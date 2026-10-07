@@ -32,7 +32,44 @@
 #                   left to cook for forty hours must not try to put a hundred
 #                   thousand Enemies on the Map.
 #
+# **The numbers below are measured (#26), and each one is a lesson.**
+# `tools/balance/measure.sh` plays the scenarios they were set against; re-run it after
+# editing this file rather than reasoning about what the edit did. The method, the table and
+# the findings are in CLAUDE.md under "The joint balance pass".
+#
+# The arithmetic they are all set against: one Ammo Press makes 37 rounds a minute, an MG
+# spends two of them per Crawler, and `heat.wave_interval_minimum_seconds` floors the gap at
+# 40 seconds — so one Press buys about nineteen Crawler-kills a minute against 1.5 Waves a
+# minute. A Factory with one Press and one Turret is therefore living on the stockpile it
+# built in the quiet early minutes, and how long that lasts is what this file decides.
+#
+#   chaff_crawlers.heat_per_extra = 1200
+#       At the 150 this was first written at, a Factory earned itself two extra Crawlers on
+#       its very first Wave and every Run was eighteen minutes long whatever the player did.
+#       1200 makes the Chaff tier a slope rather than a cliff: the documented opening Factory
+#       is sent 6 at minute three and 10 at minute twenty-five, and the stockpile it banks
+#       between Waves is what carries it. #12's bet is unchanged — producing still summons
+#       the Wave sooner — but what Heat buys the Enemy early is *time*, and size comes later.
+#
+#   shock_breakers.min_heat = 5200
+#       A Breaker steers by the Factory and a Crawler by the Nest, so a Breaker is the Wave
+#       that asks *where* your Turrets are rather than how many rounds you have — and a
+#       Turret placed to cover the Nest's lane cannot answer it at all.
+#       At 500 it arrived at two and a half minutes, before a player could afford a second
+#       Turret, and quietly took the whole production line; every measured Run ended in the
+#       same anticlimax. 5200 is about minute twenty-six, which is late enough that the
+#       question is a real one and early enough to be what ends the Run.
+#
+#   siege_hulks.min_heat = 6400
+#       The boss outranges every Turret by design (DESIGN.md) and 85% frontal armour leaves
+#       an MG doing 2 a shot, so a Factory cannot answer one at all — only a player on foot,
+#       from behind. At 1200 it arrived at minute six and ended Runs with nothing a player
+#       could have built differently, which is the "unexplained spike" #26 was opened about.
+#       6400 is reachable only by a Factory that kept its Machines alive and its Turrets fed
+#       — further than any of the eight measured scenarios gets — which makes the Hulk the
+#       thing a Factory *earns*. A second Ammo Press is what the arithmetic says gets there.
+#
 id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
-chaff_crawlers,crawler,0,6,150,40
-shock_breakers,breaker,500,1,900,8
-siege_hulks,siege_hulk,1200,1,0,1
+chaff_crawlers,crawler,0,6,1200,40
+shock_breakers,breaker,5200,1,1800,8
+siege_hulks,siege_hulk,6400,1,0,1

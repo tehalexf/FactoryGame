@@ -16,6 +16,8 @@ tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|grou
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
+tools/balance/measure.sh         # play every balance scenario headless and print the table
+tools/balance/measure.sh --scenario competent --verbose   # one Run, with its per-minute trace
 python3 tools/tuning_dashboard.py  # edit content/tuning.toml in a browser, with reset and rollback
 tools/tuning/run_tests.sh        # that dashboard's own tests, Python
 godot --path .                   # run the game
@@ -63,9 +65,9 @@ GDScript, not C#. C++ via GDExtension only when profiling demands it.
 sim/      the Simulation. Pure GDScript, no Godot node types, no floats.
 game/     the Godot layer. Input producers and state readers only.
 content/  Machine, Recipe and tuning definitions. Data, not code.
-tests/    test runner, TestCase base, and tests/cases/ for the cases themselves.
+tests/    test runner, TestCase base, the balance harness, and tests/cases/ for the cases.
 assets/   committed CC0 and self-authored assets. intake/ holds the source FBX.
-tools/    developer scripts. tools/assets/ is the asset pipeline and its tests.
+tools/    developer scripts. tools/assets/ is the asset pipeline; tools/balance/ measures a Run.
 docs/     design, ADRs, asset licensing.
 ```
 
@@ -728,42 +730,51 @@ means there is no Turret there. The bars are unshaded, because a gauge a directi
 darken is a gauge a player misreads at the worst moment. The HUD says `ammo n/m` and `DRY`
 alongside, for the post-mortem rather than the fight.
 
-### Where the balance stands, and what it is waiting for
+### Where the balance stands
 
-Measured on the starter Map, shipped content, seed 7. **No Turret:** the first Wave alone takes
-the Nest at tick 12,132 — 3 minutes 22 seconds, zero Crawlers killed. **One MG Turret behind
-one production chain** (a Miner, a Smelter, an Ammo Press, a coal Miner and a Boiler to pay for
-them, joined by six Belts — `_competent_factory` in `tests/cases/test_turrets.gd` builds exactly
-this): the Nest falls at tick 130,293, **36 minutes in, on Wave 18, after killing 670 Crawlers**.
-Eleven times the Run, and still lost.
+**These figures are measured, not derived.** `tools/balance/measure.sh` plays scripted
+sessions headless to the end of the Run and reports what happened; the whole method, the
+scenarios and every finding live under "The joint balance pass", below. Re-run it after any
+edit to `content/` rather than reasoning about what the edit did.
 
-**It loses because it runs dry, which is the point.** At the end it had spent 105 seconds with
-an empty magazine and the whole Factory was holding 16 rounds. The arithmetic: the Turret fires
-four rounds a second and a Crawler takes two of them, so it kills at exactly the two a second
-the single Breach releases — while one Ammo Press makes two rounds every three seconds. Each
-Wave therefore spends a stockpile the preceding gap built, and since a Wave's count grows by
-four and the gap does not, somewhere around Wave 16 the cumulative demand overtakes the
-cumulative supply. **The way to survive Wave 20 is a second Ammo Press and the Smelter and
-Miner behind it** — production is the defence, in the most literal arithmetic available.
+Shipped Map, shipped content, three seeds, measured 2026-10-07:
 
-Which a Run can now actually buy: the opening bill of 80 plate pays for the first line and
-nothing more, so the second Press comes out of the Nest's store. `test_nest_store.gd` proves
-that end to end against the shipped numbers; see the Nest's store, below.
+| Scenario | Run | Wave | Peak Heat | What killed it |
+|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 1 | 0 | undefended; the first Wave alone |
+| `competent` — six Machines, one MG on the lane | **27m00s** | 32 | 5526 | **ran dry**, then Breakers took the Factory |
+| `fortified` — a second MG over the Factory itself | **29m15s** | 36 | 6204 | swarmed, with 274 rounds still in it |
+| `hive_sortie` — `competent` after clearing one Hive | **29m37s** | 35 | 5398 | ran dry |
 
-One thing a later ticket should know: **a Machine's output buffer is uncapped**, so a Belt
-that fills up banks the surplus in the Ammo Press indefinitely. The stockpile a player
-builds between Waves is real and unbounded, and it is what carries the early Waves.
+Six times the Run an undefended Nest gets, and still lost.
 
-**Open: the two systems have not had a joint balance pass.** #10's arithmetic above was
-worked against #9's scaffolded schedule, which grew a Wave's count but never its arrival
-rate — so the pressure was Wave *length* against a fixed production rate. #12 replaced that
-with a schedule where Heat shortens the gap as well as lengthening the Wave, and where the
-Ammo Press and the Smelter behind it are themselves what raise the Heat. The qualitative
-claim is unchanged and is the better version of itself — production is still the defence,
-and now producing is also what summons the thing you are defending against. But the
-crossover Wave number above is a figure from the old schedule, and `fire_mg`,
-`make_ammunition`, `range_tiles` and the `[heat]` section want tuning against each other by
-somebody playing it. Neither ticket claims that was done.
+**It loses because it runs dry, which is the point.** The arithmetic, now against #12's
+schedule rather than #9's scaffold: the Turret fires four rounds a second and a Crawler takes
+two of them, while one Ammo Press makes two rounds every three seconds — 37 a minute, so
+about 19 Crawlers a minute of killing. The Wave interval floors at 40 seconds, which is 1.5
+Waves a minute, so **one Ammo Press sustains about twelve Crawlers a Wave and no more**. At
+`chaff_crawlers.heat_per_extra = 1200` that would be a Heat of 7,800, further out than a
+one-Press Factory ever gets — so what actually decides the Run is the **stockpile**. It peaks
+at 455 rounds around minute seventeen, every Wave after that is paid for out of it, it is gone
+by minute twenty-five, and the Nest falls two minutes later.
+
+**The way to survive past thirty minutes is a second Ammo Press and the Smelter and Miner
+behind it** — production is the defence, in the most literal arithmetic available. Which a Run
+can buy: the call-early lever pays `wave.call_early_bounty_per_item` of each starting Item, and
+the Nest's store hands back whatever a Belt banked. `test_nest_store.gd` proves that end to
+end; see the Nest's store, below.
+
+Two things a later ticket should know:
+
+- **A Machine's output buffer is uncapped**, so a Belt that fills up banks the surplus in the
+  Ammo Press indefinitely. The stockpile a player builds between Waves is real and unbounded,
+  and it is what carries minutes seventeen to twenty-five.
+- **A Turret on the Nest's lane cannot defend the Factory.** A Breaker steers by the *Factory*
+  flowfield and a Crawler by the Nest's, so a Breaker never walks into the reach of a Turret
+  placed to cover the Nest. The `competent` Factory loses all five of its production Machines
+  in its last minutes for exactly this reason, and a second MG at (11, 6) — which covers every
+  Machine of the opening line inside 16 m — is what answers it, and is why `fortified` outlasts
+  it. That is a geography lesson rather than a tuning one and no number fixes it.
 
 ## Mortality: what can be taken from you
 
@@ -880,18 +891,31 @@ The two halves of one trade, and they are deliberately priced in different curre
 - **A Repair Pylon is a Turret** — see the Turrets section above for the `repair` column, the
   exactly-one-of rule, and why it holds no target.
 
-### Where the mortality balance stands, and what nobody has played
+### Where the mortality balance stands
 
-Shipped numbers, not a measured Run: `enemy.breaker_damage` is 60 a second against a Smelter's
-500, so a Smelter under one Breaker has nine seconds to live. `wrench.repair_points_per_second`
-is 60, so **one player with a wrench exactly holds one Breaker off** — `test_machine_mortality` asserts it, and it is a coincidence of two tuning values
-rather than a designed identity. A Repair Pylon pulses 40 a second and spends a plate doing it,
-so it loses to a Breaker on its own and beats a Crawler comfortably. **Nobody has played this.**
-The joint pass #10 and #12 are both waiting for should take `breaker_*`, `wall.health`,
-`wrench.repair_points_per_second` and the Pylon's `repair` column together, because every one of
-them is priced against the others. `content/waves.csv` holds the Breaker tier behind 500 Heat,
-which means the first few Waves of a Run are unchanged and the Breaker arrives once a Factory is
-worth hunting — that threshold is the single number most likely to be wrong.
+`enemy.breaker_damage` is 60 a second against a Smelter's 500, so a Smelter under one Breaker
+has nine seconds to live. `wrench.repair_points_per_second` is 60, so **one player with a
+wrench exactly holds one Breaker off** — `test_machine_mortality` asserts it, and it is a
+coincidence of two tuning values rather than a designed identity. A Repair Pylon pulses 40 a
+second and spends a plate doing it, so it loses to a Breaker on its own and beats a Crawler
+comfortably.
+
+**#26 moved the Breaker threshold and the measurement says why.** At
+`shock_breakers.min_heat = 500` a producing Factory passed it at about two and a half minutes
+— before a player has any second Turret to cover the Factory with — and the Breakers
+quietly dismantled all five production Machines from minute three onward, leaving a Run that
+spent its remaining ten minutes as one Turret firing a dwindling stockpile at Chaff. It is now
+**5200**, which the documented opening Factory reaches at around minute twenty-six, so the
+Breaker arrives as the question it is meant to be: *is your Turret covering the Nest or the
+Factory?* The answer is geography and not a number — see the Turrets section above, and "The
+joint balance pass" for the Runs it was measured on.
+
+`wall.health`, `wrench.repair_points_per_second` and the Pylon's `repair` column were not
+moved. They are priced against `breaker_damage`, which also did not move, so the relationships
+`test_machine_mortality` asserts are unchanged; what changed is *when* a player is asked
+about them. **Still unplayed by a human**: nothing in the measured scenarios picks up a wrench
+to defend a Machine, because an open-loop scripted session cannot chase a Breaker. Hand repair
+under fire is the one part of this ticket a harness cannot measure.
 
 ## Heat, the Wave schedule, the Telegraph and the lever
 
@@ -979,6 +1003,13 @@ they get hunted (DESIGN.md).
   Heat still accumulates, which is what lets a test study Heat without a Wave interrupting.
 - **Building is still never gated**, mid-Wave or otherwise, and `test_heat` asserts it
   directly so that nobody adds a flag.
+
+**The numbers in `[heat]` and `content/waves.csv` are measured, not guessed.** They were set
+against played Runs in #26 and both files carry the reasoning inline; the method, the table and
+the findings are under "The joint balance pass", below. Changing any of them is a
+`tools/balance/measure.sh` away from being checked rather than argued about — and the four that
+decide how long a Run lasts are `heat.decay_per_minute`, `chaff_crawlers.heat_per_extra`,
+`shock_breakers.min_heat` and `siege_hulks.min_heat`.
 
 ## Depth, and the Breach greed opens
 
@@ -1740,15 +1771,15 @@ What is still placeholder-grade is the *surface*: the packs reference textures t
 ship, so the arms and the weapons are repainted from `dieselpunk_palette.json` rather than
 textured. Recovering the real maps is a nicer-looking ticket of its own.
 
-### Where the balance stands, and what nobody has played
+### Where the balance stands
 
-Shipped numbers, not a measured Run. The Bolt Rifle kills a 30 hp Crawler in one shot and a
-240 hp Breaker in six, one round a shot, 0.8 s between them, 0.4° of scatter. The Drum
-Autocannon needs three shots for a Crawler and twenty for a Breaker but puts out eight
-shots a second at two rounds each — so it empties a magazine sixteen times faster for a
-little over twice the damage, and 5° of scatter plus the recoil bloom means a long burst
-sprays where a tapped one does not. The Pneumatic Wrench kills a Crawler in one swing at
-0.6 s and cannot touch a Breaker before the Breaker touches it.
+The Bolt Rifle kills a 30 hp Crawler in one shot and a 240 hp Breaker in six, one round a
+shot, 0.8 s between them, 0.4° of scatter. The Drum Autocannon needs three shots for a
+Crawler and twenty for a Breaker but puts out eight shots a second at two rounds each — so it
+empties a magazine sixteen times faster for a little over twice the damage, and 5° of scatter
+plus the recoil bloom means a long burst sprays where a tapped one does not. The Pneumatic
+Wrench kills a Crawler in one swing at 0.6 s and cannot touch a Breaker before the Breaker
+touches it.
 
 A player has 150 hit points against a Crawler's 10 a bite and a Breaker's 60 — fifteen
 seconds of standing in Chaff, three bites from the thing that actually hunts you, which is
@@ -1763,21 +1794,24 @@ Smelter and an Ammo Press out of the opening eighty plates, runs a Belt into the
 for the counter to bank a round, withdraws it (#27) and kills a Crawler with it. That is the
 pillar's whole sentence as one test.
 
-**What has not been done is the balance of it.** Nobody has checked a Run can keep a magazine
-*full* that way against a Wave schedule that is simultaneously eating a Turret's rounds out of
-the same Ammo Press — and the arithmetic in the Turrets section says one Press cannot even
-feed the Turret. The honest reading is that a player who wants to shoot needs a second
-production line, which is the right answer and an untested one. Until somebody plays it, the
-Bolt Rifle and the Drum Autocannon are *tested* rather than *played*, and the rest of
-`test_gear.gd` arms its own player because a test about what a weapon does should not have to
-build a Factory first.
+**#26 measured the cost of shooting, and it is real.** `rifle_picket` is the `competent`
+Factory with a second Belt banking Ammunition at the Nest and a player standing there with a
+Bolt Rifle, drawing a magazine a minute and spending half of each minute on the trigger. It
+**costs the Run 2 minutes 1 second** — 24m59s against 27m00s. The rifle spends rounds at 75 a
+minute where the Ammo Press makes 37, so a player who
+leans on the trigger is bidding against his own Turret for the same Press, exactly as the
+Turrets section's arithmetic says he must. The honest reading stands: **a player who wants to
+shoot needs a second production line**, and that is now a measured sentence rather than a
+guess. `test_balance.test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press` is
+what keeps it true.
 
-**Nobody has played any of this.** The joint balance pass #10, #12 and #11 are all waiting
-for should now take `gear.csv`, `[gear]`, `player.health`, `enemy.player_bite_reach_metres`
-and the Ammo Press's rate together, because every one of them is priced against the others.
-The two numbers most likely to be wrong are `gear.view_kick_degrees_per_shot` — the whole
-feel of automatic fire rides on it — and `gear.enemy_hit_radius_metres`, which decides
-whether a swarm at twenty metres is a target or a lottery.
+`gear.csv`, `[gear]`, `player.health` and `enemy.player_bite_reach_metres` were **not** moved
+by #26. Nothing in the measurement contradicted them, and the Run-length lever that mattered
+turned out to be `content/waves.csv` alone rather than anything a weapon does per shot. The two numbers still most likely to be wrong are
+`gear.view_kick_degrees_per_shot` — the whole feel of automatic fire rides on it — and
+`gear.enemy_hit_radius_metres`, which decides whether a swarm at twenty metres is a target or
+a lottery. **Neither is measurable by a harness**: both are about what a fight feels like
+through a mouse, and a scripted session has no opinion about that.
 
 ## The Siege Hulk, the Hives, and the sortie
 
@@ -1948,14 +1982,13 @@ describes, and `test_the_bill_for_leaving_is_readable_before_the_player_commits`
 does not move when it is asked. `WorldView._sortie_lines` puts them on screen the whole time
 there is something out there worth leaving for.
 
-**This is the weakest part of the ticket and it is worth saying so.** A visible bill is not the
-same as a felt cost, and nobody has played it. The honest test is whether a player hesitates
-before walking out; if they do not, the lever to reach for is `hive.heat_shadow_per_minute` and
+**A visible bill is not the same as a felt cost.** #26 settled the *arithmetic* half of this —
+the sortie measurably pays, five minutes of Run for two minutes away — but the question the
+panel exists for is whether a player **hesitates** before walking out, and no harness has an
+opinion about that. If they do not, the lever to reach for is `hive.heat_shadow_per_minute` and
 `siege_hulk.shell_interval_seconds`, not a death penalty.
 
-### Where the balance stands, and what nobody has played
-
-Shipped numbers, not a measured Run.
+### Where the balance stands
 
 - 1800 hit points against the Drum Autocannon's 96 damage a second is about **nineteen seconds
   of flanked, sustained fire** — and over two minutes through the frontal armour, which is the
@@ -1966,19 +1999,40 @@ Shipped numbers, not a measured Run.
   The sortie is strongly incentivised rather than enforced.
 - 45 a stomp against a player's 150 is three stomps and a bit, and a 220-point shell kills
   outright.
-- **The two Hives on the shipped Map changed the measured baseline, and the numbers in the
-  Turrets section above are from before them.** `hive.heat_shadow_per_minute` was tried at 100
-  first and that was wrong: it left the Nest hiding 40 a minute of 240, pushed #10's documented
-  competent Factory past `waves.csv`'s 500-Heat Breaker threshold on its *first* Wave, and cost
-  it five of its six Machines. At 30 the same Factory's first Wave lands at tick 7919 rather than
-  8217 and is sent eight Crawlers rather than seven — pressure added to the measurement rather
-  than thrown over it. It is still the number on this ticket most likely to be wrong.
-- **Nobody has played any of this.** The joint pass #10, #11, #12 and #15 are all waiting for
-  now also owes `[siege_hulk]`, `[hive]` and the Hulk's 1200-Heat row in `content/waves.csv` a
-  look, because every one of them is priced against the others. The two most likely to be wrong
-  after the Hive shadow are `siege_hulk.shell_interval_seconds` — the whole rhythm of the fight
-  rides on it — and `siege_hulk.frontal_armour_percent`, which decides whether the weak point
-  reads as a discovery or as a broken gun.
+
+**The Hives are measured now, and they are worth the walk.** `hive_sortie` is the `competent`
+Factory plus one player who sprints 107 m to the eastern Hive at two minutes in, takes it apart
+in fifteen seconds of wrench, and sprints back. Thirty of the Nest's 240 a minute of decay come
+back permanently, and the Run goes from **27m00s to 29m37s** — two and a half minutes bought
+with two minutes away from the Factory, which is a thinner margin than it sounds and exactly
+the kind of claim that wanted measuring rather than asserting.
+`test_balance.test_clearing_a_hive_lengthens_a_run` holds it.
+`hive.heat_shadow_per_minute` stayed at 30, and so did `heat.decay_per_minute`.
+
+**The Hulk's threshold moved, from 1200 Heat to 6400, and the reason is a hard finding.** At
+1200 a Factory that was working reached it at about six minutes, and a Siege Hulk is
+*unanswerable by a Factory by design* — DESIGN.md says it outranges Turrets, and 85% frontal
+armour reduces an MG's 15 to 2, so 1800 hit points is 900 rounds fired from inside a 60 m
+bombardment the 16 m Turret cannot reply to. A Run that met one at minute six was over at
+minute eight with nothing a player could have built differently, which is precisely the
+"unexplained spike" #26 was opened to remove — and it is why `fortified`, the only measured
+scenario that defends its Machines, used to be the *shortest* Run in the table at 8m08s.
+
+At **6400** the Hulk is gated behind a Heat only a Factory that kept its Machines alive *and*
+its Turrets fed ever reaches. None of the eight measured scenarios gets there, and that is
+deliberate as well as being the honest statement of where M1 stands: **the boss is the thing a
+Factory earns by doing better than any of them.** The whole bet in one row — producing is what
+summons the thing you are defending against — and the one row of the table a human still has
+to fill in.
+
+**What is still unplayed, and is the one thing a harness cannot play.** No measured scenario
+answers a Hulk, because answering one means **flanking** it, and an open-loop scripted session
+cannot walk a circle around something that is walking towards it. So `siege_hulk.*` is
+untouched and the two numbers most likely to be wrong are still
+`siege_hulk.shell_interval_seconds` — the whole rhythm of the fight rides on it — and
+`siege_hulk.frontal_armour_percent`, which at 85% currently means the frontal arc is not
+"expensive" but very nearly immune: a Bolt Rifle does 4 a shot into it, which is 450 shots.
+Whether that reads as a discovery or as a broken gun is a question for a human with a mouse.
 
 ### Does the fight have a shape?
 
@@ -2201,21 +2255,215 @@ longer channel is a row.
   definition of tile order this project has. Index order would have made "which of my two Silos
   fired" a fact about which one a player happened to build first.
 
-### Where the balance stands, and nobody has played it
+### Where the balance stands
 
-Shipped numbers, not a measured Run. A Barrage Charge is 150 points against a Crawler's 30 and a
-Breaker's 240, over a six-tile radius, behind a five-second channel — so one Charge clears Chaff
-and two kill a Breaker, if a player can stand still for five seconds in the middle of it. The
-Silo's Recipe is **a plate and twenty rounds every twenty seconds**, deliberately priced in the
-very Item a Turret and a player both spend: artillery competes with the magazine rather than
-being free once the line is up. `silo.max_charges_per_load` is 4 against a capacity of 8, so a
-full Silo is two strikes rather than one big button.
+A Barrage Charge is 150 points against a Crawler's 30 and a Breaker's 240, over a six-tile
+radius, behind a five-second channel — so one Charge clears Chaff and two kill a Breaker, if a
+player can stand still for five seconds in the middle of it. The Silo's Recipe is **a plate and
+twenty rounds every twenty seconds**, deliberately priced in the very Item a Turret and a
+player both spend: artillery competes with the magazine rather than being free once the line is
+up. `silo.max_charges_per_load` is 4 against a capacity of 8, so a full Silo is two strikes
+rather than one big button.
 
-**The number most likely to be wrong is that twenty rounds a Charge**, because it is the one
-that decides whether a Run that builds a Silo thereby stops being able to feed its Turrets — and
-the joint pass #10, #11, #12 and #15 are all waiting for now has a fourth claimant on the same
-Ammo Press. The second is `paint_seconds`: five seconds is a guess at how long a player can be
-asked to be helpless, and it is the whole feel of the mechanic.
+**#26 did not measure the Silo, and the reason is a finding rather than an omission.** A Silo
+draws 400 kW. The opening Factory the whole measurement is built on draws **660** of the 900
+that one Steam Boiler and the Nest's baseline plant supply between them, so a Silo beside it
+asks for 1,060 and the grid throttles everything — and the shipped Map has **one coal Node**,
+yielding 40 coal a minute against the 30 a Boiler burns, so there is no second Boiler to be
+had. A Milestone 1 Run cannot power a Silo and the Ammo Press that feeds it at the same time.
+So the question "does building a Silo stop a Run feeding its Turrets" is not yet askable:
+**the Power grid refuses the Silo before the Ammo Press has to argue with it.**
+
+That makes the twenty-rounds-a-Charge figure still the number most likely to be wrong, and it
+puts a second one beside it: a Milestone 1 Run has no way to power a Silo, which is either a
+Map question (a second coal Node) or a content question (a second generator class, which
+DESIGN.md already lists) and is in neither case a tuning change #26 could make. The rifle
+measurement is the nearest available proxy and it is not encouraging — 75 rounds a minute out
+of a 37-a-minute Press costs the Run three minutes, and a Silo asks for 60 a minute. See the
+Gear section, and "The joint balance pass" below.
+
+The third number still unmeasured is `paint_seconds`: five seconds is a guess at how long a
+player can be asked to be helpless, and it is the whole feel of the mechanic.
+
+## The joint balance pass
+
+Every system in this game was priced in isolation, and #26 is where they were first measured
+together. Before it, the recorded Run lengths came from #9's scaffold schedule, which grew a
+Wave's count but never its arrival rate; #12 replaced that with Heat, #13 added Depth
+surcharges, #16 added two Hives taxing the decay and #17 added a fourth claimant on the one
+Ammo Press. The figures were stale in the strong sense: not merely old, but derived from a game
+that no longer existed.
+
+**The method is a measurement and not an argument.** `tools/balance/measure.sh` plays scripted
+sessions headless to the end of the Run and reports what happened. Change a number in
+`content/`, run it, read the table. Three files:
+
+- `tests/balance_scenario.gd` — a scenario is a function from tick number to Input Actions and
+  nothing else, so it replays. `to_script` hands it to `DeterminismHarness` unchanged, and
+  `test_balance.test_a_scenario_is_a_replayable_input_script` proves two minutes of one
+  tick-for-tick.
+- `tests/balance_probe.gd` — plays one scenario on one seed and reports the tick the Nest fell,
+  which Wave was on the Map, how long the Factory held no Ammunition, which Machines went
+  missing, what the Power grid was doing, and a sample a game minute throughout. It reads the
+  Simulation only through `query_*` and issues nothing but Input Actions, so a measurement is a
+  session the game could have had. **It records facts and derives the cause from them**, with
+  every threshold a named constant at the top of the file.
+- `tests/balance_scenarios.gd` — the eight sessions of record, on `MapLayout.starter()` with
+  `content/` off disk and `player.starting_stock` as written. Every one past `bare` contains
+  the same six Machines on the same tiles, so the difference between two rows is the difference
+  between two *decisions*.
+
+`tests/cases/test_balance.gd` asserts the shape in bands rather than ticks — the exact figures
+belong here, and a test that pinned the tick would turn every legitimate tuning change into a
+red suite. It costs the suite about two minutes, which is why it caches a played Run and reads
+it from several methods.
+
+### The table, measured 2026-10-07
+
+Seeds 7, 11 and 29, identical on all three — see "What the seed can reach", below. **Both
+columns are the same eight scenarios through the same harness**, so the difference between
+them is four numbers in one content file and nothing else.
+
+| Scenario | Before | After | Wave | Peak Heat | What killed it, after |
+|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | **4m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | **4m04s** | 1 | 782 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | **27m00s** | 32 | 5526 | **ran dry**, then Breakers took the Factory |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | **19m36s** | 24 | 5691 | ran dry, **27% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | **29m15s** | 36 | 6204 | swarmed, with 274 rounds still in the Factory |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
+| `hive_sortie` — clears the eastern Hive | 19m13s | **29m37s** | 35 | 5398 | ran dry, 2m37s *later* than `competent` |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | **24m59s** | 29 | 5455 | swarmed, 2m01s sooner than `competent` |
+
+**The loop the spec asks for lands.** Build nothing and lose in four minutes. Build the opening
+Factory and get twenty-seven, lost to a pressure with a name. Put the second Turret over the
+Factory instead of over the Nest's lane and get twenty-nine. Spend the same plate on a Miner
+nothing collects and lose a quarter of the Run. Dig to Depth 2 early and lose three fifths.
+
+What the *before* column says on its own is the thing #26 was opened about: **the better a
+Factory was, the shorter its Run.** `fortified` — the only scenario that actually defends its
+Machines — managed 8m08s, against 17m45s for the Factory that built no second Turret at all
+and 10m30s for the one that spent the same plate on a Miner nothing collects. Keeping the
+Factory alive kept its Heat climbing, and a Siege Hulk arrived at minute six that nothing it
+owned could shoot. A balance in which competence is punished is not a difficulty problem, it
+is an inverted gradient, and no amount of playing would have taught a player anything from
+it — which is the case for measuring before tuning rather than after.
+
+### What was changed, and why
+
+Four numbers, all in `content/waves.csv`, which is less than a tuning ticket is allowed to
+cost. The file carries the reasoning inline; the short version:
+
+| Row and column | From | To | Why |
+|---|---|---|---|
+| `chaff_crawlers.heat_per_extra` | 150 | **1200** | At 150 a Factory earned itself two extra Crawlers on its very *first* Wave, and the Chaff tier alone outgrew one Ammo Press by minute five — so every Run was eighteen minutes long whatever a player did. At 1200 the tier is a slope: 6 Crawlers at minute three, 10 at minute twenty-five, and the stockpile banked in the quiet minutes is what carries the middle of the Run. |
+| `shock_breakers.min_heat` | 500 | **5200** | 500 was reached at two and a half minutes, before a player can afford a second Turret, and the Breakers took all five production Machines from minute three. #11 flagged this threshold as the one most likely wrong; it was. 5200 is about minute twenty-six. |
+| `shock_breakers.heat_per_extra` | 900 | **1800** | Set against the new threshold so a second Breaker is a later Wave rather than the next one. |
+| `siege_hulks.min_heat` | 1200 | **6400** | 1200 arrived at six minutes, and a Siege Hulk is unanswerable by a Factory *by design* (DESIGN.md: it outranges Turrets). 6400 is reachable only by a Factory that kept its Machines alive and its Turrets fed, which makes the boss the thing that arrives because you were doing well. |
+
+**No value in `content/tuning.toml` was changed, and that is worth recording**, because
+`heat.decay_per_minute` was the obvious lever and it was the wrong one. Raising it from 240 to
+340 does flatten the Heat curve and did land the 20-40 minute window — but it also makes the
+first three or four Machines completely silent, which takes away the half of the lesson that
+happens in the first five minutes. What a Factory *makes* is unchanged; what a given Heat
+*buys the Enemy* is what moved.
+
+No value in `machines.csv`, `recipes.csv`, `gear.csv`, `deliveries.csv` or `stratagems.csv`
+moved either — some of their comments now carry what was measured, which is the point of
+having them — and **no code in `sim/` or `game/` changed at all**. The things that wanted
+changing and were not numbers are below.
+
+### What the seed can reach
+
+**A Run length here is a function of the Factory and not of the seed, and that is a property of
+the Simulation rather than of the harness.** The Map is handcrafted (`MapLayout.starter()`
+consults no seed), the Wave schedule is a function of Heat, and the single consumer of the
+seeded RNG in the whole of `sim/` is `Simulation._scatter` — the spread on a *ranged* shot. So
+three seeds are three identical Runs, down to which Machines were lost in which order, and
+`test_balance.test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed` asserts
+exactly that.
+
+Two consequences worth knowing before anybody quotes a variance:
+
+- **The three seeds in the measurement are a demonstration, not a sample.** There is no
+  distribution to sample until a player opens fire — and `rifle_picket`, which does, is
+  identical across seeds too: at this scale the spread moves where the rounds go without
+  moving how long the Nest stands.
+- **`Simulation.hash()` cannot be used as the evidence**, which is a trap worth naming because
+  it looks like it should be: the hash feeds `_rng.state`, which is seeded, so two seeds differ
+  in hash from tick 0 whether or not a draw is ever taken.
+  `BalanceProbe.Report.figures()` is what two seeds are compared on.
+
+### Findings that are not tuning
+
+The things the measurement turned up that a number cannot fix. None was patched; all are
+recorded here instead, which is what #26 asked for.
+
+1. **A Turret on the Nest's lane cannot defend the Factory.** A Breaker steers by the Factory
+   flowfield and a Crawler by the Nest's, so a Breaker never enters the reach of a Turret placed
+   to cover the Nest. The documented `competent` Factory therefore has *no answer at all* to the
+   Breaker tier and loses all five production Machines in its last minutes; the fix is where the
+   player puts the second MG. `BalanceScenarios.FACTORY_TURRET_TILE` is the tile that covers
+   every Machine of the opening line inside 16 m, and `fortified` is the Run that does it —
+   which is why `fortified` outlasts `competent` by two minutes and ends with 274 rounds still
+   in the Factory rather than none. **Geography, not tuning.**
+2. **A Belt into the Nest banks the surplus for ever, so a Belt nobody tears down is a
+   permanent tax.** `t01_munitions` wants 20 coal; the store will then take 200 more. The first
+   `deep_digger` ran its whole Run with the Boiler short of coal and 98% of it in Power deficit,
+   because nothing in the game says "the tier is paid, stop sending coal". A player has to notice
+   and demolish, which the scenario now does at three minutes. Whether that is friction or
+   tedium is a design question; it is not a number.
+3. **Milestone 1 cannot power a Silo.** The opening Factory draws 660 of 900 and a Silo wants
+   400; the Map has one coal Node yielding 40 coal a minute against a Boiler's 30, so there is
+   no second Boiler. #17's question — does a Silo stop a Run feeding its Turrets — is not yet
+   askable. Either a second coal Node (a Map change) or the second generator class DESIGN.md
+   already lists (a content ticket) has to come first.
+4. **The Siege Hulk's frontal arc is not expensive, it is very nearly immune.** 85% off 15
+   leaves an MG doing 2, and off a Bolt Rifle's 30 leaves 4 — so 1800 hit points is 900 Turret
+   rounds or 450 rifle shots from the front. DESIGN.md says the Hulk must be answered on foot,
+   and it means *from behind*. That is a legitimate design position, but it is also the one thing
+   this harness cannot measure: an open-loop scripted session cannot walk a circle around
+   something that is walking towards it.
+5. **"Over-produced" is not a verdict a report can earn.** `BalanceProbe.cause` had a clause for
+   it — the Wave interval pinned at `heat.wave_interval_minimum_seconds` for most of the Run —
+   and it fired on *every* Run over about twenty minutes, careful and careless alike, because
+   the net Heat of any working Factory outruns what the Nest can hide. It was removed. Over-
+   production is legible as a shorter Run, which is the only form in which it is informative.
+6. **A `move` intent is consumed every tick and a `sprint` is not.** Not a bug — `_walk`'s own
+   comment says standing still is the absence of an intent rather than an intent of its own —
+   but it is the kind of asymmetry that costs an hour to find, and it is why
+   `BalanceScenarios._walk_to` holds the throttle across the whole span of a walk and sends the
+   look and the sprint once.
+7. **`heat.wave_interval_baseline_seconds` is a fixed-point quantity of seconds**, like every
+   decimal in `tuning.toml`. Reading it as a whole number — which the first draft of
+   `BalanceProbe` did — yields 9,830,400 and an "at the interval floor" verdict that is always
+   true. Anything reading a `_seconds` field off `Definitions` goes through `Fixed.floor_to_int`
+   or the same `Fixed.mul` the Simulation uses.
+8. **"The Turret ran dry" has to be measured on the Factory, not on the Turret.** A destroyed
+   Turret holds no rounds and contributes no ticks, so a per-Turret ratio reports 0% for the
+   most common ending there is: the Ammunition ran out, and then the Breakers ate the Turret.
+   `DRY_ENDGAME_PERCENT` is measured against "no Ammunition anywhere in the Factory".
+
+### What is still unmeasured
+
+Honest residue, so the next ticket does not have to rediscover it:
+
+- **Anything that is about feel through a mouse.** `gear.view_kick_degrees_per_shot`,
+  `gear.enemy_hit_radius_metres`, `silo.paint_seconds`, and whether a player *hesitates* before
+  leaving the Factory. A harness has no opinion about any of them.
+- **Hand repair under fire.** No scenario picks up a wrench to save a Machine, because chasing a
+  Breaker open-loop is not possible. `wrench.repair_points_per_second` against
+  `enemy.breaker_damage` is still an arithmetic claim.
+- **Walls.** Nothing in the eight scenarios builds one, so `wall.health` against
+  `enemy.breaker_damage` is likewise unplayed.
+- **The Silo, the Stratagems and the Painting**, for the Power reason above.
+- **Answering a Siege Hulk on foot**, for the flanking reason above — and, under the new
+  threshold, *meeting one at all*: 6400 Heat is past the peak of every one of the eight
+  scenarios. The next thing a human should play is a Factory with a **second Ammo Press**,
+  which is what the Turrets section says the answer to minute thirty is, and find out what
+  arrives.
+- **Co-op.** Every scenario is one player. Four players on one Ammo Press is a different
+  economy, and the Simulation already supports measuring it.
 
 ## The float-to-fixed boundary
 

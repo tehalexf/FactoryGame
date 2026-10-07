@@ -401,9 +401,14 @@ func _gap_metres(sim: Simulation, machine: int, enemy: int) -> int:
 ## coal line runs east from the Node at (12,4) into a Boiler that pays for all of it; and the
 ## Ammunition travels the long way round to a Turret standing in the Crawlers' lane.
 const TURRET_TILE: Vector3i = Vector3i(2, 0, -7)
-## How far into the Run the dry fixture cuts the Turret's supply line. Just past tick 8479,
-## which is when this Factory's Turret first fires — the Wave it is shooting at arrived at
-## 8217, pulled in from 9000 by the Heat the Factory made producing the Ammunition.
+## How far into the Run the dry fixture cuts the Turret's supply line. Just past the tick this
+## Factory's Turret first fires on — the Wave it is shooting at arrives at 7919, pulled in
+## from the 9000 a cold Factory would wait by the Heat this one made producing the Ammunition.
+##
+## A balance change that moves the Wave clock moves this constant with it, and the symptom is
+## `test_determinism_the_dry_fixture_really_did_run_dry_with_crawlers_still_coming` failing on
+## "supplied, and shooting". `tools/balance/measure.sh --scenario competent --verbose` prints
+## the trace to re-derive it from.
 const DRY_CUT_TICK: int = 8222
 
 const LAST_BELT_TILE: Vector3i = Vector3i(1, 0, -6)
@@ -472,13 +477,13 @@ func test_an_ammo_press_feeds_a_turret_by_belt_and_it_holds_the_lane() -> void:
 
 	# Long enough for the first Wave and the far side of it. **This Factory brings its own
 	# Wave forward**: six working Machines raise Heat, Heat shortens the gap, and the Wave
-	# lands at tick 7919 rather than at the 9000 a cold Factory would wait. That is #12's
-	# mechanic acting on #10's arithmetic, and the comparison below is where it shows.
+	# lands inside this window rather than at the 9000 ticks a cold Factory would wait. That
+	# is #12's mechanic acting on #10's arithmetic, and the comparison below is where it shows.
 	#
-	# 7919 rather than the 8217 #10 measured, because the shipped Map carries two Hives since
-	# #16 and a standing Hive drowns out part of what the Nest can hide — so the same Factory
-	# producing the same Ammunition is louder than it used to be. That is the Hives being worth
-	# a sortie, measured here by accident.
+	# Asserted as *sooner* rather than as a tick number, deliberately. #26 re-derived the whole
+	# schedule against played Runs and moved `heat.decay_per_minute`, which moves the exact
+	# tick; what must not move is the direction. The measured figures live in CLAUDE.md under
+	# "The joint balance pass" and are guarded by `tests/cases/test_balance.gd`.
 	var fired: int = 0
 	var highest_magazine: int = 0
 	for i: int in range(180 * Simulation.TICKS_PER_SECOND):
@@ -507,9 +512,10 @@ func test_an_undefended_nest_loses_the_wave_the_same_factory_holds() -> void:
 	# The comparison the ticket is for. Identical content, identical Map, identical three
 	# minutes — the only difference is whether a Turret was fed.
 	#
-	# The defended Factory is attacked **earlier** than the bare one, at tick 8217 against
-	# 9000, because producing is what raised its Heat. That is the bet the whole game is
-	# about: the Factory that can hold a Wave is also the Factory that summons it sooner.
+	# The defended Factory is attacked **earlier** than the bare one, because producing is what
+	# raised its Heat. That is the bet the whole game is about: the Factory that can hold a Wave
+	# is also the Factory that summons it sooner. Stated as a direction rather than as two tick
+	# numbers for the reason above — #26's measured figures are in CLAUDE.md.
 	var defended: Simulation = Simulation.new(7, 1, null, MapLayout.starter())
 	var bare: Simulation = Simulation.new(7, 1, null, MapLayout.starter())
 	_competent_factory(defended)
@@ -674,17 +680,15 @@ func test_determinism_the_firing_fixture_really_did_kill_crawlers() -> void:
 		if sim.query_enemy_count() < before:
 			killed += before - sim.query_enemy_count()
 	assert_eq(sim.query_wave_number(), 1, "the shipped first Wave arrived")
-	# Eight rather than the six a *cold* Factory earns, and the extra two are the whole point
-	# of #12: `content/waves.csv` buys the Enemy one more Crawler a Breach every 150 Heat, and
-	# this Factory made enough producing the Ammunition it is defending itself with. One of the
-	# two is #16's: the shipped Map carries two Hives, and a standing Hive drowns out part of
-	# what the Nest can hide, so the same crafts buy the Enemy more than they did. The Turret
-	# still killed every one of them.
-	assert_eq(killed, 8, "and the Turret shot every Crawler the Wave sent")
-	assert_true(
-		killed > 6,
-		"a Factory that produces is sent more than a Factory that does not: %d" % killed
-	)
+	# Six, which is what `content/waves.csv` sends a Factory under 800 Heat — and this one is
+	# at about 700 when its first Wave lands. **That is #26's shape and not a regression.**
+	# Before it, `chaff_crawlers.heat_per_extra` was 150 and this same Factory earned itself
+	# two extra Crawlers on its very first Wave; the measurement said that slope was steep
+	# enough to outgrow one Ammo Press by minute five, which made every Run about eighteen
+	# minutes long whatever a player did. What #12 buys the Enemy on Wave 1 is now *time* — the
+	# Wave lands on tick 7919 rather than the 9000 a cold Factory waits — and the Wave's *size*
+	# is what the Heat buys later. `tests/cases/test_balance.gd` is where later is measured.
+	assert_eq(killed, 6, "and the Turret shot every Crawler the Wave sent")
 	assert_true(seen > 0, "there were Crawlers on the Map to shoot at")
 	assert_true(
 		sim.query_turret_last_shot_tick(turret) > 0,
