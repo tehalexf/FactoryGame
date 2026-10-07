@@ -401,7 +401,7 @@ const TURRET_TILE: Vector3i = Vector3i(2, 0, -7)
 ## How far into the Run the dry fixture cuts the Turret's supply line. Just past tick 8479,
 ## which is when this Factory's Turret first fires — the Wave it is shooting at arrived at
 ## 8217, pulled in from 9000 by the Heat the Factory made producing the Ammunition.
-const DRY_CUT_TICK: int = 8520
+const DRY_CUT_TICK: int = 8222
 
 const LAST_BELT_TILE: Vector3i = Vector3i(1, 0, -6)
 
@@ -469,8 +469,13 @@ func test_an_ammo_press_feeds_a_turret_by_belt_and_it_holds_the_lane() -> void:
 
 	# Long enough for the first Wave and the far side of it. **This Factory brings its own
 	# Wave forward**: six working Machines raise Heat, Heat shortens the gap, and the Wave
-	# lands at tick 8217 rather than at the 9000 a cold Factory would wait. That is #12's
+	# lands at tick 7919 rather than at the 9000 a cold Factory would wait. That is #12's
 	# mechanic acting on #10's arithmetic, and the comparison below is where it shows.
+	#
+	# 7919 rather than the 8217 #10 measured, because the shipped Map carries two Hives since
+	# #16 and a standing Hive drowns out part of what the Nest can hide — so the same Factory
+	# producing the same Ammunition is louder than it used to be. That is the Hives being worth
+	# a sortie, measured here by accident.
 	var fired: int = 0
 	var highest_magazine: int = 0
 	for i: int in range(180 * Simulation.TICKS_PER_SECOND):
@@ -642,7 +647,7 @@ func test_determinism_a_turret_firing_and_killing_crawlers_replays_identically()
 	var script: InputScript = InputScript.new()
 	script.add_tick(_factory_machines(definitions))
 	script.add_tick(_factory_belts())
-	# Past the first Wave — which this Factory's own Heat pulls in to tick 8217 — and out the
+	# Past the first Wave — which this Factory's own Heat pulls in to tick 7919 — and out the
 	# far side of it.
 	script.add_idle_ticks(180 * Simulation.TICKS_PER_SECOND)
 
@@ -666,11 +671,13 @@ func test_determinism_the_firing_fixture_really_did_kill_crawlers() -> void:
 		if sim.query_enemy_count() < before:
 			killed += before - sim.query_enemy_count()
 	assert_eq(sim.query_wave_number(), 1, "the shipped first Wave arrived")
-	# Seven rather than the six a *cold* Factory earns, and the extra one is the whole point
+	# Eight rather than the six a *cold* Factory earns, and the extra two are the whole point
 	# of #12: `content/waves.csv` buys the Enemy one more Crawler a Breach every 150 Heat, and
-	# this Factory made enough producing the Ammunition it is defending itself with. The
-	# Turret still killed every one of them.
-	assert_eq(killed, 7, "and the Turret shot every Crawler the Wave sent")
+	# this Factory made enough producing the Ammunition it is defending itself with. One of the
+	# two is #16's: the shipped Map carries two Hives, and a standing Hive drowns out part of
+	# what the Nest can hide, so the same crafts buy the Enemy more than they did. The Turret
+	# still killed every one of them.
+	assert_eq(killed, 8, "and the Turret shot every Crawler the Wave sent")
 	assert_true(
 		killed > 6,
 		"a Factory that produces is sent more than a Factory that does not: %d" % killed
@@ -687,7 +694,7 @@ func test_determinism_a_turret_running_dry_mid_wave_replays_identically() -> voi
 	var script: InputScript = InputScript.new()
 	script.add_tick(_factory_machines(definitions))
 	script.add_tick(_factory_belts())
-	# Just after the Turret opens fire — it first shoots on tick 8479 — the last Belt into it
+	# Just after the Turret opens fire — it first shoots on tick 8181 — the last Belt into it
 	# is taken up, so it spends what it is holding and then stops with Crawlers still walking
 	# at it. One Input Action, which is what makes "it ran dry" a thing a replay can
 	# reproduce exactly.

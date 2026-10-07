@@ -88,6 +88,23 @@ breaker_health = 240
 breaker_speed_metres_per_second = 2
 breaker_damage = 60
 breaker_attack_interval_seconds = 1
+[siege_hulk]
+health = 1800
+speed_metres_per_second = 1
+range_metres = 60
+shell_damage = 220
+shell_blast_radius_metres = 6
+shell_interval_seconds = 6
+shell_flight_seconds = 3
+stomp_damage = 45
+frontal_armour_percent = 85
+hit_radius_metres = 1.6
+hit_height_metres = 3.2
+[hive]
+health = 1200
+heat_shadow_per_minute = 30
+hit_radius_metres = 2
+hit_height_metres = 4
 [wall]
 health = 240
 [wrench]

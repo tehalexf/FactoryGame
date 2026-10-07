@@ -16,9 +16,9 @@
 #   id              Identifier. Lowercase letters, digits and _ only. Sorting by this
 #                   fixes the release order, so it reaches the state hash.
 #   enemy_kind      Which Enemy this row sends. The kinds that exist are the ones the
-#                   Simulation implements — `crawler` is the only one Milestone 1
-#                   ships — and a name that is not one of them is an error naming the
-#                   row, never a silently empty Wave.
+#                   Simulation implements — `crawler`, `breaker` and `siege_hulk` —
+#                   and a name that is not one of them is an error naming the row,
+#                   never a silently empty Wave.
 #   min_heat        The Heat at which this row starts contributing. 0 means from the
 #                   first Wave of a cold Run.
 #   count_per_breach  How many of this Enemy each Breach releases at `min_heat`. Per
@@ -35,3 +35,4 @@
 id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
 chaff_crawlers,crawler,0,6,150,40
 shock_breakers,breaker,500,1,900,8
+siege_hulks,siege_hulk,1200,1,0,1

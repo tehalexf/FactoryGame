@@ -21,10 +21,12 @@ make Factory layout a defensive decision.
 fortifiable. Mining at greater Depth opens new Breaches near the mine, so
 reaching for better ore literally changes the geography of the threat.
 
-**Hive** — An Enemy structure out on the Map that adds continuous pressure.
-Destroying one reduces pressure permanently but requires leaving the Factory.
-Hives are why the players carry Gear at all. Not to be confused with the Nest,
-which is theirs and is defended.
+**Hive** — An Enemy structure out on the Map that adds continuous pressure: while one
+stands, the Nest hides less of the Factory's Heat, so every craft counts for more and
+every Wave comes sooner. Destroying one reduces that pressure permanently but requires
+leaving the Factory. A Hive sends no Enemies of its own — Enemies enter at Breaches — and
+no defence can reach one. Hives are why the players carry Gear at all. Not to be confused
+with the Nest, which is theirs and is defended.
 
 **Host** — The player who owns the Factory and the Run's save file. Other
 players join the Host's Run. Authoritative over all simulation state.
@@ -113,8 +115,15 @@ than players. The reason Machine mortality is felt rather than merely true. It
 steers towards the Factory rather than the Nest, and falls back on the Nest only
 when there is nothing left to break.
 
-**Siege Hulk** — A slow Enemy that bombards the Factory from beyond Turret
-range. Cannot be answered by defenses; the players must go out and kill it.
+**Siege Hulk** — A slow Enemy that walks to a stand-off beyond Turret range and
+bombards the Factory from there, in telegraphed shells. Cannot be answered by defenses —
+it withdraws from anything that could reach it — so the players must go out and kill it.
+Its front is armoured and its back is not, so the answer is where you stand rather than
+how much Ammunition you brought. A player at its feet is a player it stomps instead of
+shelling.
+
+**Shell** — One round of a Siege Hulk's bombardment. Marked on the ground where it will
+land, for long enough to walk out of, and lethal to whatever is still standing there.
 
 **Telegraph** — The warning that precedes a Wave: klaxon, rising gauges, dust on
 the horizon. Waves are never silent, and building is never disabled. No Wave

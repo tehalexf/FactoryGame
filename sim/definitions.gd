@@ -179,6 +179,21 @@ const TUNING_BREAKER_DAMAGE: String = "enemy.breaker_damage"
 const TUNING_BREAKER_ATTACK_INTERVAL_SECONDS: String = (
 	"enemy.breaker_attack_interval_seconds"
 )
+const TUNING_SIEGE_HULK_HEALTH: String = "siege_hulk.health"
+const TUNING_SIEGE_HULK_SPEED: String = "siege_hulk.speed_metres_per_second"
+const TUNING_SIEGE_HULK_RANGE: String = "siege_hulk.range_metres"
+const TUNING_SIEGE_HULK_SHELL_DAMAGE: String = "siege_hulk.shell_damage"
+const TUNING_SIEGE_HULK_BLAST_RADIUS: String = "siege_hulk.shell_blast_radius_metres"
+const TUNING_SIEGE_HULK_SHELL_INTERVAL: String = "siege_hulk.shell_interval_seconds"
+const TUNING_SIEGE_HULK_SHELL_FLIGHT: String = "siege_hulk.shell_flight_seconds"
+const TUNING_SIEGE_HULK_STOMP_DAMAGE: String = "siege_hulk.stomp_damage"
+const TUNING_SIEGE_HULK_ARMOUR_PERCENT: String = "siege_hulk.frontal_armour_percent"
+const TUNING_SIEGE_HULK_HIT_RADIUS: String = "siege_hulk.hit_radius_metres"
+const TUNING_SIEGE_HULK_HIT_HEIGHT: String = "siege_hulk.hit_height_metres"
+const TUNING_HIVE_HEALTH: String = "hive.health"
+const TUNING_HIVE_HEAT_SHADOW: String = "hive.heat_shadow_per_minute"
+const TUNING_HIVE_HIT_RADIUS: String = "hive.hit_radius_metres"
+const TUNING_HIVE_HIT_HEIGHT: String = "hive.hit_height_metres"
 
 ## Every problem that makes this set unusable, each naming the file and the row.
 var errors: PackedStringArray = PackedStringArray()
@@ -387,6 +402,65 @@ var breaker_damage: int = 0
 
 ## How long between one Breaker's bites, in fixed-point seconds.
 var breaker_attack_interval_seconds: int = 0
+
+## A Siege Hulk's hit points.
+var siege_hulk_health: int = 0
+
+## How fast a Siege Hulk walks, in fixed-point metres per second.
+var siege_hulk_speed: int = 0
+
+## How far a Siege Hulk shells, in fixed-point metres — **and therefore where it stands**.
+##
+## One number for both, because the Hulk advances until something it can shell is inside this
+## radius and then holds: the stand-off is the reach, so there is no second figure that could
+## disagree with it. `_check_siege_hulk_outranges_every_turret` refuses a set where this does
+## not exceed every Turret's reach, which is what makes "it bombards from beyond Turret range"
+## a property of the content rather than a hope about it.
+var siege_hulk_range_metres: int = 0
+
+## What one shell takes off whatever is at the impact point, in whole hit points.
+var siege_hulk_shell_damage: int = 0
+
+## How far from the impact point a shell is felt, in fixed-point metres.
+var siege_hulk_shell_blast_radius_metres: int = 0
+
+## How long between one shell and the next, in fixed-point seconds. Shared with the stomp, so
+## a player standing at the Hulk's feet is a player stopping the bombardment.
+var siege_hulk_shell_interval_seconds: int = 0
+
+## How long a shell is in the air, in fixed-point seconds. Load-bearing exactly as
+## `wave_telegraph_seconds` is: the impact point is marked on the ground for this long before
+## anything happens there.
+var siege_hulk_shell_flight_seconds: int = 0
+
+## What a Siege Hulk does to a player within reach of it, in whole hit points.
+var siege_hulk_stomp_damage: int = 0
+
+## How much of a hit a Siege Hulk shrugs off from the front, as a whole percentage. The weak
+## point is the absence of this behind it.
+var siege_hulk_frontal_armour_percent: int = 0
+
+## How wide and how tall a Siege Hulk's hit volume is, in fixed-point metres.
+var siege_hulk_hit_radius_metres: int = 0
+var siege_hulk_hit_height_metres: int = 0
+
+## A Hive's hit points.
+var hive_health: int = 0
+
+## How much of the Nest's Heat shedding one living Hive drowns out, per minute, in whole heat
+## units.
+##
+## **A Hive subtracts from the decay rather than adding to Heat**, which is the decision rather
+## than an implementation detail. Adding would hunt an idle Run for standing still, and Heat is
+## throughput in excess of what the Nest can hide (DESIGN.md) — a Factory producing nothing is
+## owed its silence. Subtracting says the Nest hides less while these things are watching, so a
+## Hive taxes *growth*, and clearing one gives the headroom back permanently and visibly, on the
+## gauge `query_heat_decay_per_minute` already feeds.
+var hive_heat_shadow_per_minute: int = 0
+
+## How wide and how tall a Hive's hit volume is, in fixed-point metres.
+var hive_hit_radius_metres: int = 0
+var hive_hit_height_metres: int = 0
 
 ## How close an Enemy has to be to a player to bite them, in fixed-point metres.
 ##
@@ -938,6 +1012,21 @@ func digest() -> int:
 	hasher.feed_int(crawler_speed)
 	hasher.feed_int(crawler_damage)
 	hasher.feed_int(crawler_attack_interval_seconds)
+	hasher.feed_int(siege_hulk_health)
+	hasher.feed_int(siege_hulk_speed)
+	hasher.feed_int(siege_hulk_range_metres)
+	hasher.feed_int(siege_hulk_shell_damage)
+	hasher.feed_int(siege_hulk_shell_blast_radius_metres)
+	hasher.feed_int(siege_hulk_shell_interval_seconds)
+	hasher.feed_int(siege_hulk_shell_flight_seconds)
+	hasher.feed_int(siege_hulk_stomp_damage)
+	hasher.feed_int(siege_hulk_frontal_armour_percent)
+	hasher.feed_int(siege_hulk_hit_radius_metres)
+	hasher.feed_int(siege_hulk_hit_height_metres)
+	hasher.feed_int(hive_health)
+	hasher.feed_int(hive_heat_shadow_per_minute)
+	hasher.feed_int(hive_hit_radius_metres)
+	hasher.feed_int(hive_hit_height_metres)
 	hasher.feed_int(breaker_health)
 	hasher.feed_int(breaker_speed)
 	hasher.feed_int(breaker_damage)
@@ -1996,6 +2085,21 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	breaker_attack_interval_seconds = tuning.require_fixed(
 		TUNING_BREAKER_ATTACK_INTERVAL_SECONDS
 	)
+	siege_hulk_health = tuning.require_int(TUNING_SIEGE_HULK_HEALTH)
+	siege_hulk_speed = tuning.require_fixed(TUNING_SIEGE_HULK_SPEED)
+	siege_hulk_range_metres = tuning.require_fixed(TUNING_SIEGE_HULK_RANGE)
+	siege_hulk_shell_damage = tuning.require_int(TUNING_SIEGE_HULK_SHELL_DAMAGE)
+	siege_hulk_shell_blast_radius_metres = tuning.require_fixed(TUNING_SIEGE_HULK_BLAST_RADIUS)
+	siege_hulk_shell_interval_seconds = tuning.require_fixed(TUNING_SIEGE_HULK_SHELL_INTERVAL)
+	siege_hulk_shell_flight_seconds = tuning.require_fixed(TUNING_SIEGE_HULK_SHELL_FLIGHT)
+	siege_hulk_stomp_damage = tuning.require_int(TUNING_SIEGE_HULK_STOMP_DAMAGE)
+	siege_hulk_frontal_armour_percent = tuning.require_int(TUNING_SIEGE_HULK_ARMOUR_PERCENT)
+	siege_hulk_hit_radius_metres = tuning.require_fixed(TUNING_SIEGE_HULK_HIT_RADIUS)
+	siege_hulk_hit_height_metres = tuning.require_fixed(TUNING_SIEGE_HULK_HIT_HEIGHT)
+	hive_health = tuning.require_int(TUNING_HIVE_HEALTH)
+	hive_heat_shadow_per_minute = tuning.require_int(TUNING_HIVE_HEAT_SHADOW)
+	hive_hit_radius_metres = tuning.require_fixed(TUNING_HIVE_HIT_RADIUS)
+	hive_hit_height_metres = tuning.require_fixed(TUNING_HIVE_HIT_HEIGHT)
 	wall_health = tuning.require_int(TUNING_WALL_HEALTH)
 	wrench_repair_points_per_second = tuning.require_int(
 		TUNING_WRENCH_REPAIR_POINTS_PER_SECOND
@@ -2211,6 +2315,77 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				TUNING_BREAKER_ATTACK_INTERVAL_SECONDS,
 				"a bite that takes no time does unbounded damage"
 			)
+		if siege_hulk_health <= 0:
+			_report_tuning(
+				tuning, TUNING_SIEGE_HULK_HEALTH, "an Enemy has to be able to take a hit"
+			)
+		if siege_hulk_speed <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_SIEGE_HULK_SPEED,
+				"a Siege Hulk that cannot move never reaches its stand-off"
+			)
+		if siege_hulk_shell_damage <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_SIEGE_HULK_SHELL_DAMAGE,
+				"a bombardment that does no damage is weather"
+			)
+		if siege_hulk_shell_blast_radius_metres <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_SIEGE_HULK_BLAST_RADIUS,
+				"a shell with no blast cannot land on anything"
+			)
+		if siege_hulk_shell_interval_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_SIEGE_HULK_SHELL_INTERVAL,
+				"a shell that takes no time does unbounded damage"
+			)
+		if siege_hulk_shell_flight_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_SIEGE_HULK_SHELL_FLIGHT,
+				"a shell that lands the tick it was fired is the ambush the Telegraph forbids"
+			)
+		if siege_hulk_stomp_damage <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_SIEGE_HULK_STOMP_DAMAGE,
+				"a Siege Hulk a player can stand on top of for nothing is not a boss"
+			)
+		if siege_hulk_frontal_armour_percent < 0 or siege_hulk_frontal_armour_percent >= 100:
+			_report_tuning(
+				tuning,
+				TUNING_SIEGE_HULK_ARMOUR_PERCENT,
+				"armour is a percentage taken off a hit: 100 would make the front invulnerable"
+			)
+		if siege_hulk_hit_radius_metres <= 0:
+			_report_tuning(
+				tuning, TUNING_SIEGE_HULK_HIT_RADIUS, "an Enemy with no width cannot be hit"
+			)
+		if siege_hulk_hit_height_metres <= 0:
+			_report_tuning(
+				tuning, TUNING_SIEGE_HULK_HIT_HEIGHT, "an Enemy with no height cannot be aimed at"
+			)
+		if hive_health <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_HIVE_HEALTH,
+				"a Hive that starts destroyed adds no pressure there is any point removing"
+			)
+		if hive_heat_shadow_per_minute < 0:
+			_report_tuning(
+				tuning, TUNING_HIVE_HEAT_SHADOW, "a Hive cannot help the Nest hide"
+			)
+		if hive_hit_radius_metres <= 0:
+			_report_tuning(tuning, TUNING_HIVE_HIT_RADIUS, "a Hive with no width cannot be hit")
+		if hive_hit_height_metres <= 0:
+			_report_tuning(
+				tuning, TUNING_HIVE_HIT_HEIGHT, "a Hive with no height cannot be aimed at"
+			)
+		_check_siege_hulk_outranges_every_turret(tuning)
 		if wall_health <= 0:
 			_report_tuning(
 				tuning, TUNING_WALL_HEALTH, "a Wall that starts destroyed cannot be built"
@@ -2293,6 +2468,39 @@ func _read_tuning(tuning: TomlDocument) -> void:
 
 
 ## Records a tuning value that parsed but makes no sense, naming its key and line.
+## Refuses a definition set in which a Turret could reach a Siege Hulk where it stands.
+##
+## **This is the acceptance criterion "it cannot be defeated by Turrets alone" written as a
+## content check.** A Hulk holds at `siege_hulk.range_metres` from the nearest thing it can
+## shell, so a Turret whose `range_tiles` covered that distance would quietly turn the one
+## threat the Factory cannot answer into one it can — and that is an edit somebody would make
+## by adding a Cannon Turret row without ever realising what it cost.
+##
+## A cross-table check, which this file is already arranged for: tuning is read **last**, after
+## `machines.csv`, for exactly this kind of question. The comparison is in metres on both
+## sides, with the tile count converted rather than the reach rounded, and it must be strictly
+## greater — a Hulk exactly on a Turret's boundary is a Hulk whose fate a rounding rule
+## decides.
+func _check_siege_hulk_outranges_every_turret(tuning: TomlDocument) -> void:
+	var tile: int = WorldGrid.tile_size_metres()
+	for index: int in range(machine_count()):
+		var definition: MachineDefinition = machine_at(index)
+		if definition == null or not definition.is_turret():
+			continue
+		if siege_hulk_range_metres > definition.range_tiles * tile:
+			continue
+		_report_tuning(
+			tuning,
+			TUNING_SIEGE_HULK_RANGE,
+			(
+				"%s reaches %d tiles, which covers where a Siege Hulk stands — a Siege Hulk"
+				% [definition.id, definition.range_tiles]
+				+ " bombards from beyond Turret range and must not be answerable by defences"
+			)
+		)
+		return
+
+
 ## Reads `player.starting_stock`: what a Run opens with, as an `item:count` list.
 ##
 ## A quoted string rather than a key per Item, because naming an Item in `sim/` is exactly
@@ -2486,6 +2694,21 @@ func _discard_content() -> void:
 	crawler_speed = 0
 	crawler_damage = 0
 	crawler_attack_interval_seconds = 0
+	siege_hulk_health = 0
+	siege_hulk_speed = 0
+	siege_hulk_range_metres = 0
+	siege_hulk_shell_damage = 0
+	siege_hulk_shell_blast_radius_metres = 0
+	siege_hulk_shell_interval_seconds = 0
+	siege_hulk_shell_flight_seconds = 0
+	siege_hulk_stomp_damage = 0
+	siege_hulk_frontal_armour_percent = 0
+	siege_hulk_hit_radius_metres = 0
+	siege_hulk_hit_height_metres = 0
+	hive_health = 0
+	hive_heat_shadow_per_minute = 0
+	hive_hit_radius_metres = 0
+	hive_hit_height_metres = 0
 	breaker_health = 0
 	breaker_speed = 0
 	breaker_damage = 0

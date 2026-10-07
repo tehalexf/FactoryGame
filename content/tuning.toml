@@ -535,3 +535,143 @@ breach_offset_tiles = 6
 # Telegraph, because the answer to a new Breach is a Turret and a Belt rather than
 # standing somewhere different.
 breach_telegraph_seconds = 45
+
+[siege_hulk]
+
+# The Siege Hulk: the boss, and the one threat the Factory cannot answer (GLOSSARY.md).
+# It walks in, stops the moment anything is inside its own shelling reach, and bombards
+# from there — and because that reach is checked at load time against every Turret's
+# `range_tiles`, "beyond Turret range" is a property the content cannot be edited out of.
+#
+# **Everything here is feel, and this is the section to fiddle with.** Whether killing a
+# Siege Hulk is fun is the most important thing this project has to learn, and no test can
+# assert it, so every number that decides how the fight goes is here and applies to the Run
+# you are standing in the moment you save the file.
+
+# A Siege Hulk's hit points.
+#
+# Priced against the rear weak point rather than against the front. The Drum Autocannon puts
+# out 12 damage eight times a second, so 1800 is about nineteen seconds of flanked, sustained
+# fire — long enough to be a fight, short enough that one magazine chain can finish it.
+# Through the frontal armour below the same weapon needs over two minutes, which is the
+# number that says "stop shooting it in the face" without a line of UI saying so.
+health = 1800
+
+# How fast a Siege Hulk walks, in metres per second. Slower than everything else on the Map:
+# a player can always get around it, which is the whole of what the weak point is for.
+speed_metres_per_second = 1
+
+# How far a Siege Hulk shells, in metres. **The one number that makes it unanswerable.**
+#
+# It is simultaneously the stand-off and the reach: the Hulk advances until something it can
+# shell is inside this radius and then holds, so where it comes to rest is this number and
+# not a second one that could disagree with it. `Definitions` refuses a set where this does
+# not exceed every Turret's reach, so a Cannon Turret that outranged it would be a content
+# error naming the row rather than a quietly solvable boss.
+#
+# 60 m against the MG Turret's 8 tiles (16 m) is a long way outside the Factory's own guns,
+# and exactly the Bolt Rifle's reach — so a player who will not leave the Nest *can* plink at
+# it through its armour, for about five minutes of perfect fire. That is deliberate: the
+# sortie is strongly incentivised rather than enforced.
+range_metres = 60
+
+# What one shell takes off whatever is standing at the impact point, in whole hit points.
+# 220 against the shipped Smelter's 500 is three shells, and against a player's 150 it is
+# one — standing in the marker kills you, which is what makes the marker worth reading.
+shell_damage = 220
+
+# How far from the impact point a shell is felt, in metres. Three tiles, so a shell that
+# lands on a Machine hurts whatever is packed against it — dense building is what a
+# bombardment punishes.
+shell_blast_radius_metres = 6
+
+# How long between one shell and the next, in seconds. The window a player has to cross open
+# ground, and the rhythm the whole fight is cut to.
+shell_interval_seconds = 6
+
+# How long a shell is in the air, in seconds.
+#
+# **Load-bearing, exactly as `wave.telegraph_seconds` is.** A shell that landed on the tick
+# it was fired would be an ambush, and the Telegraph rule in this project is a gate rather
+# than a courtesy: the impact point is marked on the ground, with a countdown, for this long
+# before anything happens there. Three seconds is long enough to walk out of six metres at
+# walking pace and not long enough to ignore.
+shell_flight_seconds = 3
+
+# What a Siege Hulk does to a player who comes within `enemy.player_bite_reach_metres` of it,
+# in whole hit points — and the reason melee against it is useful rather than suicidal.
+#
+# A stomp and a shell share one cooldown, so **a player standing at its feet is a player
+# stopping the bombardment.** That is the same trade standing in a doorway makes against a
+# Crawler, at the same price: your own skin. 45 against 150 is three stomps and a bit.
+stomp_damage = 45
+
+# How much of a hit a Siege Hulk shrugs off when it is struck from the front, as a
+# percentage.
+#
+# **This is the weak point, and it is the reason the fight has a shape.** A damage sponge is
+# a boring fight and a timer; an armoured front with an open rear is a problem with an
+# answer, and the answer is movement. A Hulk faces what it is shelling or what is standing at
+# its feet, so flanking it means going round while it is busy with the Factory — which is
+# exactly the decision this whole ticket exists to put in front of a player.
+#
+# 85 means a frontal hit does 15% of its damage, which is slow enough to be unmistakable
+# after half a magazine. Nothing anywhere tells a player this; the gun telling them is the
+# point.
+frontal_armour_percent = 85
+
+# How wide and how tall a Siege Hulk's hit volume is, in metres.
+#
+# An Enemy is a point in the Simulation, so a shot resolves against a capsule standing on it,
+# and a boss needs a bigger one than the Crawler's `gear.enemy_hit_*` — a thing this size that
+# a player could miss by a metre would read as the gun being broken.
+hit_radius_metres = 1.6
+hit_height_metres = 3.2
+
+[hive]
+
+# The Hive: an Enemy structure out on the Map that adds continuous pressure and can be
+# destroyed for permanent relief (GLOSSARY.md). Where the Hives are is geography and lives in
+# `sim/map_layout.gd`; what one costs the players is balance and lives here.
+
+# A Hive's hit points. No armour and no weak point: a Hive is a stationary target, so the
+# fight it gives is the walk there and the Ammunition it takes, not the aiming.
+health = 1200
+
+# How much of the Nest's Heat shedding one living Hive drowns out, per minute.
+#
+# **This is the whole of what a Hive costs, and the shape of it is the decision.** A Hive does
+# not send Enemies out, and that is deliberate rather than an omission: GLOSSARY.md promises
+# that Enemies enter at Breaches, which are "known in advance and fortifiable", and a Hive that
+# emitted its own would be a second entry point nobody can fortify — it would quietly take the
+# promise back. So a Hive's pressure is routed through the Breaches that already exist, by
+# making the Factory louder than it is.
+#
+# It subtracts from `heat.decay_per_minute` rather than adding to Heat, which is the half worth
+# arguing about. Adding would mean an idle Run on this Map got hunted for standing still, which
+# contradicts DESIGN.md outright — Heat is "throughput in excess of what the Nest can hide", so
+# a Factory producing nothing has nothing to hide and is owed its silence. Subtracting says the
+# Nest can hide *less* while these things are watching, which is the same sentence pointed the
+# right way: every Hive standing makes every craft count for more, so growth is what a Hive
+# taxes and sitting still is not.
+#
+# And it makes "destroying one reduces pressure permanently" a number a player already watches.
+# `query_heat_decay_per_minute` is on the HUD; killing a Hive moves it up, for ever, visibly.
+#
+# 30 against a decay of 240 means the two Hives this Map opens with leave the Nest hiding 180 a
+# minute instead of 240 — a quarter of its capacity, handed back permanently when they fall. It
+# is deliberately a tax on growth rather than a rewrite of the shipped balance: #10 measured a
+# one-Turret Run at 36 minutes against a decay of 240, and a shadow large enough to push that
+# Factory over `waves.csv`'s 500-Heat Breaker threshold on its *first* Wave would have thrown
+# that measurement away rather than added pressure to it. Tried at 100 first, which did exactly
+# that — the documented Factory lost five of its six Machines to Wave 1.
+#
+# **Nobody has played this.** It is the number on this whole ticket most likely to be wrong, and
+# it is the cheapest one to change: a Hive's pressure is one subtraction, and the gauge that
+# reports it is already on the HUD.
+heat_shadow_per_minute = 30
+
+# How wide and how tall a Hive's hit volume is, in metres. A building rather than a Crawler,
+# so a player standing in front of it cannot miss.
+hit_radius_metres = 2
+hit_height_metres = 4
