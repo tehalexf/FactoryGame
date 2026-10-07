@@ -40,8 +40,8 @@ func test_a_factory_within_its_power_runs_at_the_rate_its_recipes_state() -> voi
 # which is the point: the throttle is a duty cycle over whole ticks, never a fraction of
 # one.
 
-const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,0,0,mine_iron_ore,
+const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,1.8,3,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const THIRD_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -76,6 +76,8 @@ sprint_field_of_view_add_degrees = 6
 holster_seconds = 0.2
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+collision_radius_metres = 0.4
+step_up_height_metres = 0.75
 health = 150
 downed_bleed_out_seconds = 20
 respawn_delay_seconds = 8
@@ -86,6 +88,7 @@ starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
+deck_height_metres = 0.9
 [machine]
 input_buffer_crafts = 2
 [survey]
@@ -96,6 +99,8 @@ pitch_degrees = 68
 baseline_supply_kw = 1
 [nest]
 health = 6000
+height_metres = 4.2
+terrace_height_metres = 1.7
 delivery_reach_metres = 5
 store_capacity_per_item = 200
 [silo]
@@ -153,6 +158,7 @@ hit_radius_metres = 2
 hit_height_metres = 4
 [wall]
 health = 240
+height_metres = 2.4
 [wrench]
 repair_points_per_second = 60
 reach_metres = 4
@@ -404,8 +410,8 @@ func test_a_cut_fuel_line_slows_the_very_miner_that_feeds_it() -> void:
 # except for one number in tuning: a 3 kW baseline against a 3 kW draw is a grid in
 # balance, and a 1 kW baseline against the same draw is a grid supplying a third.
 
-const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,0,0,mine_iron_ore,
+const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,1.8,3,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const THIN_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -445,6 +451,8 @@ sprint_field_of_view_add_degrees = 6
 holster_seconds = 0.2
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+collision_radius_metres = 0.4
+step_up_height_metres = 0.75
 health = 150
 downed_bleed_out_seconds = 20
 respawn_delay_seconds = 8
@@ -455,6 +463,7 @@ starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
+deck_height_metres = 0.9
 [machine]
 input_buffer_crafts = 2
 [survey]
@@ -465,6 +474,8 @@ pitch_degrees = 68
 baseline_supply_kw = %d
 [nest]
 health = 6000
+height_metres = 4.2
+terrace_height_metres = 1.7
 delivery_reach_metres = 5
 store_capacity_per_item = 200
 [silo]
@@ -522,6 +533,7 @@ hit_radius_metres = 2
 hit_height_metres = 4
 [wall]
 health = 240
+height_metres = 2.4
 [wrench]
 repair_points_per_second = 60
 reach_metres = 4

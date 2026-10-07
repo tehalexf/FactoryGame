@@ -34,12 +34,12 @@ extends TestCase
 # runs asserts nothing. What is not altered is the shape. A Silo is a row with a
 # Recipe fed by a Belt; a Boiler is a generator burning a Belt-fed fuel.
 
-const AUDIO_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
-plate_seam_mk1,Plate Seam,miner,2,2,0,0,400,1,0,0,0,0,dig_plate,
-coal_seam_mk1,Coal Seam,miner,2,2,0,0,400,1,0,0,0,0,dig_coal,
-boiler_mk1,Boiler Mk1,generator,2,2,0,600,450,0,0,0,0,0,burn_coal,
-mg_turret_mk1,MG Turret Mk1,turret,2,2,0,0,350,0,8,15,0,0,fire_mg,
-silo_mk1,Silo Mk1,silo,4,4,0,0,900,0,0,0,0,4,assemble_charge,
+const AUDIO_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+plate_seam_mk1,Plate Seam,miner,2,2,2,0,0,400,1,0,0,0,0,dig_plate,
+coal_seam_mk1,Coal Seam,miner,2,2,2,0,0,400,1,0,0,0,0,dig_coal,
+boiler_mk1,Boiler Mk1,generator,2,2,2.2,0,600,450,0,0,0,0,0,burn_coal,
+mg_turret_mk1,MG Turret Mk1,turret,2,2,2,0,0,350,0,8,15,0,0,fire_mg,
+silo_mk1,Silo Mk1,silo,4,4,2.2,0,0,900,0,0,0,0,4,assemble_charge,
 """
 
 const AUDIO_RECIPES: String = """id,display_name,inputs,outputs,seconds

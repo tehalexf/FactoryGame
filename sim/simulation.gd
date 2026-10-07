@@ -998,6 +998,36 @@ var _flowfield_stale: bool = true
 var _machine_flow_direction: PackedInt64Array = PackedInt64Array()
 var _machine_flow_distance: PackedInt64Array = PackedInt64Array()
 
+## How high the Factory stands on every ground tile, in fixed-point metres — 0 for bare
+## ground. The whole of what a player collides with (#30).
+##
+## **A third field rather than a column on the Enemies' two, deliberately.** An Enemy routes
+## by flowfield and asks one question of a tile: may I walk through it. A player asks a
+## different one: how high is it, because they can stand on top of the same Machine an
+## Enemy has to walk around. Sharing `_flow_blocked` would mean one of the two mechanics
+## constraining the other for no reason beyond both being about geometry — a Belt is solid
+## to a player and transparent to a Crawler, and that difference is the point rather than an
+## inconsistency. Nothing here reads the flowfield and nothing in the flowfield reads this.
+##
+## A field rather than a scan for the same reason the flowfield is one: collision runs every
+## tick for every player, so the per-tick cost has to be a handful of array reads. Building
+## it walks the *structures* and paints their footprints — O(Machines + Walls + Belt tiles)
+## once, on a tick that built or lost something — against O(structures) per tile tested
+## every tick for the alternative. Four tiles per player per tick either way after that.
+##
+## **There are no overhangs anywhere in this**, and that is what makes the whole mechanic
+## cheap: every structure is a solid column from the ground to its height, so there is no
+## ceiling to bump into, nothing to be trapped under, and "am I inside something" has
+## exactly one answer — move up. Building is flat (DESIGN.md); a storey above layer 0 would
+## be the ticket that changes that.
+##
+## Derived, so it is rebuilt rather than hashed, under its own flag and with the same size
+## check `_flowfield` makes: a Run restored from a save arrives holding nothing, and asking
+## whether the field is the right size rather than trusting a flag is what makes that
+## correct however the Simulation was constructed.
+var _solid_height: PackedInt64Array = PackedInt64Array()
+var _solid_height_stale: bool = true
+
 ## The Walls standing in the Factory, in the order they were built, and what is left of
 ## each.
 ##
@@ -1717,6 +1747,11 @@ func _walk() -> void:
 	var repeats: bool = _definitions.player_jump_repeats_while_held
 	var sprint_span: int = _sprint_ramp_ticks()
 	var settle_span: int = _seconds_in_ticks(_definitions.player_land_settle_seconds)
+	# The Factory's height, brought up to date once for the whole loop. Every question
+	# asked below reads the field rather than rebuilding it, so a Factory of hundreds of
+	# Machines costs one O(structures) repaint on the tick something was built and four
+	# array reads per player per tick for ever after.
+	_solid_heights()
 
 	for player_id: int in range(query_player_count()):
 		# A Downed player is immobilised (GLOSSARY.md) and a dead one is not on the Map at
@@ -1734,7 +1769,15 @@ func _walk() -> void:
 			_player_velocity_x[player_id] = 0
 			_player_velocity_z[player_id] = 0
 			_player_velocity_y[player_id] = 0
-			_player_y[player_id] = 0
+			# Collapsed onto whatever is under them rather than onto the ground: a player
+			# who went down on a Smelter roof stays on the roof, for the same reason a
+			# corpse does not slide. `_support_height` with their own feet as the reach
+			# answers "the highest thing at or below me", which on bare ground is 0 and
+			# therefore exactly what this line used to say.
+			_player_y[player_id] = _support_height(
+				_player_x[player_id], _player_z[player_id], _player_y[player_id]
+			)
+			_lift_out_of_anything_built_on_them(player_id)
 			_player_sprint_ticks[player_id] = 0
 			_player_intent_forward[player_id] = 0
 			_player_intent_strafe[player_id] = 0
@@ -1755,8 +1798,15 @@ func _walk() -> void:
 		# is what decides which acceleration the horizontal half uses, and a player who
 		# leaves the ground this tick is in the air for this tick's horizontal step.
 		var wants_jump: bool = _player_jump_held[player_id] != 0
+		# What is under them. Everything the ground used to be, except that the ground is
+		# now whatever the Factory put there: a Smelter roof, a Belt deck, the Nest's
+		# terrace, or the Map itself at 0. Measured from their own feet plus the step-up,
+		# so a surface they could walk onto is a surface they can land on.
+		var floor_height: int = _support_height(
+			_player_x[player_id], _player_z[player_id], _step_reach(player_id)
+		)
 		var grounded: bool = (
-			_player_y[player_id] == 0 and _player_velocity_y[player_id] == 0
+			_player_y[player_id] == floor_height and _player_velocity_y[player_id] == 0
 		)
 		if grounded and wants_jump and (repeats or _player_jump_armed[player_id] != 0):
 			_player_velocity_y[player_id] = impulse
@@ -1772,8 +1822,8 @@ func _walk() -> void:
 			_player_y[player_id] += Fixed.div(
 				_player_velocity_y[player_id], Fixed.from_int(TICKS_PER_SECOND)
 			)
-			if _player_y[player_id] <= 0:
-				_player_y[player_id] = 0
+			if _player_y[player_id] <= floor_height:
+				_player_y[player_id] = floor_height
 				# The tick and the impact speed, for the settle and for the camera dip.
 				# Recorded only on the way *down*, so a jump that launched and landed
 				# inside one tick does not claim to have arrived from nowhere.
@@ -1816,12 +1866,7 @@ func _walk() -> void:
 			_player_velocity_x[player_id] += Fixed.div(Fixed.mul(gap_x, acceleration), gap)
 			_player_velocity_z[player_id] += Fixed.div(Fixed.mul(gap_z, acceleration), gap)
 
-		_player_x[player_id] += Fixed.div(
-			_player_velocity_x[player_id], Fixed.from_int(TICKS_PER_SECOND)
-		)
-		_player_z[player_id] += Fixed.div(
-			_player_velocity_z[player_id], Fixed.from_int(TICKS_PER_SECOND)
-		)
+		_move_against_the_factory(player_id)
 		_advance_step_phase(player_id)
 
 		# Consumed. A throttle has to be re-asserted every tick, so standing still is
@@ -1832,13 +1877,100 @@ func _walk() -> void:
 		_player_jump_held[player_id] = 0
 
 
+## Moves a player one tick along their horizontal velocity, as far as the Factory lets them.
+##
+## **One axis at a time, x then z.** That is what makes walking into a wall at an angle slide
+## along it rather than stop dead, and it is one line of code rather than a contact normal.
+## The order is fixed and documented because it is the only thing in here a player could
+## conceivably notice: entering a one-tile gap diagonally resolves x first, which two clients
+## agree on because the order is written down rather than emergent.
+##
+## **A refused axis keeps the coordinate it had rather than snapping to the obstacle's face.**
+## Snapping is the usual choice and it is the wrong one here: the face is a tile boundary
+## minus a radius, which is an exact fixed-point subtraction that still has to be re-tested
+## for the corner case of two walls, and getting it wrong puts a player *inside* a solid —
+## the one state this mechanic must never produce. Refusing costs at most one tick of travel,
+## 12 cm at a sprint, which is smaller than the gap a player leaves anyway, and it cannot be
+## wrong. Velocity on the refused axis goes to zero, so walking into a Wall is a stop and not
+## a shudder.
+##
+## **Then the step up, once, after both axes.** A surface within `step_up_height` of their
+## feet is a surface they end up standing on: a kerb when they are walking and a mantle when
+## they are in the air, which is one rule rather than two and is what gets a player onto a
+## Belt deck from a jump and onto the Nest's terrace from the ground.
+func _move_against_the_factory(player_id: int) -> void:
+	var reach: int = _step_reach(player_id)
+
+	var travel_x: int = Fixed.div(
+		_player_velocity_x[player_id], Fixed.from_int(TICKS_PER_SECOND)
+	)
+	if travel_x != 0:
+		var wanted_x: int = _player_x[player_id] + travel_x
+		if _obstruction_height(wanted_x, _player_z[player_id], reach) >= 0:
+			_player_velocity_x[player_id] = 0
+		else:
+			_player_x[player_id] = wanted_x
+
+	var travel_z: int = Fixed.div(
+		_player_velocity_z[player_id], Fixed.from_int(TICKS_PER_SECOND)
+	)
+	if travel_z != 0:
+		var wanted_z: int = _player_z[player_id] + travel_z
+		if _obstruction_height(_player_x[player_id], wanted_z, reach) >= 0:
+			_player_velocity_z[player_id] = 0
+		else:
+			_player_z[player_id] = wanted_z
+
+	var surface: int = _support_height(_player_x[player_id], _player_z[player_id], reach)
+	if surface > _player_y[player_id]:
+		# Up onto it. The upward velocity goes with it: a mantle arrests a jump rather
+		# than letting it carry on past the ledge it just caught.
+		_player_y[player_id] = surface
+		if _player_velocity_y[player_id] < 0:
+			_player_landing_tick[player_id] = _tick
+			_player_landing_speed[player_id] = -_player_velocity_y[player_id]
+		_player_velocity_y[player_id] = 0
+
+	_lift_out_of_anything_built_on_them(player_id)
+
+
+## Puts a player on top of whatever has closed around them, if anything has.
+##
+## **The one recovery, and it is deliberate rather than a safety net.** The only way to be
+## inside a solid is for the solid to have arrived: a Machine or a Wall built on the tile
+## somebody was standing on, which is an ordinary thing to do in co-op and an easy thing to
+## do to yourself while straddling a footprint edge. Movement cannot put a player inside
+## anything, because a move into something too tall is refused.
+##
+## Up, never sideways, for two reasons. Nothing in this Simulation overhangs — every
+## structure is a column from the ground to its height — so the top is always free, which
+## makes "up" the one direction guaranteed to resolve, where a sideways push has to pick a
+## direction and can be refused by a second structure. And up is what reads correctly: the
+## Machine went up underneath you, so you end up on its roof, which is also where a player
+## who wanted to build there would want you.
+##
+## That gives the whole mechanic its invariant, and it is the thing the tests pin: **a
+## player's feet are never below the top of a tile they overlap.** It is restored on the
+## tick it is broken, so there is no state a player can be left in that they cannot walk or
+## jump out of — a Factory sealed around somebody is a roof they are standing on, and a
+## pocket of Walls is somewhere they can still demolish their way out of.
+func _lift_out_of_anything_built_on_them(player_id: int) -> void:
+	var inside: int = _obstruction_height(
+		_player_x[player_id], _player_z[player_id], _step_reach(player_id)
+	)
+	if inside < 0:
+		return
+	_player_y[player_id] = inside
+	_player_velocity_y[player_id] = 0
+
+
 ## Advances a player's stride by the ground they covered this tick.
 ##
 ## A player in the air covers no stride, because they are not taking steps. The phase
 ## wraps, so it stays bounded over a forty-hour Run rather than growing until it loses
 ## precision — the same reason yaw wraps.
 func _advance_step_phase(player_id: int) -> void:
-	if _player_y[player_id] != 0 or _player_velocity_y[player_id] != 0:
+	if not _is_on_their_feet(player_id):
 		return
 	var travelled: int = Fixed.div(
 		_length(_player_velocity_x[player_id], _player_velocity_z[player_id]),
@@ -3195,6 +3327,7 @@ func _place_machine(
 	# describes the Map. Rebuilt on the next tick that has an Enemy to move, never here:
 	# a player laying out a Factory places a Machine a second and the field is O(map).
 	_flowfield_stale = true
+	_solid_height_stale = true
 	return _machine_id.size() - 1
 
 
@@ -3387,6 +3520,7 @@ func _remove_machine(index: int) -> void:
 	_silo_loaded_charges.remove_at(index)
 	_machine_expires_tick.remove_at(index)
 	_flowfield_stale = true
+	_solid_height_stale = true
 
 
 ## Removes a Belt and the Items on it. The update order is derived from which Belt
@@ -3400,6 +3534,9 @@ func _remove_belt(index: int) -> void:
 	_belt_item_ids.remove_at(index)
 	_belt_item_offsets.remove_at(index)
 	_belt_update_order_stale = true
+	# Solid to a player even though it is transparent to a Crawler, so the height field is
+	# stale where the Enemies' fields are not. The one place the two part company.
+	_solid_height_stale = true
 
 
 # ── Mortality: damage, destruction, Walls and repair ──────────────────────────
@@ -3468,6 +3605,7 @@ func _remove_wall(index: int) -> void:
 	_wall_tile_z.remove_at(index)
 	_wall_health.remove_at(index)
 	_flowfield_stale = true
+	_solid_height_stale = true
 
 
 ## The most hit points a Machine can hold: the `health` its row declares, and what repair
@@ -3532,6 +3670,7 @@ func _apply_build_wall(action: InputAction) -> void:
 	# tick that has an Enemy to move, never here: a player walling off a Breach places a
 	# dozen of these in a second and a sweep is O(map).
 	_flowfield_stale = true
+	_solid_height_stale = true
 
 
 ## Why standing a Wall on a tile would be refused, or `Refusal.NONE`. The single authority on
@@ -4398,6 +4537,15 @@ func _respawn(player_id: int) -> void:
 	_player_z[player_id] = at.z
 	_player_velocity_x[player_id] = 0
 	_player_velocity_z[player_id] = 0
+	# **On top of the Nest, not inside it.** The middle of the footprint was open ground
+	# until #30 made the Nest solid, and a respawn into a solid is the one case the lift
+	# below cannot be allowed to discover: coming back to life has to put somebody
+	# somewhere they can stand, deliberately, rather than somewhere a recovery rule
+	# rescues them from. The crown is that place — the one surface on the Map nothing can
+	# be built on, nothing can take away, and the Run is lost without.
+	_solid_heights()
+	_player_y[player_id] = _solid_height_at(WorldGrid.tile_at_metres(at.x, at.z))
+	_player_velocity_y[player_id] = 0
 	_player_health[player_id] = _definitions.player_health
 	_player_life_state[player_id] = LIFE_ALIVE
 	_player_life_since_tick[player_id] = _tick
@@ -5130,6 +5278,9 @@ func _apply_build_belt(action: InputAction) -> void:
 	_belt_item_ids.append(PackedStringArray())
 	_belt_item_offsets.append(PackedInt64Array())
 	_belt_update_order_stale = true
+	# A new deck a player can stand on, and the one structure that changes the height field
+	# without changing either of the Enemies' fields.
+	_solid_height_stale = true
 
 
 ## Swaps in a new definition set, or refuses to.
@@ -5169,6 +5320,7 @@ func _apply_reload_definitions(action: InputAction) -> void:
 	# A reload can resize a footprint, which moves an obstruction without moving a
 	# Machine, so the field has to be taken as stale even though nothing was built.
 	_flowfield_stale = true
+	_solid_height_stale = true
 
 
 # ── Heat ──────────────────────────────────────────────────────────────────────
@@ -6964,6 +7116,190 @@ func _field_tile(cell: int) -> Vector3i:
 	)
 
 
+# ── Standing on the Factory ───────────────────────────────────────────────────
+#
+# What a player collides with, and all of it in fixed-point integers inside the Simulation
+# (#30). It cannot be the engine's physics: that is float-based, so a player's position
+# would depend on a solver rather than on the recorded inputs, two clients would part
+# company on the first wall, and every replay fixture in the suite would become a lie.
+#
+# The good news is that it does not need to be general 3D collision. Everything is
+# axis-aligned and grid-anchored, so this is box tests against a height per tile — and
+# because nothing overhangs, the only two questions are "how high is the floor here" and
+# "is that tile too tall to walk into".
+
+## How high the Factory stands on one tile, in fixed-point metres, rebuilding the field if a
+## structure has moved since it was last asked.
+func _solid_heights() -> PackedInt64Array:
+	if _solid_height_stale or _solid_height.size() != FIELD_TILES:
+		_rebuild_solid_heights()
+	return _solid_height
+
+
+## Repaints the height of the Factory on every ground tile.
+##
+## One pass per kind of structure, each painting the *taller* of what is there and what it
+## stands at, so a Belt laid against a Machine does not shorten it. What is solid is exactly
+## the list the ticket names: Machines at the height their row declares, Walls at
+## `wall.height_metres`, Belts at `belt.deck_height_metres`, and the Nest as its two
+## quantised terraces.
+##
+## **A Breach and a Node are deliberately not solid.** A Node is ground a Miner stands on
+## and a Breach is a hole Enemies come out of; neither is a building, and making either
+## solid would change where a Factory can be laid out rather than what a player can stand
+## on. A Hive is left alone for the same reason from the other side: it is the thing a
+## sortie goes out to kill, and walling the player out of it would change that fight.
+func _rebuild_solid_heights() -> void:
+	_solid_height.resize(FIELD_TILES)
+	_solid_height.fill(0)
+
+	for index: int in range(query_machine_count()):
+		var size: Vector2i = _machine_size(index)
+		if size == Vector2i.ZERO:
+			continue
+		var height: int = _machine_height(index)
+		var origin: Vector3i = query_machine_tile(index)
+		for offset_x: int in range(size.x):
+			for offset_z: int in range(size.y):
+				_raise_solid(
+					Vector3i(origin.x + offset_x, origin.y, origin.z + offset_z), height
+				)
+
+	for index: int in range(query_wall_count()):
+		_raise_solid(query_wall_tile(index), _definitions.wall_height)
+
+	# A Belt is painted tile by tile along its run, which is the one structure here whose
+	# footprint is a line rather than a rectangle.
+	for index: int in range(query_belt_count()):
+		var step: Vector3i = WorldGrid.direction_step(_belt_direction[index])
+		var tile: Vector3i = _belt_entry_tile(index)
+		for along: int in range(_belt_tiles[index]):
+			_raise_solid(tile, _definitions.belt_deck_height)
+			tile += step
+
+	_paint_the_nest()
+	_solid_height_stale = false
+
+
+## Paints the Nest's stepped ziggurat: the crown on its inner tiles and the terrace on the
+## ring around them.
+##
+## **Two terraces because the grid has room for two.** The body is three raked tiers of art
+## over a 4x4 footprint, and a 4x4 has exactly one ring and one middle — so quantising it
+## honestly gives the ring the first tier's head and the middle the full height. Anything
+## finer would mean a collision grid finer than the build grid, which is a bigger change
+## than this mechanic is worth and would buy a climb the jump cannot make anyway.
+func _paint_the_nest() -> void:
+	var origin: Vector3i = query_nest_tile()
+	var size: Vector2i = query_nest_footprint()
+	for offset_x: int in range(size.x):
+		for offset_z: int in range(size.y):
+			var on_the_ring: bool = (
+				offset_x == 0
+				or offset_z == 0
+				or offset_x == size.x - 1
+				or offset_z == size.y - 1
+			)
+			_raise_solid(
+				Vector3i(origin.x + offset_x, origin.y, origin.z + offset_z),
+				_definitions.nest_terrace_height if on_the_ring else _definitions.nest_height
+			)
+
+
+## Raises one tile's solid height to `height` if it is not already at least that tall.
+## Taller wins, so the order the structures are painted in cannot reach the result.
+func _raise_solid(tile: Vector3i, height: int) -> void:
+	var cell: int = _field_index(tile)
+	if cell == -1:
+		return
+	if height > _solid_height[cell]:
+		_solid_height[cell] = height
+
+
+## How tall a Machine's housing stands, in fixed-point metres, off its own row. Read rather
+## than stored, so a hot-reload that changes the column lands on the Factory already
+## standing — the arrangement `_machine_max_health` has.
+func _machine_height(index: int) -> int:
+	if not _is_machine(index):
+		return 0
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	return 0 if definition == null else definition.height
+
+
+## How high the Factory stands on one tile, in fixed-point metres, **without forcing a
+## rebuild** — the inner half of every question below, separated for the reason
+## `_tile_is_blocked` is: a loop that asked and rebuilt mid-way would be quadratic.
+func _solid_height_at(tile: Vector3i) -> int:
+	var cell: int = _field_index(tile)
+	if cell == -1 or cell >= _solid_height.size():
+		return 0
+	return _solid_height[cell]
+
+
+## The highest surface under a player's box that they could be standing on, in fixed-point
+## metres: the tallest tile they overlap whose top is no higher than `reach`.
+##
+## `reach` is their feet plus `player.step_up_height_metres`, so this one function answers
+## both "what am I standing on" and "what would I step up onto". Bare ground is 0, which
+## every player is always standing on somewhere, so there is no empty answer.
+func _support_height(x: int, z: int, reach: int) -> int:
+	var radius: int = _definitions.player_collision_radius
+	var low: Vector3i = WorldGrid.tile_at_metres(x - radius, z - radius)
+	var high: Vector3i = WorldGrid.tile_at_metres(x + radius, z + radius)
+	var support: int = 0
+	for tile_x: int in range(low.x, high.x + 1):
+		for tile_z: int in range(low.z, high.z + 1):
+			var height: int = _solid_height_at(
+				Vector3i(tile_x, WorldGrid.GROUND_LAYER, tile_z)
+			)
+			if height <= reach and height > support:
+				support = height
+	return support
+
+
+## The tallest tile under a player's box that stands above `reach`, or -1 when none does.
+##
+## Everything above a player's step-up is a wall to them, so this is what refuses a
+## horizontal move — and after the move it is also how "am I inside something" is asked,
+## because the only way to overlap a tile this tall is for it to have arrived around you.
+func _obstruction_height(x: int, z: int, reach: int) -> int:
+	var radius: int = _definitions.player_collision_radius
+	var low: Vector3i = WorldGrid.tile_at_metres(x - radius, z - radius)
+	var high: Vector3i = WorldGrid.tile_at_metres(x + radius, z + radius)
+	var tallest: int = -1
+	for tile_x: int in range(low.x, high.x + 1):
+		for tile_z: int in range(low.z, high.z + 1):
+			var height: int = _solid_height_at(
+				Vector3i(tile_x, WorldGrid.GROUND_LAYER, tile_z)
+			)
+			if height > reach and height > tallest:
+				tallest = height
+	return tallest
+
+
+## Whether a player has both feet on something.
+##
+## **"On the ground" became "on a surface" the moment the Factory became solid**, and this is
+## the one place that is decided: standing on a Smelter roof is standing, so it accelerates,
+## bobs and re-arms a jump exactly as standing on the Map does. Three things branch on it —
+## the four accelerations, the stride and the bob — and before #30 all three asked whether
+## `_player_y` was zero, which on a roof is the wrong question.
+func _is_on_their_feet(player_id: int) -> bool:
+	if _player_velocity_y[player_id] != 0:
+		return false
+	_solid_heights()
+	return _player_y[player_id] == _support_height(
+		_player_x[player_id], _player_z[player_id], _step_reach(player_id)
+	)
+
+
+## How far a player may reach up from where their feet are, in fixed-point metres. One
+## number, read in both halves of the resolution, so what stops a move and what a move
+## climbs onto can never disagree.
+func _step_reach(player_id: int) -> int:
+	return _player_y[player_id] + _definitions.player_step_up_height
+
+
 # ── Hashing ───────────────────────────────────────────────────────────────────
 
 ## Reduces the whole authoritative state to one integer.
@@ -7308,7 +7644,7 @@ func query_player_vertical_velocity(player_id: int) -> int:
 func query_player_is_grounded(player_id: int) -> bool:
 	if not _is_player(player_id):
 		return false
-	return _player_y[player_id] == 0 and _player_velocity_y[player_id] == 0
+	return _is_on_their_feet(player_id)
 
 
 ## How far into the sprint gait a player is, in [0, Fixed.ONE]. For a HUD, and for the
@@ -7432,7 +7768,7 @@ func query_player_field_of_view_degrees(player_id: int) -> int:
 ## Speed-driven rather than clamped at one, because `player.bob_sprint_multiplier` is how a
 ## sprint bobs harder than a walk — the third of the three gait cues.
 func _bob_strength(player_id: int) -> int:
-	if _player_y[player_id] != 0 or _player_velocity_y[player_id] != 0:
+	if not _is_on_their_feet(player_id):
 		return 0
 	var speed: int = _length(_player_velocity_x[player_id], _player_velocity_z[player_id])
 	var fraction: int = Fixed.clamp_fixed(
@@ -9483,6 +9819,62 @@ func query_tile_centre_metres(tile: Vector3i) -> FixedVec2:
 ## is reserved above it for when vertical building is switched on.
 func query_layer_height_metres(layer: int) -> int:
 	return WorldGrid.layer_height_metres(layer)
+
+
+# ── How tall the Factory is ───────────────────────────────────────────────────
+#
+# One projection per structure, because the renderer draws exactly these heights and the
+# Simulation collides against exactly these heights, and a renderer holding its own constant
+# for how tall a Wall is would be a second authority on a fact a player can walk into.
+
+## How high the Factory stands on one tile, in fixed-point metres. 0 for bare ground, for a
+## tile outside the Map, and for a Node or a Breach, neither of which is a building.
+##
+## The whole of what a player collides with, as one number per tile — so a test asks this
+## rather than inferring a height from whatever happens to be standing there.
+func query_solid_height_metres(tile: Vector3i) -> int:
+	_solid_heights()
+	return _solid_height_at(tile)
+
+
+## How tall a Machine's housing stands, in fixed-point metres, off the `height_metres`
+## column of its own row. 0 for an index naming none.
+func query_machine_height_metres(index: int) -> int:
+	return _machine_height(index)
+
+
+## How tall a Wall stands, in fixed-point metres, from `wall.height_metres`.
+func query_wall_height_metres() -> int:
+	return _definitions.wall_height
+
+
+## How high a Belt's deck stands, in fixed-point metres, from `belt.deck_height_metres`.
+func query_belt_deck_height_metres() -> int:
+	return _definitions.belt_deck_height
+
+
+## How high the Nest's crown stands, in fixed-point metres, from `nest.height_metres`.
+func query_nest_height_metres() -> int:
+	return _definitions.nest_height
+
+
+## How high the Nest's outer terrace stands, in fixed-point metres, from
+## `nest.terrace_height_metres` — the step that makes the ziggurat climbable.
+func query_nest_terrace_height_metres() -> int:
+	return _definitions.nest_terrace_height
+
+
+## The tallest surface a player walks straight up onto rather than having to clear, in
+## fixed-point metres, from `player.step_up_height_metres`. A kerb on the ground and a
+## mantle in the air.
+func query_player_step_up_height_metres() -> int:
+	return _definitions.player_step_up_height
+
+
+## How wide a player is for collision, as the half-extent of their box, in fixed-point
+## metres, from `player.collision_radius_metres`.
+func query_player_collision_radius_metres() -> int:
+	return _definitions.player_collision_radius
 
 
 ## The tile a Belt's run is anchored at — the end Items enter from.

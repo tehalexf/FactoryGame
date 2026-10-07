@@ -12,7 +12,9 @@
 ## every legitimate tuning change into a red suite, which is how a balance guard stops being
 ## read.
 ##
-## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`:
+## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision
+## in — which is why the two scenarios that walk anywhere read a little differently from
+## #26's own figures. See "What collision cost the two sorties" in CLAUDE.md.
 ##
 ##     bare           4m22s   undefended
 ##     opening_line   4m04s   undefended, and sooner than bare
@@ -20,8 +22,8 @@
 ##     over_producer 19m36s   ran dry, 27% sooner
 ##     fortified     29m15s   swarmed, with 274 rounds still in the Factory
 ##     deep_digger   10m48s   dug too deep, two Breaches
-##     hive_sortie   29m37s   ran dry, 2m37s later than competent
-##     rifle_picket  24m59s   swarmed, 2m01s sooner than competent
+##     hive_sortie   29m36s   ran dry, 2m36s later than competent
+##     rifle_picket  26m32s   ran dry, 28s sooner than competent (and 26m29s on seeds 11/29)
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -196,9 +198,11 @@ func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void
 	# competing with his own Turret, and the Run is shorter for it even though the rounds went
 	# into Crawlers either way.
 	#
-	# This is also the only scenario a seed can reach at all — and even here the spread moves
-	# where the rounds go without moving how long the Nest stands, which is why the figures
-	# are identical across seeds and why the row above is the whole of the seed story.
+	# This is also the only scenario a seed can reach at all, and the only row in the table
+	# that is not bit-identical across seeds: 26m32s on seed 7 against 26m29s on 11 and 29.
+	# Three seconds in twenty-six minutes — the spread moves where the rounds go without
+	# moving how long the Nest stands, which is why the row above is the whole of the seed
+	# story and why this one is asserted against `competent` rather than against a figure.
 	var competent: BalanceProbe.Report = _play("competent")
 	var picket: BalanceProbe.Report = _play("rifle_picket")
 	assert_true(picket.nest_fell, "the Run ends")
