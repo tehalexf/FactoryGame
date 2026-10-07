@@ -63,6 +63,21 @@ const KEY_CALL_WAVE: Key = KEY_G
 ## key down must not empty a player's pockets a tick at a time.
 const KEY_DELIVER: Key = KEY_F
 
+## Taking materials back out of the Nest's store (issue #27).
+##
+## An edge rather than a held state, for the reason handing a Delivery over is one. What it
+## asks for is **the shortfall on the Build Gun's current Machine**: stand at the Nest
+## holding the thing you want to build and press this until the hologram stops complaining.
+##
+## That choice is *presentation* and lives here rather than in the Simulation, which is the
+## same split `BuildGun.refusal_text` makes. `WITHDRAW_FROM_NEST` names an Item and a count
+## because the store holds several Items and nothing deposits by hand, so a player who had to
+## take all of one to get any of it could never put the rest back; what this key does is pick
+## the one amount a player actually wants, which is what the Build Gun is already holding.
+## A different UI — a counter with a row per Item — would send the same intent with different
+## numbers, and the Simulation would not know the difference.
+const KEY_WITHDRAW: Key = KEY_T
+
 ## Saving and resuming a Run. Gathered here with the rest so the rebinding ticket has
 ## one file to change, but deliberately **not** read by `sample_devices` and never
 ## turned into an Input Action — `Main._input` handles them where it handles Escape.
@@ -119,6 +134,7 @@ class DeviceSample extends RefCounted:
 	var belt_clicked: bool = false
 	var call_wave_clicked: bool = false
 	var deliver_clicked: bool = false
+	var withdraw_clicked: bool = false
 	var wall_clicked: bool = false
 	## Held, not an edge: a wrench mends for as long as it is on the Machine.
 	var repair_held: bool = false
@@ -138,6 +154,7 @@ var _demolish_clicked: bool = false
 var _belt_clicked: bool = false
 var _call_wave_clicked: bool = false
 var _deliver_clicked: bool = false
+var _withdraw_clicked: bool = false
 var _wall_clicked: bool = false
 
 
@@ -176,6 +193,8 @@ func note_event(event: InputEvent) -> void:
 				_call_wave_clicked = true
 			elif key.keycode == KEY_DELIVER:
 				_deliver_clicked = true
+			elif key.keycode == KEY_WITHDRAW:
+				_withdraw_clicked = true
 			elif key.keycode == KEY_WALL:
 				_wall_clicked = true
 
@@ -207,6 +226,7 @@ func sample_devices() -> DeviceSample:
 	sample.belt_clicked = _belt_clicked
 	sample.call_wave_clicked = _call_wave_clicked
 	sample.deliver_clicked = _deliver_clicked
+	sample.withdraw_clicked = _withdraw_clicked
 	sample.wall_clicked = _wall_clicked
 
 	_unsent_mouse_motion = Vector2.ZERO
@@ -217,6 +237,7 @@ func sample_devices() -> DeviceSample:
 	_belt_clicked = false
 	_call_wave_clicked = false
 	_deliver_clicked = false
+	_withdraw_clicked = false
 	_wall_clicked = false
 
 	return sample
@@ -308,6 +329,15 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	if sample.deliver_clicked:
 		actions.append(InputAction.deliver_to_nest(player_id))
 
+	# Sent whatever the Simulation makes of it, for the reason the hand-over is. One intent
+	# per Item the Machine on the Build Gun still needs, because a Machine may cost several
+	# and a withdrawal names one Item: standing at the Nest, that is a player saying "the
+	# rest of what this costs, please". Whether any of them lands — the reach, the store's
+	# contents, whether the Run is still going — is the Simulation's decision, and the HUD
+	# reads `query_withdraw_refusal` so a player knows before they press it.
+	if sample.withdraw_clicked:
+		actions.append_array(_withdrawals_for_the_build_gun(sim, player_id))
+
 	if sample.forward != 0.0 or sample.strafe != 0.0:
 		actions.append(
 			InputAction.move(
@@ -335,3 +365,33 @@ func _stepped_machine(sim: Simulation, player_id: int, steps: int) -> int:
 	if current == -1:
 		current = 0
 	return posmod(current + steps, count)
+
+
+## One `WITHDRAW_FROM_NEST` intent per Item the Machine on the Build Gun is still short of,
+## for exactly the shortfall. Empty when the Build Gun holds nothing, when the Machine is
+## free, or when the player can already afford it — pressing the key then is a no-op rather
+## than a withdrawal of something nobody asked for.
+##
+## Build costs are the only sink for materials in the game, so "what the thing I am holding
+## still costs" is the amount a player wants every time. This is a presentation decision and
+## it is allowed to be one: the Simulation's intent takes any Item and any count, clamps to
+## what the store holds, and refuses for its own reasons.
+func _withdrawals_for_the_build_gun(sim: Simulation, player_id: int) -> Array:
+	var withdrawals: Array = []
+	var definitions: Definitions = sim.query_definitions()
+	var machine: MachineDefinition = definitions.machine(
+		sim.query_player_selected_machine(player_id)
+	)
+	if machine == null:
+		return withdrawals
+
+	for slot: int in range(machine.build_cost_items.size()):
+		var item_id: String = machine.build_cost_items[slot]
+		var short: int = (
+			machine.build_cost_counts[slot] - sim.query_player_item(player_id, item_id)
+		)
+		if short > 0:
+			withdrawals.append(
+				InputAction.withdraw_from_nest(player_id, definitions.item_index(item_id), short)
+			)
+	return withdrawals

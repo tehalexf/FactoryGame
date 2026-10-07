@@ -166,6 +166,13 @@ enum Refusal {
 	## The wrench was held on something further away than `wrench.reach_metres`. Repairing is
 	## melee: a player has to come and stand at the Machine.
 	OUT_OF_REACH = 17,
+	## The intent names no Item in the current definition set. The Item twin of
+	## `NO_SUCH_MACHINE`: an index out of the sorted Item ids, which a hot-reload that
+	## removed a Recipe can leave a client holding.
+	NO_SUCH_ITEM = 18,
+	## The Nest's store is holding none of the Item asked for. There is a counter and a
+	## player standing at it, and nothing on it to take.
+	NOTHING_TO_WITHDRAW = 19,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -379,6 +386,34 @@ var _unlocked_stratagem_ids: PackedStringArray = PackedStringArray()
 ## tier completes, so the counter only ever holds goods against the open tier.
 var _delivery_items: PackedStringArray = PackedStringArray()
 var _delivery_counts: PackedInt64Array = PackedInt64Array()
+
+## The Nest's **store**: what a Belt has delivered past the open Delivery's bill, as parallel
+## sorted Item ids and counts — the same shape the counter above, a Machine's buffers and a
+## player's pockets use.
+##
+## This is the faucet that makes the Run a loop rather than a one-way spend. Build materials
+## used to go only outwards — into Machines, back only from a demolish or the call-early
+## bounty — so nothing the Factory made could reach the Build Gun and a Run could not fund a
+## second Ammo Press out of its own output (issue #27). A Belt running into the Nest now pays
+## the bill first and banks the rest, and `WITHDRAW_FROM_NEST` is how it comes back out. So
+## the Nest is where a Run banks as well as where it spends and what it defends, which is the
+## same argument that put progression there.
+##
+## **Capped, at `nest.store_capacity_per_item` each.** Three reasons, and the first is the
+## one that decides it: an unbounded store is an infinite sink, and a Belt that can always
+## hand off never backs up — which would delete the one legibility mechanism this project has
+## at exactly the place a player is looking. Bounded, a full store refuses the hand-off and
+## the Belt packs up visibly, which is the rule a full input buffer already obeys and not a
+## new one. Second, a cap is a reason to keep building rather than hoarding, and it gives a
+## late Factory's surplus somewhere to *go* that is not a warehouse. Third, it bounds what
+## the hash and the save file carry, which an unbounded one does not.
+##
+## **Separate arrays from the counter above, not one pot.** What is banked is spendable and
+## what is on the counter is spent: the counter clears when a tier completes and the store
+## does not, and a HUD reading "2/3" must never be a surplus. One pot would have to tell the
+## two apart anyway, with a rule rather than with a field.
+var _nest_store_items: PackedStringArray = PackedStringArray()
+var _nest_store_counts: PackedInt64Array = PackedInt64Array()
 
 ## The Breaches: the tiles Enemies enter the Map at, in the canonical tile order
 ## `MapLayout.tile_precedes` defines. A Breach never moves once it exists — it is known in
@@ -957,6 +992,8 @@ func _apply(action: InputAction) -> void:
 			_apply_call_wave_early(action)
 		InputAction.Kind.DELIVER_TO_NEST:
 			_apply_deliver_to_nest(action)
+		InputAction.Kind.WITHDRAW_FROM_NEST:
+			_apply_withdraw_from_nest(action)
 		InputAction.Kind.BUILD_WALL:
 			_apply_build_wall(action)
 		InputAction.Kind.REPAIR:
@@ -1230,12 +1267,13 @@ func _hand_off(index: int, item_id: String) -> bool:
 		return _accept_input(machine, item_id)
 
 	# The Nest takes goods against the Delivery it is waiting on, which is what makes
-	# progression something the Factory does rather than something a player carries by
-	# hand. It takes only what that tier still wants: there is no store behind the counter,
-	# so an Item the open Delivery does not ask for backs the Belt up where a player can see
-	# it rather than disappearing into the Nest.
+	# progression something the Factory does rather than something a player carries by hand —
+	# and banks whatever that tier is not waiting for, which is what makes the Factory's
+	# output something a player can spend again. Still bounded, and still nothing is
+	# destroyed: an Item the bill does not want and the store has no room for is refused, and
+	# the Belt backs up where a player can see it.
 	if _nest_covers(beyond):
-		return _accept_delivery(item_id, 1) == 1
+		return _nest_accepts(item_id, 1) == 1
 
 	var onward: int = _belt_entered_at(beyond)
 	if onward == -1 or not _belt_has_entry_room(onward):
@@ -1265,7 +1303,7 @@ func _hand_off_blocked(index: int) -> bool:
 		return not _input_has_room(machine, items[0])
 
 	if _nest_covers(beyond):
-		return _delivery_would_take(items[0]) == 0
+		return _nest_would_accept(items[0]) == 0
 
 	var onward: int = _belt_entered_at(beyond)
 	return onward == -1 or not _belt_has_entry_room(onward)
@@ -3351,7 +3389,57 @@ func _delivery_refusal(player_id: int) -> int:
 	return Refusal.NOTHING_TO_DELIVER
 
 
+## Takes goods back out of the Nest's store and puts them in a player's hands, or refuses to.
+##
+## The symmetric half of `_apply_deliver_to_nest`, and the thing that closes the loop: a Belt
+## banks what the open bill does not want, and this is how the Factory's output reaches the
+## Build Gun. Clamped to what the store is holding, exactly as a hand-over is clamped to the
+## bill — asking for more than is there takes what is there, because that is an ordinary
+## thing for a player to do and not an error.
+##
+## Refused as a **silent no-op whose hash does not move**, the same rule a misaimed build, a
+## refused hand-over and the call-early lever obey. `query_withdraw_refusal` is what says why,
+## beforehand, and it is the *same function* this consults — so what a player is told and what
+## the Simulation does are one rule and not two.
+func _apply_withdraw_from_nest(action: InputAction) -> void:
+	var item_index: int = action.withdraw_item_index()
+	if _withdraw_refusal(action.player_id, item_index) != Refusal.NONE:
+		return
+
+	var item_id: String = _definitions.item_id(item_index)
+	var drawn: int = _unbank_from_the_nest(item_id, action.withdraw_count())
+	if drawn > 0:
+		_give_to_player(action.player_id, item_id, drawn)
+
+
+## Why taking an Item out of the Nest's store would be refused, or `Refusal.NONE`. A pure
+## projection about a withdrawal that has not happened, so a HUD can grey a row out and say
+## which of the three things is in the way before a player presses anything.
+##
+## **About the Item and not about an amount.** What a player hovering a store row asks is
+## "can I take this at all"; how much they then take is clamped by the action, the way a
+## hand-over's amount is clamped by the bill. A count in here would make the honest answer to
+## "is there anything to take" depend on a number nobody has typed yet.
+func _withdraw_refusal(player_id: int, item_index: int) -> int:
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	var item_id: String = _definitions.item_id(item_index)
+	if item_id == "":
+		return Refusal.NO_SUCH_ITEM
+	if not _player_is_at_the_nest(player_id):
+		return Refusal.TOO_FAR_FROM_THE_NEST
+	if _nest_store_held(item_id) <= 0:
+		return Refusal.NOTHING_TO_WITHDRAW
+	return Refusal.NONE
+
+
 ## Whether a player is standing close enough to the Nest to hand goods over.
+##
+## The same question a withdrawal asks, because banking and spending happen at one counter:
+## `nest.delivery_reach_metres` is one reach and not two, so there is no spot a player can
+## stand on where the Nest will take goods but not hand any back.
 ##
 ## Measured to the nearest point of the Nest's footprint rather than to its anchor, so a
 ## 4x4 Nest is a building a player walks up to rather than a coordinate they have to find.
@@ -3419,6 +3507,81 @@ func _delivered_so_far(item_id: String) -> int:
 	if slot == -1:
 		return 0
 	return _delivery_counts[slot]
+
+
+## Everything the Nest will take of an Item right now, reporting how much of `quantity` it
+## took: the open Delivery's bill first, then the store.
+##
+## **The one way goods enter the Nest**, so a Belt running into it has one rule and not two,
+## and so the order is fixed rather than a function of which path arrived first. The bill
+## first because progression is what the Nest is *for* — a store that swallowed ore the open
+## tier was waiting on would quietly stall the chain a player is trying to finish.
+func _nest_accepts(item_id: String, quantity: int) -> int:
+	var taken: int = _accept_delivery(item_id, quantity)
+	if taken < quantity:
+		taken += _bank_at_the_nest(item_id, quantity - taken)
+	return taken
+
+
+## The pure twin of `_nest_accepts`: how much of an Item the Nest would take, without moving
+## anything. What lets `_hand_off_blocked` report a Belt backed up against a Nest that wants
+## nothing and has no room, rather than the renderer guessing it from a count that stopped.
+func _nest_would_accept(item_id: String) -> int:
+	return _delivery_would_take(item_id) + _nest_store_room(item_id)
+
+
+## Puts goods into the Nest's store, reporting how many went in. Clamped to the room there
+## is, because nothing is destroyed: what will not fit is not taken, and whatever offered it
+## keeps it.
+func _bank_at_the_nest(item_id: String, quantity: int) -> int:
+	var banked: int = mini(_nest_store_room(item_id), quantity)
+	if banked <= 0:
+		return 0
+
+	var slot: int = _nest_store_items.find(item_id)
+	if slot != -1:
+		_nest_store_counts[slot] += banked
+	else:
+		slot = _nest_store_items.bsearch(item_id)
+		_nest_store_items.insert(slot, item_id)
+		_nest_store_counts.insert(slot, banked)
+	return banked
+
+
+## Takes goods back out of the Nest's store, reporting how many came out. Clamped to what is
+## there, and the Item's entry is dropped once it empties so the store lists what it holds
+## rather than what it has ever held — which is also what keeps the hash a function of the
+## contents and not of the history.
+func _unbank_from_the_nest(item_id: String, quantity: int) -> int:
+	var slot: int = _nest_store_items.find(item_id)
+	if slot == -1:
+		return 0
+	var drawn: int = mini(_nest_store_counts[slot], maxi(quantity, 0))
+	if drawn <= 0:
+		return 0
+
+	_nest_store_counts[slot] -= drawn
+	if _nest_store_counts[slot] == 0:
+		_nest_store_items.remove_at(slot)
+		_nest_store_counts.remove_at(slot)
+	return drawn
+
+
+## How much of an Item the Nest's store is holding.
+func _nest_store_held(item_id: String) -> int:
+	var slot: int = _nest_store_items.find(item_id)
+	if slot == -1:
+		return 0
+	return _nest_store_counts[slot]
+
+
+## How much more of an Item the store has room for. Zero once the Run is over: a Nest that
+## has fallen is not a counter anybody is banking at, which is the rule `_delivery_would_take`
+## already obeys, and it is what stops a Belt quietly filling a ruin.
+func _nest_store_room(item_id: String) -> int:
+	if query_run_is_over():
+		return 0
+	return maxi(_definitions.nest_store_capacity_per_item - _nest_store_held(item_id), 0)
 
 
 ## Whether the open Delivery's bill has been met in full.
@@ -4160,6 +4323,13 @@ func hash() -> int:
 	for slot: int in range(_delivery_items.size()):
 		hasher.feed_text(_delivery_items[slot])
 		hasher.feed_int(_delivery_counts[slot])
+	# And what the Nest has banked past that bill, which is what the next tick will let a
+	# player withdraw and spend. Sorted by Item id, so the hash is a property of what is in
+	# the store rather than of the order it arrived in.
+	hasher.feed_int(_nest_store_items.size())
+	for slot: int in range(_nest_store_items.size()):
+		hasher.feed_text(_nest_store_items[slot])
+		hasher.feed_int(_nest_store_counts[slot])
 	# Depth: what each Node has given up and the Breaches that are on their way. All of it
 	# decides what a later tick does — a Node one craft from its threshold is in a different
 	# state from one that has just opened a Breach, and a warning half-served is a warning.
@@ -4995,6 +5165,14 @@ func query_delivery_refusal(player_id: int) -> int:
 	return _delivery_refusal(player_id)
 
 
+## Why taking an Item out of the Nest's store would be refused, or `Refusal.NONE`. The same
+## function `_apply_withdraw_from_nest` consults, so the reason on screen and the Simulation's
+## own decision cannot disagree — the arrangement `query_build_refusal` and
+## `query_delivery_refusal` already have.
+func query_withdraw_refusal(player_id: int, item_index: int) -> int:
+	return _withdraw_refusal(player_id, item_index)
+
+
 ## The deepest Node the Factory is actually mining — the figure Delivery tiers are gated
 ## against. Derived from the Miners standing on the Map, so it rises when one is built over
 ## a deeper Node and falls when that Miner comes down.
@@ -5013,6 +5191,26 @@ func query_player_is_at_the_nest(player_id: int) -> bool:
 	if not _is_player(player_id):
 		return false
 	return _player_is_at_the_nest(player_id)
+
+
+## How much of an Item the Nest's store is holding — what a Belt has delivered past the open
+## bill, and what a player standing at the Nest may withdraw and spend.
+func query_nest_store(item_id: String) -> int:
+	return _nest_store_held(item_id)
+
+
+## Every Item the Nest's store is holding, sorted by id. A copy, and only Items it actually
+## holds: an entry that empties is dropped, so this is the store's contents and not its
+## history. The list a HUD draws the counter from.
+func query_nest_store_items() -> PackedStringArray:
+	return _nest_store_items.duplicate()
+
+
+## How many of **each** Item the Nest's store will hold before it takes no more. One number
+## per Item rather than one pot shared between them, so a Belt of coal cannot crowd plate out
+## of the store.
+func query_nest_store_capacity_per_item() -> int:
+	return _definitions.nest_store_capacity_per_item
 
 
 ## Whether a Machine may be built at all, by definition index. False for one whose

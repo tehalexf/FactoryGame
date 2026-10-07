@@ -335,6 +335,7 @@ baseline_supply_kw = 300
 [nest]
 health = 6000
 delivery_reach_metres = 5
+store_capacity_per_item = 200
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5

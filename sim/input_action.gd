@@ -167,6 +167,27 @@ enum Kind {
 	## a thing, and an index into the Simulation's arrays is not something anything outside it
 	## may hold. Any tile of a Machine's footprint will do, and a Wall occupies one tile.
 	REPAIR = 14,
+	## Take goods back out of the Nest's store. args = [Item definition index, count].
+	##
+	## The symmetric half of `DELIVER_TO_NEST`: a Belt running into the Nest banks what the
+	## open Delivery's bill does not want, and this is how it comes back into a player's
+	## hands. Without it materials only ever left a player's pockets, and a Run could not
+	## fund a second Ammo Press out of its own output (issue #27).
+	##
+	## **Two arguments where the hand-over has none, and that asymmetry is deliberate.** A
+	## hand-over has one open bill and one answer to what the Nest wants, so the only thing
+	## a player chooses is when to walk over. A withdrawal has neither: the store holds
+	## several Items at once, and a player who had to take all of one to get any of it could
+	## never put the rest back — nothing deposits by hand. So the intent names what and how
+	## much, and the Simulation clamps the count to what is actually there, exactly as a
+	## hand-over is clamped to the bill.
+	##
+	## The Item travels as an index into the definition set's sorted Item ids rather than as
+	## a string, for the reason a Machine does in `BUILD_MACHINE`: an intent on the wire is
+	## integers. An index naming no Item is refused, as is a withdrawal made out of reach,
+	## from an empty store or after the Nest has fallen — a silent no-op in every case, and
+	## `Simulation.query_withdraw_refusal` is what says why, beforehand.
+	WITHDRAW_FROM_NEST = 15,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -282,6 +303,25 @@ static func call_wave_early(acting_player: int) -> InputAction:
 ## Hands a player's goods over to the Nest, against the Delivery it is waiting on.
 static func deliver_to_nest(acting_player: int) -> InputAction:
 	return InputAction.new(Kind.DELIVER_TO_NEST, acting_player)
+
+
+## Takes `count` of an Item back out of the Nest's store, by index into the definition set's
+## sorted Item ids. Clamped by the Simulation to what the store is holding, so asking for
+## more than is there takes what is there rather than being refused.
+static func withdraw_from_nest(acting_player: int, item_index: int, count: int) -> InputAction:
+	return InputAction.new(
+		Kind.WITHDRAW_FROM_NEST, acting_player, PackedInt64Array([item_index, maxi(count, 0)])
+	)
+
+
+## The Item definition index a `WITHDRAW_FROM_NEST` action names.
+func withdraw_item_index() -> int:
+	return _arg(0)
+
+
+## How many of it a `WITHDRAW_FROM_NEST` action asks for.
+func withdraw_count() -> int:
+	return _arg(1)
 
 
 static func demolish(acting_player: int, tile: Vector3i) -> InputAction:
