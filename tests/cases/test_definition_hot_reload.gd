@@ -43,11 +43,22 @@ mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 """
 
 
+## The tuning keys this file is not about. Every key the Simulation reads must be present
+## for a set to load, so a test that varies one carries the rest unchanged.
+const OTHER_TUNING: String = """
+[belt]
+items_per_second = 4
+items_per_tile = 4
+[machine]
+input_buffer_crafts = 2
+"""
+
+
 func _definitions(walk_speed: String) -> Definitions:
 	return Definitions.parse(
 		MACHINES,
 		RECIPES,
-		"[player]\nwalk_speed_metres_per_second = %s\n" % walk_speed,
+		"[player]\nwalk_speed_metres_per_second = %s\n" % walk_speed + OTHER_TUNING,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml"

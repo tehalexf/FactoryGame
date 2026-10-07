@@ -42,6 +42,17 @@ enum Kind {
 	## afterwards so a hot-reload that renumbers the table cannot renumber a Factory
 	## that is already standing.
 	BUILD_MACHINE = 3,
+	## Lay a Belt along a straight run of tiles. args = [from x, y, z, to x, y, z].
+	##
+	## Both ends travel because a Belt is a run rather than a tile: a player drags one
+	## out, and sending the whole run as one intent means a dragged Belt either lands
+	## or is refused, never half-lands. A run that is not axis-aligned on one layer is
+	## refused — there are no diagonal Belts on a 2 m grid (DESIGN.md).
+	##
+	## No Belt definition index travels. Unlike a Machine, a Belt has no row in
+	## `content/machines.csv`: it is not a Machine (GLOSSARY.md keeps the two apart),
+	## it runs no Recipe, and its one tier's rating lives in `content/tuning.toml`.
+	BUILD_BELT = 4,
 }
 
 var kind: Kind = Kind.NONE
@@ -100,6 +111,29 @@ static func build_machine(acting_player: int, machine_index: int, tile: Vector3i
 		acting_player,
 		PackedInt64Array([machine_index, tile.x, tile.y, tile.z])
 	)
+
+
+## Lays a Belt along the straight run from one tile to another, both ends included.
+## The Items travel from `from_tile` towards `to_tile`, so the aim is also the
+## direction of flow.
+static func build_belt(acting_player: int, from_tile: Vector3i, to_tile: Vector3i) -> InputAction:
+	return InputAction.new(
+		Kind.BUILD_BELT,
+		acting_player,
+		PackedInt64Array([
+			from_tile.x, from_tile.y, from_tile.z, to_tile.x, to_tile.y, to_tile.z
+		])
+	)
+
+
+## The tile a `BUILD_BELT` action starts its run at — the end Items enter from.
+func belt_from_tile() -> Vector3i:
+	return Vector3i(_arg(0), _arg(1), _arg(2))
+
+
+## The tile a `BUILD_BELT` action ends its run at — the end Items leave from.
+func belt_to_tile() -> Vector3i:
+	return Vector3i(_arg(3), _arg(4), _arg(5))
 
 
 ## The Machine definition index a `BUILD_MACHINE` action names.

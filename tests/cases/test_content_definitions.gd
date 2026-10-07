@@ -33,10 +33,21 @@ smelt_iron_plate,Smelt Iron Plate,iron_ore:2,iron_plate:1,3.2
 mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 """
 
+## The tuning keys this file is not about. Every key the Simulation reads has to be
+## present or the set does not load, so the tests below that vary one key carry the rest
+## of them unchanged rather than each restating the whole file.
+const OTHER_TUNING: String = """
+[belt]
+items_per_second = 4
+items_per_tile = 4
+[machine]
+input_buffer_crafts = 2
+"""
+
 const GOOD_TUNING: String = """
 [player]
 walk_speed_metres_per_second = 4
-"""
+""" + OTHER_TUNING
 
 
 func _parse(machines: String, recipes: String, tuning: String) -> Definitions:
@@ -166,14 +177,14 @@ func test_a_tuning_value_reaches_the_definitions_as_fixed_point() -> void:
 
 func test_a_tuning_value_may_be_written_as_a_decimal() -> void:
 	var definitions: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5.5\n"
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5.5\n" + OTHER_TUNING
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(definitions.player_walk_speed, 360448, "5.5 * 65536")
 
 
 func test_a_missing_tuning_value_is_an_error_naming_the_key() -> void:
-	var definitions: Definitions = _parse(GOOD_MACHINES, GOOD_RECIPES, "[player]\n")
+	var definitions: Definitions = _parse(GOOD_MACHINES, GOOD_RECIPES, "[player]\n" + OTHER_TUNING)
 	assert_true(definitions.has_errors())
 	assert_true(
 		definitions.describe_errors().contains("player.walk_speed_metres_per_second"),
@@ -331,10 +342,10 @@ func test_the_digest_does_not_depend_on_comments_or_blank_lines() -> void:
 
 func test_the_digest_does_not_depend_on_tuning_key_order() -> void:
 	var one: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 4\n"
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 4\n" + OTHER_TUNING
 	)
 	var other: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\n# a comment first\nwalk_speed_metres_per_second = 4\n"
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\n# a comment first\nwalk_speed_metres_per_second = 4\n" + OTHER_TUNING
 	)
 	assert_eq(one.digest(), other.digest())
 
@@ -353,7 +364,7 @@ func test_changing_a_rate_changes_the_digest() -> void:
 
 func test_changing_a_tuning_value_changes_the_digest() -> void:
 	var changed: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5\n"
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5\n" + OTHER_TUNING
 	)
 	assert_ne(changed.digest(), _good().digest())
 

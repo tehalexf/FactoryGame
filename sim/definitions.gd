@@ -58,6 +58,9 @@ const RECIPE_COLUMNS: Array = ["id", "display_name", "inputs", "outputs", "secon
 
 ## Tuning keys the Simulation reads. Each must be present.
 const TUNING_PLAYER_WALK_SPEED: String = "player.walk_speed_metres_per_second"
+const TUNING_BELT_ITEMS_PER_SECOND: String = "belt.items_per_second"
+const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
+const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
 
 ## Every problem that makes this set unusable, each naming the file and the row.
 var errors: PackedStringArray = PackedStringArray()
@@ -68,6 +71,17 @@ var warnings: PackedStringArray = PackedStringArray()
 
 ## How fast a player walks, in fixed-point metres per second.
 var player_walk_speed: int = 0
+
+## A Belt's rated throughput, in fixed-point Items per second. The Simulation turns
+## this into a whole number of ticks per Item, which is what makes the rate exact.
+var belt_items_per_second: int = 0
+
+## How many Items fit on one tile of Belt. A whole number, because it is a count of
+## places rather than a measurement.
+var belt_items_per_tile: int = 0
+
+## How many crafts' worth of each input a Machine's input buffer holds.
+var machine_input_buffer_crafts: int = 0
 
 var _machines: Array = []
 var _machine_ids: PackedStringArray = PackedStringArray()
@@ -274,6 +288,9 @@ func digest() -> int:
 		definition.feed_into(hasher)
 
 	hasher.feed_int(player_walk_speed)
+	hasher.feed_int(belt_items_per_second)
+	hasher.feed_int(belt_items_per_tile)
+	hasher.feed_int(machine_input_buffer_crafts)
 
 	# Errors are part of the verdict, not of the content, but a set that failed to
 	# load must never share a digest with one that loaded empty.
@@ -479,6 +496,21 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 
 func _read_tuning(tuning: TomlDocument) -> void:
 	player_walk_speed = tuning.require_fixed(TUNING_PLAYER_WALK_SPEED)
+	belt_items_per_second = tuning.require_fixed(TUNING_BELT_ITEMS_PER_SECOND)
+	belt_items_per_tile = tuning.require_int(TUNING_BELT_ITEMS_PER_TILE)
+	machine_input_buffer_crafts = tuning.require_int(TUNING_MACHINE_INPUT_BUFFER_CRAFTS)
+
+	# A rate or a capacity of zero is not a slow Belt, it is a Belt that cannot work.
+	# Refused by name rather than accepted and puzzled over later.
+	if not tuning.has_errors():
+		if belt_items_per_second <= 0:
+			_report_tuning(tuning, TUNING_BELT_ITEMS_PER_SECOND, "must be more than nothing")
+		if belt_items_per_tile < 1:
+			_report_tuning(tuning, TUNING_BELT_ITEMS_PER_TILE, "must be at least one Item")
+		if machine_input_buffer_crafts < 1:
+			_report_tuning(
+				tuning, TUNING_MACHINE_INPUT_BUFFER_CRAFTS, "must be at least one craft"
+			)
 
 	# Checked after every read, so this names exactly the keys nothing asked for.
 	for key: String in tuning.unread_keys():
@@ -486,6 +518,11 @@ func _read_tuning(tuning: TomlDocument) -> void:
 			"%s:%d: nothing in the Simulation reads \"%s\""
 			% [tuning.source_path, tuning.line_of(key), key]
 		)
+
+
+## Records a tuning value that parsed but makes no sense, naming its key and line.
+func _report_tuning(tuning: TomlDocument, key: String, detail: String) -> void:
+	errors.append("%s:%d: %s: %s" % [tuning.source_path, tuning.line_of(key), key, detail])
 
 
 # ── Ordering and discarding ───────────────────────────────────────────────────
@@ -520,6 +557,9 @@ func _discard_content() -> void:
 	_recipe_ids.clear()
 	_item_ids.clear()
 	player_walk_speed = 0
+	belt_items_per_second = 0
+	belt_items_per_tile = 0
+	machine_input_buffer_crafts = 0
 
 
 static func _read_file(path: String) -> String:
