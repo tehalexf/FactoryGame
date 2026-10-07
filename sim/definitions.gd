@@ -52,6 +52,7 @@ const MACHINE_COLUMNS: Array = [
 	"role",
 	"footprint_x",
 	"footprint_z",
+	"height_metres",
 	"power_draw_kw",
 	"power_supply_kw",
 	"health",
@@ -134,6 +135,12 @@ const TUNING_PLAYER_REVIVE_SECONDS: String = "player.revive_seconds"
 const TUNING_PLAYER_REVIVE_REACH: String = "player.revive_reach_metres"
 const TUNING_PLAYER_STARTING_WEAPON: String = "player.starting_weapon"
 
+# Standing on the Factory (#30). A player is a box on the grid, not a point, and what
+# they can walk up rather than having to jump is the one number that decides whether a
+# Factory reads as a place or as a maze.
+const TUNING_PLAYER_COLLISION_RADIUS: String = "player.collision_radius_metres"
+const TUNING_PLAYER_STEP_UP_HEIGHT: String = "player.step_up_height_metres"
+
 # Weight: the feel of a body being moved rather than a camera being translated (#29).
 # Every one of these is a number nobody can pick without playing, which is why all of
 # them are here rather than in `sim/`.
@@ -183,12 +190,16 @@ const TUNING_SURVEY_TRANSITION_SECONDS: String = "survey.transition_seconds"
 const TUNING_SURVEY_PITCH_DEGREES: String = "survey.pitch_degrees"
 const TUNING_BELT_ITEMS_PER_SECOND: String = "belt.items_per_second"
 const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
+const TUNING_BELT_DECK_HEIGHT: String = "belt.deck_height_metres"
 const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
 const TUNING_WALL_HEALTH: String = "wall.health"
+const TUNING_WALL_HEIGHT: String = "wall.height_metres"
 const TUNING_WRENCH_REPAIR_POINTS_PER_SECOND: String = "wrench.repair_points_per_second"
 const TUNING_WRENCH_REACH_METRES: String = "wrench.reach_metres"
 const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
 const TUNING_NEST_HEALTH: String = "nest.health"
+const TUNING_NEST_HEIGHT: String = "nest.height_metres"
+const TUNING_NEST_TERRACE_HEIGHT: String = "nest.terrace_height_metres"
 const TUNING_NEST_DELIVERY_REACH: String = "nest.delivery_reach_metres"
 const TUNING_NEST_STORE_CAPACITY: String = "nest.store_capacity_per_item"
 const TUNING_SILO_LOAD_REACH: String = "silo.load_reach_metres"
@@ -345,6 +356,22 @@ var player_look_sensitivity: int = 0
 ## How high a player's eyes are off the ground, in fixed-point metres.
 var player_eye_height: int = 0
 
+## How wide a player is, as the half-extent of the axis-aligned box collision tests them
+## as, in fixed-point metres. A box rather than a circle because everything it is tested
+## against is a box on a tile grid, and a circle would cost a square root per tick to say
+## the same thing.
+var player_collision_radius: int = 0
+
+## The tallest surface a player walks straight up onto rather than having to clear, in
+## fixed-point metres.
+##
+## A kerb on the ground and a mantle in the air, which is one rule read twice: a surface
+## within this of a player's feet is a surface they end up standing on. It is what decides
+## whether a Factory is a place or a maze, so it is deliberately **below the Belt deck** —
+## stepping onto a Belt line is a hop, which keeps a trestle a physical thing — and
+## deliberately high enough that a jump plus a mantle reaches the Nest's first terrace.
+var player_step_up_height: int = 0
+
 ## What a player starts a Run carrying, as parallel Item ids and counts.
 ##
 ## An explicit bill rather than a count of everything, which is what it used to be —
@@ -421,6 +448,15 @@ var survey_pitch_degrees: int = 0
 ## The Nest's hit points. The Run ends when these reach zero, and nothing else ends
 ## it. Whole points rather than fixed point: damage is counted in them.
 var nest_health: int = 0
+
+## How high the Nest's crown stands, in fixed-point metres: the top of the ziggurat, and
+## the surface a player comes back to life standing on.
+var nest_height: int = 0
+
+## How high the Nest's outer terrace stands, in fixed-point metres — the step the ring of
+## tiles around the crown presents. Below the crown, and within one jump and a mantle of
+## the ground, which is what makes the Nest climbable from outside.
+var nest_terrace_height: int = 0
 
 ## How close a player stands to the Nest's footprint to hand a Delivery over, in
 ## fixed-point metres. The same reach a withdrawal is made from: banking and spending
@@ -599,6 +635,11 @@ var enemy_player_bite_reach_metres: int = 0
 ## than a row in `machines.csv`, exactly as a Belt's rating is.
 var wall_health: int = 0
 
+## How tall a Wall stands, in fixed-point metres. Tuning for the reason its hit points
+## are, and the one number that makes a Wall the thing it is for: above a jump, so a line
+## of them is a line a player cannot cross either.
+var wall_height: int = 0
+
 ## How many hit points a held Pneumatic Wrench puts back per second, as a whole number.
 ## Spent as an integer credit against the tick rate rather than as a fixed-point fraction
 ## of a point per tick, so nothing drifts over a long Run.
@@ -614,6 +655,11 @@ var belt_items_per_second: int = 0
 ## How many Items fit on one tile of Belt. A whole number, because it is a count of
 ## places rather than a measurement.
 var belt_items_per_tile: int = 0
+
+## How high a Belt's deck stands off the ground, in fixed-point metres — the height a
+## player stands at when they are walking a Belt line, and the same number the generated
+## trestle is modelled at.
+var belt_deck_height: int = 0
 
 ## How many crafts' worth of each input a Machine's input buffer holds.
 var machine_input_buffer_crafts: int = 0
@@ -1129,6 +1175,8 @@ func digest() -> int:
 	hasher.feed_int(player_holster_seconds)
 	hasher.feed_int(player_look_sensitivity)
 	hasher.feed_int(player_eye_height)
+	hasher.feed_int(player_collision_radius)
+	hasher.feed_int(player_step_up_height)
 	hasher.feed_int(player_starting_stock_items.size())
 	for slot: int in range(player_starting_stock_items.size()):
 		hasher.feed_text(player_starting_stock_items[slot])
@@ -1137,10 +1185,13 @@ func digest() -> int:
 	hasher.feed_int(survey_transition_seconds)
 	hasher.feed_int(survey_pitch_degrees)
 	hasher.feed_int(belt_items_per_second)
+	hasher.feed_int(belt_deck_height)
 	hasher.feed_int(belt_items_per_tile)
 	hasher.feed_int(machine_input_buffer_crafts)
 	hasher.feed_int(power_baseline_supply_kw)
 	hasher.feed_int(nest_health)
+	hasher.feed_int(nest_height)
+	hasher.feed_int(nest_terrace_height)
 	hasher.feed_int(nest_delivery_reach)
 	hasher.feed_int(nest_store_capacity_per_item)
 	hasher.feed_int(silo_load_reach_metres)
@@ -1183,6 +1234,7 @@ func digest() -> int:
 	hasher.feed_int(breaker_damage)
 	hasher.feed_int(breaker_attack_interval_seconds)
 	hasher.feed_int(wall_health)
+	hasher.feed_int(wall_height)
 	hasher.feed_int(wrench_repair_points_per_second)
 	hasher.feed_int(wrench_reach_metres)
 	hasher.feed_int(player_health)
@@ -1337,6 +1389,7 @@ func _read_machines(table: CsvTable) -> void:
 		definition.display_name = table.value(row, "display_name")
 		definition.footprint_x = table.require_int(row, "footprint_x")
 		definition.footprint_z = table.require_int(row, "footprint_z")
+		definition.height = table.require_fixed(row, "height_metres")
 		definition.power_draw_kw = table.require_int(row, "power_draw_kw")
 		definition.power_supply_kw = table.require_int(row, "power_supply_kw")
 		definition.health = table.require_int(row, "health")
@@ -1383,6 +1436,10 @@ func _check_machine_values(
 	if definition.footprint_z < 1 or definition.footprint_z > limit:
 		table.report_row(
 			row, "footprint_z: must be 1 to %d tiles, got %d" % [limit, definition.footprint_z]
+		)
+	if definition.height <= 0:
+		table.report_row(
+			row, "height_metres: a Machine with no height is a square painted on the ground"
 		)
 	if definition.power_draw_kw < 0:
 		table.report_row(row, "power_draw_kw: must not be negative")
@@ -2223,15 +2280,20 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	player_holster_seconds = tuning.require_fixed(TUNING_PLAYER_HOLSTER_SECONDS)
 	player_look_sensitivity = tuning.require_fixed(TUNING_PLAYER_LOOK_SENSITIVITY)
 	player_eye_height = tuning.require_fixed(TUNING_PLAYER_EYE_HEIGHT)
+	player_collision_radius = tuning.require_fixed(TUNING_PLAYER_COLLISION_RADIUS)
+	player_step_up_height = tuning.require_fixed(TUNING_PLAYER_STEP_UP_HEIGHT)
 	_read_starting_stock(tuning)
 	survey_height = tuning.require_fixed(TUNING_SURVEY_HEIGHT)
 	survey_transition_seconds = tuning.require_fixed(TUNING_SURVEY_TRANSITION_SECONDS)
 	survey_pitch_degrees = tuning.require_fixed(TUNING_SURVEY_PITCH_DEGREES)
 	belt_items_per_second = tuning.require_fixed(TUNING_BELT_ITEMS_PER_SECOND)
 	belt_items_per_tile = tuning.require_int(TUNING_BELT_ITEMS_PER_TILE)
+	belt_deck_height = tuning.require_fixed(TUNING_BELT_DECK_HEIGHT)
 	machine_input_buffer_crafts = tuning.require_int(TUNING_MACHINE_INPUT_BUFFER_CRAFTS)
 	power_baseline_supply_kw = tuning.require_int(TUNING_POWER_BASELINE_SUPPLY_KW)
 	nest_health = tuning.require_int(TUNING_NEST_HEALTH)
+	nest_height = tuning.require_fixed(TUNING_NEST_HEIGHT)
+	nest_terrace_height = tuning.require_fixed(TUNING_NEST_TERRACE_HEIGHT)
 	nest_delivery_reach = tuning.require_fixed(TUNING_NEST_DELIVERY_REACH)
 	nest_store_capacity_per_item = tuning.require_int(TUNING_NEST_STORE_CAPACITY)
 	silo_load_reach_metres = tuning.require_fixed(TUNING_SILO_LOAD_REACH)
@@ -2280,6 +2342,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	hive_hit_radius_metres = tuning.require_fixed(TUNING_HIVE_HIT_RADIUS)
 	hive_hit_height_metres = tuning.require_fixed(TUNING_HIVE_HIT_HEIGHT)
 	wall_health = tuning.require_int(TUNING_WALL_HEALTH)
+	wall_height = tuning.require_fixed(TUNING_WALL_HEIGHT)
 	wrench_repair_points_per_second = tuning.require_int(
 		TUNING_WRENCH_REPAIR_POINTS_PER_SECOND
 	)
@@ -2393,6 +2456,22 @@ func _read_tuning(tuning: TomlDocument) -> void:
 			)
 		if player_eye_height <= 0:
 			_report_tuning(tuning, TUNING_PLAYER_EYE_HEIGHT, "a player has to see from somewhere")
+		if player_collision_radius <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_COLLISION_RADIUS,
+				"a player with no width is a point, and a point walks through a wall corner"
+			)
+		if player_collision_radius >= Fixed.from_rational(WorldGrid.TILE_SIZE_METRES, 2):
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_COLLISION_RADIUS,
+				"a player wider than a tile would stand in three of them at once"
+			)
+		if player_step_up_height < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_STEP_UP_HEIGHT, "a step up cannot be a step down"
+			)
 		if survey_height <= player_eye_height:
 			_report_tuning(
 				tuning,
@@ -2409,6 +2488,10 @@ func _read_tuning(tuning: TomlDocument) -> void:
 			)
 		if belt_items_per_second <= 0:
 			_report_tuning(tuning, TUNING_BELT_ITEMS_PER_SECOND, "must be more than nothing")
+		if belt_deck_height <= 0:
+			_report_tuning(
+				tuning, TUNING_BELT_DECK_HEIGHT, "a Belt carries Items along a deck, not a trench"
+			)
 		if belt_items_per_tile < 1:
 			_report_tuning(tuning, TUNING_BELT_ITEMS_PER_TILE, "must be at least one Item")
 		if machine_input_buffer_crafts < 1:
@@ -2446,6 +2529,16 @@ func _read_tuning(tuning: TomlDocument) -> void:
 		if nest_health <= 0:
 			_report_tuning(
 				tuning, TUNING_NEST_HEALTH, "a Nest that starts destroyed ends the Run at tick 0"
+			)
+		if nest_height <= 0:
+			_report_tuning(
+				tuning, TUNING_NEST_HEIGHT, "a Nest nobody can stand on is a square on the floor"
+			)
+		if nest_terrace_height <= 0 or nest_terrace_height >= nest_height:
+			_report_tuning(
+				tuning,
+				TUNING_NEST_TERRACE_HEIGHT,
+				"the terrace is a step on the way up, so it stands between the ground and the crown"
 			)
 		if wave_telegraph_seconds <= 0:
 			_report_tuning(
@@ -2643,6 +2736,10 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				tuning, TUNING_HIVE_HIT_HEIGHT, "a Hive with no height cannot be aimed at"
 			)
 		_check_siege_hulk_outranges_every_turret(tuning)
+		if wall_height <= 0:
+			_report_tuning(
+				tuning, TUNING_WALL_HEIGHT, "a Wall with no height is a line painted on the ground"
+			)
 		if wall_health <= 0:
 			_report_tuning(
 				tuning, TUNING_WALL_HEALTH, "a Wall that starts destroyed cannot be built"
@@ -2943,6 +3040,8 @@ func _discard_content() -> void:
 	player_holster_seconds = 0
 	player_look_sensitivity = 0
 	player_eye_height = 0
+	player_collision_radius = 0
+	player_step_up_height = 0
 	player_starting_stock_items.clear()
 	player_starting_stock_counts.clear()
 	survey_height = 0
@@ -2950,9 +3049,12 @@ func _discard_content() -> void:
 	survey_pitch_degrees = 0
 	belt_items_per_second = 0
 	belt_items_per_tile = 0
+	belt_deck_height = 0
 	machine_input_buffer_crafts = 0
 	power_baseline_supply_kw = 0
 	nest_health = 0
+	nest_height = 0
+	nest_terrace_height = 0
 	nest_delivery_reach = 0
 	nest_store_capacity_per_item = 0
 	wave_telegraph_seconds = 0
@@ -2993,6 +3095,7 @@ func _discard_content() -> void:
 	breaker_damage = 0
 	breaker_attack_interval_seconds = 0
 	wall_health = 0
+	wall_height = 0
 	wrench_repair_points_per_second = 0
 	wrench_reach_metres = 0
 	player_health = 0

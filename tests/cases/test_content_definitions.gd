@@ -22,9 +22,9 @@ const RECIPES: String = "res://content/recipes.csv"
 const TUNING: String = "res://content/tuning.toml"
 
 const GOOD_MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+smelter_mk1,Smelter Mk1,crafter,3,3,1.5,180,0,500,0,0,0,0,0,smelt_iron_plate,
+miner_mk1,Miner Mk1,miner,2,2,1.8,120,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const GOOD_RECIPES: String = """
@@ -62,6 +62,8 @@ sprint_field_of_view_add_degrees = 6
 holster_seconds = 0.2
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+collision_radius_metres = 0.4
+step_up_height_metres = 0.75
 health = 150
 downed_bleed_out_seconds = 20
 respawn_delay_seconds = 8
@@ -72,6 +74,7 @@ starting_stock = "iron_ore:200;iron_plate:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
+deck_height_metres = 0.9
 [machine]
 input_buffer_crafts = 2
 [survey]
@@ -82,6 +85,8 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+height_metres = 4.2
+terrace_height_metres = 1.7
 delivery_reach_metres = 5
 store_capacity_per_item = 200
 [silo]
@@ -139,6 +144,7 @@ hit_radius_metres = 2
 hit_height_metres = 4
 [wall]
 health = 240
+height_metres = 2.4
 [wrench]
 repair_points_per_second = 60
 reach_metres = 4
@@ -552,7 +558,7 @@ func test_a_nest_that_hides_nothing_is_a_legal_balance_decision() -> void:
 # ── Malformed definitions name the file and the row ───────────────────────────
 
 func test_a_duplicate_machine_id_names_the_row() -> void:
-	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,\n"
+	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,1.8,120,0,400,1,0,0,0,0,mine_iron_ore,\n"
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.has_errors())
 	var text: String = definitions.describe_errors()
@@ -663,8 +669,8 @@ func test_a_broken_table_yields_no_definitions_at_all() -> void:
 func test_every_error_in_a_row_is_reported_not_just_the_first() -> void:
 	# So that fixing a definition file is one pass, not a guessing game.
 	var machines: String = GOOD_MACHINES.replace(
-		"miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,",
-		"miner_mk1,Miner Mk1,digger,2,2,lots,0,400,1,0,0,0,0,mine_irn_ore,"
+		"miner_mk1,Miner Mk1,miner,2,2,1.8,120,0,400,1,0,0,0,0,mine_iron_ore,",
+		"miner_mk1,Miner Mk1,digger,2,2,1.8,lots,0,400,1,0,0,0,0,mine_irn_ore,"
 	)
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.errors.size() >= 3, definitions.describe_errors())
@@ -679,9 +685,9 @@ func test_the_same_files_produce_the_same_digest() -> void:
 func test_the_digest_does_not_depend_on_the_order_of_the_rows() -> void:
 	# The property the Simulation's starting hash rests on.
 	var reordered_machines: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,
+id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,1.8,120,0,400,1,0,0,0,0,mine_iron_ore,
+smelter_mk1,Smelter Mk1,crafter,3,3,1.5,180,0,500,0,0,0,0,0,smelt_iron_plate,
 """
 	var reordered_recipes: String = """
 id,display_name,inputs,outputs,seconds
@@ -737,7 +743,7 @@ func test_a_machine_and_recipe_added_only_in_the_files_appear_in_the_definitions
 	# The acceptance criterion, asserted the only way it can be: content this
 	# repository has never heard of, named nowhere but in the text below.
 	var machines: String = (
-		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,90,0,350,0,0,0,0,0,press_iron_gear,iron_plate:5\n"
+		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,2,90,0,350,0,0,0,0,0,press_iron_gear,iron_plate:5\n"
 	)
 	var recipes: String = (
 		GOOD_RECIPES + "press_iron_gear,Press Iron Gear,iron_plate:3,iron_gear:1,0.75\n"
@@ -915,7 +921,7 @@ t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 # naming a file and a row is not something `step`, `hash` or a query can report.
 
 const PYLON_ROW: String = (
-	"repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,0,mend_machinery,\n"
+	"repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,2.4,60,0,300,0,6,0,40,0,mend_machinery,\n"
 )
 
 const MEND_ROW: String = "mend_machinery,Mend Machinery,iron_plate:1,,1\n"
@@ -968,8 +974,8 @@ func test_a_turret_that_both_damages_and_repairs_is_refused() -> void:
 func test_only_a_turret_may_carry_a_repair_value() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES.replace(
-			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt",
-			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,40,0,smelt"
+			"smelter_mk1,Smelter Mk1,crafter,3,3,1.5,180,0,500,0,0,0,0,0,smelt",
+			"smelter_mk1,Smelter Mk1,crafter,3,3,1.5,180,0,500,0,0,0,40,0,smelt"
 		),
 		GOOD_RECIPES,
 		GOOD_TUNING
@@ -1219,7 +1225,7 @@ func test_a_starting_weapon_a_delivery_locks_is_refused() -> void:
 # query can report.
 
 const SILO_MACHINE_ROW: String = (
-	"silo_mk1,Silo Mk1,silo,4,4,400,0,900,0,0,0,0,8,assemble_charge,\n"
+	"silo_mk1,Silo Mk1,silo,4,4,2.2,400,0,900,0,0,0,0,8,assemble_charge,\n"
 )
 
 const ASSEMBLE_ROW: String = "assemble_charge,Assemble Charge,iron_plate:1,,20\n"
@@ -1442,8 +1448,8 @@ func test_a_silo_whose_recipe_produces_an_item_is_refused() -> void:
 func test_only_a_silo_may_declare_a_charge_capacity() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES.replace(
-			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt",
-			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,6,smelt"
+			"smelter_mk1,Smelter Mk1,crafter,3,3,1.5,180,0,500,0,0,0,0,0,smelt",
+			"smelter_mk1,Smelter Mk1,crafter,3,3,1.5,180,0,500,0,0,0,0,6,smelt"
 		),
 		GOOD_RECIPES,
 		GOOD_TUNING

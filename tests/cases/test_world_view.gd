@@ -926,7 +926,7 @@ func test_a_machine_body_stands_on_the_ground_rather_than_half_buried() -> void:
 func _sim_with_an_undrawn_machine() -> Simulation:
 	var machines: String = (
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text()
-		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,0,0,smelt_iron_plate,\n"
+		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,3,10,0,100,0,0,0,0,0,smelt_iron_plate,\n"
 	)
 	var definitions: Definitions = Definitions.parse(
 		machines,
@@ -1104,7 +1104,10 @@ func test_a_turret_wears_an_ammunition_gauge_and_nothing_else_does() -> void:
 	var where: Vector3 = view.turret_gauge_position(0)
 	assert_true(is_equal_approx(where.x, 22.0), "expected x 22.0, got %f" % where.x)
 	assert_true(is_equal_approx(where.z, 10.0), "expected z 10.0, got %f" % where.z)
-	assert_true(where.y > WorldView.MACHINE_HEIGHT_METRES, "and above its roof, not inside it")
+	assert_true(
+		where.y > Fixed.to_float(sim.query_machine_height_metres(0)),
+		"and above its roof, not inside it"
+	)
 	view.free()
 
 

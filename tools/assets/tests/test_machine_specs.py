@@ -20,6 +20,28 @@ import machine_specs  # noqa: E402
 REPO = Path(__file__).resolve().parents[3]
 
 
+def _tuned_millimetres(tuning: str, section: str, key: str) -> int:
+    """One `key = <decimal>` out of one `[section]` of `content/tuning.toml`, in
+    millimetres.
+
+    Hand-read rather than parsed with `tomllib`, deliberately: the file is only
+    a documented subset of TOML (`sim/toml_document.gd` says which), and this
+    needs one number out of it rather than a document. Same digit-by-digit
+    conversion `machine_specs` uses, for the same reason — a height is compared
+    for equality.
+    """
+    here = None
+    for line in tuning.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            here = stripped[1:-1]
+        elif here == section and stripped.startswith(key + " ="):
+            written = stripped.split("=", 1)[1].strip()
+            return machine_specs._require_millimetres(
+                {"value": written, "__line__": "0"}, "value", "content/tuning.toml")
+    raise AssertionError(f"content/tuning.toml has no [{section}] {key}")
+
+
 class TheMachineTable(unittest.TestCase):
     def test_declares_every_milestone_1_machine(self):
         """DESIGN.md's Milestone 1 list, plus the Nest and a Belt segment.
@@ -151,15 +173,16 @@ class TheDeclarationItself(unittest.TestCase):
 
 class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
     """`content/machines.csv` is the Simulation's own Machine table and the
-    authority on footprints. These are the tests that make "the mesh agrees with
-    what the Simulation believes" a mechanical fact rather than a good intention.
+    authority on footprints and on housing heights. These are the tests that make
+    "the mesh agrees with what the Simulation believes" a mechanical fact rather
+    than a good intention.
 
     The table is written here as a literal rather than read from the repository,
     so these keep testing the rule even before the gameplay tickets have landed
     their rows — and `TheShippedTables` below checks the real files.
     """
 
-    HEADER = ("id,display_name,role,footprint_x,footprint_z,"
+    HEADER = ("id,display_name,role,footprint_x,footprint_z,height_metres,"
               "power_draw_kw,health,max_depth,recipe_id\n")
     BODIES = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
               "miner_mk1,miner,2,2,2100\n"
@@ -180,7 +203,7 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
         """A disagreement is an error, not a silent override, so nobody gets to
         find out later which file the generator happened to prefer."""
         with self.assertRaises(machine_specs.DeclarationError) as caught:
-            self.load("miner_mk1,Miner Mk1,miner,3,3,120,400,1,mine_iron_ore\n")
+            self.load("miner_mk1,Miner Mk1,miner,3,3,2.1,120,400,1,mine_iron_ore\n")
         message = str(caught.exception)
         self.assertIn("machines.csv", message)
         self.assertIn("machine_bodies.csv", message)
@@ -189,7 +212,7 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
         self.assertIn("2x2", message)
 
     def test_an_agreeing_footprint_is_marked_as_checked(self):
-        machines = self.load("miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore\n")
+        machines = self.load("miner_mk1,Miner Mk1,miner,2,2,2.1,120,400,1,mine_iron_ore\n")
         miner = machine_specs.by_id(machines, "miner_mk1")
         self.assertTrue(miner.footprint_from_simulation)
         self.assertEqual((miner.footprint_x, miner.footprint_z), (2, 2))
@@ -206,7 +229,7 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
         machines = machine_specs.load(
             bodies_source=bodies, ports_source=ports,
             machines_source=self.simulation_says(
-                "miner_mk1,Miner Mk1,miner,4,3,120,400,1,mine_iron_ore\n"))
+                "miner_mk1,Miner Mk1,miner,4,3,2.1,120,400,1,mine_iron_ore\n"))
         miner = machine_specs.by_id(machines, "miner_mk1")
         self.assertEqual((miner.footprint_x, miner.footprint_z), (4, 3))
         # The port validated against the *Simulation's* footprint: tile 2 only
@@ -220,6 +243,62 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
             machine_specs.load(bodies_source=bodies,
                                machines_source=self.HEADER)
         self.assertIn("nest", str(caught.exception))
+        self.assertIn("machines.csv", str(caught.exception))
+
+    def test_the_simulations_height_wins_over_the_body_tables(self):
+        """The same rule as the footprint, one column later, and it matters more:
+        the Simulation stands a player on this number (#30), so a mesh and a roof
+        that disagreed would be a surface you fall through."""
+        with self.assertRaises(machine_specs.DeclarationError) as caught:
+            self.load("miner_mk1,Miner Mk1,miner,2,2,1.8,120,400,1,mine_iron_ore\n")
+        message = str(caught.exception)
+        self.assertIn("machines.csv", message)
+        self.assertIn("machine_bodies.csv", message)
+        self.assertIn("miner_mk1", message)
+        self.assertIn("1800", message)
+        self.assertIn("2100", message)
+
+    def test_a_blank_height_defers_to_the_simulation(self):
+        """The end state for every row the Simulation declares: the body table
+        stops restating the height and the duplicate disappears."""
+        bodies = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
+                  "miner_mk1,miner,,,\n")
+        ports = ("machine_id,port_id,direction,edge,tile,height_mm\n"
+                 "miner_mk1,ore,output,south,1,900\n")
+        machines = machine_specs.load(
+            bodies_source=bodies, ports_source=ports,
+            machines_source=self.simulation_says(
+                "miner_mk1,Miner Mk1,miner,2,2,1.8,120,400,1,mine_iron_ore\n"))
+        self.assertEqual(
+            machine_specs.by_id(machines, "miner_mk1").body_height_mm, 1800)
+
+    def test_a_height_in_millimetres_is_exact_rather_than_rounded(self):
+        """Metres are decimal in the file and millimetres everywhere here, and
+        the conversion is digit by digit rather than through a float — a height
+        is compared for equality, and a binary float is not the type to do that
+        with."""
+        bodies = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
+                  "miner_mk1,miner,,,\n")
+        ports = ("machine_id,port_id,direction,edge,tile,height_mm\n"
+                 "miner_mk1,ore,output,south,1,900\n")
+        for written, millimetres in (("2", 2000), ("2.4", 2400), ("10.425", 10425),
+                                     ("0.9", 900), ("1.05", 1050)):
+            machines = machine_specs.load(
+                bodies_source=bodies, ports_source=ports,
+                machines_source=self.simulation_says(
+                    f"miner_mk1,Miner Mk1,miner,2,2,{written},120,400,1,mine_iron_ore\n"))
+            self.assertEqual(
+                machine_specs.by_id(machines, "miner_mk1").body_height_mm, millimetres,
+                f"{written} m should be {millimetres} mm")
+
+    def test_a_blank_height_with_nothing_to_defer_to_is_an_error(self):
+        bodies = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
+                  "nest,nest,4,4,\n")
+        with self.assertRaises(machine_specs.DeclarationError) as caught:
+            machine_specs.load(bodies_source=bodies,
+                               machines_source=self.HEADER)
+        self.assertIn("nest", str(caught.exception))
+        self.assertIn("body_height_mm", str(caught.exception))
         self.assertIn("machines.csv", str(caught.exception))
 
 
@@ -254,6 +333,29 @@ class TheShippedTables(unittest.TestCase):
         for port in belt.ports:
             with self.subTest(port=port.port_id):
                 self.assertEqual(port.height_mm, belt.body_height_mm)
+
+    def test_the_two_heights_the_simulation_tunes_match_the_bodies_that_wear_them(self):
+        """A Belt's deck and the Nest's crown are the two solid heights that are
+        **not** a Machine's, so they live in `content/tuning.toml` rather than in
+        `machines.csv` — a Belt and the Nest run no Recipe (DESIGN.md) and have no
+        row there to carry a column.
+
+        That makes them the one pair of heights the footprint rule cannot cover,
+        so they get this cross-check instead: the Simulation stands a player on
+        the tuned number and the generator models the body at the declared one,
+        and a disagreement would be a deck you walk through.
+        """
+        tuning = (REPO / "content" / "tuning.toml").read_text()
+        for machine_id, section, key in (("belt_straight", "belt", "deck_height_metres"),
+                                         ("nest", "nest", "height_metres")):
+            with self.subTest(machine_id=machine_id):
+                tuned_mm = _tuned_millimetres(tuning, section, key)
+                body = machine_specs.by_id(machine_specs.load(), machine_id)
+                self.assertEqual(
+                    body.body_height_mm, tuned_mm,
+                    f"content/machine_bodies.csv gives {machine_id} "
+                    f"{body.body_height_mm} mm but content/tuning.toml's "
+                    f"[{section}] {key} says {tuned_mm} mm")
 
 
 if __name__ == "__main__":

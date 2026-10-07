@@ -1,9 +1,12 @@
 """The deep check: the game's own loader, asked whether a candidate would load.
 
 Seam: `definitions_check.Checker.errors(candidate)`, and the store with one
-wired in. These need Godot and an imported project, so they skip themselves
-when `godot` is not on PATH — the subset gate is what holds in that case, and
-`test_store.py` covers it on its own.
+wired in. These need Godot, so they skip themselves when `godot` is not on PATH
+— the subset gate is what holds in that case, and `test_store.py` covers it on
+its own. They do *not* need the project to have been imported already: the
+checker runs an import pass itself when there is no class cache, because
+`check_definitions.gd` names `Definitions` and that global only resolves
+through one.
 
 The values asserted here are the loader's own refusals, read off
 `sim/definitions.gd`'s cross-checks. The point of this layer is that those rules

@@ -8,20 +8,21 @@
 # it from there and this table's columns are then only a cross-check, which the
 # asset suite fails on any disagreement.
 #
-# Leave footprint_x and footprint_z BLANK to say "machines.csv owns this one",
-# which is the end state for every row: as gameplay tickets add a Machine with a
-# real Recipe to machines.csv, that ticket blanks this row's two footprint
-# columns and the duplicate is gone. Until then a filled-in pair lets the art
-# pipeline run ahead of the gameplay tables without inventing Recipes, at the
-# cost of a cross-check instead of a single source — and the cross-check is a
+# Leave footprint_x, footprint_z and body_height_mm BLANK to say "machines.csv
+# owns this one", which is the end state for every row: as gameplay tickets add a
+# Machine with a real Recipe to machines.csv, that ticket blanks this row's
+# duplicated columns and the duplicate is gone. Until then a filled-in value lets
+# the art pipeline run ahead of the gameplay tables without inventing Recipes, at
+# the cost of a cross-check instead of a single source — and the cross-check is a
 # test, not a promise.
 #
-# A blank footprint for a Machine that machines.csv does not declare is an
-# error, so a row can never resolve to no footprint at all.
+# A blank footprint or height for a Machine that machines.csv does not declare is
+# an error, so a row can never resolve to no footprint and no height at all.
 #
 # miner_mk1, coal_miner_mk1, smelter_mk1, steam_boiler_mk1, ammo_press_mk1 and
-# silo_mk1 are all declared by machines.csv, so their footprints are blank here and
-# there is exactly one authority for each. The rest follow as their Recipes arrive.
+# silo_mk1 are all declared by machines.csv, so their footprints and their heights
+# are blank here and there is exactly one authority for each. The rest follow as
+# their Recipes arrive.
 #
 # Known gap: machines.csv also declares mg_turret_mk1, which has no body here and
 # so no generated mesh yet. The Simulation and the placeholder renderer are happy
@@ -33,22 +34,27 @@
 #
 # body            Which recipe in tools/assets/machine_recipes.py builds it.
 # footprint_x/z   Footprint in TILES on the 2 m grid, or blank (see above).
-# body_height_mm  Height of the main housing above the ground, in millimetres.
-#                 Art direction, not a grid rule: M1 builds flat, so the
-#                 Simulation has no opinion about height. Masts, stacks and
-#                 launch tubes rise above this; it is the housing, not the
-#                 silhouette. Everything is sized against the 1800 mm player.
-#                 For a Belt it is the deck height, which must equal the Belt
-#                 port height in machine_ports.csv.
+# body_height_mm  Height of the main housing above the ground, in millimetres,
+#                 or blank (see above). **No longer art direction alone**: #30
+#                 made the Factory solid, so the Simulation collides a player
+#                 against this height and stands them on top of it — which is why
+#                 machines.csv's `height_metres` is the authority wherever it
+#                 declares the Machine and this column is a cross-check. Masts,
+#                 stacks and launch tubes rise above it and are NOT solid; it is
+#                 the housing, not the silhouette, and a thin mast that stopped a
+#                 player would read as a bug. Everything is sized against the
+#                 1800 mm player. For a Belt it is the deck height, which must
+#                 equal the Belt port height in machine_ports.csv and which
+#                 `belt.deck_height_metres` in tuning.toml has to match.
 machine_id,body,footprint_x,footprint_z,body_height_mm
-miner_mk1,miner,,,1800
-coal_miner_mk1,coal_miner,,,2000
-smelter_mk1,smelter,,,1500
+miner_mk1,miner,,,
+coal_miner_mk1,coal_miner,,,
+smelter_mk1,smelter,,,
 press_mk1,press,2,3,2400
 assembler_mk1,assembler,3,3,2200
-steam_boiler_mk1,boiler,,,2200
+steam_boiler_mk1,boiler,,,
 generator_mk1,generator,2,2,2200
-ammo_press_mk1,ammo_press,,,2000
-silo_mk1,silo,,,2200
+ammo_press_mk1,ammo_press,,,
+silo_mk1,silo,,,
 nest,nest,4,4,4200
 belt_straight,belt,1,1,900

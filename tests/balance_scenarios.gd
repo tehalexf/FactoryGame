@@ -52,14 +52,27 @@ const DEEP_IRON_NODE: Vector3i = Vector3i(22, GROUND, 10)
 ## a walk to a place and the place is the whole of the plan.
 const EASTERN_HIVE: Vector3i = Vector3i(38, GROUND, 24)
 
+## Where a sortie turns, out past the east end of the Factory and south of all of it.
+##
+## **The straight line from the Nest to the eastern Hive goes through the Smelter**, which
+## was free when a player could walk through a Machine and is not free now that #30 made the
+## Factory solid. What collision does to an open-loop walk is not a stop — the player slides
+## along the housing and comes out of it pointing somewhere else — so the measured cost was
+## two seconds of detour and a sortie that halted twelve metres short of the Hive and swung
+## at nothing. A player who could see the Smelter would have gone round it, so the scenario
+## does: east along the Nest's own latitude until the Factory is behind it, then north-east
+## to the Hive. Both legs are clear ground, which is what keeps `_sprint_ticks_for`'s
+## arithmetic honest.
+const SORTIE_WAYPOINT: Vector3i = Vector3i(24, GROUND, 0)
+
 ## How many of a Factory's own pixels of mouse travel make one whole turn, at the shipped
 ## `player.look_sensitivity_turns_per_1000_pixels`. Derived rather than written down, so a
 ## sensitivity change re-aims the sorties instead of silently sending them past the Hive.
 const LOOK_PIXELS_PER_TURN: int = 1000 * 10 / 2
 
 ## How finely `_look_pixels_towards` searches for a heading: 4096 steps of a turn, which is
-## about five arc-minutes. Over the 107 m walk to the eastern Hive that is under 16 cm of
-## drift, well inside the Wrench's 4 m reach.
+## about five arc-minutes. Over the longest leg of the sortie to the eastern Hive — 56 m, from
+## `SORTIE_WAYPOINT` — that is under 9 cm of drift, well inside the Wrench's 4 m reach.
 const HEADING_STEPS: int = 4096
 
 
@@ -232,21 +245,36 @@ static func hive_sortie() -> BalanceScenario:
 	# The weapon comes out before the walk: the holster takes 0.2 s and a player who arrives
 	# still holding the Build Gun wastes a swing.
 	scenario.at_second(120, [InputAction.set_build_mode(0, false)])
-	var out: int = _walk_to(scenario, 121 * Simulation.TICKS_PER_SECOND, EASTERN_HIVE, 3)
+	# Two legs out, round the east end of the Factory rather than through the Smelter. See
+	# `SORTIE_WAYPOINT`: a walk that clips a solid housing arrives late and aimed wrong.
+	var home: Vector3i = Vector3i(0, GROUND, 0)
+	var turn: int = _walk_to(scenario, 121 * Simulation.TICKS_PER_SECOND, SORTIE_WAYPOINT, 0)
+	var out: int = _walk_to(
+		scenario,
+		turn,
+		EASTERN_HIVE,
+		3,
+		SORTIE_WAYPOINT,
+		heading_towards(home, SORTIE_WAYPOINT)
+	)
 	# 1200 hit points at 55 a swing is 22 swings, and the Wrench swings every 0.6 s — so
 	# fifteen seconds of leaning on the trigger, with another fifteen of margin for where the
 	# open-loop walk actually stopped. Held every tick, because that is what leaning on a
 	# trigger is; the cooldown is the Simulation's business.
 	scenario.hold(out, 30 * Simulation.TICKS_PER_SECOND, [InputAction.fire(0)])
-	# And back to the Factory, so the rest of the Run is played by a player who is standing
-	# in it rather than one stranded on the far side of the Map.
-	_walk_to(
+	# And back to the Factory the way he came, so the rest of the Run is played by a player
+	# who is standing in it rather than one stranded on the far side of the Map — or one who
+	# walked home into the side of his own Smelter.
+	var back: int = _walk_to(
 		scenario,
 		out + 31 * Simulation.TICKS_PER_SECOND,
-		Vector3i(0, GROUND, 0),
+		SORTIE_WAYPOINT,
 		0,
 		EASTERN_HIVE,
-		heading_towards(Vector3i(0, GROUND, 0), EASTERN_HIVE)
+		heading_towards(SORTIE_WAYPOINT, EASTERN_HIVE)
+	)
+	_walk_to(
+		scenario, back, home, 0, SORTIE_WAYPOINT, heading_towards(EASTERN_HIVE, SORTIE_WAYPOINT)
 	)
 	return scenario
 

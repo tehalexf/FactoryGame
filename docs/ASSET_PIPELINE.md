@@ -243,17 +243,36 @@ apart silently, so there is exactly one declaration of each fact:
 | Machine footprint, in tiles | `content/machines.csv` | the Simulation, and the generator |
 | Footprint of a body the Simulation does not declare yet (Nest, Belt, Machines awaiting a Recipe) | `content/machine_bodies.csv` | the generator |
 | Input and output port positions | `content/machine_ports.csv` | the Simulation, and the generator |
-| Housing height | `content/machine_bodies.csv` | the generator |
+| Housing height, in metres | `content/machines.csv` | the Simulation, and the generator |
+| Housing height of a body the Simulation does not declare yet (Nest, Belt, Machines awaiting a Recipe) | `content/machine_bodies.csv` | the generator |
 | Material palette, and which generated texture each material wears | `tools/assets/dieselpunk_palette.json` | the generator, `machine_materials.py`, the contact-sheet renderer |
 | Geometry | `tools/assets/machine_recipes.py` over the kit in `machine_parts.py` | the generator |
 | The surface Godot draws | `assets/machines/materials/*.tres`, generated from the palette | the engine, via `_subresources` in each `.glb.import` |
 
-`machines.csv` wins. Where it names a Machine, its footprint is used and
-`machine_bodies.csv`'s columns are only a cross-check — a disagreement is a load
-error naming both files, never a silent override. Blank the two footprint
-columns in `machine_bodies.csv` to defer to it outright, which is the end state
-for every row: as gameplay tickets add Machines with real Recipes, the duplicate
-disappears and the cross-check tightens by itself.
+`machines.csv` wins. Where it names a Machine, its footprint and its
+`height_metres` are used and `machine_bodies.csv`'s columns are only a
+cross-check — a disagreement is a load error naming both files, never a silent
+override. Blank the footprint and height columns in `machine_bodies.csv` to
+defer to it outright, which is the end state for every row: as gameplay tickets
+add Machines with real Recipes, the duplicate disappears and the cross-check
+tightens by itself. The six Machines `machines.csv` declares have already got
+there, and the Nest, a Belt and the three bodies still awaiting a Recipe are
+what is left.
+
+**The housing height stopped being art direction when #30 made the Factory
+solid.** The Simulation collides a player against `height_metres` and stands
+them on top of it, so a mesh that was 70 cm taller than the declaration would be
+a roof a player falls through — which is why the authority moved to the file the
+Simulation loads and why the disagreement is an error rather than a warning. It
+is the **housing** and not the silhouette: masts, stacks and the Silo's 7 m
+launch tube rise above it and are not solid, because a thin tube that stopped a
+player would read as a bug rather than as a building. The one height that is
+*not* a Machine's are a Belt's deck and the Nest's crown: neither runs a Recipe,
+so neither has a row in `machines.csv` to carry a column, and the Simulation
+tunes them in `content/tuning.toml` (`belt.deck_height_metres`,
+`nest.height_metres`) while `machine_bodies.csv` models them. Those two get a
+cross-check of their own in `tools/assets/tests/test_machine_specs.py`, for the
+same reason and against the same failure.
 
 `tools/assets/machine_specs.py` is the only reader of those tables outside the
 Simulation, and the only place a port's position is computed. Nothing else may

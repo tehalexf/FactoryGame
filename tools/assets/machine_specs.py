@@ -4,11 +4,13 @@
 Three tables, each with one job, and one rule about which wins:
 
 * `content/machines.csv` — the Simulation's own Machine table, and **the
-  authority on footprints**. Where it names a Machine, its footprint is the
-  footprint, full stop.
-* `content/machine_bodies.csv` — which Machines have a generated mesh, how tall
-  the housing is, and a footprint for bodies `machines.csv` does not yet declare
-  (the Nest and a Belt never will: neither runs a Recipe). A footprint given in
+  authority on footprints and on housing heights**. Where it names a Machine, its
+  `footprint_x`/`footprint_z` and its `height_metres` are the footprint and the
+  height, full stop — the Simulation collides a player against that height, so a
+  mesh that disagreed with it would be a roof you fall through.
+* `content/machine_bodies.csv` — which Machines have a generated mesh, and a
+  footprint and height for bodies `machines.csv` does not yet declare (the Nest
+  and a Belt never will: neither runs a Recipe). A footprint or a height given in
   both files must agree exactly, or loading fails naming both files.
 * `content/machine_ports.csv` — the authority on port positions.
 
@@ -188,6 +190,25 @@ def _require_int(row: dict[str, str], column: str, path: str) -> int:
             f"which is not a whole number") from None
 
 
+def _require_millimetres(row: dict[str, str], column: str, path: str) -> int:
+    """A decimal number of metres as whole millimetres, exactly.
+
+    Parsed digit by digit rather than through `float`, for the reason
+    `Fixed.from_decimal_string` exists on the other side of the boundary: a
+    height is compared against a declaration for equality, and a binary float is
+    not the right type to do that with. Three decimal places, floored, which is
+    millimetres and the resolution the rest of this module works in.
+    """
+    value = row.get(column, "")
+    sign, digits = (-1, value[1:]) if value.startswith("-") else (1, value)
+    whole, _, fraction = digits.partition(".")
+    if not whole.isdigit() or (fraction and not fraction.isdigit()):
+        raise DeclarationError(
+            f"{path} line {row['__line__']}: column {column!r} is {value!r}, "
+            f"which is not a number of metres")
+    return sign * (int(whole) * 1000 + int((fraction + "000")[:3]))
+
+
 def _require_one_of(row: dict[str, str], column: str, allowed, path: str) -> str:
     value = row.get(column, "")
     if value not in allowed:
@@ -197,9 +218,11 @@ def _require_one_of(row: dict[str, str], column: str, allowed, path: str) -> str
     return value
 
 
-def simulation_footprints(machines_source: str | None = None
-                          ) -> dict[str, tuple[int, int]]:
-    """Footprints as the Simulation declares them, from `content/machines.csv`.
+def simulation_declarations(machines_source: str | None = None
+                            ) -> dict[str, tuple[tuple[int, int], int]]:
+    """What the Simulation declares about each Machine's box, from
+    `content/machines.csv`: its footprint in tiles and its housing height in
+    millimetres.
 
     An empty result when the file is absent: the gameplay tables arrive on their
     own tickets, and the art pipeline must not be blocked on them. Every id the
@@ -211,14 +234,24 @@ def simulation_footprints(machines_source: str | None = None
         if not MACHINES_CSV.exists():
             return {}
         machines_source = MACHINES_CSV.read_text()
-    footprints: dict[str, tuple[int, int]] = {}
+    declared: dict[str, tuple[tuple[int, int], int]] = {}
     for row in parse_table(machines_source, path):
         machine_id = row.get("id", "")
         if not machine_id:
             raise DeclarationError(f"{path} line {row['__line__']}: empty id")
-        footprints[machine_id] = (_require_int(row, "footprint_x", path),
-                                  _require_int(row, "footprint_z", path))
-    return footprints
+        declared[machine_id] = (
+            (_require_int(row, "footprint_x", path), _require_int(row, "footprint_z", path)),
+            _require_millimetres(row, "height_metres", path),
+        )
+    return declared
+
+
+def simulation_footprints(machines_source: str | None = None
+                          ) -> dict[str, tuple[int, int]]:
+    """Just the footprints, for the callers that only want those."""
+    return {machine_id: box
+            for machine_id, (box, _height) in
+            simulation_declarations(machines_source).items()}
 
 
 def load(bodies_source: str | None = None,
@@ -240,7 +273,7 @@ def load(bodies_source: str | None = None,
         bodies_source = BODIES_CSV.read_text()
     if ports_source is None:
         ports_source = PORTS_CSV.read_text()
-    declared_by_simulation = simulation_footprints(machines_source)
+    declared_by_simulation = simulation_declarations(machines_source)
 
     bare: dict[str, Machine] = {}
     for row in parse_table(bodies_source, bodies_path):
@@ -253,7 +286,9 @@ def load(bodies_source: str | None = None,
                 f"{bodies_path} line {row['__line__']}: duplicate machine_id "
                 f"{machine_id!r}")
 
-        from_simulation = declared_by_simulation.get(machine_id)
+        declaration = declared_by_simulation.get(machine_id)
+        from_simulation = None if declaration is None else declaration[0]
+        height_from_simulation = None if declaration is None else declaration[1]
         own = (row.get("footprint_x", ""), row.get("footprint_z", ""))
         if own == ("", ""):
             if from_simulation is None:
@@ -282,12 +317,38 @@ def load(bodies_source: str | None = None,
                 raise DeclarationError(
                     f"{bodies_path} line {row['__line__']}: {machine_id} has "
                     f"{axis} of {size} tiles; the grid allows 1 to 4")
+        # The housing height follows exactly the footprint's rule, one column later:
+        # `machines.csv` owns it where it declares the Machine, this table's column is
+        # then a cross-check, and blanking the column defers to it outright. The
+        # Simulation collides a player against that number, so a mesh and a roof that
+        # disagreed would be a surface you fall through rather than a cosmetic drift.
+        own_height = row.get("body_height_mm", "")
+        if own_height == "":
+            if height_from_simulation is None:
+                raise DeclarationError(
+                    f"{bodies_path} line {row['__line__']}: {machine_id} leaves its "
+                    f"body_height_mm blank, which means {machines_path} owns it, but "
+                    f"{machines_path} does not declare {machine_id!r}")
+            height_mm = height_from_simulation
+        else:
+            height_mm = _require_int(row, "body_height_mm", bodies_path)
+            if height_from_simulation is not None and height_from_simulation != height_mm:
+                raise DeclarationError(
+                    f"{machines_path} gives {machine_id} a height of "
+                    f"{height_from_simulation} mm but {bodies_path} line "
+                    f"{row['__line__']} says {height_mm} mm. {machines_path} is the "
+                    f"authority: either correct this row or blank its body_height_mm "
+                    f"column to defer to it.")
+        if height_mm <= 0:
+            raise DeclarationError(
+                f"{bodies_path} line {row['__line__']}: {machine_id} has a housing "
+                f"height of {height_mm} mm; a body has to stand off the ground")
         bare[machine_id] = Machine(
             machine_id=machine_id,
             body=row.get("body", ""),
             footprint_x=footprint[0],
             footprint_z=footprint[1],
-            body_height_mm=_require_int(row, "body_height_mm", bodies_path),
+            body_height_mm=height_mm,
             footprint_from_simulation=from_simulation is not None,
         )
 
