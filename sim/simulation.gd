@@ -151,6 +151,41 @@ var _belt_item_offsets: Array = []
 var _belt_update_order: PackedInt64Array = PackedInt64Array()
 var _belt_update_order_stale: bool = true
 
+## The one Power grid's reading at the end of the tick it last ran: what the Factory's
+## generators and its baseline plant between them supplied, and what its working
+## Machines between them drew, both in whole kilowatts.
+##
+## There is exactly one grid and it has no topology — no wires, no sub-networks, no
+## distance (GLOSSARY.md, DESIGN.md). Total supply against total demand, globally, and a
+## shortfall throttles every Machine in the Factory by the same proportion. That is the
+## whole model, and it is the reason a Boiler dying mid-Wave makes every gauge in the base
+## dip together instead of killing one Machine.
+##
+## Kilowatts, as whole integers. The throttle is an exact ratio of these two numbers, so
+## keeping them integral is what keeps the ratio from needing a rounding rule at all.
+var _power_supply_kw: int = 0
+var _power_demand_kw: int = 0
+
+## The grid's unspent supply, in kilowatt-ticks, and the mechanism that makes a
+## proportional throttle exact rather than approximately right.
+##
+## A throttled Machine does not advance a fraction of a tick — fractions accumulate
+## rounding, and over a 40-hour Run a rate that is 0.9999 of what the file says is a
+## Factory that quietly under-produces. Instead the grid runs a duty cycle: every tick it
+## banks `min(supply, demand)` and spends `demand` to buy the Factory one whole tick of
+## work. On a grid supplying 1 against a demand of 3, that buys a tick every third tick —
+## exactly a third rate, with the remainder carried in this integer rather than thrown
+## away. Over any window a Machine has advanced exactly `floor(ticks * supply / demand)`
+## ticks: one floor, applied once to the total, never once per tick.
+##
+## Power is not storable in Milestone 1 — there are no batteries — so this is clamped
+## below `demand` rather than allowed to bank a surplus.
+var _power_credit_kw_ticks: int = 0
+
+## Whether the grid bought the Factory a tick of work on the tick that last ran. One
+## answer for the whole Factory, because there is one grid.
+var _power_tick_granted: bool = true
+
 ## What each Machine is holding *for* its Recipe, as the same sorted id/count pair as
 ## the output buffer. A Belt fills this; crafting empties it. Its capacity is what
 ## back-pressure pushes against: when it is full the Belt feeding it cannot hand over,
@@ -198,6 +233,10 @@ func _init(
 	_player_x.fill(0)
 	_player_z.fill(0)
 
+	# A reading before the first tick, so a HUD drawn on tick 0 shows the grid the Run
+	# actually starts on rather than a pair of zeroes.
+	_read_the_grid()
+
 
 # ── Advancing ─────────────────────────────────────────────────────────────────
 
@@ -215,6 +254,7 @@ func step(actions: Array) -> void:
 		_apply(action)
 
 	_transport()
+	_power()
 	_extract()
 	_craft()
 
@@ -552,6 +592,96 @@ func _belt_precedes(a: int, b: int) -> bool:
 	return _belt_tile_z[a] < _belt_tile_z[b]
 
 
+# ── Power ─────────────────────────────────────────────────────────────────────
+
+## Reads the one Power grid and decides whether it can buy the Factory this tick.
+##
+## Runs after the Belts and before the Machines, so a lump of coal delivered to a Boiler
+## this tick is already burning when the grid is read — the same "delivered this tick is
+## usable this tick" rule a crafter's inputs follow.
+##
+## A shortfall throttles proportionally and picks no favourites: there is one grid, one
+## ratio, and every Machine drawing from it advances on the same ticks. Nothing is halted
+## outright and nothing is singled out, which is what makes a brownout read as the whole
+## Factory sagging together rather than as one Machine mysteriously dead.
+func _power() -> void:
+	_read_the_grid()
+
+	if _power_demand_kw <= 0:
+		# Nothing is drawing, so there is nothing to ration and nothing to carry over.
+		_power_credit_kw_ticks = 0
+		_power_tick_granted = true
+		return
+
+	# Power is not storable: a grid whose demand just fell cannot have been banking the
+	# difference, so credit never exceeds one tick's worth of demand.
+	_power_credit_kw_ticks = mini(_power_credit_kw_ticks, maxi(_power_demand_kw - 1, 0))
+	_power_credit_kw_ticks += mini(_power_supply_kw, _power_demand_kw)
+
+	_power_tick_granted = _power_credit_kw_ticks >= _power_demand_kw
+	if _power_tick_granted:
+		_power_credit_kw_ticks -= _power_demand_kw
+
+
+## Totals the grid: what is supplied, and what is drawn.
+##
+## Demand counts a Machine only while it would actually work. A Smelter with an empty
+## input buffer is not consuming anything, so it is not on the grid either — which means
+## cutting a Belt lightens the load rather than browning out the Machines that are still
+## fed, and the gauge a player reads is the Factory that is running rather than the
+## Factory that was built.
+func _read_the_grid() -> void:
+	var supply: int = _definitions.power_baseline_supply_kw
+	var demand: int = 0
+	for index: int in range(query_machine_count()):
+		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+		if definition == null or not _machine_would_work(index, definition):
+			continue
+		supply += definition.power_supply_kw
+		demand += definition.power_draw_kw
+	_power_supply_kw = supply
+	_power_demand_kw = demand
+
+
+## Whether a Machine has everything it needs to advance a craft this tick, leaving Power
+## out of it. The shared answer behind three questions that must never disagree: what the
+## grid charges for, what `_extract` and `_craft` advance, and — through
+## `_machine_has_its_inputs` — what a query calls starved.
+##
+## A Machine placed this tick would not work this tick, which is the rule that keeps a
+## freshly built Machine's first output from landing a tick early. Starvation deliberately
+## does *not* ask that question: a Miner put down on a Node is not starved, it is new.
+func _machine_would_work(index: int, definition: MachineDefinition) -> bool:
+	if _machine_built_tick[index] == _tick:
+		return false
+	if _definitions.recipe_at(definition.recipe_index) == null:
+		return false
+	return _machine_has_its_inputs(index, definition)
+
+
+## Whether a Machine is holding what its Recipe needs. A Miner's input is the ground under
+## it, a crafter's and a generator's arrives on a Belt.
+func _machine_has_its_inputs(index: int, definition: MachineDefinition) -> bool:
+	var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
+	if recipe == null:
+		return false
+	if definition.is_miner():
+		var node_index: int = _node_under_machine(index, definition)
+		return node_index != -1 and _recipe_yields(recipe, _node_resource[node_index])
+	return _holds_a_whole_recipe(index, recipe)
+
+
+## Whether the grid lets a given Machine advance this tick.
+##
+## A Machine that draws nothing is never throttled: a Steam Boiler burns its coal at the
+## rate its Recipe states whatever the grid is doing, which is what stops a brownout from
+## throttling the very generators that would end it.
+func _power_allows(definition: MachineDefinition) -> bool:
+	if definition.power_draw_kw <= 0:
+		return true
+	return _power_tick_granted
+
+
 # ── Extraction ────────────────────────────────────────────────────────────────
 
 ## Advances every Miner by one tick.
@@ -564,27 +694,23 @@ func _belt_precedes(a: int, b: int) -> bool:
 ## Nothing is subtracted from the Node. Nodes are inexhaustible (DESIGN.md), which is
 ## why there is no quantity here to take.
 ##
+## A Miner on a short grid is slowed, not stopped: the grid buys the whole Factory a tick
+## of work or none of one, so a throttled Miner accumulates progress on a fraction of the
+## ticks and a Belt running out of it visibly thins.
+##
 ## Walks Machines in index order, which is construction order and therefore the same
 ## on every client.
 func _extract() -> void:
 	for index: int in range(query_machine_count()):
-		if _machine_built_tick[index] == _tick:
-			continue
-
 		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
 		if definition == null or not definition.is_miner():
 			continue
+		if not _machine_would_work(index, definition):
+			continue
+		if not _power_allows(definition):
+			continue
 
 		var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
-		if recipe == null:
-			continue
-
-		var node_index: int = _node_under_machine(index, definition)
-		if node_index == -1:
-			continue
-		if not _recipe_yields(recipe, _node_resource[node_index]):
-			continue
-
 		var required: int = _ticks_per_craft(recipe)
 		_machine_progress_ticks[index] += 1
 		while _machine_progress_ticks[index] >= required:
@@ -607,23 +733,26 @@ func _extract() -> void:
 ## would get back if they knocked it down", and it means a Recipe's duration is the only
 ## thing between an input arriving and an output appearing.
 ##
+## Power throttles this the same way it throttles extraction, and for the same reason it
+## does not throttle a generator: a Machine that draws nothing from the grid is never held
+## back by it, so a Steam Boiler burns its coal at the rate its Recipe states even in the
+## brownout it is trying to end.
+##
 ## Walks Machines in index order, which is construction order and therefore the same on
 ## every client. Index order is safe here in a way it is not for Belts: a Machine's tick
 ## reads and writes only its own buffers, so no Machine can observe another's progress
 ## within a tick.
 func _craft() -> void:
 	for index: int in range(query_machine_count()):
-		if _machine_built_tick[index] == _tick:
-			continue
-
 		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
 		if definition == null or definition.is_miner():
 			continue
-
-		var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
-		if recipe == null or not _holds_a_whole_recipe(index, recipe):
+		if not _machine_would_work(index, definition):
+			continue
+		if not _power_allows(definition):
 			continue
 
+		var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
 		var required: int = _ticks_per_craft(recipe)
 		_machine_progress_ticks[index] += 1
 		while _machine_progress_ticks[index] >= required:
@@ -1005,6 +1134,14 @@ func hash() -> int:
 		for slot: int in range(input_items.size()):
 			hasher.feed_text(input_items[slot])
 			hasher.feed_int(input_counts[slot])
+	# The one Power grid. The credit carried between ticks is what makes a proportional
+	# throttle exact, so it is authoritative state and a divergence in it is a divergence
+	# in every Machine's rate; the two gauge readings are hashed with it because a Factory
+	# in deficit and a Factory in surplus are not in the same state.
+	hasher.feed_int(_power_supply_kw)
+	hasher.feed_int(_power_demand_kw)
+	hasher.feed_int(_power_credit_kw_ticks)
+	hasher.feed_int(1 if _power_tick_granted else 0)
 	# The Belts, and every Item riding one. Items are derived state — recomputed
 	# identically on every client and never replicated (ADR 0002) — and that is exactly
 	# why they have to be hashed: the guarantee that they are identical everywhere is
@@ -1253,17 +1390,9 @@ func query_machine_is_starved(index: int) -> bool:
 	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
 	if definition == null:
 		return false
-	var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
-	if recipe == null:
+	if _definitions.recipe_at(definition.recipe_index) == null:
 		return false
-
-	if definition.is_miner():
-		var under: int = _node_under_machine(index, definition)
-		if under == -1:
-			return true
-		return not _recipe_yields(recipe, _node_resource[under])
-
-	return not _holds_a_whole_recipe(index, recipe)
+	return not _machine_has_its_inputs(index, definition)
 
 
 ## The Node a Machine's footprint covers, or -1. A Miner over no Node produces
@@ -1275,6 +1404,57 @@ func query_node_under_machine(index: int) -> int:
 	if definition == null:
 		return -1
 	return _node_under_machine(index, definition)
+
+
+# ── The Power grid ────────────────────────────────────────────────────────────
+
+## What the one Power grid supplied on the tick that last ran, in whole kilowatts: the
+## baseline plant plus every generator that was burning.
+func query_power_supply_kw() -> int:
+	return _power_supply_kw
+
+
+## What the Factory drew on the tick that last ran, in whole kilowatts. Only Machines
+## that were actually working are on it — an idle Machine draws nothing.
+func query_power_demand_kw() -> int:
+	return _power_demand_kw
+
+
+## How much of its demand the Factory is getting, in fixed point: `ONE` when supply meets
+## demand or nothing is drawing, and `supply / demand` when it does not.
+##
+## **This number is for the gauge, and the Simulation never reads it back.** It is the one
+## place Power touches fixed point, and `from_rational` floors, so a grid supplying 1
+## against a demand of 3 reads as 0.33332... rather than a third. The throttle itself is
+## driven by the two integers, not by this — which is exactly why the rounding here can
+## never reach the state hash or move a single Item.
+func query_power_ratio() -> int:
+	if _power_demand_kw <= 0:
+		return Fixed.ONE
+	if _power_supply_kw >= _power_demand_kw:
+		return Fixed.ONE
+	return Fixed.from_rational(_power_supply_kw, _power_demand_kw)
+
+
+## Whether the grid is short: demand above supply. The brownout, as one boolean.
+func query_power_is_in_deficit() -> bool:
+	return _power_demand_kw > 0 and _power_supply_kw < _power_demand_kw
+
+
+## Whether the grid held a Machine back on the tick that last ran.
+##
+## False for a Machine that draws nothing and for one that is not working anyway — a
+## starved Smelter is starved, not throttled, and a HUD that confused the two would send a
+## player to lay a Belt when the answer is a Boiler.
+func query_machine_is_throttled(index: int) -> bool:
+	if not _is_machine(index):
+		return false
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition == null or definition.power_draw_kw <= 0:
+		return false
+	if not _machine_would_work(index, definition):
+		return false
+	return query_power_is_in_deficit()
 
 
 ## How many Belts are laid.

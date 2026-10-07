@@ -8,7 +8,11 @@
 #   display_name    What the player sees.
 #   inputs          Items consumed per craft, as `item:count`, several separated
 #                   by `;`. Empty for a Miner's Recipe — a Node is its input.
-#   outputs         Items produced per craft, same form. Never empty.
+#   outputs         Items produced per craft, same form. Empty only for a
+#                   generator's Recipe: what a Steam Boiler produces is Power, and
+#                   Power is not an Item. Which of these two columns a Recipe must
+#                   fill therefore depends on the role of the Machine that runs it,
+#                   and machines.csv is where the pairing is checked.
 #   seconds         How long one craft takes, in seconds of game time. Written in
 #                   decimal because that is how a human reasons about a rate;
 #                   parsed to an exact fixed-point quantity, never a float.
@@ -18,5 +22,7 @@
 # naming it in a Recipe and nothing more.
 #
 id,display_name,inputs,outputs,seconds
+burn_coal,Burn Coal,coal:1,,2
+mine_coal,Mine Coal,,coal:1,1.5
 mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 smelt_iron_plate,Smelt Iron Plate,iron_ore:2,iron_plate:1,3.2

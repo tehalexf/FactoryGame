@@ -13,17 +13,29 @@
 #                             Its Recipe must have no inputs; the Node is the
 #                             input.
 #                   crafter — consumes Belt-fed inputs. Its Recipe must have at
-#                             least one input.
+#                             least one input and at least one output.
+#                   generator — burns a Belt-fed fuel and supplies the one Power
+#                             grid. Its Recipe is the fuel and the burn time, and
+#                             must have no outputs, because Power is not an Item.
+#                             All three generator classes (Steam, Electric, Exotic)
+#                             are this one role; they differ in fuel chain and
+#                             failure mode, which are rows rather than code.
 #   footprint_x     Tiles occupied, on the 2 m grid. DESIGN.md caps Machines at
 #   footprint_z     4x4; Belts are 1x1.
-#   power_draw_kw   Demand on the one Power grid when running. Shortfall
-#                   throttles rather than stops (DESIGN.md).
+#   power_draw_kw   Demand on the one Power grid when running. Shortfall throttles
+#                   every Machine proportionally rather than stopping any of them
+#                   (DESIGN.md). Must be 0 for a generator.
+#   power_supply_kw What this Machine adds to the one Power grid while it is burning
+#                   its fuel. Must be 0 for anything that is not a generator: a
+#                   Machine either feeds the grid or draws from it.
 #   health          Machines are mortal. Hit points before destruction.
 #   max_depth       Deepest Node tier this Machine can reach. 0 for anything
 #                   that is not a Miner — greater Depth is more valuable ore,
 #                   more Power and more Heat.
 #   recipe_id       The Recipe in recipes.csv this Machine runs. Must exist.
 #
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id
-miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore
-smelter_mk1,Smelter Mk1,crafter,3,3,180,500,0,smelt_iron_plate
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id
+coal_miner_mk1,Coal Miner Mk1,miner,2,2,120,0,400,1,mine_coal
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,smelt_iron_plate
+steam_boiler_mk1,Steam Boiler Mk1,generator,3,2,0,600,450,0,burn_coal

@@ -20,10 +20,17 @@ enum Role {
 	MINER = 0,
 	## Consumes Belt-fed inputs. Its Recipe has at least one.
 	CRAFTER = 1,
+	## Burns a Belt-fed fuel and supplies the one Power grid. Its Recipe is the fuel
+	## and the burn time; Power is not an Item, so the Recipe produces nothing.
+	##
+	## All three generator classes GLOSSARY.md names — Steam, Electric, Exotic — are
+	## this one Role. They differ in their fuel chain and in how they fail, which are
+	## a Recipe and a row in a table, not a second simulation.
+	GENERATOR = 2,
 }
 
 ## Spelling of each Role in the file, indexed by the enum value.
-const ROLE_NAMES: Array = ["miner", "crafter"]
+const ROLE_NAMES: Array = ["miner", "crafter", "generator"]
 
 ## Largest footprint DESIGN.md allows, in tiles on the 2 m grid.
 const MAX_FOOTPRINT_TILES: int = 4
@@ -38,6 +45,12 @@ var footprint_z: int = 0
 
 ## Demand on the one Power grid while running.
 var power_draw_kw: int = 0
+
+## What this Machine adds to the one Power grid while it is burning its fuel. 0 for
+## anything that is not a generator — a Machine either feeds the grid or draws from
+## it, never both, which is what keeps the grid a sum of two columns rather than a
+## network of flows.
+var power_supply_kw: int = 0
 
 ## Hit points before destruction.
 var health: int = 0
@@ -70,6 +83,10 @@ func is_miner() -> bool:
 	return role == Role.MINER
 
 
+func is_generator() -> bool:
+	return role == Role.GENERATOR
+
+
 ## Feeds this definition into a hash, in a fixed order. `recipe_id` goes in rather
 ## than `recipe_index` so the digest describes what the file says, not how the
 ## loader happened to number things.
@@ -80,6 +97,7 @@ func feed_into(hasher: StateHasher) -> void:
 	hasher.feed_int(footprint_x)
 	hasher.feed_int(footprint_z)
 	hasher.feed_int(power_draw_kw)
+	hasher.feed_int(power_supply_kw)
 	hasher.feed_int(health)
 	hasher.feed_int(max_depth)
 	hasher.feed_text(recipe_id)

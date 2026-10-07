@@ -35,6 +35,14 @@ const STARTING_MINER: String = "miner_mk1"
 const STARTING_SMELTER: String = "smelter_mk1"
 const STARTING_BELT_TILES: int = 4
 
+## The opening Power chain: a Coal Miner on the Map's coal, a short Belt, and the Steam
+## Boiler that burns what the Belt delivers. Here so that the one Power grid is something
+## a player can watch rather than something only a test knows about — and deleted by the
+## Build Gun ticket along with the rest of the opening line.
+const STARTING_COAL_MINER: String = "coal_miner_mk1"
+const STARTING_BOILER: String = "steam_boiler_mk1"
+const STARTING_FUEL_BELT_TILES: int = 2
+
 var _simulation: Simulation = null
 var _tick_pump: TickPump = null
 var _definition_watcher: DefinitionWatcher = null
@@ -170,11 +178,60 @@ func _opening_line_actions() -> Array:
 		belt_entry.x + STARTING_BELT_TILES - 1, belt_entry.y, belt_entry.z
 	)
 
-	return [
+	var actions: Array = [
 		InputAction.build_machine(0, miner, anchor),
 		InputAction.build_belt(0, belt_entry, belt_exit),
 		InputAction.build_machine(0, smelter, Vector3i(belt_exit.x + 1, belt_exit.y, belt_exit.z)),
 	]
+	actions.append_array(_opening_power_actions(definitions))
+	return actions
+
+
+## The Input Actions that lay the opening Power chain, or none when the Map or the content
+## cannot support one.
+##
+## The same shape as the production line and for the same reason: a Coal Miner against the
+## ground it can mine, a Belt out of its output port, and the Boiler the Belt runs into.
+## Every number comes from the queries — the footprints from `content/machines.csv`, the
+## Node from the Map — so there is no second copy of either here.
+func _opening_power_actions(definitions: Definitions) -> Array:
+	var coal_miner: int = definitions.machine_index(STARTING_COAL_MINER)
+	var boiler: int = definitions.machine_index(STARTING_BOILER)
+	if coal_miner == -1 or boiler == -1:
+		return []
+
+	var node: int = _node_for(definitions, STARTING_COAL_MINER)
+	if node == -1:
+		return []
+
+	var footprint: MachineDefinition = definitions.machine(STARTING_COAL_MINER)
+	var anchor: Vector3i = _simulation.query_node_tile(node)
+	var belt_entry: Vector3i = Vector3i(anchor.x + footprint.footprint_x, anchor.y, anchor.z)
+	var belt_exit: Vector3i = Vector3i(
+		belt_entry.x + STARTING_FUEL_BELT_TILES - 1, belt_entry.y, belt_entry.z
+	)
+
+	return [
+		InputAction.build_machine(0, coal_miner, anchor),
+		InputAction.build_belt(0, belt_entry, belt_exit),
+		InputAction.build_machine(0, boiler, Vector3i(belt_exit.x + 1, belt_exit.y, belt_exit.z)),
+	]
+
+
+## The first Node on the Map a given Miner can actually work, or -1. Asked of the Recipe
+## rather than assumed from a Node's index, because which Resource a Miner takes is data.
+func _node_for(definitions: Definitions, machine_id: String) -> int:
+	var definition: MachineDefinition = definitions.machine(machine_id)
+	if definition == null:
+		return -1
+	var recipe: RecipeDefinition = definitions.recipe_at(definition.recipe_index)
+	if recipe == null:
+		return -1
+	for node: int in range(_simulation.query_node_count()):
+		for slot: int in range(recipe.output_count()):
+			if definitions.item_id(recipe.output_item(slot)) == _simulation.query_node_resource(node):
+				return node
+	return -1
 
 
 ## The watcher that notices a saved content file. Replaceable so a test can point it

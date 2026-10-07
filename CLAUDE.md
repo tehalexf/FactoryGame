@@ -235,15 +235,21 @@ arrays, never as an object per Item.
   edge (an input port) or at the *entry tile* of another Belt. No inserter entity exists
   (DESIGN.md), there is no stored connection to go stale, and side-loading onto the
   middle of a Belt is deliberately not a connection.
-- **Open: `content/machine_ports.csv` is not yet the Simulation's authority.** #19 added
+- **Open: `content/machine_ports.csv` is still not the Simulation's authority.** #19 added
   that file and the mesh markers that match it, declaring an exact edge and tile for each
-  port. The Simulation currently accepts a Belt against *any* footprint edge tile, which
-  is looser. It cannot simply adopt the file yet: the table describes ten Machine bodies
-  while `content/machines.csv` defines two, so loading it under its own documented rule
-  ("machine_id must name a row in machines.csv") would fail the whole content load. The
-  ticket that brings the remaining Machines into `machines.csv` should make `Definitions`
-  read the ports table and tighten `_load_from_port` and `_hand_off` to the declared
-  edge, tile and direction — one declaration, not two.
+  port. The Simulation accepts a Belt against *any* footprint edge tile, which is looser.
+  It still cannot adopt the file: the table describes ten Machine bodies and
+  `content/machines.csv` now defines four, and `coal_miner_mk1` has no row in it at all,
+  so loading it under its own documented rule ("machine_id must name a row in
+  machines.csv") would still fail the whole content load. The ticket that brings the
+  remaining Machines into `machines.csv` should make `Definitions` read the ports table
+  and tighten `_load_from_port` and `_hand_off` to the declared edge, tile and direction —
+  one declaration, not two.
+- **Open: `coal_miner_mk1` has no generated mesh.** #7 added it to `machines.csv` because
+  a Steam Boiler burns coal and nothing else mines any, and left
+  `content/machine_bodies.csv` alone: a row there means a `.glb` to generate and commit,
+  and the placeholder renderer draws every Machine as a box regardless. The art pass adds
+  the body, the ports and the mesh.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
@@ -280,6 +286,53 @@ same Factory in two orders and comparing every Item position tick by tick.
 - A tick runs **Belts before Machines**: an Item delivered this tick is usable this
   tick, and an Item produced this tick is collected on the next, which is the same rule a
   freshly built Machine follows.
+
+## The one Power grid
+
+One grid, no topology. Total supply against total demand, globally — no wires, no
+sub-networks, no distance, and nothing in `sim/` that looks like a graph. That is
+GLOSSARY.md and DESIGN.md, and it is the whole model.
+
+- **A shortfall throttles every Machine by the same proportion.** Nothing is halted
+  and nothing is singled out, which is what makes a brownout read as the Factory
+  sagging together rather than as one Machine mysteriously dead. A Belt running out
+  of a throttled Miner visibly thins, and that is the gauge a player reads first.
+- **The throttle is a duty cycle over whole ticks, not a fraction of one.** Every
+  tick the grid banks `min(supply, demand)` kilowatt-ticks and spends `demand` to buy
+  the whole Factory one tick of work. On a grid supplying 1 against a demand of 3
+  that buys a tick every third tick — exactly a third rate, with the remainder
+  carried in an integer rather than thrown away. Over any window a Machine has
+  advanced exactly `floor(ticks * supply / demand)` ticks: **one floor, applied once
+  to the total, never once per tick.** A fixed-point ratio added up every tick would
+  lose up to 2⁻¹⁶ of a tick each time and leave a 40-hour Factory quietly
+  under-producing, so there is no fixed point in the mechanism at all.
+- **`query_power_ratio` is for the gauge and the Simulation never reads it back.**
+  It is the one place Power touches fixed point and it floors, so a third reads as
+  0.33332…. Because the throttle is driven by the two integers instead, that rounding
+  cannot reach the state hash or move a single Item.
+- **Demand counts a Machine only while it would actually work.** A starved Smelter is
+  not consuming, so it is not on the grid: cutting a Belt lightens the load rather
+  than browning out the Machines that are still fed. `_machine_would_work` is the one
+  predicate behind what the grid charges for, what advances, and what a query calls
+  starved — three answers that must never disagree.
+- **A Machine either feeds the grid or draws from it, never both.** `role=generator`
+  supplies `power_supply_kw` and must draw nothing; everything else draws and must
+  supply nothing. A Machine drawing nothing is never throttled, which is what stops a
+  brownout from throttling the very Boiler that would end it.
+- **A generator is a crafter that makes nothing.** Its Recipe is its fuel and its
+  burn time, and it has no outputs, because Power is not an Item and never will be —
+  there are no fluids and no steam on a Belt (DESIGN.md). Which of `inputs` and
+  `outputs` a Recipe must fill therefore depends on the role of the Machine running
+  it, so that pairing is checked in `_check_machines_against_recipes` and the error
+  names the Machine's row. All three generator classes GLOSSARY.md names — Steam,
+  Electric, Exotic — are this one role, differing in fuel chain and failure mode,
+  which are rows rather than code.
+- **`power.baseline_supply_kw` exists because the Factory would otherwise deadlock.**
+  Machines are throttled by the grid, a Steam Boiler burns Belt-delivered coal, and
+  coal needs a Miner: a Factory starting on nothing but its own generators could
+  never turn the first wheel. The baseline is the Nest's own small plant, tuned to
+  exactly one Miner and one Smelter, so the first Machine beyond the opening line is
+  the moment Power becomes the player's problem.
 
 ## Determinism rules
 

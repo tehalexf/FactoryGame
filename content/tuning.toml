@@ -48,3 +48,14 @@ items_per_tile = 4
 # fills up against when a Machine cannot keep up, and small enough that a stalled
 # line is obvious rather than absorbed.
 input_buffer_crafts = 2
+
+[power]
+
+# The baseline supply on the one Power grid, in kilowatts, before a single generator
+# is built. The Nest arrives with its own small plant, and it has to: Machines are
+# throttled by the grid, a Steam Boiler burns Belt-delivered coal, and mining coal
+# needs a Miner — so a Factory starting on nothing but its own generators could
+# never turn the first wheel. This is exactly enough for one Miner and one Smelter
+# (120 + 180 kW) and not one watt more, so the first Machine beyond that opening
+# line is the moment Power becomes the player's problem.
+baseline_supply_kw = 300

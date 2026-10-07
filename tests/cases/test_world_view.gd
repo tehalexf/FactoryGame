@@ -84,8 +84,8 @@ func test_the_opening_line_is_built_once_and_not_once_a_tick() -> void:
 	var main: Main = Main.new()
 	for frame: int in range(10):
 		main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
-	assert_eq(main.simulation().query_machine_count(), 2)
-	assert_eq(main.simulation().query_belt_count(), 1)
+	assert_eq(main.simulation().query_machine_count(), 4, "the production line and the Power chain")
+	assert_eq(main.simulation().query_belt_count(), 2, "one Belt each")
 	main.free()
 
 
@@ -167,13 +167,85 @@ func test_the_hud_names_a_stalled_belt_and_a_starved_machine() -> void:
 	view.free()
 
 
+func test_the_hud_shows_the_power_grids_supply_demand_and_ratio() -> void:
+	# The gauge the Power ticket exists to put on screen. Read off the Simulation every
+	# frame, never remembered, so it cannot disagree with the grid it describes.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), sim.query_node_tile(0)
+		),
+	])
+	sim.step([])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("power 300/120 kW"),
+		"a player must be able to read supply against demand, got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("100%"),
+		"and the ratio the two of them come to, got %s" % view.hud_text()
+	)
+	view.free()
+
+
+func test_the_hud_reads_a_brownout_as_a_fraction_of_the_power_asked_for() -> void:
+	# Three Miners at 120 kW on a 300 kW baseline is five sixths of what the Factory asked
+	# for, and the HUD rounds that to a whole percent for the player.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	var coal_miner: int = sim.query_definitions().machine_index("coal_miner_mk1")
+	sim.step([
+		InputAction.build_machine(0, miner, sim.query_node_tile(0)),
+		InputAction.build_machine(0, miner, sim.query_node_tile(1)),
+		InputAction.build_machine(0, coal_miner, sim.query_node_tile(2)),
+	])
+	sim.step([])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("power 300/360 kW"),
+		"got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("83%"),
+		"five sixths is 83%% of the Power asked for, got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("throttled"),
+		"and every Machine on the short grid must say so, got %s" % view.hud_text()
+	)
+	view.free()
+
+
 func test_the_root_opens_a_whole_line_so_there_is_something_to_watch() -> void:
 	var main: Main = Main.new()
 	main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
 	var sim: Simulation = main.simulation()
-	assert_eq(sim.query_belt_count(), 1, "a Run opens with one Belt, until the Build Gun")
-	assert_eq(sim.query_machine_count(), 2, "a Miner and the Smelter it feeds")
+	assert_eq(sim.query_belt_count(), 2, "an ore Belt and a fuel Belt, until the Build Gun")
+	assert_eq(sim.query_machine_count(), 4, "a Miner, its Smelter, a Coal Miner and a Boiler")
 	assert_eq(sim.query_machine_id(1), "smelter_mk1")
+	assert_eq(sim.query_machine_id(3), "steam_boiler_mk1")
+	main.free()
+
+
+func test_the_run_opens_with_a_fuel_line_and_a_burning_boiler() -> void:
+	# Power has to be visible in the running game, not only in a test, so the opening
+	# Factory includes the whole chain: a Coal Miner on the Map's coal, a Belt, and the
+	# Steam Boiler that burns what it delivers.
+	var main: Main = Main.new()
+	for frame: int in range(400):
+		main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
+	var sim: Simulation = main.simulation()
+	assert_eq(sim.query_machine_count(), 4, "a Miner, a Smelter, a Coal Miner and a Boiler")
+	assert_eq(sim.query_power_supply_kw(), 900, "the baseline plant and a burning Boiler")
+	assert_true(
+		sim.query_power_demand_kw() >= 240,
+		"both Miners are working, whatever the Smelter happens to be doing"
+	)
+	assert_eq(sim.query_power_ratio(), Fixed.ONE, "so the opening Factory is in surplus")
+	assert_false(sim.query_power_is_in_deficit())
 	main.free()
 
 
