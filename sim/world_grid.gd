@@ -159,6 +159,17 @@ static func direction_step(direction: int) -> Vector3i:
 	return DIRECTION_STEPS[direction]
 
 
+## The grid direction nearest to a facing angle in turns.
+##
+## Yaw 0 looks down -z — Godot's forward, and direction 3 in the order above — and yaw
+## increases turning left, which walks *backwards* through that order. Rounded to the
+## nearer of two when the angle falls between, so a player facing roughly north gets north
+## rather than whichever way the arithmetic happened to floor.
+static func direction_from_turns(turns: int) -> int:
+	var quarters: int = Fixed.round_to_int(Fixed.div(turns, Fixed.QUARTER_TURN))
+	return posmod(3 - quarters, DIRECTION_COUNT)
+
+
 ## The direction from one tile to another, or -1 when they do not lie on one axis
 ## of one layer. Two identical tiles have no direction either: a run of one tile
 ## still has to be aimed.
