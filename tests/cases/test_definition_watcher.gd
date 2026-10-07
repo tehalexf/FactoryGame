@@ -38,7 +38,7 @@ const OTHER_TUNING: String = """
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -52,6 +52,7 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -110,6 +111,7 @@ func before_each() -> void:
 	_write(Definitions.RECIPES_FILE, RECIPES)
 	_write(Definitions.TUNING_FILE, TUNING)
 	_write(Definitions.WAVES_FILE, WAVES)
+	_write(Definitions.DELIVERIES_FILE, DELIVERIES)
 
 
 func after_each() -> void:
@@ -118,6 +120,7 @@ func after_each() -> void:
 		Definitions.RECIPES_FILE,
 		Definitions.TUNING_FILE,
 		Definitions.WAVES_FILE,
+		Definitions.DELIVERIES_FILE,
 	]:
 		DirAccess.remove_absolute("%s/%s" % [DIR, file_name])
 	DirAccess.remove_absolute(DIR)
@@ -340,3 +343,12 @@ func test_a_frame_with_no_tick_holds_the_edit_until_there_is_one() -> void:
 	main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
 	assert_eq(main.simulation().query_definition_generation(), 1, "and it was not dropped")
 	main.free()
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
+"""

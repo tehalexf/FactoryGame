@@ -67,6 +67,8 @@ static func refusal_text(refusal: int) -> String:
 			return "not enough materials"
 		Simulation.Refusal.NOTHING_THERE:
 			return "nothing there to demolish"
+		Simulation.Refusal.CONTENT_IS_LOCKED:
+			return "not unlocked — deliver to the Nest"
 		Simulation.Refusal.NOT_DAMAGED:
 			return "already whole"
 		Simulation.Refusal.OUT_OF_REACH:

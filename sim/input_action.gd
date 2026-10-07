@@ -127,6 +127,21 @@ enum Kind {
 	## other three see land. Pulled while a Wave is already coming it is refused as a silent
 	## no-op; `Simulation.query_call_wave_early_refusal` is what says why, beforehand.
 	CALL_WAVE_EARLY = 11,
+	## Hand what you are carrying over to the Nest, against the Delivery it is waiting on.
+	## args = [].
+	##
+	## No arguments, for the reason the lever has none: there is one Delivery open at a
+	## time and one bill to pay, so the only thing a player chooses is *when* to walk over
+	## — and what crosses the counter is everything the open tier is still waiting for and
+	## the player is carrying, clamped to the bill. A count would be a second thing for a
+	## player to get wrong about an act that is already physical.
+	##
+	## Progression is physical (GLOSSARY.md): there is no research menu and no science
+	## resource, so unlocking the next tier of Machines, Gear components and Stratagems is
+	## this intent, performed standing at the Nest. Handed over out of reach, with nothing
+	## the Nest wants, or at a Depth the next tier is gated above, it is refused as a
+	## silent no-op; `Simulation.query_delivery_refusal` is what says why, beforehand.
+	DELIVER_TO_NEST = 12,
 	## Build one tile of Wall. args = [tile x, tile y, tile z].
 	##
 	## One tile rather than a run, unlike `BUILD_BELT`. A Belt is a run because Items travel
@@ -138,7 +153,7 @@ enum Kind {
 	## in `content/machines.csv`. It is not a Machine (DESIGN.md lists it alongside the Nest
 	## and the Belt), it runs no Recipe, and its one tier's hit points live in
 	## `content/tuning.toml`.
-	BUILD_WALL = 12,
+	BUILD_WALL = 13,
 	## Hold the Pneumatic Wrench on whatever is standing on a tile, mending it.
 	## args = [tile x, tile y, tile z].
 	##
@@ -151,7 +166,7 @@ enum Kind {
 	## A tile rather than an index, exactly as `DEMOLISH` carries one: a player aims a tool at
 	## a thing, and an index into the Simulation's arrays is not something anything outside it
 	## may hold. Any tile of a Machine's footprint will do, and a Wall occupies one tile.
-	REPAIR = 13,
+	REPAIR = 14,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -262,6 +277,11 @@ static func build_machine(
 ## Wave is whatever the Factory's Heat has earned, and the only thing being chosen is when.
 static func call_wave_early(acting_player: int) -> InputAction:
 	return InputAction.new(Kind.CALL_WAVE_EARLY, acting_player)
+
+
+## Hands a player's goods over to the Nest, against the Delivery it is waiting on.
+static func deliver_to_nest(acting_player: int) -> InputAction:
+	return InputAction.new(Kind.DELIVER_TO_NEST, acting_player)
 
 
 static func demolish(acting_player: int, tile: Vector3i) -> InputAction:

@@ -48,14 +48,22 @@ look_sensitivity_turns_per_1000_pixels = 0.2
 # down on. Change this and the whole sense of scale changes with it.
 eye_height_metres = 1.7
 
-# How many of each Item a player starts a Run carrying.
+# What a player starts a Run carrying, as `item:count`, several separated by `;`. The
+# same form a Recipe's inputs and a Machine's `build_cost` use. Empty opens a Run
+# empty-handed; every Item named must be one some Recipe mentions.
 #
-# A scaffold, and labelled as one: Delivery progression (DESIGN.md, milestone 5) is
-# what will really decide where a player's materials come from, and this key goes away
-# when it lands. Until then it is what makes the Build Gun usable at all — building
-# spends a Machine's `build_cost` and demolishing returns it, so a Run has to open with
-# something in hand.
-starting_stock_per_item = 200
+# **Exactly the opening line and two plates over.** The Machines a Run opens with are the
+# ones no Delivery tier names — the Miner (8), the Smelter (12), the coal Miner (8) and
+# the Steam Boiler (16) — and the Ammo Press (14) and MG Turret (20) that the first
+# Delivery unlocks: 78 plates for the whole competent Factory, against 80 here. Belts are
+# free and demolishing refunds in full, so laying the Factory out wrong costs ticks and
+# not materials (issue #1, user story 7).
+#
+# This replaces `starting_stock_per_item`, which granted 200 of every Item in the game and
+# said in its own comment that Delivery progression would decide where materials really
+# come from. It does: past this bill, what a player can build is what the Nest has
+# unlocked, and a Run's materials come out of the Factory.
+starting_stock = "iron_plate:80"
 
 [belt]
 
@@ -170,6 +178,13 @@ baseline_supply_kw = 300
 # that is still going twenty minutes later, which is the whole of this game's thesis.
 health = 6000
 
+# How close a player has to stand to the Nest to hand a Delivery over, in metres from the
+# edge of its footprint. Progression is physical (GLOSSARY.md), so handing goods over is a
+# thing done at a place rather than through a menu — but a Delivery is also the one
+# interaction a player makes while a Wave is chewing on the Nest, so the reach is a couple
+# of tiles rather than a pixel-perfect spot to stand on.
+delivery_reach_metres = 5
+
 [wave]
 
 # Wave scheduling. **Heat decides when and how much** (GLOSSARY.md, DESIGN.md); these
@@ -193,15 +208,18 @@ telegraph_seconds = 12
 # both legible and what makes a chokepoint work.
 spawn_interval_seconds = 0.5
 
-# What calling a Wave early pays, as a count of every Item granted to the player who
-# pulled the lever. The reward for confidence, and the reason a group argues about
-# whether they are ready: a called Wave is the same Wave, arriving while the Factory is
-# still cooler than it would have been, in exchange for the materials to meet it.
+# What calling a Wave early pays, as a count of each Item named in
+# `player.starting_stock`, granted to the player who pulled the lever. The reward for
+# confidence, and the reason a group argues about whether they are ready: a called Wave is
+# the same Wave, arriving while the Factory is still cooler than it would have been, in
+# exchange for the materials to meet it.
 #
-# A scaffold in the same sense `player.starting_stock_per_item` is: Delivery progression
-# (DESIGN.md, milestone 5) is what will really decide what a reward looks like. Until
-# then materials are the thing a player actually wants mid-Run, and granting them uses
-# the same stock the Build Gun spends, so a bounty is immediately spendable on defence.
+# Paid in the opening bill's own Items rather than in a count of every Item in the game,
+# which is what it used to be. Two reasons. The lever buys the means to *defend*, so what
+# it pays should be build materials and not a handful of everything; and a bounty paid in
+# every Item would have conjured exactly the goods `content/deliveries.csv` asks for, so a
+# player could buy a Delivery tier off the lever without a Factory. Progression a lever can
+# buy is not progression.
 call_early_bounty_per_item = 25
 
 [heat]

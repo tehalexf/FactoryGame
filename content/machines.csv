@@ -68,6 +68,16 @@
 #                   Demolishing returns this in full, so a layout stays cheap to
 #                   iterate on (issue #1, user story 7).
 #
+# **There is no `locked` column, deliberately.** A Machine is locked because a tier of
+# `content/deliveries.csv` names it in `unlocks_machines`, so the Machines a Run opens with
+# are exactly the ones no tier names. One authority: moving a Machine between tiers, or
+# taking it off the chain entirely, is an edit to that file alone.
+#
+# The two deeper Miners are this milestone's worked example of that. `miner_mk2` is what the
+# second Delivery tier unlocks and `miner_mk3` what the third does, and each is the only way
+# to reach the Depth the tier after it is gated at — so the chain pays for the tool that
+# opens its own next gate.
+#
 id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
 ammo_press_mk1,Ammo Press Mk1,crafter,2,3,150,0,450,0,0,0,0,make_ammunition,iron_plate:14
 coal_miner_mk1,Coal Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_coal,iron_plate:8

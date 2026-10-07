@@ -49,12 +49,14 @@ func _content(waves: String = ONE_BREAKER, overrides: Array = []) -> Definitions
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
-		tuning,
+		tuning.replace(SHIPPED_STOCK, STOCKED),
 		waves,
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -185,8 +187,9 @@ func test_a_destroyed_machine_takes_its_build_cost_and_its_contents_with_it() ->
 	var sim: Simulation = _open_sim(ONE_BREAKER, ONE_SHOT_BREAKER)
 	var ground: int = WorldGrid.GROUND_LAYER
 	_build(sim, "miner_mk1", Vector3i(14, ground, 0))
-	# player.starting_stock_per_item is 200, the lever paid wave.call_early_bounty_per_item
-	# of 25, and miner_mk1 costs iron_plate:8.
+	# This file's player.starting_stock is iron_plate:200, the lever paid
+	# wave.call_early_bounty_per_item of 25 in that bill's one Item, and miner_mk1 costs
+	# iron_plate:8.
 	assert_eq(sim.query_player_item(0, "iron_plate"), 217, "the build cost was spent")
 
 	var mined: int = _step_until(
@@ -533,8 +536,8 @@ func _mend_content(waves: String = ONE_CRAWLER) -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml")
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
 	return Definitions.parse(
-		MEND_MACHINES, MEND_RECIPES, tuning, waves,
-		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv"
+		MEND_MACHINES, MEND_RECIPES, tuning.replace(SHIPPED_STOCK, STOCKED), waves, DELIVERIES,
+		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv", "deliveries.csv"
 	)
 
 
@@ -858,3 +861,21 @@ func test_a_damaged_factory_round_trips_through_a_save() -> void:
 		loaded.simulation.query_tile_obstructs_enemies(Vector3i(6, ground, 6)),
 		"and the fields rebuild from the restored Walls rather than being carried in the file"
 	)
+
+
+# ── Fixtures that keep progression out of the way ─────────────────────────────
+# The shipped Delivery chain and the shipped opening stock are balance, and neither is what
+# this file asserts: a Run opens holding exactly the 80 plate one line costs
+# (`content/tuning.toml`), which is not enough to build and rebuild the way these tests do.
+# So the stock becomes an explicit 200 plate — plate only, because `call_early_bounty_per_item`
+# pays out in the opening bill's Items and an ore bounty would put ore in a player's pockets
+# that the destruction tests need to come from a Miner — and the tier locks nothing, so
+# nothing here is refused as `CONTENT_IS_LOCKED`. `test_delivery.gd` is where the real chain
+# and the real bill are asserted.
+
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const STOCKED: String = 'starting_stock = "iron_plate:200"'
+
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""

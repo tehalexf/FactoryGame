@@ -54,7 +54,7 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -68,6 +68,7 @@ pitch_degrees = 68
 baseline_supply_kw = 1
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -104,7 +105,7 @@ reach_metres = 4
 
 
 func _one_third_content() -> Definitions:
-	return Definitions.parse(THIRD_MACHINES, THIRD_RECIPES, THIRD_TUNING, WAVES)
+	return Definitions.parse(THIRD_MACHINES, THIRD_RECIPES, THIRD_TUNING, WAVES, DELIVERIES)
 
 
 ## The shipped Wave composition, inline so the fixture is a complete definition set. A
@@ -367,7 +368,7 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -381,6 +382,7 @@ pitch_degrees = 68
 baseline_supply_kw = %d
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -414,7 +416,8 @@ health = 240
 repair_points_per_second = 60
 reach_metres = 4
 """ % baseline_kw,
-		WAVES
+		WAVES,
+		DELIVERIES
 	)
 
 
@@ -588,3 +591,12 @@ func test_the_baseline_plant_is_what_lets_a_factory_start_at_all() -> void:
 	assert_eq(sim.query_power_supply_kw(), 300, "the Nest's own plant, with no generator built")
 	assert_false(sim.query_power_is_in_deficit(), "which covers one Miner")
 	assert_eq(sim.query_machine_output(0, "coal"), 1, "so the first coal can be mined")
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
+"""

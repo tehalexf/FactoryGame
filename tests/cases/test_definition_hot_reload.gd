@@ -61,7 +61,7 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -75,6 +75,7 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -124,10 +125,12 @@ func _definitions(walk_speed: String) -> Definitions:
 		RECIPES,
 		"[player]\nwalk_speed_metres_per_second = %s\n" % walk_speed + OTHER_TUNING,
 		WAVES,
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -179,7 +182,7 @@ func test_the_same_definitions_produce_the_same_starting_hash() -> void:
 func test_definitions_that_failed_to_load_are_reported_and_nothing_is_invented() -> void:
 	# A Run must not start on a broken definition set, and the way it refuses is by
 	# saying so rather than by substituting plausible numbers.
-	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n", WAVES)
+	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n", WAVES, DELIVERIES)
 	var sim: Simulation = Simulation.new(SEED, PLAYERS, broken)
 
 	assert_true(sim.query_definition_errors().size() > 0)
@@ -255,7 +258,7 @@ func test_a_reload_of_a_broken_definition_set_is_refused() -> void:
 	var before: int = sim.hash()
 
 	var broken: Definitions = Definitions.parse(
-		MACHINES, RECIPES, "[player]\nwalk_speed = oops\n", WAVES
+		MACHINES, RECIPES, "[player]\nwalk_speed = oops\n", WAVES, DELIVERIES
 	)
 	sim.step([InputAction.reload_definitions(0, broken)])
 
@@ -346,3 +349,12 @@ func test_a_replay_under_the_same_definitions_is_not_refused() -> void:
 	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording, same)
 	assert_false(divergence.definitions_mismatch)
 	assert_true(divergence.is_identical, divergence.describe())
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
+"""

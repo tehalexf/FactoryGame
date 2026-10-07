@@ -1,0 +1,72 @@
+# DEEP FOUNDRY — Delivery tiers.
+#
+# Progression is physical. You carry goods to the Nest — or run a Belt into it — and
+# completing a Delivery unlocks the next tier of Machines, Gear components and
+# Stratagems (GLOSSARY.md). There is no research menu and no science resource, and
+# there is no column here for a number, so an unlock can only ever change what a
+# player is able to *build*. Adding a tier is a row. Edit this file while the game is
+# running and the change applies when you save it.
+#
+# The tiers are a **chain**, walked in id order: the next Delivery is the first row the
+# Run has not completed. So write the ids so that they sort into the order you mean
+# them to be offered in — `t01_`, `t02_`, … — because sorting by id is what fixes that
+# order, and it therefore reaches the state hash. Nothing is skipped: a tier whose
+# Depth the Factory has not reached blocks the chain until a Miner reaches it, which is
+# the whole of "Depth gates what is possible to deliver".
+#
+# Columns:
+#   id              Identifier. Lowercase letters, digits and _ only. Save files record
+#                   completed tiers by this, so renaming one is a breaking change.
+#   display_name    What the player sees.
+#   min_depth       The Depth a Node has to be worked at before this tier can be
+#                   delivered. Compared against the deepest Node the Factory is
+#                   actually mining — so reaching Depth 2 means building a Miner whose
+#                   `max_depth` reaches 2 and standing it on a Depth 2 Node, not
+#                   ticking a box. Must not decrease down the chain: a tier that is
+#                   shallower than the one before it could never be the thing holding
+#                   the chain up, and a file saying otherwise is a file somebody
+#                   misordered.
+#   goods           What the Nest wants, as `item:count`, several separated by `;` —
+#                   the same form a Recipe's inputs and a Machine's `build_cost` use.
+#                   Every Item named must be one some Recipe mentions, because that is
+#                   the only way an Item comes to exist. Never empty: a tier that costs
+#                   nothing is not progression.
+#   unlocks_machines  Machines this tier opens up, by id, several separated by `;`.
+#                   Each must name a row in machines.csv. **A Machine is locked
+#                   because some tier here names it** — the Machines a Run opens with
+#                   are exactly the ones no tier names, so there is no `locked` column
+#                   in machines.csv and no second authority to fall out of step.
+#   unlocks_gear    Gear components this tier opens up, by id. Gear is modular
+#                   (GLOSSARY.md) and the frames and components themselves arrive in a
+#                   later milestone; what a Run has unlocked is recorded, hashed and
+#                   saved from now, because that is the half that cannot be retrofitted.
+#   unlocks_stratagems  Stratagems this tier opens up, by id. Same standing as the Gear
+#                   list — the Silo, the Charges and the Painting arrive later.
+#
+# Any of the three unlock columns may be empty. A row with all three empty is an error:
+# a Delivery that unlocks nothing is a bill a player pays for nothing.
+#
+# Where the chain stands at Milestone 1, and why:
+#
+#   The keystone loop is not behind the chain. A Run opens able to build all of it — the
+#   Miner, the Smelter, the coal Miner, the Steam Boiler, the Ammo Press and the MG Turret,
+#   78 plates against the 80 `player.starting_stock` grants — because DESIGN.md's whole
+#   thesis is that a fed Turret behind a production chain is what a Run is, and a game that
+#   made a player earn the right to defend themselves before the first Wave would be a
+#   different game. What the chain sells is Depth, which is the other direction the Factory
+#   can grow in.
+#
+#   `t01_munitions` wants coal, so the first thing a player does is run a Belt out of the
+#   coal Miner and into the Nest and watch the Factory pay for its own progression.
+#   `t02_deep_mining` wants plate and Ammunition, so it competes directly with the magazine
+#   the player is trying to keep full — and it unlocks Miner Mk2, the Miner that reaches the
+#   Depth 2 seam. `t03_deep_survey` then sits at Depth 2, which only a Mk2 actually working
+#   that seam reaches, and unlocks Mk3 for the Depth 3 one: **each tier pays for the tool
+#   that opens the gate on the tier after it**, which is the whole shape of "Depth gates what
+#   is possible to deliver". And the deep seam is the one that opens new Breaches, so the
+#   chain is also what talks a player into being hunted from a second direction.
+#
+id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_munitions,Munitions Licence,1,coal:20,,mg_drum_magazine,
+t02_deep_mining,Deep Mining Licence,1,iron_plate:120;ammunition:60,miner_mk2,heavy_barrel;reflex_sight,resupply_drop
+t03_deep_survey,Deep Survey Licence,2,iron_plate:400;coal:200,miner_mk3,hardened_plating,orbital_barrage

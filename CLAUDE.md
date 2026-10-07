@@ -133,11 +133,12 @@ Machines, Recipes and tuning values are **data**, in `content/`:
 content/machines.csv    one row per Machine
 content/recipes.csv     one row per Recipe
 content/waves.csv       one row per tier of Wave composition
+content/deliveries.csv  one row per tier of Delivery progression
 content/tuning.toml     balance numbers that are not per-Machine or per-Recipe
 ```
 
-**Adding a Machine, a Recipe or an Enemy tier to the Waves is a row. It is never a
-code change.** There is no
+**Adding a Machine, a Recipe, an Enemy tier to the Waves or a Delivery tier is a
+row. It is never a code change.** There is no
 registry, no enum and no Item table — the set of Items is exactly the set the
 Recipes mention, interned in sorted order. Every column is documented in the
 header comment of the file it belongs to; read that before adding a row.
@@ -161,9 +162,9 @@ the rows from an export. These files are read with `FileAccess`, not `load()`.
 - A tuning key nothing reads is a **warning**, because a file carrying a number
   that does nothing lies to whoever is tuning it.
 
-`Definitions.load_from_directory` reads all four files and `Definitions.parse` takes all
-four sources, in that order. A missing one is an error naming the path, never an empty
-table — and `game/definition_watcher.gd` digests all four, so editing any of them
+`Definitions.load_from_directory` reads all five files and `Definitions.parse` takes all
+five sources, in that order. A missing one is an error naming the path, never an empty
+table — and `game/definition_watcher.gd` digests all five, so editing any of them
 hot-reloads.
 
 `sim/csv_table.gd` and `sim/toml_document.gd` are the only parsers. Both are
@@ -171,8 +172,9 @@ hand-rolled: Godot ships no TOML parser, and vendoring one into a public repo is
 out (`docs/ASSETS.md`). The TOML subset is sections, `key = value`, comments,
 integers, decimals, quoted strings, `true`/`false` — and nothing else. Arrays,
 inline tables and dates are valid TOML and are refused by name and line number.
-If you need a fifth data file, reuse `CsvTable` rather than writing a parser —
-`content/waves.csv` is the worked example of doing exactly that.
+If you need a sixth data file, reuse `CsvTable` rather than writing a parser —
+`content/waves.csv` and `content/deliveries.csv` are the worked examples of doing
+exactly that.
 
 Rates are written in decimal because that is how a human reasons about them, and
 cross into fixed point exactly once, through `Fixed.from_decimal_string`, which
@@ -789,8 +791,12 @@ they get hunted (DESIGN.md).
   all: a Wave is composed from the Heat the Factory is carrying when it *arrives*, so
   calling early means it arrives while that Heat is lower than it would have been. What it
   costs is the breathing room given up. One trade, no second number to tune. It pays
-  `wave.call_early_bounty_per_item` out of the same stock the Build Gun spends — a scaffold
-  in the same sense `player.starting_stock_per_item` is.
+  `wave.call_early_bounty_per_item` out of the same stock the Build Gun spends, in the
+  Items `player.starting_stock` names rather than in a count of every Item in the game. That
+  changed with #14 for two reasons: the lever buys the means to *defend*, so what it pays is
+  build materials; and a bounty paid in every Item would have conjured exactly the goods
+  `content/deliveries.csv` asks for, so a player could have bought a Delivery tier off the
+  lever without a Factory.
 - **A refused pull is a silent no-op whose hash does not move**, and
   `query_call_wave_early_refusal` is a projection about a pull that has not happened — the
   same arrangement `query_build_refusal` has, and for the same reason: the reason is on
@@ -962,10 +968,26 @@ user story 7).
 **Destruction is the exact opposite and that asymmetry is the point** — see Mortality below.
 A Machine an Enemy chewed down returns nothing at all.
 
-Where the stock comes from is `player.starting_stock_per_item`, and the file says plainly
-that it is a scaffold: Delivery progression (milestone 5) is what will really decide it.
-It is granted once at construction, so raising the number mid-Run is not a way to conjure
-materials.
+Where the stock comes from is `player.starting_stock`: an explicit `item:count` bill rather
+than the count-of-everything scaffold it replaced. It is granted once at construction, so
+raising it mid-Run is not a way to conjure materials. The shipped value is
+`"iron_plate:80"` — the whole competent Factory costs 78 — so **a Run opens with the opening
+line and two plates over**, and everything past that is unlocked at the Nest.
+
+A tuning key rather than a per-Item key, and a quoted string rather than a table, because
+naming an Item in `sim/` is the one thing this project does not do: the set of Items is
+whatever the Recipes mention, and a key called `starting_iron_plate` would be a second Item
+table. It is parsed by the same `item:count` function a Recipe's inputs and a Machine's
+`build_cost` go through, so there is one answer to what well-formed means.
+
+**Open, and the next ticket's work: nothing refills a player's pockets.** Build materials go
+one way — out, into Machines — and come back only from a demolish or the call-early bounty.
+The Nest's counter takes goods but keeps no store, so there is no way to turn Factory output
+back into something the Build Gun can spend. At 80 plates a Run can build its opening line
+and iterate on it, which is what #14 was asked for; a Run that wants a *second* Ammo Press
+(CLAUDE.md's own balance note above) needs a faucet. The obvious shape is the symmetric half
+of this ticket — the Nest holding what a Belt delivers past the open bill, and a withdraw
+intent beside `DELIVER_TO_NEST` — and it was deliberately left out rather than guessed at.
 
 ### Rotation
 
@@ -973,6 +995,79 @@ materials.
 2x3 Machine turned a quarter covers 3x2 tiles from the same origin. One convention, shared
 by placement validation and the renderer. Rotation is per-Machine state and is hashed; a
 turned Machine covers different ground and presents its ports to different tiles.
+
+## Delivery progression at the Nest
+
+Where a Run gets better at anything. Progression is **physical**: goods carried or
+Belt-fed to the Nest unlock the next tier of Machines, Gear components and Stratagems, and
+there is no research menu and no science resource (GLOSSARY.md, DESIGN.md). That makes the
+Nest both the thing you defend and the place you progress, so one location carries the
+Run's whole meaning.
+
+- **The tiers are `content/deliveries.csv`**, and adding one is a row. The table has
+  **no numeric column at all**, which is how "unlocks are Machines, Gear components and
+  Stratagems, never stat increases" is enforced: there is nowhere to write "+10% mining
+  speed" even if somebody wanted to. `test_delivery` asserts the consequence directly —
+  completing a tier leaves `query_definition_digest` exactly where it was, so no number the
+  Run is playing by moved.
+- **A Machine is locked because a tier names it.** There is no `locked` column in
+  `content/machines.csv`: the Machines a Run opens with are exactly the ones no tier's
+  `unlocks_machines` mentions. One authority, so moving a Machine between tiers is an edit
+  to one file. The keystone loop is deliberately *not* behind the chain — a game that made a
+  player earn the right to defend themselves before the first Wave would be a different
+  game — so what the shipped chain sells is **Depth**: `t02_deep_mining` unlocks Miner Mk2
+  and `t03_deep_survey`, which only a Mk2 working the Depth 2 seam can reach, unlocks Mk3.
+  Each tier pays for the tool that opens the gate on the tier after it, and the deep seam is
+  the one that opens new Breaches (#13) — so the chain is also what talks a player into being
+  hunted from a second direction.
+- **Locked content is a refusal, not a second gate.** `Refusal.CONTENT_IS_LOCKED` comes out
+  of `_build_refusal`, before the ground and before the wallet, because being locked is a
+  fact about the Machine rather than about the tile. A locked Machine may still be put on
+  the Build Gun: the hologram asks that one function every frame, so the reason is on screen
+  before the click — which is both better UX and the only version that leaves the hash
+  alone.
+- **The chain is walked in id order and nothing is skipped.** The next Delivery is the first
+  tier this Run has not completed. A tier whose Depth the Factory has not reached *blocks*
+  the chain rather than being passed over, which is the whole of "Depth gates what is
+  possible to deliver". `Definitions` refuses a file whose `min_depth` goes backwards down
+  the chain, because such a tier could never be the thing holding the chain up.
+- **Depth is derived from the Factory, never stored.** `query_depth_reached` is the deepest
+  Node a Miner is *actually working*, and it asks through `_miner_reaches` and
+  `_recipe_yields` — the same predicates `_machine_has_its_inputs` asks — so the Delivery
+  gate and the extraction rule cannot disagree about what a Factory is mining. A Miner Mk1
+  parked on a Depth 3 Node is starved, and it has reached Depth nothing. The gate therefore
+  measures something a player can argue with, and it falls again when that Miner comes down.
+- **Goods reach the counter two ways and settle in one place.** A Belt whose far end points
+  into the Nest's footprint hands Items to the open Delivery; a player standing within
+  `nest.delivery_reach_metres` of that footprint hands over what they are carrying, clamped
+  to the bill. Both go through `_accept_delivery`, and `_deliveries()` — one tick phase,
+  straight after `_transport` — is the only thing that completes a tier. A tier that
+  completed on one path and not the other would be two rules.
+- **The Nest keeps no store, so nothing is destroyed.** It takes only what the open tier is
+  still waiting for; an Item it does not want is refused and the Belt **backs up where a
+  player can see it**, exactly as it does against a full input buffer.
+- **Everything about the next Delivery is a query, and the HUD reads all of it.** Which
+  tier, what it wants, how much has arrived, the Depth it is gated at, and
+  `query_delivery_refusal` — a projection about a hand-over that has not happened, the same
+  arrangement `query_build_refusal` and `query_call_wave_early_refusal` have. A player
+  aiming a Factory at a goal they cannot read is guessing.
+- **Unlock state is resolved ids, sorted, and hashed.** `_completed_delivery_ids`,
+  `_unlocked_machine_ids`, `_unlocked_gear_ids`, `_unlocked_stratagem_ids` and the part-paid
+  counter. Ids rather than indices for the reason `_machine_id` holds an id: a hot-reload
+  that resorts the Delivery table, or inserts a tier ahead of the one already earned, must
+  not renumber what a Run has earned. Sorted, so iteration order is a property of what was
+  unlocked rather than of the order it was earned in. `RunSave` persists all five without
+  being told, because it reflects over the Simulation's properties.
+- **A fixture that is not about progression replaces the chain rather than walking it.**
+  Several suites build the deeper Miners or fill a Factory out of a player's pockets, and
+  neither the chain nor the opening bill is what they assert — so they substitute a tier that
+  locks nothing and a stock that pays for anything (`DELIVERIES` / `STOCKED` in
+  `test_depth`, `test_turrets`, `test_world_view`, `test_heat`, `test_enemies`,
+  `test_nest`). `test_delivery.gd` is the one place the shipped chain itself is asserted.
+- **Gear components and Stratagems are identifiers nothing reads yet**, and that is on
+  purpose. The frames, the Silo, the Charges and the Painting are later milestones; what a
+  Run has unlocked is recorded, hashed and saved *now*, because that is the half that cannot
+  be retrofitted onto a Run already in progress.
 
 ## The float-to-fixed boundary
 
@@ -1140,7 +1235,7 @@ chain from a mouse to a state hash is.
   from recomputing what the code does. `Fixed.mul(a, b) == (a * b) >> 16` asserts
   nothing.
 - Domain vocabulary from `GLOSSARY.md`, capitalised: Nest, Breach, Factory,
-  Machine, Belt, Heat, Wave, Turret, Silo, Charge, Delivery.
+  Machine, Belt, Heat, Wave, Turret, Silo, Charge, Delivery, Depth, Gear, Stratagem.
 - Fixed-point constants are written `Fixed.from_rational(1, 3)`, never as a
   decimal literal. In a *data* file a rate is written in decimal and parsed with
   `Fixed.from_decimal_string`.
