@@ -194,6 +194,75 @@ what lets a client whose own files hash differently refuse instead of desyncing.
   seconds, minimum one, and progress is counted in ticks so nothing rounds away
   over a long Run.
 
+## Belts and the Items on them
+
+The most performance-critical system in the project, and the one whose data layout is
+hardest to change later. The reference implementations of this genre spend the large
+majority of a late-game frame on Belts and their Items, so this is built as integers in
+arrays, never as an object per Item.
+
+- **An Item is a position and an id.** Per Belt: one `PackedStringArray` of Item ids and
+  one `PackedInt64Array` of positions, ordered front first. There is no Item class, no
+  Item instance and — per ADR 0002 — no node: Items are derived state, recomputed
+  identically on every client rather than replicated, which is why they cost no
+  bandwidth. They are still **hashed**, because "identical everywhere" is worth nothing
+  unchecked.
+- **Positions are sub-units, not metres.** A sub-unit is sized so an Item advances
+  exactly one per tick, so a saturated Belt delivers one Item every
+  `ticks_per_item` ticks *exactly*, with no rounding anywhere and nothing emergent from
+  frame timing. Metres appear only in `query_belt_item_position_metres`, which divides
+  once at the end — that is what keeps a 500-tile Belt's far end at 1000 m rather than
+  999.98 m.
+- **A Belt's rating is data**: `belt.items_per_second` and `belt.items_per_tile` in
+  `content/tuning.toml`. Speed and spacing are *derived* from those two, so there is no
+  second number to disagree with them. Pick a rate that divides 60; one that does not is
+  floored to whole ticks.
+- **Back-pressure is not a special case.** Each Item advances one sub-unit unless the
+  Item ahead — or the end of the run — is in the way. A full destination refuses a
+  hand-off, the leading Item stops, and the queue packs at its spacing behind it. The
+  queue a player sees is literally the state.
+- **Belts connect by adjacency, and nothing else.** A Belt's run starts on the tile past
+  a Machine's footprint edge (its output port) and ends pointing at another footprint
+  edge (an input port) or at the *entry tile* of another Belt. No inserter entity exists
+  (DESIGN.md), there is no stored connection to go stale, and side-loading onto the
+  middle of a Belt is deliberately not a connection.
+- **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
+  GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
+  carries two tiles rather than a definition index.
+
+### The update order, and the bias it avoids
+
+Advancing Belts in index order would make a line's throughput depend on the order it was
+built in: a Belt advanced before the Belt it feeds sees an occupied entry slot, one
+advanced after sees a vacated one. That is a real desync risk and a real gameplay
+inconsistency, so index order is not used.
+
+Each tick walks the Belts **downstream first** — a Belt is advanced only after the Belt
+it hands Items to. Each Belt feeds at most one other, so the order is found by chasing
+each chain to its end and recording it backwards, starting chains in **canonical tile
+order** (the tile a run starts at), which is geography rather than history. A Belt loop
+has no downstream-most member, so the cycle is cut at its canonically first Belt and that
+one join carries a tick of latency. Where two Belts merge, priority goes to the lower
+tile, not the earlier build.
+
+The order is derived, so it is rebuilt rather than hashed, and only when a Belt is laid.
+`tests/cases/test_belts.gd` asserts the absence of the bias directly, by building the
+same Factory in two orders and comparing every Item position tick by tick.
+
+### Machines, ports and starvation
+
+- A crafter's inputs live in an **input buffer** separate from its output buffer, with a
+  capacity of `machine.input_buffer_crafts` crafts' worth of each input. That capacity is
+  the thing back-pressure pushes against.
+- A Machine **banks no progress while starved**. It accumulates ticks only while holding
+  a whole Recipe's worth of inputs, and consumes them when the craft completes.
+  `query_machine_is_starved` answers the question for both roles — a Miner is starved
+  over the wrong ground, a crafter over an incomplete buffer — so the renderer never has
+  to infer it from a count that stopped moving.
+- A tick runs **Belts before Machines**: an Item delivered this tick is usable this
+  tick, and an Item produced this tick is collected on the next, which is the same rule a
+  freshly built Machine follows.
+
 ## Determinism rules
 
 From [ADR 0002](docs/adr/0002-deterministic-lockstep-inputs-only-networking.md).

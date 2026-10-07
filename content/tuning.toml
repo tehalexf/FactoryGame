@@ -19,3 +19,32 @@
 # walking the length of a Factory is not a chore, slow enough that Belt layout
 # still matters.
 walk_speed_metres_per_second = 4
+
+[belt]
+
+# A Belt's rated throughput, in Items a second. This is the primary number: the
+# Simulation turns it into a whole number of ticks per Item, so throughput is exact
+# by construction rather than something that emerges from rounding a speed. 4 Items a
+# second at 60 ticks a second is one Item every 15 ticks.
+#
+# Pick a rate that divides 60. A rate that does not is floored to whole ticks, so
+# 7 Items a second is really 60 / 8 = 7.5.
+items_per_second = 4
+
+# How many Items fit on one tile of Belt. With a 2 m tile, 4 Items a tile sit 0.5 m
+# apart, and with the rating above that means Items travel at 2 m/s — a speed and a
+# density that are both consequences of these two numbers, so neither is written
+# twice. It also sets how much a Belt swallows before back-pressure reaches the
+# Machine feeding it: a 10-tile Belt buffers 40 Items.
+items_per_tile = 4
+
+[machine]
+
+# How many crafts' worth of each input a Machine holds in its input buffer. A Recipe
+# needing 2 ore a craft therefore buffers 4 ore, and a hungrier Recipe gets a
+# proportionally bigger buffer without anyone tuning it separately.
+#
+# This is the number that makes back-pressure visible: it is the capacity a Belt
+# fills up against when a Machine cannot keep up, and small enough that a stalled
+# line is obvious rather than absorbed.
+input_buffer_crafts = 2

@@ -32,10 +32,20 @@ id,display_name,inputs,outputs,seconds
 mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 """
 
+## The tuning keys this file is not about. Every key the Simulation reads must be present
+## for a set to load, so a test that varies one carries the rest unchanged.
+const OTHER_TUNING: String = """
+[belt]
+items_per_second = 4
+items_per_tile = 4
+[machine]
+input_buffer_crafts = 2
+"""
+
 const TUNING: String = """
 [player]
 walk_speed_metres_per_second = 4
-"""
+""" + OTHER_TUNING
 
 ## Long enough to pass any sane check interval.
 const A_LONG_FRAME: float = 10.0
@@ -102,7 +112,7 @@ func test_editing_the_tuning_file_produces_a_new_definition_set() -> void:
 	var watcher: DefinitionWatcher = _watcher()
 	watcher.check_now()
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n" + OTHER_TUNING)
 
 	var reloaded: Definitions = watcher.check_now()
 	assert_not_null(reloaded, "a saved edit must be noticed")
@@ -132,7 +142,7 @@ func test_adding_a_machine_and_recipe_produces_a_new_definition_set() -> void:
 func test_a_change_is_reported_once_not_on_every_check() -> void:
 	var watcher: DefinitionWatcher = _watcher()
 	watcher.check_now()
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n" + OTHER_TUNING)
 
 	assert_not_null(watcher.check_now())
 	assert_null(watcher.check_now(), "the same edit must not reload every frame")
@@ -164,7 +174,7 @@ func test_fixing_a_malformed_edit_is_noticed() -> void:
 	assert_null(watcher.check_now())
 	assert_true(watcher.has_errors())
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 9\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 9\n" + OTHER_TUNING)
 	var reloaded: Definitions = watcher.check_now()
 	assert_not_null(reloaded, "the fix must be picked up")
 	assert_eq(reloaded.player_walk_speed, 9 * 65536)
@@ -202,7 +212,7 @@ func test_polling_only_checks_once_the_interval_has_elapsed() -> void:
 	# poor trade. The interval is the whole reason `poll` takes a frame time.
 	var watcher: DefinitionWatcher = DefinitionWatcher.new(DIR, 1.0)
 	watcher.check_now()
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n" + OTHER_TUNING)
 
 	assert_null(watcher.poll(0.1), "not yet")
 	assert_null(watcher.poll(0.1), "still not yet")
@@ -214,7 +224,7 @@ func test_the_very_first_edit_of_a_session_is_not_missed() -> void:
 	# established it lazily would swallow the first edit after launch, which is the
 	# one a developer is most likely to be testing the feature with.
 	var watcher: DefinitionWatcher = _watcher()
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n" + OTHER_TUNING)
 	assert_not_null(watcher.check_now())
 
 
@@ -227,7 +237,7 @@ func test_a_saved_edit_reaches_the_simulation_as_an_input_action() -> void:
 	var main: Main = Main.new()
 	main.set_definition_watcher(DefinitionWatcher.new(DIR, 0.0))
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n" + OTHER_TUNING)
 	main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
 
 	assert_eq(main.simulation().query_definition_generation(), 1, "the edit was applied")
@@ -239,7 +249,7 @@ func test_a_saved_edit_is_applied_once_not_on_every_frame() -> void:
 	var main: Main = Main.new()
 	main.set_definition_watcher(DefinitionWatcher.new(DIR, 0.0))
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n" + OTHER_TUNING)
 	for frame: int in range(10):
 		main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
 
@@ -266,7 +276,7 @@ func test_a_frame_with_no_tick_holds_the_edit_until_there_is_one() -> void:
 	var main: Main = Main.new()
 	main.set_definition_watcher(DefinitionWatcher.new(DIR, 0.0))
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n")
+	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\n" + OTHER_TUNING)
 	main.advance_frame(0.001)
 	assert_eq(main.simulation().query_definition_generation(), 0, "no tick, no change")
 

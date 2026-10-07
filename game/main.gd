@@ -24,9 +24,16 @@ extends Node
 const WORLD_SEED: int = 1
 const PLAYER_COUNT: int = 1
 
-## The Machine a Run opens with, placed on the first Node so that there is something
-## producing to look at. Goes away when the Build Gun arrives.
+## The line a Run opens with: a Miner on the first Node, a Belt out of its output port,
+## and a Smelter at the far end of the Belt. Enough to watch ore travel and become
+## plates. All of it goes away when the Build Gun arrives.
+##
+## The Belt starts on the tile just past the Miner's footprint and the Smelter is anchored
+## on the tile just past the Belt's far end, because that adjacency *is* the connection —
+## Belts run straight into Machine ports and no inserter entity exists (DESIGN.md).
 const STARTING_MINER: String = "miner_mk1"
+const STARTING_SMELTER: String = "smelter_mk1"
+const STARTING_BELT_TILES: int = 4
 
 var _simulation: Simulation = null
 var _tick_pump: TickPump = null
@@ -115,16 +122,12 @@ func collect_input_actions() -> Array:
 		actions.append(InputAction.reload_definitions(0, _pending_definitions))
 		_pending_definitions = null
 
-	# The opening Miner, on the Map's first Node. Once only — a flag rather than a
+	# The opening line, on the Map's first Node. Once only — a flag rather than a
 	# check against the Simulation, because the Godot layer does not get to decide
 	# anything from state it has read back.
 	if _starting_miner_pending:
 		_starting_miner_pending = false
-		var miner: int = _simulation.query_definitions().machine_index(STARTING_MINER)
-		if miner != -1 and _simulation.query_node_count() > 0:
-			actions.append(
-				InputAction.build_machine(0, miner, _simulation.query_node_tile(0))
-			)
+		actions.append_array(_opening_line_actions())
 
 	var intent_x: int = 0
 	var intent_z: int = 0
@@ -142,6 +145,36 @@ func collect_input_actions() -> Array:
 		actions.append(InputAction.move(0, intent_x, intent_z))
 
 	return actions
+
+
+## The Input Actions that lay the opening line, in the order they have to happen in.
+##
+## Ordinary build intents, on the first tick, exactly as a player's own would be — so the
+## opening line records, replays and hashes like anything else, and this method is the
+## only thing the Build Gun ticket has to delete.
+##
+## The geometry comes out of the queries: the Miner's footprint from
+## `content/machines.csv` by way of the Simulation, the Node from the Map. Nothing here
+## has its own copy of either.
+func _opening_line_actions() -> Array:
+	var definitions: Definitions = _simulation.query_definitions()
+	var miner: int = definitions.machine_index(STARTING_MINER)
+	var smelter: int = definitions.machine_index(STARTING_SMELTER)
+	if miner == -1 or smelter == -1 or _simulation.query_node_count() == 0:
+		return []
+
+	var footprint: MachineDefinition = definitions.machine(STARTING_MINER)
+	var anchor: Vector3i = _simulation.query_node_tile(0)
+	var belt_entry: Vector3i = Vector3i(anchor.x + footprint.footprint_x, anchor.y, anchor.z)
+	var belt_exit: Vector3i = Vector3i(
+		belt_entry.x + STARTING_BELT_TILES - 1, belt_entry.y, belt_entry.z
+	)
+
+	return [
+		InputAction.build_machine(0, miner, anchor),
+		InputAction.build_belt(0, belt_entry, belt_exit),
+		InputAction.build_machine(0, smelter, Vector3i(belt_exit.x + 1, belt_exit.y, belt_exit.z)),
+	]
 
 
 ## The watcher that notices a saved content file. Replaceable so a test can point it

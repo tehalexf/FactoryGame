@@ -112,3 +112,53 @@ static func footprint_is_buildable(origin: Vector3i, size_x: int, size_z: int) -
 	if not is_buildable(origin):
 		return false
 	return is_buildable(Vector3i(origin.x + size_x - 1, origin.y, origin.z + size_z - 1))
+
+
+# ── Directions ────────────────────────────────────────────────────────────────
+# A Belt runs along one axis, so a direction is one of four. Held as a small
+# integer because it reaches the state hash and the network wire; the step it means
+# is resolved here and nowhere else, so no caller gets its own opinion about which
+# way +z is.
+
+## How many directions a Belt can run in. Four, because the grid is square and
+## diagonal Belts do not exist (DESIGN.md).
+const DIRECTION_COUNT: int = 4
+
+## +x, +z, -x, -z, indexed by direction. Counter-clockwise order, so rotating a
+## Belt later is `(direction + 1) % DIRECTION_COUNT`.
+const DIRECTION_STEPS: Array = [
+	Vector3i(1, 0, 0), Vector3i(0, 0, 1), Vector3i(-1, 0, 0), Vector3i(0, 0, -1)
+]
+
+
+## The one-tile step a direction means. The zero vector for an unknown direction,
+## so a malformed value moves nothing rather than crashing a Run.
+static func direction_step(direction: int) -> Vector3i:
+	if direction < 0 or direction >= DIRECTION_COUNT:
+		return Vector3i.ZERO
+	return DIRECTION_STEPS[direction]
+
+
+## The direction from one tile to another, or -1 when they do not lie on one axis
+## of one layer. Two identical tiles have no direction either: a run of one tile
+## still has to be aimed.
+static func direction_from_to(from: Vector3i, to: Vector3i) -> int:
+	if from.y != to.y:
+		return -1
+	if from.x != to.x and from.z != to.z:
+		return -1
+	for direction: int in range(DIRECTION_COUNT):
+		var step: Vector3i = DIRECTION_STEPS[direction]
+		if step.x != 0 and to.x != from.x and signi(to.x - from.x) == step.x:
+			return direction
+		if step.z != 0 and to.z != from.z and signi(to.z - from.z) == step.z:
+			return direction
+	return -1
+
+
+## How many tiles a straight run from one tile to another covers, counting both
+## ends. 0 when the two tiles do not lie on one axis of one layer.
+static func tiles_between(from: Vector3i, to: Vector3i) -> int:
+	if direction_from_to(from, to) == -1:
+		return 0
+	return absi(to.x - from.x) + absi(to.z - from.z) + 1
