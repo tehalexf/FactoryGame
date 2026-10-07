@@ -69,6 +69,34 @@ cannot quietly turn two Machines back into the same dark box. The committed
 contact sheets in `docs/images/` are the same claim in a picture; rebuild them
 with `tools/assets/render_machines.sh`.
 
+`game/world_view.gd` is the only consumer of those `.glb`s, and it flattens each one
+once on first use. The generator splits a body into a mesh per material so the glTF can
+name a shared material without embedding its textures, which Godot imports as a dozen
+`MeshInstance3D`s — the wrong shape to draw fifty of, and a shape a `MultiMesh` cannot
+take at all. So a body becomes **one Mesh with a surface per material, cached by id**: a
+Machine is one node, a Belt tile is one instance, and fifty Smelters share one buffer.
+The port markers carry no mesh and fall out of that flattening by themselves.
+
+Three rules the renderer holds to, each with a test:
+
+- **A body is placed, never measured.** Every body is modelled about the centre of its
+  footprint with its feet on the ground, so the renderer moves it to the footprint centre
+  at the layer's height and turns it by the Machine's rotation, and that is all.
+- **A Machine with no body draws a box.** Adding a row to `content/machines.csv` is never
+  blocked on art, so a missing `.glb` is an ordinary state and not a warning.
+- **Count decides node or instance.** Machines and the Nest are nodes, pooled. Belt
+  tiles, Items and Enemies are `MultiMesh` instances, because those are the three that
+  reach the thousands — `test_world_view` asserts the scene tree does not grow by a node
+  for any of them.
+
+The lighting is the other half of the art pipeline. The generated surfaces are physically
+based and mostly metal, and a metal lit by an ambient *colour* has nothing to reflect, so
+it renders as a dark smear whatever its albedo says. `_sync_scenery` therefore takes both
+ambient and reflections off the sky, tonemaps filmic, and carries a shadowless cool fill
+opposite the sun so the far side of a boiler still reads. The palette was tuned in Blender
+renders; those numbers are the second half of that tuning, and they are not
+interchangeable.
+
 The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
