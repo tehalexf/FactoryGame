@@ -679,6 +679,220 @@ func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
 	view.free()
 
 
+# ── Real meshes ───────────────────────────────────────────────────────────────
+# Each Machine, the Nest and every tile of Belt draw the body the asset pipeline
+# generated for them. The assertions are about placement, orientation and the
+# fallback — what the surfaces look like is judged by looking, not by a test.
+
+func test_a_machine_draws_the_body_generated_for_its_id() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(10, 0, 10)
+		)
+	])
+	view.sync(sim)
+	assert_eq(
+		view.machine_body_path(0),
+		"res://assets/machines/smelter_mk1.glb",
+		"a Smelter draws the Smelter the generator produced"
+	)
+	view.free()
+
+
+func test_a_turned_machine_turns_its_body_with_its_footprint() -> void:
+	# A 3x2 Steam Boiler turned a quarter covers 2x3 tiles from the same anchor, so the
+	# body has to turn by the same quarter or it stands across its own neighbours.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("steam_boiler_mk1"), Vector3i(10, 0, 10), 1
+		)
+	])
+	view.sync(sim)
+	assert_eq(sim.query_machine_footprint(0), Vector2i(2, 3), "the premise of the assertions below")
+	assert_true(
+		is_equal_approx(view.machine_body_yaw(0), -TAU * 0.25),
+		"expected a quarter turn, got %f radians" % view.machine_body_yaw(0)
+	)
+	# Two tiles from x=10 spans 20 m to 24 m, so the centre is 22 m; three tiles from
+	# z=10 spans 20 m to 26 m, so the centre is 23 m.
+	var placed: Vector3 = view.machine_placeholder_position(0)
+	assert_true(is_equal_approx(placed.x, 22.0), "expected x 22.0, got %f" % placed.x)
+	assert_true(is_equal_approx(placed.z, 23.0), "expected z 23.0, got %f" % placed.z)
+	view.free()
+
+
+func test_a_machine_body_stands_on_the_ground_rather_than_half_buried() -> void:
+	# Every generated body is modelled with its feet on the ground, so it is seated at the
+	# height of its layer and not at half its own height like a box would be.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(10, 0, 10)
+		)
+	])
+	view.sync(sim)
+	assert_ne(view.machine_body_path(0), "", "the premise: this Smelter has a body")
+	assert_true(
+		is_equal_approx(view.machine_placeholder_position(0).y, 0.0),
+		"expected the ground, got y %f" % view.machine_placeholder_position(0).y
+	)
+	view.free()
+
+
+## A definition set with a Machine the asset pipeline has never heard of, so the renderer
+## has to draw something for a row that has no art.
+func _sim_with_an_undrawn_machine() -> Simulation:
+	var machines: String = (
+		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text()
+		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,smelt_iron_plate,\n"
+	)
+	var definitions: Definitions = Definitions.parse(
+		machines,
+		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
+		FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text(),
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml"
+	)
+	return Simulation.new(1, 1, definitions)
+
+
+func test_a_machine_with_no_body_falls_back_to_a_placeholder() -> void:
+	# Adding a Machine is a row in content/machines.csv and never a code change, so a row
+	# whose art has not been drawn yet must still stand on the Map.
+	var sim: Simulation = _sim_with_an_undrawn_machine()
+	var view: WorldView = WorldView.new()
+	assert_true(sim.query_definitions_loaded(), "the premise: the extra row loaded")
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("wind_vane_mk1"), Vector3i(10, 0, 10)
+		)
+	])
+	view.sync(sim)
+	assert_eq(sim.query_machine_count(), 1, "the premise of the assertions below")
+	assert_eq(view.machine_body_path(0), "", "there is no body to draw")
+	assert_eq(view.placeholder_count(), sim.query_node_count() + 1, "and it is drawn anyway")
+	# 2x2 tiles from (10,10) spans 20 m to 24 m, so the placeholder's centre is 22 m.
+	assert_true(
+		is_equal_approx(view.machine_placeholder_position(0).x, 22.0),
+		"on its own footprint, got x %f" % view.machine_placeholder_position(0).x
+	)
+	view.free()
+
+
+# ── Belts ─────────────────────────────────────────────────────────────────────
+
+func test_a_tile_of_belt_is_turned_to_the_direction_its_run_goes_in() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	# Along +z, which is the direction the Belt body is modelled running in, so it needs
+	# no turn at all.
+	sim.step([InputAction.build_belt(0, Vector3i(0, 0, 0), Vector3i(0, 0, 3))])
+	view.sync(sim)
+	assert_eq(sim.query_belt_direction(0), 1, "the premise of the assertion below")
+	assert_true(
+		is_equal_approx(view.belt_instance_yaw(0), 0.0),
+		"expected no turn, got %f radians" % view.belt_instance_yaw(0)
+	)
+
+	# And along +x, a quarter turn the other way round from a Machine's, because the grid
+	# counts its directions clockwise and Godot turns counter-clockwise.
+	sim.step([InputAction.build_belt(0, Vector3i(10, 0, 10), Vector3i(13, 0, 10))])
+	view.sync(sim)
+	assert_eq(sim.query_belt_direction(1), 0, "the premise of the assertion below")
+	assert_true(
+		is_equal_approx(view.belt_instance_yaw(4), TAU * 0.25),
+		"expected a quarter turn, got %f radians" % view.belt_instance_yaw(4)
+	)
+	view.free()
+
+
+func test_a_tile_of_belt_is_drawn_on_the_tile_the_simulation_says() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([InputAction.build_belt(0, Vector3i(10, 0, 10), Vector3i(12, 0, 10))])
+	view.sync(sim)
+	# Tile (10,0,10) is centred on 21 m, and the run advances one tile — 2 m — a step.
+	assert_true(
+		is_equal_approx(view.belt_instance_position(0).x, 21.0),
+		"expected x 21.0, got %f" % view.belt_instance_position(0).x
+	)
+	assert_true(
+		is_equal_approx(view.belt_instance_position(2).x, 25.0),
+		"expected x 25.0, got %f" % view.belt_instance_position(2).x
+	)
+	view.free()
+
+
+# ── Pooling ───────────────────────────────────────────────────────────────────
+# The view rebuilds its numbers from the queries every frame but not its nodes. A
+# standing Factory redrawn is the same nodes moved, and the things that reach the
+# highest counts — Items, Enemies and tiles of Belt — are not nodes at all.
+
+func test_redrawing_an_unchanged_factory_builds_no_new_nodes() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(10, 0, 10)
+		),
+		InputAction.build_belt(0, Vector3i(20, 0, 20), Vector3i(23, 0, 20)),
+	])
+	view.sync(sim)
+	var settled: int = view.get_child_count()
+	for frame: int in range(10):
+		sim.step([])
+		view.sync(sim)
+	assert_eq(view.get_child_count(), settled, "ten more frames must cost nothing")
+	view.free()
+
+
+func test_a_machine_costs_one_node_and_a_belt_costs_none() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var empty: int = view.get_child_count()
+
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(10, 0, 10)
+		)
+	])
+	view.sync(sim)
+	assert_eq(view.get_child_count(), empty + 1, "a Machine is one node, not a dozen")
+
+	# Forty tiles of trestle, through the one MultiMesh every Belt on the Map shares.
+	sim.step([InputAction.build_belt(0, Vector3i(20, 0, 20), Vector3i(59, 0, 20))])
+	view.sync(sim)
+	assert_eq(view.belt_placeholder_count(), 40, "the premise of the assertion below")
+	assert_eq(view.get_child_count(), empty + 1, "and not one node for any of them")
+	view.free()
+
+
+func test_a_demolished_machine_hands_its_node_back() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var empty: int = view.get_child_count()
+
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(10, 0, 10)
+		)
+	])
+	view.sync(sim)
+	sim.step([InputAction.demolish(0, Vector3i(10, 0, 10))])
+	view.sync(sim)
+	assert_eq(sim.query_machine_count(), 0, "the premise of the assertion below")
+	assert_eq(view.get_child_count(), empty, "the pool shrinks back rather than leaking")
+	view.free()
+
+
 # ── A Turret's Ammunition, readable from a distance ───────────────────────────
 
 func test_a_turret_wears_an_ammunition_gauge_and_nothing_else_does() -> void:

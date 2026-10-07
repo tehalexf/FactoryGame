@@ -7,10 +7,15 @@
 ## it. The meshes below are the one thing this node owns, and they are a function of
 ## the queries, rebuilt whenever what the queries report stops matching them.
 ##
-## Everything it draws is a placeholder: a box per Node, a box per Machine, sized
-## from the footprint `content/machines.csv` states. Real meshes arrive with the art
-## pass; what matters now is that the box is in the place the Simulation says the
-## Machine is, and that the count on screen is the count in the buffer.
+## Machines, the Nest and the Belts draw the bodies `tools/assets/generate_machines.sh`
+## generated for them, out of `assets/machines/<id>.glb`. A body the pipeline has not
+## produced yet falls back to a box sized from its footprint, so **adding a row to
+## `content/machines.csv` is never blocked on art** — the Machine is simply plain until
+## someone draws it. What matters either way is that the thing on screen is in the place
+## the Simulation says it is, and that the count on screen is the count in the buffer.
+##
+## Nodes, Breaches and the hologram stay boxes on purpose: a Node is ground rather than a
+## building, a Breach is a hole, and the hologram is a promise.
 ##
 ## The camera is part of that. It goes where `query_player_camera_*` says it goes, every
 ## frame — on foot, mid-lift and in Survey View alike. There is no camera controller and
@@ -30,8 +35,15 @@ const MACHINE_HEIGHT_METRES: float = 3.0
 ## A Node is drawn as a low slab, so a Miner standing on one does not hide it.
 const NODE_HEIGHT_METRES: float = 0.4
 
-## A tile of Belt is a low slab too, so the Items riding it are what the eye follows.
+## How high a tile of Belt stands when it has no generated body — a low slab, so the
+## Items riding it are what the eye follows.
 const BELT_HEIGHT_METRES: float = 0.3
+
+## How high the deck of a generated tile of Belt is, in metres, which is where an Item
+## rides. Declared by the `belt_straight` ports in `content/machine_ports.csv`, which the
+## asset suite holds the mesh to; this is presentation only — where an Item *is* is the
+## Simulation's answer, and only how high off the ground it is drawn comes from here.
+const BELT_DECK_METRES: float = 0.9
 
 ## An Item is a small cube sitting on the Belt. Smaller than the 0.5 m an Item occupies
 ## along the run, so a packed Belt reads as a queue of distinct boxes with gaps rather
@@ -41,10 +53,19 @@ const ITEM_SIZE_METRES: float = 0.35
 ## Which player this view is looking through. One for now; co-op makes it the local id.
 const VIEWED_PLAYER: int = 0
 
-## Where the Nest's mesh lives. Generated from the `nest` row of
-## `content/machine_bodies.csv` by `tools/assets/generate_machines.sh`, like every other
-## body, even though the Nest is not a Machine.
-const NEST_MESH: String = "res://assets/machines/nest.glb"
+## Where the generated bodies live, and the ids of the two that are not Machines. Every
+## body in that directory comes out of `tools/assets/generate_machines.sh`, which models
+## it with its origin at the centre of its footprint and its feet on the ground — so a
+## body needs only to be moved to a tile centre to be standing in the right place.
+const BODY_DIRECTORY: String = "res://assets/machines/"
+
+## The Nest's body. Generated from the `nest` row of `content/machine_bodies.csv` like
+## every other, even though the Nest is not a Machine.
+const NEST_BODY: String = "nest"
+
+## One tile of Belt. Modelled running along +z — its input port faces north and its
+## output south — so a tile is turned by the direction its run goes in.
+const BELT_BODY: String = "belt_straight"
 
 ## How many cells the Telegraph's gauge is drawn with. A rising bar of text, because there
 ## is no audio yet and a countdown alone does not read as a klaxon.
@@ -93,9 +114,30 @@ const AMMUNITION_DRY: Color = Color(0.88, 0.17, 0.14)
 ## at which a player still has time to go and look at the Belt.
 const AMMUNITION_LOW_FRACTION: float = 0.5
 
+## One node per Machine, pooled: a Machine arriving takes the next free instance and a
+## Machine demolished hands one back, so a Factory of fifty costs fifty nodes rather than
+## fifty rebuilt every frame.
 var _machine_meshes: Array[MeshInstance3D] = []
+
+## What each pooled Machine instance is currently wearing — the path of the body it drew,
+## or `box <x>x<z>` where it fell back. Compared against what the Simulation now reports
+## so a Machine is re-dressed only when it stops matching, which for a standing Factory
+## is never. **Not a mirror of Simulation state**: it describes this node's own meshes,
+## and nothing reads it to decide anything about the Run.
+var _machine_dressing: PackedStringArray = PackedStringArray()
+
 var _node_meshes: Array[MeshInstance3D] = []
-var _belt_meshes: Array[MeshInstance3D] = []
+
+## Every tile of Belt, as instances of one mesh.
+##
+## A Belt run reaches hundreds of tiles and a tile of trestle is a dozen surfaces, so this
+## is one MultiMesh for every Belt on the Map rather than a node each — the same decision
+## the Items riding on top of it are drawn with, for the same reason.
+var _belt_meshes: MultiMeshInstance3D = null
+
+## The instance transforms handed to the Belt MultiMesh, in the flat twelve-floats layout
+## the Items use, with a yaw in the basis because a tile of Belt points somewhere.
+var _belt_transforms: PackedFloat32Array = PackedFloat32Array()
 
 ## Every Item on every Belt, as instances of one mesh.
 ##
@@ -144,15 +186,26 @@ var _item_transforms: PackedFloat32Array = PackedFloat32Array()
 ## How many floats one MultiMesh instance transform occupies in TRANSFORM_3D format.
 const FLOATS_PER_INSTANCE: int = 12
 
-## The hologram the Build Gun projects. One box, moved and recoloured every frame from
-## the aim and the refusal the Simulation reports — never from a remembered placement.
+## The generated bodies, merged and cached by id, with `null` recorded for a body the
+## pipeline has not produced. One Mesh per *kind* of Machine and not one per Machine:
+## fifty Smelters are fifty transforms against one buffer, and a body is read off the
+## disk once per Run however many of it get built.
+var _bodies: Dictionary = {}
+
+## The hologram the Build Gun projects: the body of the Machine that would land, drawn
+## translucent, moved and recoloured every frame from the aim and the refusal the
+## Simulation reports — never from a remembered placement. `_hologram_dressing` is the
+## same re-dressing bookkeeping the Machines use, so switching the Build Gun's selection
+## rebuilds nothing until the selection actually changes.
 var _hologram: MeshInstance3D = null
+var _hologram_dressing: String = ""
 
 ## The scenery: a lit sky and a ground plane with the 2 m grid on it. Not a mirror of
 ## anything, and the reason scale reads at all — a 1.8 m eye height against 2 m tiles
 ## means nothing without a surface to see the tiles on.
 var _ground: MeshInstance3D = null
 var _sun: DirectionalLight3D = null
+var _fill: DirectionalLight3D = null
 var _environment: WorldEnvironment = null
 
 var _hud: Label = null
@@ -168,6 +221,12 @@ const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
 ## How far the ground plane extends, in tiles from the origin. The Map's own extent, so
 ## a player cannot walk off the edge of what they can see.
 const GROUND_HALF_EXTENT_TILES: int = 64
+
+## How many Machines the HUD will name before it starts counting them instead. A line a
+## Machine is readable at four and is a wall of text over the Factory at fifty, so the
+## list is the ones in trouble and the rest are a number — which is also the order a
+## player wants them in.
+const MACHINES_LISTED: int = 5
 
 ## How long each arm of the crosshair is, in pixels. Small: it marks where the Build Gun
 ## points without becoming a thing a player looks at instead of the Factory.
@@ -201,9 +260,11 @@ func placeholder_count() -> int:
 	return _node_meshes.size() + _machine_meshes.size()
 
 
-## How many tiles of Belt are on screen.
+## How many tiles of Belt are on screen. Instances of one mesh, so this is a count of
+## transforms — there is one node for every Belt on the Map.
 func belt_placeholder_count() -> int:
-	return _belt_meshes.size()
+	@warning_ignore("integer_division")
+	return _belt_transforms.size() / FLOATS_PER_INSTANCE
 
 
 ## Where the Nest is standing, in metres. For the smoke test.
@@ -227,12 +288,7 @@ func enemy_instance_count() -> int:
 
 ## Where an Enemy instance is standing, in metres. For the smoke test.
 func enemy_instance_position(instance: int) -> Vector3:
-	if instance < 0 or instance >= enemy_instance_count():
-		return Vector3.ZERO
-	var base: int = instance * FLOATS_PER_INSTANCE
-	return Vector3(
-		_enemy_transforms[base + 3], _enemy_transforms[base + 7], _enemy_transforms[base + 11]
-	)
+	return _instance_position(_enemy_transforms, instance)
 
 
 ## How many Items are on screen.
@@ -244,12 +300,7 @@ func item_instance_count() -> int:
 ## Where an Item instance is standing, in metres. For the smoke test, and for anything
 ## later that needs to point at a specific Item.
 func item_instance_position(instance: int) -> Vector3:
-	if instance < 0 or instance >= item_instance_count():
-		return Vector3.ZERO
-	var base: int = instance * FLOATS_PER_INSTANCE
-	return Vector3(
-		_item_transforms[base + 3], _item_transforms[base + 7], _item_transforms[base + 11]
-	)
+	return _instance_position(_item_transforms, instance)
 
 
 ## Where a Machine's placeholder stands, in metres. For the smoke test, and for
@@ -298,6 +349,165 @@ func hud_text() -> String:
 	return _hud.text
 
 
+## Which body a Machine drew, as a `res://` path, or `""` where it fell back to a
+## placeholder. For the tests, and for anything later that needs to know whether a
+## Machine has art yet.
+func machine_body_path(index: int) -> String:
+	if index < 0 or index >= _machine_dressing.size():
+		return ""
+	var dressing: String = _machine_dressing[index]
+	return dressing if dressing.begins_with("res://") else ""
+
+
+## Which way a Machine's body is turned, in radians about Y.
+func machine_body_yaw(index: int) -> float:
+	if index < 0 or index >= _machine_meshes.size():
+		return 0.0
+	return _machine_meshes[index].rotation.y
+
+
+## Where a tile of Belt is drawn, in metres. Instances of one mesh, so this reads a
+## transform rather than a node — there is one node for every Belt on the Map.
+func belt_instance_position(instance: int) -> Vector3:
+	return _instance_position(_belt_transforms, instance)
+
+
+## Which way a tile of Belt runs, in radians about Y, as it was drawn.
+func belt_instance_yaw(instance: int) -> float:
+	if instance < 0 or instance >= belt_placeholder_count():
+		return 0.0
+	var base: int = instance * FLOATS_PER_INSTANCE
+	# The basis is row-major in the buffer, so row 2 column 2 is cos(yaw) and row 0
+	# column 2 is sin(yaw) — which is the pair atan2 wants, in that order.
+	return atan2(_belt_transforms[base + 2], _belt_transforms[base + 10])
+
+
+# ── The generated bodies ──────────────────────────────────────────────────────
+# `tools/assets/generate_machines.sh` produces one `.glb` per body, split into a mesh per
+# material so the glTF can name a shared material without embedding its textures. Godot
+# imports that as a scene of a dozen `MeshInstance3D`s, which is the wrong shape to draw
+# fifty of: it is a dozen nodes and a dozen draw calls per Machine, and it cannot go in a
+# MultiMesh at all. So each body is flattened once, on first use, into a single Mesh with
+# one surface per material — the same geometry, the same shared materials, one node.
+
+## The body for an id, merged and cached, or `null` when the pipeline has not produced
+## one. A miss is cached too, so a Machine with no art costs one `ResourceLoader.exists`
+## for the whole Run rather than one a frame.
+func _body(id: String) -> Mesh:
+	if _bodies.has(id):
+		return _bodies[id]
+	var merged: Mesh = _merged_body(BODY_DIRECTORY + id + ".glb")
+	_bodies[id] = merged
+	return merged
+
+
+## Flattens a generated body into one Mesh, keeping a surface per material.
+##
+## Returns `null` rather than complaining when there is no such body: a Machine whose art
+## has not been drawn yet is an ordinary state for this project to be in — the renderer
+## draws a box and says nothing, so adding a row to `content/machines.csv` is never
+## blocked on the asset pipeline.
+func _merged_body(path: String) -> Mesh:
+	if not ResourceLoader.exists(path):
+		return null
+	var scene: PackedScene = load(path)
+	if scene == null:
+		return null
+
+	var root: Node = scene.instantiate()
+	var surfaces: Dictionary = {}
+	_collect_surfaces(root, Transform3D.IDENTITY, surfaces)
+	# Instantiated outside the tree, so it is freed rather than queued: nothing will come
+	# along to process the queue.
+	root.free()
+
+	var merged: ArrayMesh = ArrayMesh.new()
+	for skin: Variant in surfaces:
+		var built: SurfaceTool = surfaces[skin]
+		built.index()
+		merged = built.commit(merged)
+		merged.surface_set_material(merged.get_surface_count() - 1, skin as Material)
+	if merged.get_surface_count() == 0:
+		return null
+	return merged
+
+
+## Walks a body's scene, gathering every surface into a SurfaceTool per material.
+##
+## The port markers the generator leaves behind (`Port_<direction>_<id>`) carry no mesh
+## and are skipped by that fact alone — they are a Belt-connection fact for a later
+## ticket, not geometry.
+func _collect_surfaces(node: Node, parent: Transform3D, surfaces: Dictionary) -> void:
+	var here: Transform3D = parent
+	if node is Node3D:
+		here = parent * (node as Node3D).transform
+
+	if node is MeshInstance3D:
+		var instance: MeshInstance3D = node
+		var mesh: Mesh = instance.mesh
+		if mesh != null:
+			for surface: int in range(mesh.get_surface_count()):
+				var skin: Material = instance.get_surface_override_material(surface)
+				if skin == null:
+					skin = mesh.surface_get_material(surface)
+				if not surfaces.has(skin):
+					var fresh: SurfaceTool = SurfaceTool.new()
+					fresh.begin(Mesh.PRIMITIVE_TRIANGLES)
+					surfaces[skin] = fresh
+				(surfaces[skin] as SurfaceTool).append_from(mesh, surface, here)
+
+	for child: Node in node.get_children():
+		_collect_surfaces(child, here, surfaces)
+
+
+## The yaw, in radians, that turns a body modelled running along +z so that it runs along
+## a grid direction instead.
+##
+## `WorldGrid.DIRECTION_STEPS` counts +x, +z, -x, -z, which walks *clockwise* seen from
+## above where Godot's positive rotation about Y is counter-clockwise — so the quarter
+## turns run the other way, and direction 1 is the one that needs none.
+static func _yaw_for_direction(direction: int) -> float:
+	return float(1 - direction) * TAU * 0.25
+
+
+## The yaw a Machine's body is turned by, in radians, for the rotation the Simulation
+## holds. One quarter turn a step, in the same sense a Belt's direction turns.
+static func _yaw_for_rotation(rotation: int) -> float:
+	return -float(rotation) * TAU * 0.25
+
+
+## Writes one instance transform — a yaw about Y and a position — into a MultiMesh
+## buffer. Row-major, which is the layout TRANSFORM_3D expects.
+static func _write_instance(
+	buffer: PackedFloat32Array, instance: int, where: Vector3, yaw: float
+) -> void:
+	var base: int = instance * FLOATS_PER_INSTANCE
+	var along: float = sin(yaw)
+	var across: float = cos(yaw)
+	buffer[base + 0] = across
+	buffer[base + 1] = 0.0
+	buffer[base + 2] = along
+	buffer[base + 3] = where.x
+	buffer[base + 4] = 0.0
+	buffer[base + 5] = 1.0
+	buffer[base + 6] = 0.0
+	buffer[base + 7] = where.y
+	buffer[base + 8] = -along
+	buffer[base + 9] = 0.0
+	buffer[base + 10] = across
+	buffer[base + 11] = where.z
+
+
+## The position an instance was drawn at, out of a MultiMesh buffer. A MultiMesh keeps its
+## own copy on the rendering server where a headless test cannot see it, so the buffer
+## this side is the only readable record of what was drawn.
+static func _instance_position(buffer: PackedFloat32Array, instance: int) -> Vector3:
+	var base: int = instance * FLOATS_PER_INSTANCE
+	if instance < 0 or base + FLOATS_PER_INSTANCE > buffer.size():
+		return Vector3.ZERO
+	return Vector3(buffer[base + 3], buffer[base + 7], buffer[base + 11])
+
+
 # ── Drawing ───────────────────────────────────────────────────────────────────
 
 func _sync_nodes(sim: Simulation) -> void:
@@ -316,34 +526,96 @@ func _sync_nodes(sim: Simulation) -> void:
 
 func _sync_machines(sim: Simulation) -> void:
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
-	_resize_pool(_machine_meshes, sim.query_machine_count(), tile_size, MACHINE_HEIGHT_METRES, Color(0.35, 0.37, 0.33))
+	var total: int = sim.query_machine_count()
+	_resize_machine_pool(total)
 
-	for index: int in range(sim.query_machine_count()):
-		var definition: MachineDefinition = sim.query_definitions().machine(sim.query_machine_id(index))
-		if definition == null:
-			continue
-
+	for index: int in range(total):
 		# The footprint comes from content/machines.csv, through the Simulation, and
 		# *turned* — `query_machine_footprint` reports the ground the Machine actually
-		# covers, so a rotated Machine is drawn over its own tiles. The renderer does not
-		# get its own copy of those numbers; #19 generates the real meshes against the
-		# same file, and two sources would drift apart on the first balance change.
+		# covers. The renderer does not get its own copy of those numbers; the generator
+		# builds the body against the same file, and two sources would drift apart on the
+		# first balance change.
 		var footprint: Vector2i = sim.query_machine_footprint(index)
-		var box: BoxMesh = _machine_meshes[index].mesh
-		box.size = Vector3(
-			float(footprint.x) * tile_size, MACHINE_HEIGHT_METRES, float(footprint.y) * tile_size
-		)
+		var rotation: int = sim.query_machine_rotation(index)
+		var instance: MeshInstance3D = _machine_meshes[index]
 
-		var tile: Vector3i = sim.query_machine_tile(index)
-		var near: FixedVec2 = sim.query_tile_centre_metres(tile)
-		var far: FixedVec2 = sim.query_tile_centre_metres(
-			Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
-		)
-		_machine_meshes[index].position = Vector3(
-			(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
-			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + MACHINE_HEIGHT_METRES * 0.5,
-			(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
-		)
+		# A body is modelled unturned, so a placeholder standing in for one is sized
+		# unturned too and then turned by the same yaw. `rotated_footprint` is its own
+		# inverse, which is what takes the covered ground back to the declared footprint.
+		var declared: Vector2i = WorldGrid.rotated_footprint(footprint.x, footprint.y, rotation)
+		var dressing: String = _dressing_for(sim.query_machine_id(index), declared, tile_size)
+		if _machine_dressing[index] != dressing:
+			_dress(instance, sim.query_machine_id(index), declared, tile_size)
+			_machine_dressing[index] = dressing
+
+		instance.rotation = Vector3(0.0, _yaw_for_rotation(rotation), 0.0)
+		instance.position = _footprint_centre(sim, sim.query_machine_tile(index), footprint)
+		# A placeholder box is modelled about its own centre rather than standing on the
+		# ground, so it is the one thing that has to be lifted onto its feet.
+		if not dressing.begins_with("res://"):
+			instance.position.y += MACHINE_HEIGHT_METRES * 0.5
+
+
+## Grows or shrinks the Machine pool. A node per Machine and not per frame: a standing
+## Factory re-dresses nothing, and a demolition hands an instance back rather than
+## discarding the whole pool.
+func _resize_machine_pool(wanted: int) -> void:
+	while _machine_meshes.size() > wanted:
+		var spare: MeshInstance3D = _machine_meshes.pop_back()
+		_machine_dressing.remove_at(_machine_dressing.size() - 1)
+		remove_child(spare)
+		spare.queue_free()
+
+	while _machine_meshes.size() < wanted:
+		var fresh: MeshInstance3D = MeshInstance3D.new()
+		add_child(fresh)
+		_machine_meshes.append(fresh)
+		_machine_dressing.append("")
+
+
+## What a Machine of this id and footprint should be wearing: the path of its generated
+## body, or a `box` description when there is none. Compared against what an instance is
+## already wearing, so re-dressing happens on a change and not on a frame.
+func _dressing_for(id: String, footprint: Vector2i, _tile_size: float) -> String:
+	if _body(id) != null:
+		return BODY_DIRECTORY + id + ".glb"
+	return "box %dx%d" % [footprint.x, footprint.y]
+
+
+## Puts a body on an instance, or a placeholder box sized to its footprint where there is
+## no body. The placeholder is a plain slab-grey, deliberately unlike the generated
+## surfaces, so "this Machine has no art yet" reads as a fact rather than as a bug.
+func _dress(instance: MeshInstance3D, id: String, footprint: Vector2i, tile_size: float) -> void:
+	var body: Mesh = _body(id)
+	if body != null:
+		instance.mesh = body
+		instance.material_override = null
+		return
+
+	var box: BoxMesh = BoxMesh.new()
+	box.size = Vector3(
+		float(footprint.x) * tile_size, MACHINE_HEIGHT_METRES, float(footprint.y) * tile_size
+	)
+	instance.mesh = box
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = Color(0.35, 0.37, 0.33)
+	skin.roughness = 0.85
+	instance.material_override = skin
+
+
+## The centre of the ground a footprint covers, in metres, on the layer it stands on.
+## Which is where a generated body's origin goes, because every body is modelled about
+## the centre of its footprint with its feet on the ground.
+func _footprint_centre(sim: Simulation, tile: Vector3i, footprint: Vector2i) -> Vector3:
+	var near: FixedVec2 = sim.query_tile_centre_metres(tile)
+	var far: FixedVec2 = sim.query_tile_centre_metres(
+		Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
+	)
+	return Vector3(
+		(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
+		Fixed.to_float(sim.query_layer_height_metres(tile.y)),
+		(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
+	)
 
 
 ## An Ammunition gauge over every Turret, and over nothing else.
@@ -427,25 +699,17 @@ func _paint_gauge(bar: MeshInstance3D, colour: Color) -> void:
 	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 
-## The middle of a Machine's footprint at ground level, in metres. The same three queries
-## `_sync_machines` uses to place the box, so a gauge cannot end up over a different Machine.
+## The middle of a Machine's footprint at ground level, in metres. The same placement
+## `_sync_machines` seats the body with, so a gauge cannot end up over a different Machine.
 func _machine_centre(sim: Simulation, index: int) -> Vector3:
-	var footprint: Vector2i = sim.query_machine_footprint(index)
-	var tile: Vector3i = sim.query_machine_tile(index)
-	var near: FixedVec2 = sim.query_tile_centre_metres(tile)
-	var far: FixedVec2 = sim.query_tile_centre_metres(
-		Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
-	)
-	return Vector3(
-		(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
-		Fixed.to_float(sim.query_layer_height_metres(tile.y)),
-		(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
+	return _footprint_centre(
+		sim, sim.query_machine_tile(index), sim.query_machine_footprint(index)
 	)
 
 
-## The Nest: one mesh, standing on the middle of its footprint.
+## The Nest: one body, standing on the middle of its footprint.
 ##
-## Built once, because the Nest does not move. Its real mesh is loaded when the asset
+## Built once, because the Nest does not move. Its generated body is loaded when the asset
 ## pipeline has produced one and a placeholder box stands in otherwise, so the Simulation
 ## and the tests do not depend on an import having run.
 func _sync_nest(sim: Simulation) -> void:
@@ -456,40 +720,31 @@ func _sync_nest(sim: Simulation) -> void:
 		_nest_mesh = _nest_body(footprint, tile_size)
 		add_child(_nest_mesh)
 
-	var tile: Vector3i = sim.query_nest_tile()
-	var near: FixedVec2 = sim.query_tile_centre_metres(tile)
-	var far: FixedVec2 = sim.query_tile_centre_metres(
-		Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
-	)
-	_nest_mesh.position = Vector3(
-		(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
-		Fixed.to_float(sim.query_layer_height_metres(tile.y)),
-		(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
-	)
+	_nest_mesh.position = _footprint_centre(sim, sim.query_nest_tile(), footprint)
 
 
 ## The Nest's body: its generated mesh if there is one, and a tall box if there is not.
+##
+## A holder with the body parented under it, so `_nest_mesh.position` means the floor of
+## the footprint either way — a box is modelled about its centre and has to be lifted onto
+## its feet, where a generated body already stands on them.
 func _nest_body(footprint: Vector2i, tile_size: float) -> Node3D:
-	if ResourceLoader.exists(NEST_MESH):
-		var scene: PackedScene = load(NEST_MESH)
-		if scene != null:
-			var body: Node3D = scene.instantiate()
-			# The mesh is modelled standing on the ground, like every generated body, so it
-			# is parented at the footprint's floor rather than at its centre.
-			return body
-
-	var placeholder: MeshInstance3D = MeshInstance3D.new()
-	var box: BoxMesh = BoxMesh.new()
-	box.size = Vector3(
-		float(footprint.x) * tile_size, NEST_HEIGHT_METRES, float(footprint.y) * tile_size
-	)
-	placeholder.mesh = box
-	placeholder.position = Vector3(0.0, NEST_HEIGHT_METRES * 0.5, 0.0)
-	var skin: StandardMaterial3D = StandardMaterial3D.new()
-	skin.albedo_color = Color(0.46, 0.40, 0.30)
-	placeholder.material_override = skin
 	var holder: Node3D = Node3D.new()
-	holder.add_child(placeholder)
+	var body: MeshInstance3D = MeshInstance3D.new()
+	var mesh: Mesh = _body(NEST_BODY)
+	if mesh != null:
+		body.mesh = mesh
+	else:
+		var box: BoxMesh = BoxMesh.new()
+		box.size = Vector3(
+			float(footprint.x) * tile_size, NEST_HEIGHT_METRES, float(footprint.y) * tile_size
+		)
+		body.mesh = box
+		body.position = Vector3(0.0, NEST_HEIGHT_METRES * 0.5, 0.0)
+		var skin: StandardMaterial3D = StandardMaterial3D.new()
+		skin.albedo_color = Color(0.46, 0.40, 0.30)
+		body.material_override = skin
+	holder.add_child(body)
 	return holder
 
 
@@ -527,59 +782,158 @@ func _sync_enemies(sim: Simulation) -> void:
 		_enemy_meshes = MultiMeshInstance3D.new()
 		var instanced: MultiMesh = MultiMesh.new()
 		instanced.transform_format = MultiMesh.TRANSFORM_3D
-		var box: BoxMesh = BoxMesh.new()
-		box.size = Vector3(ENEMY_SIZE_METRES, ENEMY_SIZE_METRES, ENEMY_SIZE_METRES)
-		instanced.mesh = box
+		instanced.mesh = _crawler_mesh()
 		_enemy_meshes.multimesh = instanced
-		var skin: StandardMaterial3D = StandardMaterial3D.new()
-		skin.albedo_color = Color(0.58, 0.14, 0.12)
-		_enemy_meshes.material_override = skin
 		add_child(_enemy_meshes)
 
 	var total: int = sim.query_enemy_count()
 	_enemy_transforms.resize(total * FLOATS_PER_INSTANCE)
 	for index: int in range(total):
 		var where: FixedVec2 = sim.query_enemy_position_metres(index)
-		var base: int = index * FLOATS_PER_INSTANCE
-		_enemy_transforms[base + 0] = 1.0
-		_enemy_transforms[base + 1] = 0.0
-		_enemy_transforms[base + 2] = 0.0
-		_enemy_transforms[base + 3] = Fixed.to_float(where.x)
-		_enemy_transforms[base + 4] = 0.0
-		_enemy_transforms[base + 5] = 1.0
-		_enemy_transforms[base + 6] = 0.0
-		_enemy_transforms[base + 7] = ENEMY_SIZE_METRES * 0.5
-		_enemy_transforms[base + 8] = 0.0
-		_enemy_transforms[base + 9] = 0.0
-		_enemy_transforms[base + 10] = 1.0
-		_enemy_transforms[base + 11] = Fixed.to_float(where.z)
+		# A Crawler faces the way the flowfield is sending it, which is a query like
+		# everything else here — the Simulation decides where it is going and this draws
+		# it pointing that way. A Crawler on a tile the field cannot route keeps the
+		# heading it had, which is the same thing the Simulation does with it.
+		var heading: int = sim.query_flow_direction(sim.query_enemy_tile(index))
+		var yaw: float = _yaw_for_direction(heading) if heading >= 0 else 0.0
+		_write_instance(
+			_enemy_transforms,
+			index,
+			Vector3(Fixed.to_float(where.x), 0.0, Fixed.to_float(where.z)),
+			yaw
+		)
 
 	_enemy_meshes.multimesh.instance_count = total
 	if total > 0:
 		_enemy_meshes.multimesh.buffer = _enemy_transforms
 
 
-## One slab per tile of Belt. Flat on the ground, so the Items on top of it are what the
-## eye follows along a line.
+## One Crawler: a low armoured carapace on six legs, nose along +z.
+##
+## Built here rather than generated, because it is the one mesh in the game that has to go
+## in a MultiMesh — a thousand of these are a thousand transforms against one buffer, so
+## it is a handful of boxes and stays a handful of boxes. Shape over detail: at twenty
+## metres what reads is "low, wide, many-legged, coming at you", and nothing else survives
+## the distance.
+func _crawler_mesh() -> Mesh:
+	var built: SurfaceTool = SurfaceTool.new()
+	built.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var size: float = ENEMY_SIZE_METRES
+
+	var block: BoxMesh = BoxMesh.new()
+	block.size = Vector3.ONE
+
+	# The abdomen, the thorax it tapers into and the head jutting ahead of both: three
+	# blocks of falling height, which is what makes the silhouette read as *pointed*
+	# rather than as a brick.
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.78, size * 0.46, size * 0.62)),
+		Vector3(0.0, size * 0.40, -size * 0.30)
+	))
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.62, size * 0.34, size * 0.50)),
+		Vector3(0.0, size * 0.36, size * 0.18)
+	))
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.34, size * 0.22, size * 0.34)),
+		Vector3(0.0, size * 0.26, size * 0.54)
+	))
+	# Mandibles, so the front end is the end that bites.
+	for side: int in [-1, 1]:
+		built.append_from(block, 0, Transform3D(
+			Basis.from_scale(Vector3(size * 0.09, size * 0.09, size * 0.30)),
+			Vector3(float(side) * size * 0.14, size * 0.20, size * 0.78)
+		))
+
+	# Six legs, splayed and stepping outside the body, which is the whole reason this is
+	# not a box: a bug's outline is the legs.
+	for side: int in [-1, 1]:
+		for pair: int in range(3):
+			var along: float = (float(pair) - 1.0) * size * 0.34
+			built.append_from(block, 0, Transform3D(
+				Basis.from_scale(Vector3(size * 0.42, size * 0.08, size * 0.10)),
+				Vector3(float(side) * size * 0.52, size * 0.30, along)
+			))
+			built.append_from(block, 0, Transform3D(
+				Basis.from_scale(Vector3(size * 0.09, size * 0.30, size * 0.09)),
+				Vector3(float(side) * size * 0.70, size * 0.15, along)
+			))
+
+	built.index()
+	var merged: ArrayMesh = built.commit()
+	# Chitin: dark, dull and faintly warm, so a swarm reads against the ochre ground
+	# without glowing like a hazard marker.
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = Color(0.21, 0.07, 0.06)
+	skin.metallic = 0.25
+	skin.roughness = 0.55
+	merged.surface_set_material(0, skin)
+	return merged
+
+
+## Every tile of Belt on the Map, turned to the direction its run goes in.
+##
+## One MultiMesh for the lot. A tile of trestle is a dozen surfaces and a Belt run reaches
+## hundreds of tiles, so a node a tile would be thousands of nodes for the system the
+## project's performance budget is written around — the Items riding on top of it are
+## instanced for the same reason, and this is the same decision one level down.
 func _sync_belts(sim: Simulation) -> void:
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _belt_meshes == null:
+		_belt_meshes = MultiMeshInstance3D.new()
+		var instanced: MultiMesh = MultiMesh.new()
+		instanced.transform_format = MultiMesh.TRANSFORM_3D
+		var body: Mesh = _body(BELT_BODY)
+		if body != null:
+			instanced.mesh = body
+		else:
+			# No Belt art yet: a low slab, flat on the ground, so the Items on top of it
+			# are still what the eye follows along a line.
+			var slab: BoxMesh = BoxMesh.new()
+			slab.size = Vector3(tile_size, BELT_HEIGHT_METRES, tile_size)
+			instanced.mesh = slab
+			var skin: StandardMaterial3D = StandardMaterial3D.new()
+			skin.albedo_color = Color(0.24, 0.22, 0.20)
+			_belt_meshes.material_override = skin
+		_belt_meshes.multimesh = instanced
+		add_child(_belt_meshes)
+
+	# A placeholder slab is modelled about its own centre, so it alone has to be lifted
+	# onto its feet; a generated tile of trestle already stands on the ground.
+	var lift: float = 0.0 if _body(BELT_BODY) != null else BELT_HEIGHT_METRES * 0.5
 
 	var tiles: int = 0
 	for index: int in range(sim.query_belt_count()):
 		tiles += sim.query_belt_length_tiles(index)
-	_resize_pool(_belt_meshes, tiles, tile_size, BELT_HEIGHT_METRES, Color(0.24, 0.22, 0.20))
+	_belt_transforms.resize(tiles * FLOATS_PER_INSTANCE)
 
-	var slab: int = 0
+	var instance: int = 0
 	for index: int in range(sim.query_belt_count()):
-		for step: int in range(sim.query_belt_length_tiles(index)):
-			var tile: Vector3i = sim.query_belt_tile(index, step)
-			var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
-			_belt_meshes[slab].position = Vector3(
-				Fixed.to_float(centre.x),
-				Fixed.to_float(sim.query_layer_height_metres(tile.y)) + BELT_HEIGHT_METRES * 0.5,
-				Fixed.to_float(centre.z)
-			)
-			slab += 1
+		# A Belt run is a straight line of tiles, so the queries are asked where it starts
+		# and which way it goes and the rest of the run is walked from there — one tile
+		# step a tile, out of `WorldGrid.direction_step`, which is the one place the
+		# meaning of a direction is written down. Asking `query_belt_tile` and
+		# `query_tile_centre_metres` per tile instead costs about five times as much, and
+		# a Belt run reaches hundreds of tiles.
+		var direction: int = sim.query_belt_direction(index)
+		var yaw: float = _yaw_for_direction(direction)
+		var step: Vector3i = WorldGrid.direction_step(direction)
+		var anchor: Vector3i = sim.query_belt_tile(index, 0)
+		var centre: FixedVec2 = sim.query_tile_centre_metres(anchor)
+		var at: Vector3 = Vector3(
+			Fixed.to_float(centre.x),
+			Fixed.to_float(sim.query_layer_height_metres(anchor.y)) + lift,
+			Fixed.to_float(centre.z)
+		)
+		var along: Vector3 = Vector3(float(step.x), 0.0, float(step.z)) * tile_size
+		for tile: int in range(sim.query_belt_length_tiles(index)):
+			_write_instance(_belt_transforms, instance, at, yaw)
+			at += along
+			instance += 1
+
+	_belt_meshes.multimesh.instance_count = tiles
+	if tiles > 0:
+		_belt_meshes.multimesh.buffer = _belt_transforms
 
 
 ## Every Item on every Belt, at the position the Simulation says it is at.
@@ -606,32 +960,22 @@ func _sync_items(sim: Simulation) -> void:
 	for index: int in range(sim.query_belt_count()):
 		total += sim.query_belt_item_count(index)
 
+	var deck: float = BELT_DECK_METRES if _body(BELT_BODY) != null else BELT_HEIGHT_METRES
 	_item_transforms.resize(total * FLOATS_PER_INSTANCE)
 	var instance: int = 0
 	for index: int in range(sim.query_belt_count()):
 		var layer: int = sim.query_belt_tile(index, 0).y
 		var height: float = (
-			Fixed.to_float(sim.query_layer_height_metres(layer))
-			+ BELT_HEIGHT_METRES
-			+ ITEM_SIZE_METRES * 0.5
+			Fixed.to_float(sim.query_layer_height_metres(layer)) + deck + ITEM_SIZE_METRES * 0.5
 		)
 		for slot: int in range(sim.query_belt_item_count(index)):
 			var where: FixedVec2 = sim.query_belt_item_position_metres(index, slot)
-			var base: int = instance * FLOATS_PER_INSTANCE
-			# An identity basis with the position in the fourth column of each row, which
-			# is the layout a MultiMesh expects for TRANSFORM_3D.
-			_item_transforms[base + 0] = 1.0
-			_item_transforms[base + 1] = 0.0
-			_item_transforms[base + 2] = 0.0
-			_item_transforms[base + 3] = Fixed.to_float(where.x)
-			_item_transforms[base + 4] = 0.0
-			_item_transforms[base + 5] = 1.0
-			_item_transforms[base + 6] = 0.0
-			_item_transforms[base + 7] = height
-			_item_transforms[base + 8] = 0.0
-			_item_transforms[base + 9] = 0.0
-			_item_transforms[base + 10] = 1.0
-			_item_transforms[base + 11] = Fixed.to_float(where.z)
+			_write_instance(
+				_item_transforms,
+				instance,
+				Vector3(Fixed.to_float(where.x), height, Fixed.to_float(where.z)),
+				0.0
+			)
 			instance += 1
 
 	_item_meshes.multimesh.instance_count = total
@@ -694,6 +1038,11 @@ func _sync_hud(sim: Simulation) -> void:
 		totals.append("nothing extracted yet")
 	lines.append_array(totals)
 
+	# Machines in trouble first, and only as many as a player can read. A line per Machine
+	# buries a real Factory under its own diagnostics — fifty lines of "running" tell
+	# nobody anything, and they are drawn over the Factory they are describing.
+	var healthy: int = 0
+	var listed: int = 0
 	for index: int in range(sim.query_machine_count()):
 		# Starvation is asked of the Simulation rather than guessed from a count that has
 		# stopped moving. A renderer that inferred it would be a second opinion about the
@@ -705,6 +1054,14 @@ func _sync_hud(sim: Simulation) -> void:
 			state = "starved"
 		elif sim.query_machine_is_throttled(index):
 			state = "throttled"
+		# A Turret is always named, however healthy it looks: "running" and out of
+		# Ammunition are the same word for a Turret, and a dry one costs the Run.
+		if state == "running" and not sim.query_machine_is_turret(index):
+			healthy += 1
+			continue
+		if listed >= MACHINES_LISTED:
+			continue
+		listed += 1
 		# The Heat this Machine has made and the rate it is making it at, on the Machine's
 		# own line. That is the whole of "Heat's contributors are visible": a player reads
 		# the cause next to the thing that caused it, rather than inferring it from a total.
@@ -729,16 +1086,19 @@ func _sync_hud(sim: Simulation) -> void:
 			line += " — DRY" if held == 0 else " — %d shots" % sim.query_turret_shots_remaining(index)
 		lines.append(line)
 
+	var unlisted: int = sim.query_machine_count() - healthy - listed
+	if unlisted > 0:
+		lines.append("… and %d more needing attention" % unlisted)
+	if healthy > 0:
+		lines.append("%d machines running" % healthy)
+
+	var stalled: int = 0
 	for index: int in range(sim.query_belt_count()):
-		var flow: String = "stalled" if sim.query_belt_is_stalled(index) else "moving"
+		if sim.query_belt_is_stalled(index):
+			stalled += 1
+	if sim.query_belt_count() > 0:
 		lines.append(
-			"belt %d tiles — %s — %d/%d"
-			% [
-				sim.query_belt_length_tiles(index),
-				flow,
-				sim.query_belt_item_count(index),
-				sim.query_belt_capacity(index),
-			]
+			"belts %d — %d stalled" % [sim.query_belt_count(), stalled]
 		)
 
 	_hud.text = "\n".join(lines)
@@ -922,9 +1282,14 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 
 ## A lit sky and a ground plane with the 2 m grid marked on it, built once.
 ##
-## Not decoration. A first-person controller judged on how it feels needs a surface to
-## walk on and a grid to read the 2 m tiles off, or a 1.8 m eye height is a number with
-## nothing to be 1.8 m against.
+## Not decoration, and not only because a first-person controller judged on how it feels
+## needs a surface to walk on. The generated surfaces are **physically based and mostly
+## metal** — cast iron, welded steel, oiled steel — and a metal lit by an ambient *colour*
+## has nothing to reflect, so it renders as a dark smear whatever its albedo says. The
+## light here is therefore a sky the materials can see: ambient and reflections both come
+## off it, which is what puts the sheen back on a boiler drum and the olive back on a
+## housing. The palette was tuned in Blender renders and Blender's lighting is not
+## Godot's; these numbers are the second half of that tuning.
 func _sync_scenery(sim: Simulation) -> void:
 	if _ground != null:
 		return
@@ -935,33 +1300,83 @@ func _sync_scenery(sim: Simulation) -> void:
 	var sky: Sky = Sky.new()
 	var sky_material: ProceduralSkyMaterial = ProceduralSkyMaterial.new()
 	# Dieselpunk: a low, smoky, ochre sky rather than a clear blue one (DESIGN.md).
-	sky_material.sky_top_color = Color(0.22, 0.24, 0.28)
-	sky_material.sky_horizon_color = Color(0.52, 0.44, 0.33)
-	sky_material.ground_bottom_color = Color(0.14, 0.13, 0.12)
-	sky_material.ground_horizon_color = Color(0.32, 0.28, 0.23)
+	sky_material.sky_top_color = Color(0.17, 0.19, 0.24)
+	sky_material.sky_horizon_color = Color(0.49, 0.40, 0.29)
+	sky_material.sky_curve = 0.12
+	sky_material.ground_bottom_color = Color(0.11, 0.10, 0.09)
+	sky_material.ground_horizon_color = Color(0.30, 0.25, 0.20)
+	sky_material.ground_curve = 0.08
+	# The haze the sun burns through, rather than a disc with a hard edge.
+	sky_material.sun_angle_max = 18.0
+	sky_material.sun_curve = 0.08
 	sky.sky_material = sky_material
 	world.sky = sky
-	# An explicit ambient colour rather than the sky's own, and a generous one. A single
-	# directional light leaves every face turned away from it black, and a Machine whose
-	# silhouette a player cannot read is a Machine they cannot diagnose — readability is
-	# the point of the placeholders, not realism.
-	world.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	world.ambient_light_color = Color(0.62, 0.63, 0.68)
-	world.ambient_light_energy = 0.9
+
+	# Ambient *and* reflections off that sky. The reflection half is what a metal needs:
+	# with no environment to mirror, `metallic = 1` is a material with nothing to show.
+	world.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	world.ambient_light_sky_contribution = 1.0
+	world.ambient_light_energy = 2.1
+	world.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
+
+	# Filmic, because the sky is bright and the Machines are dark and a linear curve
+	# cannot hold both — without it the ground blows out to white while a Smelter stays a
+	# silhouette. The exposure sits a little under one so the ochre keeps its colour.
+	world.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	world.tonemap_exposure = 1.15
+	world.tonemap_white = 2.0
+
+	# Contact shadow in the crevices of a body, which is most of what makes rivets,
+	# gauges and frames read as parts rather than as texture.
+	world.ssao_enabled = true
+	world.ssao_radius = 0.9
+	world.ssao_intensity = 1.6
+	world.ssao_power = 1.4
+
+	# Smog, so distance reads as distance. The grid otherwise runs to a hard horizon line
+	# and a Factory fifty metres away is as crisp as the one under the player's nose.
+	world.fog_enabled = true
+	world.fog_mode = Environment.FOG_MODE_DEPTH
+	world.fog_light_color = Color(0.46, 0.39, 0.31)
+	world.fog_light_energy = 0.9
+	world.fog_density = 0.0
+	world.fog_depth_begin = 45.0
+	world.fog_depth_end = 320.0
+	world.fog_depth_curve = 1.4
+	world.fog_sky_affect = 0.0
+
 	_environment.environment = world
 	add_child(_environment)
 
 	_sun = DirectionalLight3D.new()
-	# High and off to one side, so vertical faces catch it at different angles and a box
-	# reads as a box rather than as a silhouette.
-	_sun.rotation = Vector3(-0.85, -2.3, 0.0)
-	_sun.light_energy = 1.4
-	_sun.light_color = Color(1.0, 0.94, 0.84)
+	# Low and off to one side — a late-afternoon industrial sun. Low enough that a stack
+	# or a derrick throws a shadow long enough to see, which is half of what tells a
+	# player how tall a thing is.
+	# Behind a player's right shoulder as a Run opens — yaw 0 looks down -z — so the face
+	# of a Machine a player is walking towards is the lit face and its shadow falls away
+	# from them. A sun in front of the opening view would make every body a silhouette.
+	_sun.rotation = Vector3(-0.72, 0.66, 0.0)
+	_sun.light_energy = 3.0
+	_sun.light_color = Color(1.0, 0.89, 0.73)
 	_sun.shadow_enabled = true
-	# Not fully black. A placeholder box in shadow still has to read as a box, and a
+	# Not fully black. A Machine in shadow still has to read as that Machine, and a
 	# Factory half of which is unreadable at a glance defeats the point of Survey View.
-	_sun.shadow_opacity = 0.65
+	_sun.shadow_opacity = 0.9
+	_sun.directional_shadow_max_distance = 160.0
+	_sun.directional_shadow_blend_splits = true
 	add_child(_sun)
+
+	# A cool fill from the opposite side, carrying no shadow. The generated surfaces are
+	# cast iron, soot and oiled steel — dark to begin with — and one sun leaves every face
+	# turned away from it black. A Machine a player cannot read is a Machine they cannot
+	# diagnose, and silhouette is a gameplay requirement here (docs/ASSET_PIPELINE.md), so
+	# the far side of a boiler has to stay legible.
+	_fill = DirectionalLight3D.new()
+	_fill.rotation = Vector3(-0.41, -2.45, 0.0)
+	_fill.light_energy = 1.1
+	_fill.light_color = Color(0.72, 0.78, 0.92)
+	_fill.shadow_enabled = false
+	add_child(_fill)
 
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
 	var span: float = float(GROUND_HALF_EXTENT_TILES * 2) * tile_size
@@ -972,6 +1387,11 @@ func _sync_scenery(sim: Simulation) -> void:
 	_ground.mesh = plane
 	var surface: StandardMaterial3D = StandardMaterial3D.new()
 	surface.albedo_texture = _grid_texture()
+	# Dirt, not concrete: rough, unlit by any specular, and dark enough that the Machines
+	# standing on it are the brightest thing in frame.
+	surface.albedo_color = Color(0.60, 0.54, 0.47)
+	surface.roughness = 1.0
+	surface.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	# Anisotropic, because the grid runs away to the horizon and nearest-neighbour
 	# filtering turns the far half of it into noise.
 	surface.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
@@ -988,16 +1408,20 @@ func _sync_scenery(sim: Simulation) -> void:
 func _grid_texture() -> ImageTexture:
 	var size: int = 16
 	var image: Image = Image.create(size, size, false, Image.FORMAT_RGB8)
-	image.fill(Color(0.29, 0.27, 0.25))
+	image.fill(Color(0.33, 0.30, 0.27))
 	for along: int in range(size):
-		image.set_pixel(along, 0, Color(0.38, 0.36, 0.33))
-		image.set_pixel(0, along, Color(0.38, 0.36, 0.33))
+		image.set_pixel(along, 0, Color(0.42, 0.39, 0.35))
+		image.set_pixel(0, along, Color(0.42, 0.39, 0.35))
 	return ImageTexture.create_from_image(image)
 
 
-## The Build Gun's hologram: a translucent box on the tile the gun is aimed at, sized to
-## the footprint the selected Machine would occupy *turned by the rotation the player is
-## holding*, and coloured by whether the Simulation would accept it.
+## The Build Gun's hologram: the body of the selected Machine, drawn translucent on the
+## tile the gun is aimed at, turned by the rotation the player is holding, and coloured by
+## whether the Simulation would accept it.
+##
+## It is the Machine's own body rather than a box because the question a player is asking
+## is "will *that* fit there", and a box cannot answer it — a derrick's legs and a boiler's
+## drum occupy their footprint very differently.
 ##
 ## Everything here is a query. The aim comes from `BuildGun`, which derives it from where
 ## the Simulation says the camera is; the refusal comes from `query_build_refusal`, which
@@ -1006,47 +1430,44 @@ func _grid_texture() -> ImageTexture:
 func _sync_hologram(sim: Simulation) -> void:
 	if _hologram == null:
 		_hologram = MeshInstance3D.new()
-		_hologram.mesh = BoxMesh.new()
 		var fresh: StandardMaterial3D = StandardMaterial3D.new()
 		fresh.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 		fresh.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		_hologram.material_override = fresh
 		add_child(_hologram)
 
-	var selected: MachineDefinition = sim.query_definitions().machine(
-		sim.query_player_selected_machine(VIEWED_PLAYER)
-	)
-	_hologram.visible = selected != null
-	if selected == null:
+	var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
+	var definition: MachineDefinition = sim.query_definitions().machine(selected)
+	_hologram.visible = definition != null
+	if definition == null:
 		return
 
-	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
-	var footprint: Vector2i = WorldGrid.rotated_footprint(
-		selected.footprint_x, selected.footprint_z, rotation
-	)
-	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	var declared: Vector2i = Vector2i(definition.footprint_x, definition.footprint_z)
+	var dressing: String = _dressing_for(selected, declared, tile_size)
+	if _hologram_dressing != dressing:
+		# `_dress` clears the material override where a body carries its own surfaces,
+		# which is exactly what a hologram must not do — so the translucent skin goes back
+		# on after.
+		var skin: StandardMaterial3D = _hologram.material_override
+		_dress(_hologram, selected, declared, tile_size)
+		_hologram.material_override = skin
+		_hologram_dressing = dressing
 
-	var box: BoxMesh = _hologram.mesh
-	box.size = Vector3(
-		float(footprint.x) * tile_size, MACHINE_HEIGHT_METRES, float(footprint.y) * tile_size
-	)
+	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
+	var footprint: Vector2i = WorldGrid.rotated_footprint(declared.x, declared.y, rotation)
+	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
 
-	var near: FixedVec2 = sim.query_tile_centre_metres(tile)
-	var far: FixedVec2 = sim.query_tile_centre_metres(
-		Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
-	)
-	_hologram.position = Vector3(
-		(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
-		Fixed.to_float(sim.query_layer_height_metres(tile.y)) + MACHINE_HEIGHT_METRES * 0.5,
-		(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
-	)
+	_hologram.rotation = Vector3(0.0, _yaw_for_rotation(rotation), 0.0)
+	_hologram.position = _footprint_centre(sim, tile, footprint)
+	if not dressing.begins_with("res://"):
+		_hologram.position.y += MACHINE_HEIGHT_METRES * 0.5
 
 	var refusal: int = sim.query_build_refusal(
 		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation
 	)
-	var skin: StandardMaterial3D = _hologram.material_override
-	skin.albedo_color = (
+	var tint: StandardMaterial3D = _hologram.material_override
+	tint.albedo_color = (
 		HOLOGRAM_ALLOWED if refusal == Simulation.Refusal.NONE else HOLOGRAM_REFUSED
 	)
 
