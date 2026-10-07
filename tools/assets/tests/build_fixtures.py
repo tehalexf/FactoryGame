@@ -21,6 +21,12 @@ real exported FBX actually looks like:
   prefixed_actions.fbx    actions named "Armature|Armature|Walk", the FBX
                           take-name mangling Godot then shows in its
                           AnimationPlayer
+  viewmodel.fbx           a first-person weapon as the purchased packs ship one:
+                          several named takes plus a `default` take spanning the
+                          whole timeline, animation spread across an armature
+                          *and* a loose weapon-part empty, and a weapon body mesh
+                          that is neither parented nor animated because its skin
+                          cluster did not survive
 """
 
 import argparse
@@ -227,6 +233,65 @@ def fixture_prefixed_actions(out_dir):
     export_fbx(os.path.join(out_dir, "prefixed_actions.fbx"))
 
 
+def fixture_viewmodel(out_dir):
+    """A first-person weapon of the shape `fbx_to_viewmodel.py` has to handle.
+
+    Three things at once, because they only bite together: a take is spread over
+    several objects (the hands on the armature, the magazine on its own empty),
+    a `default` take holds every action end to end, and the weapon body arrives
+    loose — unparented and unanimated — because FBX skin clusters over plain
+    helpers do not survive the import.
+    """
+    reset()
+    armature = new_armature([
+        ("Hips", None, (0, 0, 1.0), (0, 0, 1.3)),
+        ("Spine", "Hips", (0, 0, 1.3), (0, 0, 1.6)),
+    ])
+    arms = add_cube_mesh(name="ArmsMesh", size=0.4, location=(0, 0, 1.2))
+    skin(arms, armature, "Hips")
+
+    part = bpy.data.objects.new("Part", None)
+    bpy.context.collection.objects.link(part)
+    part.location = (0.0, -0.3, 1.4)
+
+    # The weapon body: no parent, no animation, sitting at the world origin.
+    body = add_cube_mesh(name="WeaponBody", size=0.3, location=(0, 0, 0))
+    # One named material, white and untextured, which is what a pack that
+    # references textures it does not ship renders as.
+    material = bpy.data.materials.new("Material")
+    material.use_nodes = True
+    body.data.materials.append(material)
+
+    eye = bpy.data.objects.new("EyePoint", None)
+    bpy.context.collection.objects.link(eye)
+    eye.location = (0.0, 0.0, 1.7)
+
+    # Actions live on the weapon part, not on the armature, and Blender's FBX
+    # exporter broadcasts every action to every object — which is exactly the
+    # shape the purchased packs arrive in, one take spread across the hands and
+    # the weapon's own helpers.
+    for name, slide in (("Shoot", 0.2), ("idle", 0.05), ("default", 0.4)):
+        part.animation_data_create()
+        part.animation_data.action = bpy.data.actions.new(name)
+        for frame, value in ((1, 0.0), (10, slide)):
+            part.location = (value, -0.3, 1.4)
+            part.keyframe_insert("location", frame=frame)
+
+    # One throwaway pose action so the armature has animation data at all: the
+    # FBX exporter only broadcasts the other takes onto objects that do.
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode="POSE")
+    armature.animation_data_create()
+    armature.animation_data.action = bpy.data.actions.new("rest")
+    pose_bone = armature.pose.bones["Spine"]
+    for frame, value in ((1, 0.0), (10, 0.15)):
+        pose_bone.location = (0.0, 0.0, value)
+        pose_bone.keyframe_insert("location", frame=frame)
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    export_fbx(os.path.join(out_dir, "viewmodel.fbx"))
+
+
 def main():
     args = parse_args()
     os.makedirs(args.out_dir, exist_ok=True)
@@ -236,6 +301,7 @@ def main():
     fixture_relocated_textures(args.out_dir)
     fixture_orphan_weights(args.out_dir)
     fixture_prefixed_actions(args.out_dir)
+    fixture_viewmodel(args.out_dir)
     print("fixtures written to", args.out_dir)
 
 

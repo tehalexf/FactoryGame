@@ -9,6 +9,7 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 ```bash
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
+tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 godot --path .                   # run the game
@@ -1240,25 +1241,66 @@ Run you are standing in.
   `query_player_component` and what is in it comes out of the definition set.
 - `KEY_REVIVE` (T) is held, like the wrench, and does nothing on a solo Run.
 
-### The weapon in frame, and the honest limit of what shipped
+### The weapon in frame, and where it comes from
 
-`WorldView._sync_weapon` draws a **placeholder**: one box for a frame and one for a barrel,
-parented to the camera, swaying with the player's own velocity and kicking when a shot
-lands. Every number it moves by is read out of the Simulation, so nothing there is a second
-opinion and all of it replays — and the barrel's length comes off the weapon's own reach, so
-a fourth weapon looks different without the renderer changing.
+`game/weapon_viewmodel.gd` is the whole of it: the purchased first-person arms, their
+weapon, and the clip that is playing on them, parented to the camera so the model and the
+aim climb together. **Everything it moves by is read out of the Simulation** — the velocity,
+the kick, the tick a shot fired on, the rounds left in the player's pockets — and the clip's
+*time* is computed from the tick count and seeked explicitly rather than left to the
+engine's clock, so what is on screen is a function of Simulation state and a replay looks
+the same twice.
 
-What it is **not** is the purchased first-person arms and their named takes. The packs are
-there and `docs/LICENSED_ASSETS.md` records exactly what each FBX holds and the frame ranges
-of every take — Shoot, Reload, Draw, PutAway, walk, run, idle, plus Pump and Chamber — so
-the research is done. What is not done is the pipeline: those are FBX inside the gitignored
-quarantine, Godot cannot import an FBX at runtime, and nothing non-redistributable may be
-committed. Using them therefore needs a Blender step that converts the named takes into a
-GLB **outside** the repository, plus a runtime glTF load of the result.
-`WorldView.WEAPON_BODY_DIRECTORY` is the seam that waits for it: a GLB named for the weapon,
-loaded if it is there and silently skipped if it is not, so **the repository stays buildable
-and testable for anyone without those files**. That is a ticket of its own and it is the
-single highest-value thing left on this pillar, because feel is what this pillar is.
+**The models are loaded at runtime from outside the repository, and are usually absent.**
+The packs forbid redistribution and this repo is public, so a converted `.glb` is exactly as
+forbidden as the FBX it came from (`docs/ASSETS.md`). `tools/assets/convert_weapons.sh`
+writes one per weapon into a gitignored directory and `WeaponViewmodel` draws two
+placeholder boxes for any weapon it does not find there. **A clone without the packs builds,
+tests green and plays**, which is the rule, and `test_weapon_viewmodel.gd` asserts it rather
+than trusting it. The conversion, and the four things about those FBX that bite, are
+`docs/ASSET_PIPELINE.md` section 7.
+
+- **`WeaponAnimator` is the state machine and it is a `RefCounted` with no nodes.** It takes
+  a `Facts` — every field of which is a `query_*` — and returns a `Cue`: which role should be
+  playing, how far into it, whether it loops, and **which weapon's model belongs on screen**.
+  No assets, no scene tree, so every transition a player will ever see is a cheap assertion
+  rather than something only a screenshot could catch. Clip lengths are *told* to it by
+  whoever loaded the model, and anything it is not told falls back to `DEFAULT_SECONDS` — so
+  absence of the packs changes what is **drawn** and not what **happens**.
+- **A role is what the game asks for; a clip name is what a pack happens to call it.**
+  `Shoot` against `Knife_Attack_1_Anim`, `PutAway` against `Holster`. `CLIP_NEEDLES` is the
+  whole of the translation, resolved once when a model loads, and a weapon whose model lacks
+  a take simply never plays that role — which is how the Bolt Rifle works a bolt and the
+  Drum Autocannon does not.
+- **A weapon change is two clips with a model swap between them**, and the holster belongs to
+  the weapon *going away*. `Cue.weapon` lags `query_player_weapon` for exactly as long as the
+  stow takes, because you cannot holster a rifle that has already been swapped for an
+  autocannon. Neither clip can be fired through.
+- **The bolt and the pump are only played by a weapon that has room for them.** A `Chamber`
+  or `Pump` take runs after the shot clip and only when `query_player_weapon_interval_ticks`
+  leaves time for both — otherwise the model would visibly cycle slower than the Simulation
+  lets the player shoot. The Bolt Rifle's 48 ticks has room; the Autocannon's 7 does not.
+- **A reload is not invented, because the Simulation has none.** A round leaves the player's
+  pockets the tick the trigger goes, and the one moment that *is* a reload is the one a query
+  can see: `query_player_shots_remaining` rising off zero — a player who was dry and now is
+  not. A player who banks a second round while holding one has not reloaded, and a melee
+  weapon has no magazine at all.
+- **The trigger beats a reload outright**, which is what the Shotgun's
+  `Reload_Start` / `reload` / `Reload_End` split is for: break out of the loop, shoot, and
+  close the action afterwards rather than resuming it. A pack that ships one `reload` take
+  plays one clip and the same code does both.
+- **One model per weapon, built once.** A change hides one and shows another; the scene tree
+  does not grow as a Run goes on, which is the rule every other thing in `WorldView` obeys.
+- **The thing in a player's hands is an id, and nothing here knows it is a weapon.**
+  `WeaponViewmodel.held_facts` and `show_held` are one struct and one call: change
+  `Facts.weapon` to any id, hand it back, and the holster, the model swap and the draw
+  happen by themselves. That is the seam a holster between a weapon and the Build Gun wants
+  — `draw` and `holster` are first-class roles here rather than a special case, because
+  `Draw` and `PutAway` are first-class takes in the packs.
+
+What is still placeholder-grade is the *surface*: the packs reference textures they do not
+ship, so the arms and the weapons are repainted from `dieselpunk_palette.json` rather than
+textured. Recovering the real maps is a nicer-looking ticket of its own.
 
 ### Where the balance stands, and what nobody has played
 

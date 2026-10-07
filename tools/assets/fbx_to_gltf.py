@@ -438,10 +438,26 @@ def prune_uv_layers(keep):
 # ---------------------------------------------------------------- animation
 
 
+# Parts of a mangled FBX take name that name the authoring layer rather than the
+# take: 3ds Max writes `<object>|<take>|BaseLayer`.
+ACTION_NAME_NOISE = {"baselayer", "baseanimation", "animlayer"}
+
+
 def clean_action_names():
-    """`Armature|Armature|Walk` -> `Walk`."""
+    """`Armature|Armature|Walk` -> `Walk`, and `Bolt|Chamber|BaseLayer` -> `Chamber`.
+
+    FBX takes import one action per animated object, each named for the object, the
+    take and — from 3ds Max — the authoring animation layer. What a Godot
+    AnimationPlayer should show is the name the artist gave the take, so every part
+    that names an object in this scene or an authoring layer is dropped and the
+    last of what remains is the take.
+    """
+    objects = {o.name for o in bpy.data.objects}
     for action in bpy.data.actions:
-        cleaned = action.name.split("|")[-1].strip()
+        parts = [p.strip() for p in action.name.split("|") if p.strip()]
+        kept = [p for p in parts
+                if p not in objects and p.lower() not in ACTION_NAME_NOISE]
+        cleaned = kept[-1] if kept else (parts[-1] if parts else action.name)
         if cleaned and cleaned != action.name:
             log(f"renamed action {action.name!r} -> {cleaned!r}")
             action.name = cleaned
@@ -516,4 +532,9 @@ def main():
     export_glb(args.output)
 
 
-main()
+# Guarded so this file can be imported as a module by another Blender script and
+# have its corrections reused: `tools/assets/fbx_to_viewmodel.py` does exactly
+# that. Blender's `--python` runs a file as `__main__`, so the command line is
+# unaffected.
+if __name__ == "__main__":
+    main()

@@ -1606,151 +1606,27 @@ func _place_camera(sim: Simulation) -> void:
 
 # ── The weapon in frame ───────────────────────────────────────────────────────
 #
-# **This is the honest limit of what this ticket shipped, and it is worth being plain
-# about.** First-person combat lives or dies on animation and feel, and what is here is a
-# placeholder: one box for a frame and one for a barrel, parented to the camera, swaying
-# with the player's own velocity and kicking when a shot lands. Every number it moves by is
-# read out of the Simulation — the velocity, the kick, the tick a shot fired on — so nothing
-# here is a second opinion about the Run, and all of it replays.
+# `WeaponViewmodel` is the whole of it, and it hangs off the camera so the model and the
+# aim climb together. Everything it moves by is read out of the Simulation — the velocity,
+# the kick, the tick a shot fired on, the rounds left in the player's pockets — so nothing
+# here is a second opinion about the Run and all of it replays.
 #
-# What it is *not* is the purchased first-person arms and their named takes
-# (`docs/LICENSED_ASSETS.md`: Shoot, Reload, Draw, PutAway, walk, run, idle, and the Pump
-# and Chamber variants, with exact frame ranges recorded). Those are FBX inside the
-# gitignored quarantine, and Godot cannot import an FBX at runtime — so using them needs a
-# Blender step that converts the named takes into a GLB outside the repository and a
-# runtime glTF load of the result. That is a ticket of its own, and `WEAPON_BODY_DIRECTORY`
-# below is the seam it plugs into: a GLB named for the weapon, loaded if it is there and
-# silently skipped if it is not, **so the repository stays buildable and testable for
-# anyone without those files** — which is the rule `docs/ASSETS.md` sets and the reason
-# none of it may be committed.
+# **The purchased arms are loaded at runtime from outside the repository, and are usually
+# not there.** They are non-redistributable (`docs/ASSETS.md`), Godot cannot import an FBX
+# at runtime, and nothing converted may be committed either — so
+# `tools/assets/convert_weapons.sh` writes a GLB per weapon into a gitignored directory and
+# `WeaponViewmodel` loads it if it finds it and draws two boxes if it does not. A clone
+# without the packs is a playable, testable game; see `docs/ASSET_PIPELINE.md` section 7.
 
-## Where a converted first-person weapon mesh would live, outside the shipping tree. The
-## directory is gitignored and will usually not exist, which is an ordinary state and not a
-## warning — exactly as a Machine with no `.glb` is.
-const WEAPON_BODY_DIRECTORY: String = "res://assets_licensed/generated/gear/"
-
-## How far down, right and forward of the camera the weapon sits, in metres. Pure feel, and
-## the three numbers most worth fiddling with in this file.
-const WEAPON_OFFSET: Vector3 = Vector3(0.22, -0.20, -0.45)
-
-## How far the weapon drops out of frame while a player is Downed or dead, in metres. Far
-## enough to be gone, because a weapon still in frame while bleeding out reads as a bug.
-const WEAPON_STOWED_METRES: float = 0.9
-
-## How far the weapon swings as a player walks, in metres per metre per second of their own
-## speed, and the cap on it. Driven by `query_player_velocity` rather than by a clock, so a
-## player standing still has a steady weapon and a sprinting one does not.
-const WEAPON_SWAY_PER_SPEED: float = 0.012
-const WEAPON_SWAY_LIMIT_METRES: float = 0.06
-
-## How far the weapon recoils towards the camera on a shot, in metres, and how many ticks it
-## takes to come back. Separate from the Simulation's own view kick — that one moves the
-## *aim* and is authoritative; this one moves the model and is presentation.
-const WEAPON_RECOIL_METRES: float = 0.09
-const WEAPON_RECOIL_TICKS: int = 8
-
-var _weapon_view: Node3D = null
-var _weapon_body: MeshInstance3D = null
-var _weapon_barrel: MeshInstance3D = null
-var _weapon_loaded_id: String = ""
+var _weapon_view: WeaponViewmodel = null
 
 
 ## Puts the weapon in frame, where the Simulation says it should be.
-##
-## Parented to the camera, so it inherits the view's yaw and pitch — including the recoil
-## the Simulation has in `query_player_camera_pitch_turns`, which is the point: the model
-## and the aim climb together because they are the same number.
 func _sync_weapon(sim: Simulation) -> void:
 	if _weapon_view == null:
-		_weapon_view = Node3D.new()
+		_weapon_view = WeaponViewmodel.new()
 		_camera.add_child(_weapon_view)
-		_weapon_body = MeshInstance3D.new()
-		_weapon_body.mesh = BoxMesh.new()
-		(_weapon_body.mesh as BoxMesh).size = Vector3(0.07, 0.11, 0.34)
-		_weapon_body.material_override = _unshaded(Color(0.21, 0.22, 0.20))
-		_weapon_view.add_child(_weapon_body)
-		_weapon_barrel = MeshInstance3D.new()
-		_weapon_barrel.mesh = BoxMesh.new()
-		(_weapon_barrel.mesh as BoxMesh).size = Vector3(0.035, 0.035, 0.40)
-		_weapon_barrel.material_override = _unshaded(Color(0.14, 0.14, 0.15))
-		_weapon_view.add_child(_weapon_barrel)
-
-	var weapon: String = sim.query_player_weapon(VIEWED_PLAYER)
-	_weapon_view.visible = not weapon.is_empty() and sim.query_player_is_alive(VIEWED_PLAYER)
-	_load_weapon_body(weapon)
-
-	# A melee weapon is short and a rifle is long, read off the weapon's own reach rather
-	# than off a table here — so a fourth weapon looks different without this file changing.
-	var reach: float = Fixed.to_float(sim.query_player_weapon_range_metres(VIEWED_PLAYER))
-	(_weapon_barrel.mesh as BoxMesh).size = Vector3(
-		0.035, 0.035, clampf(0.12 + reach * 0.006, 0.12, 0.55)
-	)
-	_weapon_barrel.position = Vector3(0.0, 0.0, -(_weapon_barrel.mesh as BoxMesh).size.z * 0.6)
-
-	var sway: float = 0.0
-	var velocity: FixedVec2 = sim.query_player_velocity(VIEWED_PLAYER)
-	var speed: float = Vector2(Fixed.to_float(velocity.x), Fixed.to_float(velocity.z)).length()
-	sway = minf(speed * WEAPON_SWAY_PER_SPEED, WEAPON_SWAY_LIMIT_METRES)
-
-	var recoil: float = 0.0
-	var fired: int = sim.query_player_last_shot_tick(VIEWED_PLAYER)
-	if fired >= 0:
-		var since: int = sim.query_tick() - fired
-		if since >= 0 and since < WEAPON_RECOIL_TICKS:
-			recoil = WEAPON_RECOIL_METRES * (1.0 - float(since) / float(WEAPON_RECOIL_TICKS))
-
-	var stowed: float = 0.0
-	if not sim.query_player_is_alive(VIEWED_PLAYER):
-		stowed = WEAPON_STOWED_METRES
-	# Survey View lifts the camera to read the Factory, so the weapon comes down out of the
-	# way of the thing the player raised the camera to look at.
-	stowed += WEAPON_STOWED_METRES * Fixed.to_float(
-		sim.query_player_survey_blend(VIEWED_PLAYER)
-	)
-
-	_weapon_view.position = Vector3(
-		WEAPON_OFFSET.x + sway,
-		WEAPON_OFFSET.y - sway - stowed,
-		WEAPON_OFFSET.z + recoil
-	)
-
-
-## Loads a converted first-person weapon mesh if there is one, and leaves the placeholder
-## boxes alone if there is not.
-##
-## Absence is an ordinary state. The directory is outside the shipping tree and gitignored,
-## so for anybody who has not built the conversion it simply is not there — and the game
-## still runs, which is the whole rule: nothing non-redistributable may be committed, and
-## nothing may be *required* either.
-func _load_weapon_body(weapon_id: String) -> void:
-	if weapon_id == _weapon_loaded_id:
-		return
-	_weapon_loaded_id = weapon_id
-	if weapon_id.is_empty():
-		return
-	var path: String = "%s%s.glb" % [WEAPON_BODY_DIRECTORY, weapon_id]
-	if not FileAccess.file_exists(path):
-		return
-	var document: GLTFDocument = GLTFDocument.new()
-	var state: GLTFState = GLTFState.new()
-	if document.append_from_file(path, state) != OK:
-		return
-	var loaded: Node = document.generate_scene(state)
-	if loaded == null:
-		return
-	_weapon_body.visible = false
-	_weapon_barrel.visible = false
-	_weapon_view.add_child(loaded)
-
-
-## An unshaded material. A view model is lit by whatever the level happens to be lit by,
-## which at eye level is nothing in particular, so a weapon that took the directional light
-## would vanish whenever a player faced away from the sun.
-func _unshaded(colour: Color) -> StandardMaterial3D:
-	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = colour
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	return material
+	_weapon_view.sync(sim, VIEWED_PLAYER)
 
 
 ## Whether the weapon is in frame. For the smoke test.
@@ -1764,6 +1640,34 @@ func weapon_offset() -> Vector3:
 	if _weapon_view == null:
 		return Vector3.ZERO
 	return _weapon_view.position
+
+
+## Which animation role the weapon in frame is playing — `idle`, `fire`, `reload`, `draw`
+## and the rest of `WeaponAnimator`'s vocabulary. For the smoke test.
+func weapon_clip_role() -> String:
+	if _weapon_view == null:
+		return ""
+	return _weapon_view.clip_role()
+
+
+## Which weapon's model is on screen, which lags what the player is holding for exactly as
+## long as putting the old one away takes. For the smoke test.
+func weapon_model_id() -> String:
+	if _weapon_view == null:
+		return ""
+	return _weapon_view.model_weapon()
+
+
+## Whether a converted first-person model is in frame rather than the placeholder boxes.
+## False on any clone without the purchased packs, which is the ordinary case.
+func weapon_has_model() -> bool:
+	return _weapon_view != null and _weapon_view.has_model()
+
+
+## The view model itself, for a ticket that needs to put something other than a weapon in
+## the player's hands — `WeaponViewmodel.held_facts` and `show_held` are that seam.
+func weapon_viewmodel() -> WeaponViewmodel:
+	return _weapon_view
 
 
 ## Where the camera is standing, in metres. For the smoke test, which asserts it against
