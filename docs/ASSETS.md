@@ -25,7 +25,18 @@ reconstructing provenance later is far harder than logging it now.
 
 | Asset | Source | Licence | Committed? |
 |---|---|---|---|
-| _(none yet)_ | | | |
+| `assets/generated/textures/` (8 tiling textures) | Generated locally, SDXL base 1.0 via `tools/aigen` | Authored for this project; model CreativeML Open RAIL++-M | Yes |
+| `assets/generated/icons/` (10 Item icons) | Generated locally, SDXL base 1.0 via `tools/aigen` | Authored for this project; model CreativeML Open RAIL++-M | Yes |
+| SDXL base 1.0 weights | `stabilityai/stable-diffusion-xl-base-1.0` @ `4621659` | CreativeML Open RAIL++-M | **No** — gitignored under `tools/aigen/models/`, re-downloaded by `setup.sh` |
+
+Generated art carries its full provenance in a manifest beside it
+(`assets/generated/*/manifest.json`): model id and revision, licence, every
+sampler setting, the image hash and the versions used. `generate.py --check`
+re-verifies that record against the files on disk without needing a GPU.
+
+The model licence covers the *weights*, which are not redistributed here; the
+OpenRAIL++-M terms place no ownership claim on generated output. The images
+themselves are ours and are safe to commit to a public repo.
 
 ## Known licence constraints
 

@@ -1,0 +1,100 @@
+# The shared Dieselpunk material palette.
+#
+# Every Machine, Belt, Wall and floor in the Factory draws from these, so they
+# have to read as one family: the same grime, the same olive drab, the same
+# age of steel. The shared `style` and `negative` below are what enforce that
+# -- edit them and the whole palette moves together, which is the point.
+#
+# Per GLOSSARY.md, Dieselpunk here means 1920s-40s heavy industry: cast iron,
+# welded steel, olive drab, hydraulics, grime. Explicitly NOT Victorian
+# steampunk, so no brass, copper, polished wood or whimsy -- the negative
+# prompt names those directly because SDXL reaches for them unprompted the
+# moment "industrial" appears.
+#
+# Regenerate: tools/aigen/.venv/bin/python tools/aigen/generate.py \
+#               --recipe tools/aigen/prompts/textures.yaml
+
+kind: texture
+description: Tiling albedo textures for the shared Machine material palette.
+
+model:
+  id: stabilityai/stable-diffusion-xl-base-1.0
+  revision: 462165984030d82259a11f4367a4eed129e94a7b
+  variant: fp16
+  licence: CreativeML Open RAIL++-M
+
+defaults:
+  width: 1024
+  height: 1024
+  steps: 40
+  guidance: 6.5
+  # Deterministic sampler. Do not switch to an ancestral one without accepting
+  # that --verify will start drifting.
+  scheduler: dpmpp_2m_karras
+  # Patches every Conv2d in the UNet and VAE to wrap. Measured afterwards, not
+  # assumed -- see the `tiling` block in the committed manifest.
+  seamless: true
+
+# Kept short on purpose: item prompt + style must fit CLIP's 77 tokens or the
+# text encoder truncates it and the committed prompt stops describing the
+# committed image. `generate.py` refuses to run if it overflows.
+# "interwar" rather than "1920s to 1940s" -- same meaning, 5 fewer tokens.
+style: >-
+  seamless tileable texture photograph, top-down flat view, no vignette,
+  sharp surface detail, raking light picking out the relief, interwar heavy
+  industry dieselpunk, worn and grimy
+
+negative: >-
+  brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean,
+  pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark,
+  border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail,
+  grass, moss, confetti, abstract pattern
+
+items:
+  - id: cast_iron_plate
+    seed: 20260101
+    prompt: >-
+      rough cast iron surface, dense corrosion pitting and casting freckles,
+      dark grey iron, ground-in grime
+
+  - id: riveted_steel_plate
+    seed: 20260102
+    prompt: >-
+      welded steel plate, rows of domed hot-driven rivets, raised weld beads,
+      scuffed grey-blue steel, soot streaks
+
+  - id: olive_drab_paint
+    seed: 20260103
+    prompt: >-
+      weathered olive green painted metal, peeling flaking paint, rust spots
+      showing through, deep scratches
+
+  - id: poured_concrete
+    seed: 20260104
+    prompt: >-
+      poured concrete factory floor, form-board timber marks, hairline cracks,
+      dark oil stains, grey aggregate
+
+  - id: rust_pitted_steel
+    seed: 20260105
+    prompt: >-
+      rusted iron sheet, even orange-brown corrosion, fine rust pitting,
+      oxidised metal surface
+
+  - id: diamond_tread_plate
+    seed: 20260112
+    prompt: >-
+      dark steel checker plate industrial floor, raised diamond tread bars,
+      worn smooth and greasy, dull grey metal
+
+  - id: soot_brick
+    seed: 20260107
+    prompt: >-
+      soot-blackened industrial brick wall, dark recessed mortar, coal dust,
+      boiler house, irregular fired brick
+
+  - id: oiled_machine_housing
+    seed: 20260108
+    prompt: >-
+      oily worn steel surface, dark grease stains, circular grinding swirl
+      marks, scratched bare metal
