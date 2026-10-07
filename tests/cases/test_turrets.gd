@@ -32,12 +32,14 @@ func _content(overrides: Array = []) -> Definitions:
 		_read("res://content/waves.csv"),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -57,9 +59,9 @@ func _read(path: String) -> String:
 ## assertion is a test nobody runs. Every Turret number is the real file's; nothing about
 ## the Turret is special-cased for the test. Power is left out of it (nothing draws) so a
 ## brownout cannot be mistaken for an empty magazine.
-const AMMO_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-ammo_source_mk1,Ammunition Seam,miner,2,2,0,0,400,1,0,0,0,dig_ammunition,
-mg_turret_mk1,MG Turret Mk1,turret,2,2,0,0,350,0,8,15,0,fire_mg,
+const AMMO_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+ammo_source_mk1,Ammunition Seam,miner,2,2,0,0,400,1,0,0,0,0,dig_ammunition,
+mg_turret_mk1,MG Turret Mk1,turret,2,2,0,0,350,0,8,15,0,0,fire_mg,
 """
 
 const AMMO_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -100,12 +102,14 @@ func _ammo_content(overrides: Array = [], waves: String = ONE_CRAWLER) -> Defini
 		waves,
 		AMMO_DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -344,12 +348,14 @@ func test_a_turret_with_nothing_in_reach_is_not_on_the_power_grid() -> void:
 		ONE_CRAWLER,
 		AMMO_DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
@@ -523,7 +529,7 @@ func test_an_undefended_nest_loses_the_wave_the_same_factory_holds() -> void:
 func _cannon_content() -> Definitions:
 	var machines: String = (
 		_read("res://content/machines.csv")
-		+ "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,160,0,500,0,14,80,0,fire_cannon,iron_plate:30\n"
+		+ "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,160,0,500,0,14,80,0,0,fire_cannon,iron_plate:30\n"
 	)
 	var recipes: String = (
 		_read("res://content/recipes.csv") + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n"
@@ -535,12 +541,14 @@ func _cannon_content() -> Definitions:
 		_read("res://content/waves.csv"),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -569,18 +577,20 @@ func test_a_cannon_turret_fires_further_and_harder_with_no_code_that_knows_about
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
 	tuning = tuning.replace(SHIPPED_STOCK, AMMO_STOCK)
 	var content: Definitions = Definitions.parse(
-		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,0,0,500,0,14,80,0,fire_cannon,\n",
+		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,0,0,500,0,14,80,0,0,fire_cannon,\n",
 		AMMO_RECIPES + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n",
 		tuning,
 		ONE_CRAWLER,
 		AMMO_DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 
@@ -776,6 +786,15 @@ const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 

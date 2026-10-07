@@ -234,6 +234,42 @@ enum Refusal {
 	## A revive was held on a solo Run. **Solo play has no Downed state** (GLOSSARY.md),
 	## so there is never anybody to pick up.
 	NO_TEAMMATE = 28,
+	## The intent names no Stratagem in the current definition set. The Stratagem twin of
+	## `NO_SUCH_MACHINE`: an index out of the sorted Stratagem ids, which a hot-reload that
+	## deleted a row can leave a client holding.
+	NO_SUCH_STRATAGEM = 29,
+	## The Stratagem exists but no Delivery has unlocked it yet. The standing
+	## `CONTENT_IS_LOCKED` has for a Machine and `GEAR_IS_LOCKED` has for a component, and a
+	## reason of its own because a player reading "locked" wants to know *what* is locked.
+	STRATAGEM_IS_LOCKED = 30,
+	## The dial was worked at a tile with no Silo on it. A Silo's dial is a physical thing on
+	## a physical Machine (DESIGN.md: diegetic controls are operated in the world), so there
+	## is somewhere it has to be.
+	NO_SILO_THERE = 31,
+	## The Silo is already loaded, and **a completed load cannot be undone** (GLOSSARY.md:
+	## committing a Charge is irreversible). This is the refusal that makes the irreversibility
+	## real rather than a convention: there is no unload intent, and a second load is refused
+	## rather than replacing the first. Fire what is in the tube or lose it.
+	SILO_ALREADY_LOADED = 32,
+	## The Silo is not holding as many Charges as the dial is asking for. Charges are built in
+	## advance, never instantaneous (GLOSSARY.md), so the answer is to wait for the Silo to
+	## assemble them or to turn the dial down.
+	NOT_ENOUGH_CHARGES = 33,
+	## The dial is asking for a number of Charges no load may carry — fewer than one, or more
+	## than `silo.max_charges_per_load`.
+	BAD_CHARGE_COUNT = 34,
+	## A Painting was begun with no loaded Silo anywhere on the Map. Nothing to call in: the
+	## load comes first and the Painting spends it.
+	NOTHING_LOADED = 35,
+	## The player is standing somewhere other than the tile they are painting. **A player
+	## must stand at the target** (GLOSSARY.md) — that is the whole price of a Stratagem, and
+	## it is why Painting is this design's best co-op moment.
+	NOT_AT_THE_TARGET = 36,
+	## The player is already channelling a Painting, and a Painting leaves them **unable to
+	## act** (GLOSSARY.md). A refusal rather than a mode, exactly as `PLAYER_IS_DOWN` is:
+	## nothing asks whether acting is currently permitted, it asks whether *this* player has
+	## both hands on a designator, which is a fact about them in the same way their wallet is.
+	PLAYER_IS_PAINTING = 37,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -974,6 +1010,89 @@ var _turret_last_shot_tick: PackedInt64Array = PackedInt64Array()
 ## the output buffer. A Belt fills this; crafting empties it. Its capacity is what
 ## back-pressure pushes against: when it is full the Belt feeding it cannot hand over,
 ## so the Belt fills and stalls where a player can see it.
+# ── The Silo, its Charges and the Painting that spends them ───────────────────
+# Per-Machine arrays indexed exactly like `_machine_progress_ticks`, and per-player arrays
+# indexed exactly like `_player_repair_credit`. There is no Silo table and no Stratagem
+# subsystem, for the reason there is no Turret table: giving a Silo its own index space is
+# how a Silo stops being a Machine.
+
+## How many Charges each Machine has stockpiled. 0 for everything that is not a Silo.
+##
+## **This is what a destroyed Silo takes with it.** `_remove_machine` drops the entry, so the
+## stockpile is lost with the Machine and nothing hands it back — the rule #11 argued for,
+## applied to the most expensive thing a Factory can be holding. A breakthrough therefore
+## threatens the players' heaviest weapon and not just their smelters.
+var _silo_charges: PackedInt64Array = PackedInt64Array()
+
+## What each Silo is loaded with, by Stratagem **id**, and how many Charges went into it.
+## Empty and 0 for a Silo that is not loaded.
+##
+## An id rather than an index, for the reason `_machine_id` holds an id: a hot-reload that
+## resorts the Stratagem table must not change what is in the tube under a player's hands.
+##
+## **A load is irreversible.** There is no intent that empties these, `_load_silo_refusal`
+## refuses a second load outright, and the only thing that clears them is a Painting
+## beginning. Which is the IRON NEST lesson taken seriously: friction is satisfying when it
+## is problem-solving under pressure, and an irreversible commitment made *before* the fight
+## is exactly that.
+var _silo_loaded_stratagem: PackedStringArray = PackedStringArray()
+var _silo_loaded_charges: PackedInt64Array = PackedInt64Array()
+
+## The tick a Machine stands until, or -1 for one that stands indefinitely — which is every
+## Machine a Build Gun placed. Only a Sentry Drop's Turret carries a real tick.
+##
+## A tick rather than a countdown, the arrangement `_player_life_since_tick` has: how long is
+## left is arithmetic over two numbers that are hashed anyway, so there is no second counter
+## to keep in step.
+var _machine_expires_tick: PackedInt64Array = PackedInt64Array()
+
+## Where each player's dial is set — the shell type and the charge count they are carrying to
+## a Silo. Not a load: nothing is committed until `LOAD_SILO`.
+##
+## Per player rather than per Silo, and Simulation state rather than something the controller
+## remembers, for both of the reasons `_player_selected_machine` is: the Godot layer is
+## forbidden to hold anything authoritative, and in co-op what somebody else is winding up is
+## worth drawing. A dial on the Silo shared between four players would let one of them change
+## another's commitment under their hands.
+var _player_dial_stratagem: PackedStringArray = PackedStringArray()
+var _player_dial_charges: PackedInt64Array = PackedInt64Array()
+
+## The Painting intent, consumed and cleared every tick. **Held, like the wrench and the
+## trigger**: a Painting is a channel, so what the Simulation needs to know each tick is
+## "still on it, still that tile", and letting go is itself the act of interrupting. Zero at
+## every point a hash is taken, which is why none of these four is hashed.
+var _player_paint_held: PackedInt64Array = PackedInt64Array()
+var _player_paint_tile_x: PackedInt64Array = PackedInt64Array()
+var _player_paint_tile_y: PackedInt64Array = PackedInt64Array()
+var _player_paint_tile_z: PackedInt64Array = PackedInt64Array()
+
+## The Painting in flight: what it carries, where, and how far through it is.
+##
+## `_player_paint_charges` above zero is what "a Painting is in flight" means, rather than a
+## separate flag — a Painting always carries at least one Charge, and a count of ticks served
+## cannot say it because a Painting that began this tick has served none. That is the same
+## rule a Machine built this tick and an Enemy through a Breach this tick obey.
+##
+## **The Charges left the Silo when this was filled in**, which is what makes "an interrupted
+## Painting consumes the Charge and produces nothing" true by construction rather than by a
+## special case somebody has to remember.
+var _player_paint_stratagem: PackedStringArray = PackedStringArray()
+var _player_paint_charges: PackedInt64Array = PackedInt64Array()
+var _player_paint_target_x: PackedInt64Array = PackedInt64Array()
+var _player_paint_target_y: PackedInt64Array = PackedInt64Array()
+var _player_paint_target_z: PackedInt64Array = PackedInt64Array()
+var _player_paint_ticks: PackedInt64Array = PackedInt64Array()
+
+## What interruption has cost, per player: the tick the last Painting was interrupted on, or
+## -1, and the running total of Charges lost to interruption.
+##
+## State rather than something inferred, for two reasons. A player has to be able to read what
+## a lost Painting cost them — a Charge that vanished with no accounting is exactly the "bad
+## luck" Heat is built to avoid. And it is what lets a replay fixture *prove* an interruption
+## happened rather than assume it from an effect that did not arrive.
+var _player_paint_interrupted_tick: PackedInt64Array = PackedInt64Array()
+var _player_charges_wasted: PackedInt64Array = PackedInt64Array()
+
 var _machine_input_items: Array = []
 var _machine_input_counts: Array = []
 
@@ -1090,6 +1209,39 @@ func _init(
 	_player_fire_held.fill(0)
 	_player_revive_target.resize(players)
 	_player_revive_target.fill(-1)
+	# The dial opens on the first *unlocked* Stratagem and one Charge, so a Run has something
+	# loadable on it rather than something a Silo would refuse — the arrangement the Build
+	# Gun's opening Machine has, and for the same reason.
+	_player_dial_stratagem.resize(players)
+	_player_dial_stratagem.fill(_opening_stratagem())
+	_player_dial_charges.resize(players)
+	_player_dial_charges.fill(1)
+	_player_paint_held.resize(players)
+	_player_paint_held.fill(0)
+	_player_paint_tile_x.resize(players)
+	_player_paint_tile_y.resize(players)
+	_player_paint_tile_z.resize(players)
+	_player_paint_tile_x.fill(0)
+	_player_paint_tile_y.fill(0)
+	_player_paint_tile_z.fill(0)
+	_player_paint_stratagem.resize(players)
+	_player_paint_stratagem.fill("")
+	_player_paint_charges.resize(players)
+	_player_paint_charges.fill(0)
+	_player_paint_target_x.resize(players)
+	_player_paint_target_y.resize(players)
+	_player_paint_target_z.resize(players)
+	_player_paint_target_x.fill(0)
+	_player_paint_target_y.fill(0)
+	_player_paint_target_z.fill(0)
+	_player_paint_ticks.resize(players)
+	_player_paint_ticks.fill(0)
+	# -1 rather than 0, so "has never been interrupted" is distinguishable from "interrupted
+	# on tick 0" — the same reason `_player_last_shot_tick` opens at -1.
+	_player_paint_interrupted_tick.resize(players)
+	_player_paint_interrupted_tick.fill(-1)
+	_player_charges_wasted.resize(players)
+	_player_charges_wasted.fill(0)
 	for player_id: int in range(players):
 		_player_component_ids.append(PackedStringArray())
 
@@ -1128,9 +1280,18 @@ func step(actions: Array) -> void:
 	# something in front of them, and after `_walk` so a shot leaves from where the player
 	# now stands rather than from where they stood last tick.
 	_revive()
+	# Beside hand repair and a revive, because all three are a player spending a tick of
+	# attention on something in front of them and nothing else. Before `_fight`, so that a
+	# player who began a Painting this tick is already unable to pull a trigger.
+	_paint()
 	_fight()
 	_transport()
 	_deliveries()
+	# Before anything reads a Machine index for this tick — the grid, the aim, the craft — so
+	# a Sentry whose time ran out draws no Power, acquires nothing and fires nothing on the
+	# tick it goes. A Sentry *placed* this tick is a Machine built this tick and does not work
+	# this tick either, by the rule `_machine_would_work` already holds.
+	_expire()
 	_aim()
 	_power()
 	_extract()
@@ -1193,6 +1354,12 @@ func _apply(action: InputAction) -> void:
 			_apply_fit_component(action)
 		InputAction.Kind.REVIVE:
 			_apply_revive(action)
+		InputAction.Kind.SET_SILO_DIAL:
+			_apply_set_silo_dial(action)
+		InputAction.Kind.LOAD_SILO:
+			_apply_load_silo(action)
+		InputAction.Kind.PAINT:
+			_apply_paint(action)
 
 
 ## Records the throttle a player asked for this tick. Applying it is `_walk`'s job,
@@ -1276,7 +1443,14 @@ func _walk() -> void:
 		# all, so neither walks. Stopped outright rather than decelerated: going down is a
 		# collapse, and a corpse that slid another two metres would read as a bug. The
 		# throttle is consumed anyway, so the per-tick arrays are still zero at the hash.
-		if _player_life_state[player_id] != LIFE_ALIVE:
+		# A player channelling a Painting stands at the target, exposed and unable to act
+		# (GLOSSARY.md), and standing still is the literal half of that. Stopped rather than
+		# decelerated, like going down, because a designator held on a tile while its holder
+		# slid off it would make "at the target" a figure of speech.
+		if (
+			_player_life_state[player_id] != LIFE_ALIVE
+			or _player_paint_charges[player_id] > 0
+		):
 			_player_velocity_x[player_id] = 0
 			_player_velocity_z[player_id] = 0
 			_player_intent_forward[player_id] = 0
@@ -1820,6 +1994,13 @@ func _machine_would_work(index: int, definition: MachineDefinition) -> bool:
 	# no repair material sitting over a Factory that is whole. One clause, two outputs.
 	if definition.is_turret() and not _turret_has_work(index, definition):
 		return false
+	# A full Silo has nothing to do, so it draws no Power and consumes no inputs — one more
+	# clause in the same predicate, and the same shape as a Turret with nothing in reach.
+	# Deliberately *not* starvation: it has everything its Recipe asks for, it has nowhere to
+	# put the Charge. Without this a Silo at capacity would go on eating plate and rounds and
+	# browning out the Factory to produce nothing at all.
+	if definition.is_silo() and not _silo_has_room(index, definition):
+		return false
 	return _machine_has_its_inputs(index, definition)
 
 
@@ -1951,6 +2132,12 @@ func _craft() -> void:
 					_mend(index, definition)
 				else:
 					_fire(index, definition)
+			# And this is the whole of what a completed craft does for a Silo: the Charge is
+			# the output. The plate and the rounds were consumed two lines above, which is
+			# what makes a Charge something the Factory paid for rather than something a
+			# timer produced.
+			elif definition.is_silo():
+				_assemble_a_charge(index)
 			if not _holds_a_whole_recipe(index, recipe):
 				break
 
@@ -2496,8 +2683,24 @@ func _apply_build_machine(action: InputAction) -> void:
 			definition.build_cost_counts[index]
 		)
 
+	_place_machine(definition, tile, rotation, -1)
+
+
+## Stands a Machine up and returns its index.
+##
+## The one place a Machine joins the Factory, so the per-Machine arrays cannot fall out of
+## step with each other. Extracted in #17 because a Sentry Drop places a Turret without a
+## Build Gun, without a build cost and without a player standing there — and a second copy of
+## these appends would have been a second place to forget an array.
+##
+## `expires_tick` is -1 for everything a Build Gun placed, which is to say for everything
+## that stands until something takes it down. A Sentry Drop is the only thing that passes a
+## real tick.
+func _place_machine(
+	definition: MachineDefinition, tile: Vector3i, rotation: int, expires_tick: int
+) -> int:
 	_machine_id.append(definition.id)
-	_machine_rotation.append(rotation)
+	_machine_rotation.append(WorldGrid.wrap_rotation(rotation))
 	_machine_tile_x.append(tile.x)
 	_machine_tile_y.append(tile.y)
 	_machine_tile_z.append(tile.z)
@@ -2510,15 +2713,23 @@ func _apply_build_machine(action: InputAction) -> void:
 	_machine_buffer_counts.append(PackedInt64Array())
 	_machine_input_items.append(PackedStringArray())
 	_machine_input_counts.append(PackedInt64Array())
-	# Every Machine gets an entry, Turret or not, so the per-Machine arrays stay parallel and
-	# an index means the same thing in all of them. -1 is "shooting at nothing", which is also
-	# what a Smelter is doing.
+	# Every Machine gets an entry, Turret or Silo or neither, so the per-Machine arrays stay
+	# parallel and an index means the same thing in all of them. -1 is "shooting at nothing",
+	# which is also what a Smelter is doing.
 	_turret_target_serial.append(-1)
 	_turret_last_shot_tick.append(-1)
+	# A Silo arrives with an empty stockpile and nothing in the tube. Charges are built in
+	# advance, never instantaneous (GLOSSARY.md), so a freshly built Silo is a Silo that
+	# cannot fire — which is the whole reason the artillery supply line is a supply line.
+	_silo_charges.append(0)
+	_silo_loaded_stratagem.append("")
+	_silo_loaded_charges.append(0)
+	_machine_expires_tick.append(expires_tick)
 	# A new footprint is a new obstruction, so the Enemies' shared field no longer
 	# describes the Map. Rebuilt on the next tick that has an Enemy to move, never here:
 	# a player laying out a Factory places a Machine a second and the field is O(map).
 	_flowfield_stale = true
+	return _machine_id.size() - 1
 
 
 ## Why a placement would be refused, or `Refusal.NONE`.
@@ -2530,8 +2741,9 @@ func _build_refusal(player_id: int, machine_index: int, tile: Vector3i, rotation
 	# A player who is Downed or dead is not building. **Still not a build mode** — nothing
 	# here asks whether building is currently permitted (DESIGN.md), it asks whether *this*
 	# player is on their feet, which is a fact about them in the same way their wallet is.
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	var definition: MachineDefinition = _definitions.machine_at(machine_index)
 	if definition == null:
 		return Refusal.NO_SUCH_MACHINE
@@ -2637,8 +2849,9 @@ func _apply_demolish(action: InputAction) -> void:
 func _demolish_refusal(player_id: int, tile: Vector3i) -> int:
 	if not _is_player(player_id):
 		return Refusal.NOTHING_THERE
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	if (
 		query_machine_at_tile(tile) != -1
 		or query_belt_at_tile(tile) != -1
@@ -2697,6 +2910,16 @@ func _remove_machine(index: int) -> void:
 	_machine_input_counts.remove_at(index)
 	_turret_target_serial.remove_at(index)
 	_turret_last_shot_tick.remove_at(index)
+	# **A destroyed Silo loses its stockpile, and a demolished one loses it too.** The entries
+	# go with the Machine and nothing anywhere hands a Charge back — the asymmetry #11 argued
+	# for, applied to the most expensive thing a Factory can be holding, plus the one extra
+	# claim this ticket makes: a load is irreversible, so taking the Silo apart must not be a
+	# way to undo one. A Charge is not an Item, so there is nothing for `_refund_machine` to
+	# return even if it wanted to.
+	_silo_charges.remove_at(index)
+	_silo_loaded_stratagem.remove_at(index)
+	_silo_loaded_charges.remove_at(index)
+	_machine_expires_tick.remove_at(index)
 	_flowfield_stale = true
 
 
@@ -2851,8 +3074,9 @@ func _apply_build_wall(action: InputAction) -> void:
 func _build_wall_refusal(player_id: int, tile: Vector3i) -> int:
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	if not WorldGrid.is_buildable(tile):
 		return Refusal.OFF_THE_MAP
 	if (
@@ -2940,8 +3164,9 @@ func _repair_refusal(player_id: int, tile: Vector3i) -> int:
 		return Refusal.RUN_IS_OVER
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 
 	var machine: int = query_machine_at_tile(tile)
 	var wall: int = query_wall_at_tile(tile)
@@ -3142,8 +3367,9 @@ func _equip_refusal(player_id: int, gear_index: int) -> int:
 		return Refusal.RUN_IS_OVER
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	var definition: GearDefinition = _definitions.gear_at(gear_index)
 	if definition == null:
 		return Refusal.NO_SUCH_GEAR
@@ -3194,8 +3420,9 @@ func _fit_refusal(player_id: int, slot_index: int, gear_index: int) -> int:
 		return Refusal.RUN_IS_OVER
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	if _definitions.gear_slot_id(slot_index).is_empty():
 		return Refusal.WRONG_SLOT
 	if gear_index < 0:
@@ -3291,8 +3518,9 @@ func _fire_refusal(player_id: int) -> int:
 		return Refusal.RUN_IS_OVER
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	var weapon: GearDefinition = _weapon_of(player_id)
 	if weapon == null:
 		return Refusal.NO_WEAPON
@@ -3525,6 +3753,28 @@ func _player_can_act(player_id: int) -> bool:
 	return _is_player(player_id) and _player_life_state[player_id] == LIFE_ALIVE
 
 
+## Why a player cannot act at all this tick, or `Refusal.NONE`.
+##
+## The one function every refusal a player's intent goes through opens with, so that the two
+## states in which a player does nothing — Downed or dead, and channelling a Painting — are
+## **facts about the player** rather than modes somebody has to remember to check at each
+## site. Nothing in the Simulation asks whether acting is currently permitted; what it asks
+## is whether this player is on their feet with their hands free, which is a fact in the same
+## way their wallet is. Building is still never gated (DESIGN.md).
+##
+## Deliberately *not* folded into `_player_can_act`, which is consulted by `_damage_player`
+## and by `query_player_is_alive`: a player mid-Painting is emphatically still alive and still
+## takes a bite, and that bite is what interrupts them.
+func _act_refusal(player_id: int) -> int:
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+	if _player_life_state[player_id] != LIFE_ALIVE:
+		return Refusal.PLAYER_IS_DOWN
+	if _player_paint_charges[player_id] > 0:
+		return Refusal.PLAYER_IS_PAINTING
+	return Refusal.NONE
+
+
 ## Takes hit points off a player, and puts them down if that was the last of them.
 ##
 ## `damage_taken_percent` is where armour lands: the one Gear modifier that is not about
@@ -3537,6 +3787,13 @@ func _damage_player(player_id: int, points: int) -> void:
 	if taken <= 0:
 		return
 	_player_health[player_id] = maxi(_player_health[player_id] - taken, 0)
+	# **Being hit interrupts a Painting, and the Charge is gone.** This is the clause that
+	# makes Painting the co-op moment it is meant to be: one player is committed and helpless
+	# while the others keep things off them, and a Painting nothing could interrupt would make
+	# the channel a formality rather than a risk. It fires on any damage at all rather than on
+	# going down, because a Stratagem a player could soak two Breaker bites through would not
+	# be exposed in any sense a player could feel.
+	_interrupt_painting(player_id)
 	if _player_health[player_id] > 0:
 		return
 	_go_down(player_id)
@@ -3559,6 +3816,9 @@ func _go_down(player_id: int) -> void:
 	_player_view_kick_turns[player_id] = 0
 	_player_fire_cooldown[player_id] = 0
 	_player_revive_credit[player_id] = 0
+	# A player who went down was already interrupted by the hit that put them there; this
+	# covers going down any other way the Simulation ever learns to do it.
+	_interrupt_painting(player_id)
 
 
 ## Advances every player's bleed-out and respawn by one tick.
@@ -3684,8 +3944,9 @@ func _revive_refusal(rescuer: int, target: int) -> int:
 	# up and this is the honest reason rather than "nothing to revive".
 	if query_player_count() <= 1:
 		return Refusal.NO_TEAMMATE
-	if not _player_can_act(rescuer):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(rescuer)
+	if blocked != Refusal.NONE:
+		return blocked
 	if target == rescuer or not _is_player(target):
 		return Refusal.NOTHING_TO_REVIVE
 	if _player_life_state[target] != LIFE_DOWNED:
@@ -3779,6 +4040,494 @@ func _take_from_player(player_id: int, item_id: String, quantity: int) -> void:
 
 	_player_item_ids[player_id] = items
 	_player_item_counts[player_id] = counts
+
+
+# ── The Silo, the dial, and the Painting ──────────────────────────────────────
+#
+# The design's most distinctive mechanic, borrowed from StarCraft's nuclear silo and
+# sharpened. It is also the clearest statement of the keystone loop there is: a Charge is
+# assembled out of Belt-fed plate and rounds, so **more production means more artillery, full
+# stop** (docs/DESIGN.md).
+#
+# Four claims, and every one of them is a consequence of where state lives rather than a rule
+# somebody has to remember:
+#
+# * **A Charge is assembled, never instantaneous.** The Silo is a Machine with a Recipe and
+#   `_craft` advances it exactly as it advances a Smelter; the one line that differs is what
+#   happens instead of depositing an output. A full Silo is idle and off the Power grid, by the
+#   same clause that keeps a Turret with nothing in reach off it.
+# * **A load is irreversible.** There is no unload intent, `_load_silo_refusal` refuses a
+#   second load rather than replacing the first, and `_remove_machine` takes the load with the
+#   Machine — so demolishing is not an undo either. DESIGN.md puts Silo loading first on the
+#   diegetic list because that commitment is problem-solving under pressure, which is the side
+#   of the IRON NEST line this project wants to be on.
+# * **An interrupted Painting consumes the Charge and produces nothing.** True by
+#   construction: `_begin_painting` takes the Charges off the Silo and `_interrupt_painting`
+#   does not put them back, because there is nowhere to put them back to.
+# * **A destroyed Silo loses its stockpile.** #11's asymmetry, applied to the most expensive
+#   thing a Factory can be holding, which is what makes a breakthrough threaten the players'
+#   heaviest weapon and not just their smelters.
+
+## Winds a player's dial. Clamped, not refused: a dial is a physical thing with stops on it,
+## and a counter that refused to go past four rather than stopping at four would be a strange
+## piece of machinery.
+##
+## An index naming no Stratagem leaves the dial where it was, exactly as a `SELECT_MACHINE`
+## naming no Machine leaves the Build Gun holding what it held — a selection that silently
+## became "nothing" would leave a player committing an empty load.
+func _apply_set_silo_dial(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	var definition: StratagemDefinition = _definitions.stratagem_at(
+		action.dial_stratagem_index()
+	)
+	if definition == null:
+		return
+	_player_dial_stratagem[action.player_id] = definition.id
+	_player_dial_charges[action.player_id] = clampi(
+		action.dial_charges(), 1, maxi(_definitions.silo_max_charges_per_load, 1)
+	)
+
+
+## Commits a load into a Silo, or refuses to. **Irreversible once it lands.**
+##
+## A refusal is a silent no-op whose hash does not move, exactly as a misaimed build is: a
+## player walking up to a Silo that is already loaded is an ordinary thing to do, and
+## `query_load_silo_refusal` is what tells them so *before* they press the key. That
+## projection is the whole reason the irreversibility is fair rather than cruel — the
+## commitment is made knowingly.
+func _apply_load_silo(action: InputAction) -> void:
+	var tile: Vector3i = action.load_silo_tile()
+	var stratagem_index: int = action.load_stratagem_index()
+	var charges: int = action.load_charges()
+	if _load_silo_refusal(action.player_id, tile, stratagem_index, charges) != Refusal.NONE:
+		return
+
+	var index: int = _silo_at(tile)
+	var definition: StratagemDefinition = _definitions.stratagem_at(stratagem_index)
+	# The Charges leave the stockpile and go into the tube. Nothing takes them back out but a
+	# Painting beginning, and nothing hands them back at all.
+	_silo_charges[index] -= charges
+	_silo_loaded_stratagem[index] = definition.id
+	_silo_loaded_charges[index] = charges
+
+
+## Why a load would be refused, or `Refusal.NONE`.
+##
+## The single authority on whether a load is legal: `_apply_load_silo` obeys it and
+## `query_load_silo_refusal` reports it, so what a player is told and what the Simulation does
+## are one rule and not two copies of it. The same arrangement `query_build_refusal` has, and
+## it matters more here than anywhere else in the project, because this is the one act that
+## cannot be taken back.
+func _load_silo_refusal(
+	player_id: int, tile: Vector3i, stratagem_index: int, charges: int
+) -> int:
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+
+	var definition: StratagemDefinition = _definitions.stratagem_at(stratagem_index)
+	if definition == null:
+		return Refusal.NO_SUCH_STRATAGEM
+	# Before the Silo and before the stockpile, for the reason `CONTENT_IS_LOCKED` comes before
+	# the ground and the wallet: being locked is a fact about the Stratagem, and a player
+	# holding one they have not earned has the same problem at every Silo on the Map.
+	if not _stratagem_is_unlocked(definition.id):
+		return Refusal.STRATAGEM_IS_LOCKED
+	if charges < 1 or charges > maxi(_definitions.silo_max_charges_per_load, 1):
+		return Refusal.BAD_CHARGE_COUNT
+
+	var index: int = _silo_at(tile)
+	if index == -1:
+		return Refusal.NO_SILO_THERE
+	if not _within_silo_reach(player_id, index):
+		return Refusal.OUT_OF_REACH
+	# **The one that makes the mechanic what it is.** A loaded Silo is a commitment, so a
+	# second load is refused rather than replacing the first. Fire what is in the tube or lose
+	# it with the Silo.
+	if _silo_loaded_charges[index] > 0:
+		return Refusal.SILO_ALREADY_LOADED
+	if _silo_charges[index] < charges:
+		return Refusal.NOT_ENOUGH_CHARGES
+	return Refusal.NONE
+
+
+## The Silo whose footprint covers a tile, or -1. Any tile of it will do, exactly as any tile
+## of a Machine's footprint takes a wrench.
+func _silo_at(tile: Vector3i) -> int:
+	var index: int = query_machine_at_tile(tile)
+	if index == -1:
+		return -1
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition == null or not definition.is_silo():
+		return -1
+	return index
+
+
+## Whether a player is standing close enough to work a Silo's dial.
+##
+## Measured to the **footprint**, not to its centre, through the same `_gap_to_span` a Delivery
+## at the Nest uses — because a Silo is 4x4 and a reach to its centre would mean standing
+## inside it. Squared on both sides, like every other reach in this project: `Fixed.sqrt`
+## floors, and a player exactly on the boundary must not be in or out by a rounding rule.
+func _within_silo_reach(player_id: int, index: int) -> bool:
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition == null:
+		return false
+	var origin: Vector3i = query_machine_tile(index)
+	var size: Vector2i = WorldGrid.rotated_footprint(
+		definition.footprint_x, definition.footprint_z, _machine_rotation[index]
+	)
+	var tile_size: int = WorldGrid.TILE_SIZE_METRES
+	var gap_x: int = _gap_to_span(
+		_player_x[player_id],
+		Fixed.from_int(origin.x * tile_size),
+		Fixed.from_int((origin.x + size.x) * tile_size)
+	)
+	var gap_z: int = _gap_to_span(
+		_player_z[player_id],
+		Fixed.from_int(origin.z * tile_size),
+		Fixed.from_int((origin.z + size.y) * tile_size)
+	)
+	var reach: int = _definitions.silo_load_reach_metres
+	return gap_x * gap_x + gap_z * gap_z <= reach * reach
+
+
+## Records the Painting a player is holding this tick. Applying it is `_paint`'s job, once a
+## tick, so two intents arriving in one tick cannot serve two ticks of channel.
+func _apply_paint(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	var tile: Vector3i = action.paint_tile()
+	_player_paint_held[action.player_id] = 1
+	_player_paint_tile_x[action.player_id] = tile.x
+	_player_paint_tile_y[action.player_id] = tile.y
+	_player_paint_tile_z[action.player_id] = tile.z
+
+
+## Advances every Painting by one tick, begins the ones that were just started, and interrupts
+## the ones that were let go of.
+##
+## Consumes and clears the held intent every tick, the arrangement `_repair` and `_fight` both
+## have, so the four per-tick arrays are zero at every point a hash is taken.
+##
+## A Painting that begins this tick serves no tick of channel on it — the rule a Machine built
+## this tick, an Enemy through a Breach this tick and a player Downed this tick all obey.
+func _paint() -> void:
+	for player_id: int in range(query_player_count()):
+		var held: bool = _player_paint_held[player_id] != 0
+		var tile: Vector3i = Vector3i(
+			_player_paint_tile_x[player_id],
+			_player_paint_tile_y[player_id],
+			_player_paint_tile_z[player_id]
+		)
+		_player_paint_held[player_id] = 0
+		_player_paint_tile_x[player_id] = 0
+		_player_paint_tile_y[player_id] = 0
+		_player_paint_tile_z[player_id] = 0
+
+		if _player_paint_charges[player_id] > 0:
+			# **Letting go is interrupting, and the Charges are already gone.** So is aiming
+			# the designator at a different tile, which is a player changing their mind about
+			# the target — the commitment was made when the channel began, and there is no
+			# version of this where it can be re-aimed for free.
+			if not held or tile != query_player_paint_tile(player_id):
+				_interrupt_painting(player_id)
+				continue
+			# A Run that has ended calls nothing in, for the reason a Turret that has nothing
+			# to shoot at fires nothing: the game is over. The Charges are spent either way.
+			if query_run_is_over():
+				_interrupt_painting(player_id)
+				continue
+			_player_paint_ticks[player_id] += 1
+			if _player_paint_ticks[player_id] >= query_player_paint_ticks_required(player_id):
+				_resolve_painting(player_id)
+			continue
+
+		if not held:
+			continue
+		if _paint_refusal(player_id, tile) != Refusal.NONE:
+			continue
+		_begin_painting(player_id, tile)
+
+
+## Why a Painting would not start, or `Refusal.NONE`.
+##
+## A projection about a Painting that has not happened, the arrangement every other refusal in
+## this project has — and the one that matters most, because what it is refusing is about to
+## spend something irreplaceable. A player reads "nothing loaded" or "stand on the target"
+## before they hold the key rather than after a Charge has gone.
+func _paint_refusal(player_id: int, tile: Vector3i) -> int:
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	if not WorldGrid.is_within_extent(tile):
+		return Refusal.OFF_THE_MAP
+	# **A player must stand at the target** (GLOSSARY.md). Literally the tile under their feet,
+	# rather than a reach: the whole price of a Stratagem is walking into the place you want it
+	# to land and standing there unable to do anything else, and a reach would let a player buy
+	# that off a few metres at a time. It is also why `_walk` roots them once the channel
+	# starts — "at the target" has to mean something.
+	if WorldGrid.tile_at_metres(_player_x[player_id], _player_z[player_id]) != tile:
+		return Refusal.NOT_AT_THE_TARGET
+
+	var silo: int = _loaded_silo()
+	if silo == -1:
+		return Refusal.NOTHING_LOADED
+	var definition: StratagemDefinition = _definitions.stratagem(_silo_loaded_stratagem[silo])
+	if definition == null:
+		return Refusal.NO_SUCH_STRATAGEM
+	if not _stratagem_is_unlocked(definition.id):
+		return Refusal.STRATAGEM_IS_LOCKED
+	# A Sentry Drop needs ground to stand on, and the answer to "there is a Smelter there" has
+	# to arrive before the channel rather than after it. The ground can still be taken during
+	# the five seconds a Barrage channels, which is why `_drop_a_sentry` checks again.
+	if definition.is_sentry():
+		var dropped: MachineDefinition = _definitions.machine(definition.sentry_machine)
+		if dropped == null:
+			return Refusal.NO_SUCH_MACHINE
+		var size: Vector2i = WorldGrid.rotated_footprint(
+			dropped.footprint_x, dropped.footprint_z, 0
+		)
+		if not WorldGrid.footprint_is_buildable(tile, size.x, size.y):
+			return Refusal.OFF_THE_MAP
+		if _footprint_is_occupied(tile, size.x, size.y):
+			return Refusal.OCCUPIED
+	return Refusal.NONE
+
+
+## Takes the load out of a Silo and puts it in a player's hands as a Painting in flight.
+##
+## **This is the tick the Charges are spent on.** Everything about "an interrupted Painting
+## consumes the Charge and produces nothing" follows from these five lines rather than from a
+## rule anywhere else: there is no path by which they go back into the Silo, so the only
+## question left is whether the channel finishes.
+func _begin_painting(player_id: int, tile: Vector3i) -> void:
+	var silo: int = _loaded_silo()
+	_player_paint_stratagem[player_id] = _silo_loaded_stratagem[silo]
+	_player_paint_charges[player_id] = _silo_loaded_charges[silo]
+	_player_paint_target_x[player_id] = tile.x
+	_player_paint_target_y[player_id] = tile.y
+	_player_paint_target_z[player_id] = tile.z
+	_player_paint_ticks[player_id] = 0
+	_silo_loaded_stratagem[silo] = ""
+	_silo_loaded_charges[silo] = 0
+
+
+## Ends a Painting with nothing to show for it, and records what that cost.
+##
+## The count and the tick are state rather than something a HUD infers, for two reasons. A
+## player has to be able to read what a lost Painting cost them — a Charge that vanished with
+## no accounting is exactly the bad luck Heat is built to avoid. And it is what lets a replay
+## fixture *prove* an interruption happened rather than infer it from an effect that failed to
+## arrive, which is a weaker claim about a stronger-sounding thing.
+func _interrupt_painting(player_id: int) -> void:
+	if not _is_player(player_id) or _player_paint_charges[player_id] <= 0:
+		return
+	_player_charges_wasted[player_id] += _player_paint_charges[player_id]
+	_player_paint_interrupted_tick[player_id] = _tick
+	_clear_painting(player_id)
+
+
+func _clear_painting(player_id: int) -> void:
+	_player_paint_stratagem[player_id] = ""
+	_player_paint_charges[player_id] = 0
+	_player_paint_target_x[player_id] = 0
+	_player_paint_target_y[player_id] = 0
+	_player_paint_target_z[player_id] = 0
+	_player_paint_ticks[player_id] = 0
+
+
+## What a finished Painting does, dispatched on the Stratagem's own effect.
+##
+## Three effects and no fourth place to add one: a row in `content/stratagems.csv` chooses
+## between these, and what varies inside each of them is columns. A second Barrage with a
+## wider radius and a longer channel needs nothing here.
+func _resolve_painting(player_id: int) -> void:
+	var definition: StratagemDefinition = _definitions.stratagem(
+		_player_paint_stratagem[player_id]
+	)
+	var charges: int = _player_paint_charges[player_id]
+	var target: Vector3i = query_player_paint_tile(player_id)
+	# Cleared before the effect lands, so that a Stratagem which puts a Machine down or hands
+	# goods over is doing it to a player who is no longer channelling.
+	_clear_painting(player_id)
+	if definition == null or charges <= 0:
+		return
+
+	if definition.is_barrage():
+		_shell_the_ground(definition, target, charges)
+	elif definition.is_supply():
+		_drop_supplies(definition, player_id, charges)
+	elif definition.is_sentry():
+		_drop_a_sentry(definition, target, charges)
+
+
+## A Barrage: `damage_per_charge` times the Charges loaded, off every Enemy in reach of the
+## painted tile.
+##
+## Reach is compared **squared**, like a Turret's and a wrench's, because `Fixed.sqrt` floors
+## and a Crawler exactly on the boundary must not be in or out by a rounding rule.
+##
+## Walked in **descending** index order, which is the one place in this project that does not
+## walk Enemies forwards. Nothing here is a *choice* between Enemies — every Enemy in the
+## radius is hit, so no selection bias exists to avoid — and a kill removes its entry
+## immediately, exactly as `_fire` does, which would make a forward walk skip the Enemy that
+## slid into the gap. The resulting arrays are identical whichever way round it is read.
+##
+## Enemies only. There is no friendly fire anywhere in this Simulation and this would be the
+## one place it existed, which is a design decision rather than an oversight: the price of a
+## Barrage is already the channel, and charging a second price nobody tuned would make the
+## heaviest Stratagem in the game the one nobody uses.
+func _shell_the_ground(
+	definition: StratagemDefinition, target: Vector3i, charges: int
+) -> void:
+	var centre: FixedVec2 = WorldGrid.tile_centre_metres(target)
+	var reach: int = Fixed.from_int(definition.radius_tiles * WorldGrid.TILE_SIZE_METRES)
+	var squared_reach: int = reach * reach
+	var points: int = definition.damage_per_charge * charges
+	for index: int in range(_enemy_health.size() - 1, -1, -1):
+		if _squared_gap(centre, index) <= squared_reach:
+			_hit_enemy(index, points)
+
+
+## A Supply Drop: `goods_per_charge` times the Charges loaded, into the painting player's own
+## pockets.
+##
+## **Their pockets rather than the Nest's store**, which is what makes it the answer to having
+## run out: those are the same pockets the Build Gun spends from and a weapon fires out of, so
+## Ammunition and repair material arrive where a player standing in a fight can use them. A
+## drop that banked at the Nest would be a Delivery run in reverse and would ask the player to
+## walk home, which is exactly what a Stratagem is for not having to do.
+func _drop_supplies(definition: StratagemDefinition, player_id: int, charges: int) -> void:
+	for slot: int in range(definition.goods_items.size()):
+		_give_to_player(
+			player_id, definition.goods_items[slot], definition.goods_counts[slot] * charges
+		)
+
+
+## A Sentry Drop: the Turret the row names, on the painted tile, for `sentry_seconds`, arriving
+## with its magazine already filled.
+##
+## **An ordinary Machine in every respect a player can observe.** It aims through `_aim`, it
+## spends rounds through `_craft`, it can be chewed down, it obstructs Enemies and it does not
+## work on the tick it arrived — all of that is `_place_machine` and nothing else. The two
+## things that make it a Sentry are an expiry tick and a pre-filled input buffer, and neither
+## is a mechanism: it is how a Machine that arrived from outside the Map and needs no Belt is
+## expressed in the arrays that already exist.
+##
+## It is filled through `_add_to_input`, which is uncapped — the cap lives in `_input_has_room`
+## and belongs to a Belt hand-off. So a Sentry legitimately arrives holding more than a Belt
+## could ever have put there, which is the literal content of "needs no Belt", and
+## `query_turret_ammunition_capacity` reports the gauge honestly against what it is holding.
+##
+## The ground may have been taken during the channel, by a Machine somebody built or by a Belt
+## somebody dragged. The Charges are spent either way, and nothing arrives — which is the same
+## bargain an interrupted Painting strikes, and the reason `_paint_refusal` checks the ground
+## up front so that this is the rare case rather than the ordinary one.
+func _drop_a_sentry(
+	definition: StratagemDefinition, target: Vector3i, charges: int
+) -> void:
+	var dropped: MachineDefinition = _definitions.machine(definition.sentry_machine)
+	if dropped == null:
+		return
+	var size: Vector2i = WorldGrid.rotated_footprint(
+		dropped.footprint_x, dropped.footprint_z, 0
+	)
+	if not WorldGrid.footprint_is_buildable(target, size.x, size.y):
+		return
+	if _footprint_is_occupied(target, size.x, size.y):
+		return
+
+	var index: int = _place_machine(
+		dropped, target, 0, _tick + maxi(definition.sentry_seconds, 1) * TICKS_PER_SECOND
+	)
+	for slot: int in range(definition.goods_items.size()):
+		_add_to_input(
+			index, definition.goods_items[slot], definition.goods_counts[slot] * charges
+		)
+
+
+## Takes every Machine whose time is up off the Map.
+##
+## Walked in **descending** index order so that removing one does not skip the next, the same
+## reason `_shell_the_ground` reads Enemies backwards. Which Machines go is a pure function of
+## the tick and the hashed expiry array, so the order is only about the walk.
+##
+## A Sentry that expires loses what it was holding, exactly as a destroyed Machine does — but
+## for a different reason, and one worth being explicit about: those rounds were never the
+## Factory's. They arrived from outside the Map with the Turret and they leave with it, so a
+## player cannot bank a Sentry Drop by letting its time run out next to a Belt.
+func _expire() -> void:
+	for index: int in range(_machine_expires_tick.size() - 1, -1, -1):
+		if _machine_expires_tick[index] < 0:
+			continue
+		if _tick < _machine_expires_tick[index]:
+			continue
+		_remove_machine(index)
+
+
+## Banks one assembled Charge, up to the Silo's capacity.
+##
+## Clamped rather than trusted, even though `_machine_would_work` already keeps a full Silo
+## from crafting: a hot-reload can lower `charge_capacity` under a Silo that is already over
+## it, and a stockpile that quietly grew past its own cap would be a number in the save file
+## with no bound on it — which is the argument the Nest's store already made for being capped.
+func _assemble_a_charge(index: int) -> void:
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition == null or not definition.is_silo():
+		return
+	_silo_charges[index] = mini(_silo_charges[index] + 1, definition.charge_capacity)
+
+
+## Whether a Silo has room for one more Charge.
+func _silo_has_room(index: int, definition: MachineDefinition) -> bool:
+	return _silo_charges[index] < definition.charge_capacity
+
+
+## The loaded Silo a Painting draws from, or -1.
+##
+## **The one whose tile comes first in canonical tile order**, through `MapLayout.tile_precedes`
+## — the single definition of tile order this project has, already used by Node sorting, Breach
+## sorting and the runtime Breach insert. Geography rather than construction order, for the
+## reason the Breaches are released in tile order: index order is the order a player happened
+## to build in, and "which of my two Silos fired" should not be a fact about the past.
+func _loaded_silo() -> int:
+	var best: int = -1
+	for index: int in range(query_machine_count()):
+		if _silo_loaded_charges[index] <= 0:
+			continue
+		if best != -1 and not MapLayout.tile_precedes(
+			query_machine_tile(index), query_machine_tile(best)
+		):
+			continue
+		best = index
+	return best
+
+
+## Whether a Stratagem may be loaded: either no Delivery tier claims it, or one that has been
+## completed does.
+##
+## A Stratagem is locked **because a tier names it**, which is why there is no `locked` column
+## in `content/stratagems.csv` — the Stratagems a Run opens with are exactly the ones no tier
+## names, the arrangement the Machines and the Gear already have.
+func _stratagem_is_unlocked(stratagem_id: String) -> bool:
+	if _unlocked_stratagem_ids.has(stratagem_id):
+		return true
+	return not _definitions.locks_stratagem(stratagem_id)
+
+
+## The Stratagem a fresh Run opens with on the dial: the first unlocked one by id, for the
+## reason the Build Gun opens holding the first unlocked Machine.
+func _opening_stratagem() -> String:
+	for stratagem_id: String in _definitions.stratagem_ids():
+		if _stratagem_is_unlocked(stratagem_id):
+			return stratagem_id
+	return ""
 
 
 # ── Laying a Belt ─────────────────────────────────────────────────────────────
@@ -4274,8 +5023,9 @@ func _call_wave_early_refusal(player_id: int) -> int:
 		return Refusal.NO_BREACH
 	if player_id < 0 or player_id >= query_player_count():
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	if _wave_queue_cursor < _wave_queue_kind.size():
 		return Refusal.WAVE_STILL_ARRIVING
 	if _wave_called_early == 1 or _telegraph_is_showing():
@@ -4357,8 +5107,9 @@ func _apply_deliver_to_nest(action: InputAction) -> void:
 func _delivery_refusal(player_id: int) -> int:
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	if query_run_is_over():
 		return Refusal.RUN_IS_OVER
 	var index: int = _next_delivery_index()
@@ -4409,8 +5160,9 @@ func _apply_withdraw_from_nest(action: InputAction) -> void:
 func _withdraw_refusal(player_id: int, item_index: int) -> int:
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
-	if not _player_can_act(player_id):
-		return Refusal.PLAYER_IS_DOWN
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
 	if query_run_is_over():
 		return Refusal.RUN_IS_OVER
 	var item_id: String = _definitions.item_id(item_index)
@@ -5389,6 +6141,17 @@ func hash() -> int:
 	# two clients that are aimed at different Crawlers.
 	hasher.feed_ints(_turret_target_serial)
 	hasher.feed_ints(_turret_last_shot_tick)
+	# What every Silo has banked, what is in its tube, and when a temporary Machine goes. All
+	# of it decides what a later tick can do — a Silo one Charge short of a load is in a
+	# different state from one that has just been loaded, and a Sentry with a second left is in
+	# a different state from one with forty. The loaded Stratagem goes in as an **id** for the
+	# reason `_machine_id` does: a hash over indices would agree between two clients whose
+	# Stratagem table sorted differently.
+	hasher.feed_ints(_silo_charges)
+	hasher.feed_ints(_silo_loaded_charges)
+	for stratagem_id: String in _silo_loaded_stratagem:
+		hasher.feed_text(stratagem_id)
+	hasher.feed_ints(_machine_expires_tick)
 	for index: int in range(query_machine_count()):
 		hasher.feed_text(_machine_id[index])
 		var items: PackedStringArray = _machine_buffer_items[index]
@@ -5455,6 +6218,29 @@ func hash() -> int:
 	hasher.feed_ints(_player_fire_cooldown)
 	hasher.feed_ints(_player_last_shot_tick)
 	hasher.feed_ints(_player_view_kick_turns)
+	# The dial each player is carrying, and the Painting any of them is channelling. The dial
+	# because it is what a `LOAD_SILO` commits and therefore decides what the next tick can
+	# do; the Painting because a channel half-served is a channel, and because the Charges it
+	# is holding have already left the Silo — a Run that diverged on which of those two places
+	# the Charges were in would be a Run that disagreed about whether it still had artillery.
+	# Ids rather than indices, for the reason `_player_selected_machine` holds an id. The
+	# **held** half of the Painting intent is deliberately absent, like the walking throttle
+	# and the trigger: `_paint` consumes and clears it, so it is zero here every time.
+	for stratagem_id: String in _player_dial_stratagem:
+		hasher.feed_text(stratagem_id)
+	hasher.feed_ints(_player_dial_charges)
+	for stratagem_id: String in _player_paint_stratagem:
+		hasher.feed_text(stratagem_id)
+	hasher.feed_ints(_player_paint_charges)
+	hasher.feed_ints(_player_paint_target_x)
+	hasher.feed_ints(_player_paint_target_y)
+	hasher.feed_ints(_player_paint_target_z)
+	hasher.feed_ints(_player_paint_ticks)
+	# And what interruption has cost. Hashed because it is a fact about the Run that a player
+	# reads and a fixture asserts on, and because a Charge lost on one client and not another
+	# is the loudest possible divergence.
+	hasher.feed_ints(_player_paint_interrupted_tick)
+	hasher.feed_ints(_player_charges_wasted)
 	# The Belts, and every Item riding one. Items are derived state — recomputed
 	# identically on every client and never replicated (ADR 0002) — and that is exactly
 	# why they have to be hashed: the guarantee that they are identical everywhere is
@@ -6172,7 +6958,11 @@ func query_turret_ammunition_capacity(index: int) -> int:
 	var capacity: int = 0
 	for slot: int in range(recipe.input_count()):
 		capacity += _input_capacity(index, _definitions.item_id(recipe.input_item(slot)))
-	return capacity
+	# A Sentry Drop's Turret arrives holding more than a Belt could ever have handed it, because
+	# it was packed off the Map and needs no Belt — so the top of the gauge is whichever is
+	# larger. Reporting the Belt's figure instead would draw a bar at 3000% and read as a bug
+	# at exactly the moment a player most needs to know how long the Sentry has left in it.
+	return maxi(capacity, _turret_ammunition(index))
 
 
 ## How many more times a Turret can fire on what it is holding.
@@ -6199,6 +6989,259 @@ func query_turret_shots_remaining(index: int) -> int:
 		if shots == -1 or possible < shots:
 			shots = possible
 	return maxi(shots, 0)
+
+
+# ── The Silo, the Stratagems, the dial and the Painting ───────────────────────
+
+## How many Stratagems the content declares, and what each one is. Index order is the sorted
+## Stratagem ids, which is the index space a `SET_SILO_DIAL` or `LOAD_SILO` intent travels in.
+func query_stratagem_count() -> int:
+	return _definitions.stratagem_count()
+
+
+func query_stratagem_id(index: int) -> String:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return "" if definition == null else definition.id
+
+
+func query_stratagem_display_name(index: int) -> String:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return "" if definition == null else definition.display_name
+
+
+## Which of `StratagemDefinition.Effect` a Stratagem resolves as, or -1.
+func query_stratagem_effect(index: int) -> int:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return -1 if definition == null else definition.effect
+
+
+## How long a Stratagem channels, in whole ticks. Ticks rather than the file's seconds,
+## because a tick is the Simulation's only unit of time and the conversion floors exactly
+## once — the same arrangement a Recipe's duration has.
+func query_stratagem_paint_ticks(index: int) -> int:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	if definition == null:
+		return 0
+	return maxi(_seconds_to_ticks(definition.paint_seconds), 1)
+
+
+func query_stratagem_radius_tiles(index: int) -> int:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return 0 if definition == null else definition.radius_tiles
+
+
+func query_stratagem_damage_per_charge(index: int) -> int:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return 0 if definition == null else definition.damage_per_charge
+
+
+## Every Item one Charge of a Stratagem delivers, sorted by id. Empty for a Barrage.
+func query_stratagem_goods(index: int) -> PackedStringArray:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return PackedStringArray() if definition == null else definition.goods_items.duplicate()
+
+
+func query_stratagem_goods_per_charge(index: int, item_id: String) -> int:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return 0 if definition == null else definition.goods_of(item_id)
+
+
+func query_stratagem_sentry_machine(index: int) -> String:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return "" if definition == null else definition.sentry_machine
+
+
+func query_stratagem_sentry_seconds(index: int) -> int:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	return 0 if definition == null else definition.sentry_seconds
+
+
+## Whether a Delivery has opened a Stratagem up, or it was never locked. The Stratagem twin of
+## `query_machine_is_unlocked` and `query_gear_is_unlocked`.
+func query_stratagem_is_unlocked(index: int) -> bool:
+	var definition: StratagemDefinition = _definitions.stratagem_at(index)
+	if definition == null:
+		return false
+	return _stratagem_is_unlocked(definition.id)
+
+
+## Whether a Machine is a Silo. Asked of the Machine rather than inferred from its id, exactly
+## as `query_machine_is_turret` is.
+func query_machine_is_silo(index: int) -> bool:
+	if not _is_machine(index):
+		return false
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	return definition != null and definition.is_silo()
+
+
+## How many Charges a Silo has stockpiled, and how many it will hold. The two halves of the
+## gauge a player reads to know whether there is artillery to call.
+func query_silo_charges(index: int) -> int:
+	if not query_machine_is_silo(index):
+		return 0
+	return _silo_charges[index]
+
+
+func query_silo_charge_capacity(index: int) -> int:
+	if not query_machine_is_silo(index):
+		return 0
+	return _definitions.machine(_machine_id[index]).charge_capacity
+
+
+## What is in a Silo's tube: the Stratagem id, or "" for a Silo that is not loaded, and how
+## many Charges went into it.
+##
+## **There is no query that would let anything take this back out**, and that is the point.
+func query_silo_loaded_stratagem(index: int) -> String:
+	if not query_machine_is_silo(index):
+		return ""
+	return _silo_loaded_stratagem[index]
+
+
+func query_silo_loaded_charges(index: int) -> int:
+	if not query_machine_is_silo(index):
+		return 0
+	return _silo_loaded_charges[index]
+
+
+func query_silo_is_loaded(index: int) -> bool:
+	return query_silo_loaded_charges(index) > 0
+
+
+## The Silo a Painting would draw from, or -1 — the loaded one whose tile comes first in
+## canonical tile order. What the HUD reads to say whether there is anything to call in.
+func query_loaded_silo() -> int:
+	return _loaded_silo()
+
+
+## How close a player stands to work a Silo's dial, in fixed-point metres from its footprint.
+func query_silo_load_reach_metres() -> int:
+	return _definitions.silo_load_reach_metres
+
+
+## The most Charges one load may commit — the dial's upper stop.
+func query_max_charges_per_load() -> int:
+	return maxi(_definitions.silo_max_charges_per_load, 1)
+
+
+## The tick a Machine stands until, or -1 for one that stands indefinitely.
+func query_machine_expires_tick(index: int) -> int:
+	if not _is_machine(index):
+		return -1
+	return _machine_expires_tick[index]
+
+
+## Whether a Machine is temporary — which, today, is exactly a Sentry Drop's Turret.
+func query_machine_is_temporary(index: int) -> bool:
+	return query_machine_expires_tick(index) >= 0
+
+
+## How many ticks a temporary Machine has left, and 0 for one that is not temporary.
+func query_machine_ticks_remaining(index: int) -> int:
+	var expires: int = query_machine_expires_tick(index)
+	if expires < 0:
+		return 0
+	return maxi(expires - _tick, 0)
+
+
+## Where a player's dial is set. Not a load: nothing is committed until `LOAD_SILO`, and the
+## HUD reads both this and `query_load_silo_refusal` so a player knows what they are about to
+## commit and whether it would land.
+func query_player_dial_stratagem(player_id: int) -> String:
+	if not _is_player(player_id):
+		return ""
+	return _player_dial_stratagem[player_id]
+
+
+## The same thing as an index into the sorted Stratagem ids, or -1. What a `LOAD_SILO` intent
+## carries, so the controller reads it back rather than remembering it.
+func query_player_dial_stratagem_index(player_id: int) -> int:
+	return _definitions.stratagem_index(query_player_dial_stratagem(player_id))
+
+
+func query_player_dial_charges(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_dial_charges[player_id]
+
+
+## Why a load would be refused, or `Refusal.NONE`. A projection about a load that has not
+## happened — the arrangement `query_build_refusal` has, and the one that matters most in this
+## file: a load cannot be taken back, so the reason has to be on screen *before* the key.
+func query_load_silo_refusal(
+	player_id: int, tile: Vector3i, stratagem_index: int, charges: int
+) -> int:
+	return _load_silo_refusal(player_id, tile, stratagem_index, charges)
+
+
+## Why a Painting would not start, or `Refusal.NONE`. The same kind of projection, about the
+## act that spends what the load committed.
+func query_paint_refusal(player_id: int, tile: Vector3i) -> int:
+	return _paint_refusal(player_id, tile)
+
+
+## Whether a player is channelling a Painting — which is to say, exposed and unable to act.
+func query_player_is_painting(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	return _player_paint_charges[player_id] > 0
+
+
+## The tile a Painting in flight is aimed at, which is also the tile its player is standing on.
+func query_player_paint_tile(player_id: int) -> Vector3i:
+	if not _is_player(player_id):
+		return Vector3i.ZERO
+	return Vector3i(
+		_player_paint_target_x[player_id],
+		_player_paint_target_y[player_id],
+		_player_paint_target_z[player_id]
+	)
+
+
+## What a Painting in flight is carrying: the Stratagem id and the Charges already spent on it.
+func query_player_paint_stratagem(player_id: int) -> String:
+	if not _is_player(player_id):
+		return ""
+	return _player_paint_stratagem[player_id]
+
+
+func query_player_paint_charges(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_paint_charges[player_id]
+
+
+## Ticks of channel served, and ticks the Stratagem asks for. The two halves of the gauge the
+## covering players watch — a fraction of a channel already served rather than a guess at how
+## long is left, the shape the Telegraph's gauge has.
+func query_player_paint_ticks_served(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_paint_ticks[player_id]
+
+
+func query_player_paint_ticks_required(player_id: int) -> int:
+	return query_stratagem_paint_ticks(
+		_definitions.stratagem_index(query_player_paint_stratagem(player_id))
+	)
+
+
+## The tick a player's last Painting was interrupted on, or -1, and the Charges they have lost
+## that way over the whole Run.
+##
+## **What an interrupted Painting costs, as a number.** State rather than an inference, so that
+## a HUD can say it and a fixture can prove it rather than concluding it from an effect that
+## never arrived.
+func query_player_paint_interrupted_tick(player_id: int) -> int:
+	if not _is_player(player_id):
+		return -1
+	return _player_paint_interrupted_tick[player_id]
+
+
+func query_player_charges_wasted(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_charges_wasted[player_id]
 
 
 # ── The Nest, the Breaches, the Waves and the Enemies ─────────────────────────

@@ -44,8 +44,8 @@ const STEP_AT_SLOW: int = -274
 const STEP_AT_FAST: int = -410
 
 const MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const RECIPES: String = """
@@ -83,6 +83,9 @@ baseline_supply_kw = 300
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 200
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -140,12 +143,14 @@ func _definitions(walk_speed: String) -> Definitions:
 		WAVES,
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -197,7 +202,7 @@ func test_the_same_definitions_produce_the_same_starting_hash() -> void:
 func test_definitions_that_failed_to_load_are_reported_and_nothing_is_invented() -> void:
 	# A Run must not start on a broken definition set, and the way it refuses is by
 	# saying so rather than by substituting plausible numbers.
-	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n", WAVES, DELIVERIES, GEAR)
+	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n", WAVES, DELIVERIES, GEAR, STRATAGEMS)
 	var sim: Simulation = Simulation.new(SEED, PLAYERS, broken)
 
 	assert_true(sim.query_definition_errors().size() > 0)
@@ -275,7 +280,8 @@ func test_a_reload_of_a_broken_definition_set_is_refused() -> void:
 	var broken: Definitions = Definitions.parse(
 		MACHINES, RECIPES, "[player]\nwalk_speed = oops\n", WAVES, DELIVERIES,
 		GEAR
-	)
+	,
+		STRATAGEMS)
 	sim.step([InputAction.reload_definitions(0, broken)])
 
 	assert_eq(sim.query_definition_digest(), _slow().digest(), "the old definitions stand")
@@ -374,6 +380,15 @@ func test_a_replay_under_the_same_definitions_is_not_refused() -> void:
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 

@@ -52,12 +52,14 @@ func _quick_content(nest_health: int = 40, interval: String = "1") -> Definition
 		TWO_CRAWLERS,
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -294,6 +296,15 @@ const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 

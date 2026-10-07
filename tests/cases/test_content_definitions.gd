@@ -22,9 +22,9 @@ const RECIPES: String = "res://content/recipes.csv"
 const TUNING: String = "res://content/tuning.toml"
 
 const GOOD_MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const GOOD_RECIPES: String = """
@@ -62,6 +62,9 @@ baseline_supply_kw = 300
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 200
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -132,12 +135,14 @@ func _parse(
 		waves,
 		deliveries,
 		gear,
+		STRATAGEMS,
 		MACHINES,
 		RECIPES,
 		TUNING,
 		WAVES_PATH,
 		DELIVERIES_PATH,
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -150,6 +155,15 @@ pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
 gear_a,Component A,barrel,,0,0,0,0,,0,10,0,0,0,0,0
 gear_b,Component B,sight,,0,0,0,0,,0,0,0,-10,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 
@@ -494,7 +508,7 @@ func test_a_nest_that_hides_nothing_is_a_legal_balance_decision() -> void:
 # ── Malformed definitions name the file and the row ───────────────────────────
 
 func test_a_duplicate_machine_id_names_the_row() -> void:
-	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,\n"
+	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,\n"
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.has_errors())
 	var text: String = definitions.describe_errors()
@@ -605,8 +619,8 @@ func test_a_broken_table_yields_no_definitions_at_all() -> void:
 func test_every_error_in_a_row_is_reported_not_just_the_first() -> void:
 	# So that fixing a definition file is one pass, not a guessing game.
 	var machines: String = GOOD_MACHINES.replace(
-		"miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,",
-		"miner_mk1,Miner Mk1,digger,2,2,lots,0,400,1,0,0,0,mine_irn_ore,"
+		"miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,",
+		"miner_mk1,Miner Mk1,digger,2,2,lots,0,400,1,0,0,0,0,mine_irn_ore,"
 	)
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.errors.size() >= 3, definitions.describe_errors())
@@ -621,9 +635,9 @@ func test_the_same_files_produce_the_same_digest() -> void:
 func test_the_digest_does_not_depend_on_the_order_of_the_rows() -> void:
 	# The property the Simulation's starting hash rests on.
 	var reordered_machines: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,
 """
 	var reordered_recipes: String = """
 id,display_name,inputs,outputs,seconds
@@ -679,7 +693,7 @@ func test_a_machine_and_recipe_added_only_in_the_files_appear_in_the_definitions
 	# The acceptance criterion, asserted the only way it can be: content this
 	# repository has never heard of, named nowhere but in the text below.
 	var machines: String = (
-		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,90,0,350,0,0,0,0,press_iron_gear,iron_plate:5\n"
+		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,90,0,350,0,0,0,0,0,press_iron_gear,iron_plate:5\n"
 	)
 	var recipes: String = (
 		GOOD_RECIPES + "press_iron_gear,Press Iron Gear,iron_plate:3,iron_gear:1,0.75\n"
@@ -857,7 +871,7 @@ t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 # naming a file and a row is not something `step`, `hash` or a query can report.
 
 const PYLON_ROW: String = (
-	"repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,mend_machinery,\n"
+	"repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,0,mend_machinery,\n"
 )
 
 const MEND_ROW: String = "mend_machinery,Mend Machinery,iron_plate:1,,1\n"
@@ -910,8 +924,8 @@ func test_a_turret_that_both_damages_and_repairs_is_refused() -> void:
 func test_only_a_turret_may_carry_a_repair_value() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES.replace(
-			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,",
-			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,40,"
+			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt",
+			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,40,0,smelt"
 		),
 		GOOD_RECIPES,
 		GOOD_TUNING
@@ -1151,3 +1165,272 @@ func test_a_starting_weapon_a_delivery_locks_is_refused() -> void:
 		definitions.describe_errors().contains("unlocked by a Delivery tier"),
 		definitions.describe_errors()
 	)
+
+# ── The Stratagem table ───────────────────────────────────────────────────────
+# A Stratagem is a player-called intervention drawn from a stockpile of Charges
+# (GLOSSARY.md), and adding one is a row. What is checked here is the *schema*, because the
+# schema is what enforces the design: each effect reads exactly the columns that belong to it,
+# so there is nowhere to write a Barrage that also drops a Turret even if somebody wanted to.
+# Loader errors name a file, a row and a column, which is not something `step`, `hash` or a
+# query can report.
+
+const SILO_MACHINE_ROW: String = (
+	"silo_mk1,Silo Mk1,silo,4,4,400,0,900,0,0,0,0,8,assemble_charge,\n"
+)
+
+const ASSEMBLE_ROW: String = "assemble_charge,Assemble Charge,iron_plate:1,,20\n"
+
+const STRATAGEM_HEADER: String = (
+	"id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge"
+	+ ",sentry_machine,sentry_seconds\n"
+)
+
+
+## Parses a Stratagem table against machines and recipes that declare a Silo and a Turret, so
+## a `sentry` row has something real to name.
+func _parse_stratagems(table: String) -> Definitions:
+	return Definitions.parse(
+		GOOD_MACHINES + SILO_MACHINE_ROW + PYLON_ROW.replace(",0,6,0,40,0,", ",0,6,15,0,0,"),
+		GOOD_RECIPES + ASSEMBLE_ROW + MEND_ROW,
+		GOOD_TUNING,
+		WAVES,
+		DELIVERY_HEADER + "t01_opening,Opening Licence,1,iron_plate:1,,gear_a,\n",
+		GEAR,
+		STRATAGEM_HEADER + table,
+		MACHINES,
+		RECIPES,
+		TUNING,
+		WAVES_PATH,
+		DELIVERIES_PATH,
+		"gear.csv",
+		"stratagems.csv"
+	)
+
+
+func test_the_shipped_stratagem_table_loads_and_declares_three() -> void:
+	var definitions: Definitions = Definitions.load_from_directory(Definitions.CONTENT_DIR)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_eq(definitions.stratagem_count(), 3, "DESIGN.md caps Milestone 1 at three")
+	assert_eq(
+		definitions.stratagem_ids(),
+		PackedStringArray(["artillery_barrage", "sentry_drop", "supply_drop"]),
+		"sorted by id, so the index a load intent carries is a property of the content"
+	)
+
+
+func test_a_stratagem_added_only_in_the_file_appears_in_the_definitions() -> void:
+	# The acceptance criterion, asserted the only way it can be: a Stratagem this repository
+	# has never heard of, named nowhere but in the text below.
+	var definitions: Definitions = _parse_stratagems(
+		"smoke_screen,Smoke Screen,barrage,2.5,9,4,,,0\n"
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	var smoke: StratagemDefinition = definitions.stratagem("smoke_screen")
+	if not assert_not_null(smoke, "one row and no code"):
+		return
+	assert_true(smoke.is_barrage())
+	assert_eq(smoke.radius_tiles, 9, "it reaches further than anything shipped")
+	assert_eq(smoke.damage_per_charge, 4)
+	assert_eq(smoke.paint_seconds, 163840, "2.5 * 65536")
+
+
+func test_a_stratagem_with_no_channel_at_all_is_refused() -> void:
+	var definitions: Definitions = _parse_stratagems(
+		"instant_barrage,Instant Barrage,barrage,0,6,150,,,0\n"
+	)
+	assert_true(definitions.has_errors(), "a Painting with no channel is not a Painting")
+	assert_true(
+		definitions.describe_errors().contains("paint_seconds"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_barrage_that_delivers_goods_is_refused_by_column() -> void:
+	# The schema is what keeps the three effects distinct. A Barrage shells the ground; a row
+	# that also handed out rounds would be two Stratagems pretending to be one.
+	var definitions: Definitions = _parse_stratagems(
+		"loot_barrage,Loot Barrage,barrage,5,6,150,ammunition:10,,0\n"
+	)
+	assert_true(definitions.has_errors(), "a number in a column nothing reads lies")
+	assert_true(
+		definitions.describe_errors().contains("goods_per_charge"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_supply_drop_with_a_radius_or_a_damage_value_is_refused_by_column() -> void:
+	var with_radius: Definitions = _parse_stratagems(
+		"wide_supply,Wide Supply,supply,3,4,0,ammunition:10,,0\n"
+	)
+	assert_true(with_radius.has_errors())
+	assert_true(
+		with_radius.describe_errors().contains("radius_tiles"), with_radius.describe_errors()
+	)
+
+	var with_damage: Definitions = _parse_stratagems(
+		"hot_supply,Hot Supply,supply,3,0,9,ammunition:10,,0\n"
+	)
+	assert_true(with_damage.has_errors())
+	assert_true(
+		with_damage.describe_errors().contains("damage_per_charge"),
+		with_damage.describe_errors()
+	)
+
+
+func test_a_supply_drop_that_delivers_nothing_is_refused() -> void:
+	var definitions: Definitions = _parse_stratagems(
+		"empty_supply,Empty Supply,supply,3,0,0,,,0\n"
+	)
+	assert_true(definitions.has_errors(), "a drop a player paid for and cannot feel")
+	assert_true(
+		definitions.describe_errors().contains("goods_per_charge"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_sentry_drop_must_name_a_turret_that_exists() -> void:
+	var missing: Definitions = _parse_stratagems(
+		"ghost_sentry,Ghost Sentry,sentry,3,0,0,ammunition:10,no_such_turret,45\n"
+	)
+	assert_true(missing.has_errors())
+	assert_true(
+		missing.describe_errors().contains("sentry_machine"), missing.describe_errors()
+	)
+
+	var not_a_turret: Definitions = _parse_stratagems(
+		"smelter_sentry,Smelter Sentry,sentry,3,0,0,ammunition:10,smelter_mk1,45\n"
+	)
+	assert_true(not_a_turret.has_errors(), "a Sentry Drop places a Turret")
+	assert_true(
+		not_a_turret.describe_errors().contains("sentry_machine"),
+		not_a_turret.describe_errors()
+	)
+
+
+func test_a_stratagem_that_is_not_a_sentry_may_not_be_temporary() -> void:
+	var definitions: Definitions = _parse_stratagems(
+		"timed_barrage,Timed Barrage,barrage,5,6,150,,,30\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("sentry_seconds"), definitions.describe_errors()
+	)
+
+
+func test_a_stratagem_naming_an_effect_nothing_answers_to_is_refused_by_name() -> void:
+	var definitions: Definitions = _parse_stratagems(
+		"nuke,Nuke,orbital_strike,5,6,150,,,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(definitions.describe_errors().contains("effect"), definitions.describe_errors())
+
+
+func test_a_stratagem_delivering_an_item_no_recipe_mentions_is_refused() -> void:
+	# The set of Items is exactly what the Recipes mention, so a drop of something nothing in
+	# the Factory could make is content somebody broke.
+	var definitions: Definitions = _parse_stratagems(
+		"medkit_drop,Medkit Drop,supply,3,0,0,bandages:2,,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("goods_per_charge"),
+		definitions.describe_errors()
+	)
+
+
+func test_an_empty_stratagem_table_is_an_error() -> void:
+	var definitions: Definitions = _parse_stratagems("")
+	assert_true(
+		definitions.has_errors(), "a Silo with nothing to load is a Machine nobody can use"
+	)
+
+
+func test_a_delivery_tier_unlocking_a_stratagem_that_does_not_exist_is_refused() -> void:
+	var definitions: Definitions = Definitions.parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		WAVES,
+		DELIVERY_HEADER + "t01_opening,Opening Licence,1,iron_plate:1,,,no_such_stratagem\n",
+		GEAR,
+		STRATAGEMS,
+		MACHINES,
+		RECIPES,
+		TUNING,
+		WAVES_PATH,
+		DELIVERIES_PATH,
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_true(definitions.has_errors(), "one authority, checked rather than assumed")
+	assert_true(
+		definitions.describe_errors().contains("unlocks_stratagems"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_silo_whose_recipe_produces_an_item_is_refused() -> void:
+	# A Charge is not an Item, so the Silo joins the rule a generator and a Turret already
+	# obey rather than getting a clause of its own.
+	var definitions: Definitions = Definitions.parse(
+		GOOD_MACHINES + SILO_MACHINE_ROW,
+		GOOD_RECIPES + "assemble_charge,Assemble Charge,iron_plate:1,iron_gear:1,20\n",
+		GOOD_TUNING,
+		WAVES,
+		DELIVERY_HEADER + "t01_opening,Opening Licence,1,iron_plate:1,,gear_a,\n",
+		GEAR,
+		STRATAGEMS,
+		MACHINES,
+		RECIPES,
+		TUNING,
+		WAVES_PATH,
+		DELIVERIES_PATH,
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("a Charge"),
+		"and the message names what it does produce: " + definitions.describe_errors()
+	)
+
+
+func test_only_a_silo_may_declare_a_charge_capacity() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES.replace(
+			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt",
+			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,6,smelt"
+		),
+		GOOD_RECIPES,
+		GOOD_TUNING
+	)
+	assert_true(definitions.has_errors(), "a number in a column nothing reads lies")
+	assert_true(
+		definitions.describe_errors().contains("charge_capacity"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_silo_that_stockpiles_nothing_is_refused() -> void:
+	var definitions: Definitions = Definitions.parse(
+		GOOD_MACHINES + SILO_MACHINE_ROW.replace(",0,0,0,8,assemble", ",0,0,0,0,assemble"),
+		GOOD_RECIPES + ASSEMBLE_ROW,
+		GOOD_TUNING,
+		WAVES,
+		DELIVERY_HEADER + "t01_opening,Opening Licence,1,iron_plate:1,,gear_a,\n",
+		GEAR,
+		STRATAGEMS,
+		MACHINES,
+		RECIPES,
+		TUNING,
+		WAVES_PATH,
+		DELIVERIES_PATH,
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_true(definitions.has_errors(), "a Silo that holds nothing could never be loaded")
+	assert_true(
+		definitions.describe_errors().contains("charge_capacity"),
+		definitions.describe_errors()
+	)
+

@@ -301,6 +301,41 @@ delivery_reach_metres = 5
 # is the same argument `player.starting_stock` makes for being one quoted bill.
 store_capacity_per_item = 200
 
+[silo]
+
+# The Silo: the Machine that assembles Charges (GLOSSARY.md). An ordinary Machine with a
+# Recipe, fed by Belts, drawing Power and destructible — what it has instead of an output
+# buffer is a stockpile of Charges, and what it has instead of a button is a dial.
+#
+# How deep the stockpile goes is `charge_capacity` in machines.csv, because that is a
+# property of the Machine and what makes a bigger Silo a row. The Stratagems a Charge may
+# be spent on, and what each one does, are content/stratagems.csv. These two keys are the
+# parts of loading that belong to no single Silo and no single Stratagem.
+
+# How close a player stands to a Silo to work its dial, in metres from the edge of its
+# footprint.
+#
+# Loading is **diegetic** (DESIGN.md names it first in the list): a physical mechanism
+# operated at the Machine rather than a menu, which is the whole reason it is weighty. So
+# there is a place a player has to be standing, exactly as there is for handing a Delivery
+# over at the Nest. Four metres is two tiles, the same reach a wrench has — close enough
+# that loading is something done at the Silo, generous enough that a 4x4 footprint does not
+# need a pixel-perfect spot to stand on.
+load_reach_metres = 4
+
+# The most Charges one load may commit — the dial's upper stop.
+#
+# **Deliberately a separate number from a Silo's `charge_capacity`.** That column says how
+# much artillery a Factory may bank; this says how big one strike may be. Four against a
+# capacity of eight means a full Silo is two strikes rather than one, so a player who has
+# been producing has a decision to make about how to spend it rather than one big button.
+#
+# The load is **irreversible** (GLOSSARY.md): a committed dial cannot be turned back, and
+# the Charges it took are gone whether the Painting lands or not. That is the whole of what
+# makes this number interesting — four Charges in the tube is a bet placed before the fight
+# about what the fight is going to be.
+max_charges_per_load = 4
+
 [wave]
 
 # Wave scheduling. **Heat decides when and how much** (GLOSSARY.md, DESIGN.md); these

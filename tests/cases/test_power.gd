@@ -40,8 +40,8 @@ func test_a_factory_within_its_power_runs_at_the_rate_its_recipes_state() -> voi
 # which is the point: the throttle is a duty cycle over whole ticks, never a fraction of
 # one.
 
-const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,0,mine_iron_ore,
+const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const THIRD_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -76,6 +76,9 @@ baseline_supply_kw = 1
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 200
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -118,7 +121,7 @@ reach_metres = 4
 
 
 func _one_third_content() -> Definitions:
-	return Definitions.parse(THIRD_MACHINES, THIRD_RECIPES, THIRD_TUNING, WAVES, DELIVERIES, GEAR)
+	return Definitions.parse(THIRD_MACHINES, THIRD_RECIPES, THIRD_TUNING, WAVES, DELIVERIES, GEAR, STRATAGEMS)
 
 
 ## The shipped Wave composition, inline so the fixture is a complete definition set. A
@@ -362,8 +365,8 @@ func test_a_cut_fuel_line_slows_the_very_miner_that_feeds_it() -> void:
 # except for one number in tuning: a 3 kW baseline against a 3 kW draw is a grid in
 # balance, and a 1 kW baseline against the same draw is a grid supplying a third.
 
-const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,0,mine_iron_ore,
+const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const THIN_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -403,6 +406,9 @@ baseline_supply_kw = %d
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 200
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -445,7 +451,8 @@ reach_metres = 4
 		WAVES,
 		DELIVERIES,
 		GEAR
-	)
+	,
+		STRATAGEMS)
 
 
 ## A Miner at the origin running onto a ten-tile Belt, on a grid of the given baseline.
@@ -627,6 +634,15 @@ func test_the_baseline_plant_is_what_lets_a_factory_start_at_all() -> void:
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 

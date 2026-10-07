@@ -304,9 +304,9 @@ func test_a_machine_holding_its_inputs_is_not_starved() -> void:
 # these tests bring their own content: a Miner whose Recipe takes 0.1 s, which floors to
 # 5 ticks and so offers 12 ore a second to a Belt rated for 4.
 
-const FAST_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,
+const FAST_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,
 """
 
 const FAST_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -342,6 +342,9 @@ baseline_supply_kw = 300
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 200
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -392,7 +395,7 @@ chaff_crawlers,crawler,0,6,150,40
 
 
 func _fast_content() -> Definitions:
-	return Definitions.parse(FAST_MACHINES, FAST_RECIPES, FAST_TUNING, WAVES, DELIVERIES, GEAR)
+	return Definitions.parse(FAST_MACHINES, FAST_RECIPES, FAST_TUNING, WAVES, DELIVERIES, GEAR, STRATAGEMS)
 
 
 ## A Run whose Miner outruns its Belt, on a Map with one Node at the origin.
@@ -848,6 +851,15 @@ func test_determinism_a_stalled_belt_really_did_stall_during_its_fixture() -> vo
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 

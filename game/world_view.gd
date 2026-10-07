@@ -132,6 +132,15 @@ const AMMUNITION_LOW: Color = Color(0.95, 0.74, 0.16)
 const AMMUNITION_BACKING: Color = Color(0.09, 0.08, 0.08)
 const AMMUNITION_DRY: Color = Color(0.88, 0.17, 0.14)
 
+## The Charge gauge's colours. Blue-white, so artillery reads as a different quantity from
+## Ammunition at a glance rather than after reading the number — and the backing goes red on an
+## empty Silo for the reason an empty magazine's does: absence of a bar has to mean "there is
+## no Silo there" and not "there is a Silo there with nothing in it".
+const CHARGE_FULL: Color = Color(0.58, 0.78, 1.0)
+const CHARGE_LOADED: Color = Color(1.0, 0.78, 0.35)
+const CHARGE_BACKING: Color = Color(0.09, 0.11, 0.16)
+const CHARGE_EMPTY: Color = Color(0.45, 0.07, 0.07)
+
 ## Below this fraction of a full magazine the gauge goes amber. Half, because a Turret's
 ## input buffer is `machine.input_buffer_crafts` crafts deep and half of that is the point
 ## at which a player still has time to go and look at the Belt.
@@ -205,6 +214,14 @@ var _pending_breach_meshes: Array[MeshInstance3D] = []
 ## Machine is not a node here either — it is a box this view rebuilds from the queries.
 var _turret_gauge_backings: Array[MeshInstance3D] = []
 var _turret_gauge_fills: Array[MeshInstance3D] = []
+
+## The Charge gauge over every Silo. The same two meshes and the same argument: mid-Wave a
+## player deciding whether to run for the Silo needs to know whether there is artillery in it,
+## and they are thirty metres away looking at the whole Factory. A **different colour** from a
+## magazine, because the two readings mean different things and a player must not have to
+## remember which bar is which.
+var _silo_gauge_backings: Array[MeshInstance3D] = []
+var _silo_gauge_fills: Array[MeshInstance3D] = []
 
 ## The instance transforms handed to the MultiMesh, in its own flat layout: twelve floats
 ## an instance, with the position in slots 3, 7 and 11. Built from the queries every frame
@@ -281,6 +298,7 @@ func sync(sim: Simulation) -> void:
 	_sync_pending_breaches(sim)
 	_sync_machines(sim)
 	_sync_turret_gauges(sim)
+	_sync_silo_gauges(sim)
 	_sync_enemies(sim)
 	_sync_belts(sim)
 	_sync_walls(sim)
@@ -379,6 +397,36 @@ func turret_gauge_width_metres(slot: int) -> float:
 	if not _turret_gauge_fills[slot].visible:
 		return 0.0
 	return (_turret_gauge_fills[slot].mesh as BoxMesh).size.x
+
+
+## How many Charge gauges are on screen. One per Silo and none for anything else.
+func silo_gauge_count() -> int:
+	return _silo_gauge_fills.size()
+
+
+## How wide a Silo's Charge gauge is drawn, in metres, and what colour its backing is reading.
+## For the smoke test, and for the same reason the Turret's pair exists.
+func silo_gauge_width_metres(slot: int) -> float:
+	if slot < 0 or slot >= _silo_gauge_fills.size():
+		return 0.0
+	if not _silo_gauge_fills[slot].visible:
+		return 0.0
+	return (_silo_gauge_fills[slot].mesh as BoxMesh).size.x
+
+
+func silo_gauge_backing_colour(slot: int) -> Color:
+	if slot < 0 or slot >= _silo_gauge_backings.size():
+		return Color.BLACK
+	return (_silo_gauge_backings[slot].material_override as StandardMaterial3D).albedo_color
+
+
+## What colour a Silo's gauge is *filling* in. The fill rather than the backing, because the
+## reading that matters about a Silo is whether the Charges in it are still spendable: a loaded
+## tube is already committed, and that is a different state from a full stockpile.
+func silo_gauge_fill_colour(slot: int) -> Color:
+	if slot < 0 or slot >= _silo_gauge_fills.size():
+		return Color.BLACK
+	return (_silo_gauge_fills[slot].material_override as StandardMaterial3D).albedo_color
 
 
 ## What colour a Turret's gauge is reading. The backing, because that is the half that turns
@@ -714,35 +762,101 @@ func _sync_turret_gauges(sim: Simulation) -> void:
 			+ Vector3(0.0, MACHINE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0)
 		)
 
-		var backing: BoxMesh = _turret_gauge_backings[slot].mesh
-		backing.size = Vector3(
-			AMMUNITION_GAUGE_WIDTH_METRES,
-			AMMUNITION_GAUGE_HEIGHT_METRES,
-			AMMUNITION_GAUGE_DEPTH_METRES
-		)
-		_turret_gauge_backings[slot].position = above
-		_paint_gauge(
-			_turret_gauge_backings[slot], AMMUNITION_DRY if held == 0 else AMMUNITION_BACKING
+		_hang_gauge(
+			_turret_gauge_backings,
+			_turret_gauge_fills,
+			slot,
+			above,
+			fraction,
+			AMMUNITION_DRY if held == 0 else AMMUNITION_BACKING,
+			AMMUNITION_LOW if fraction < AMMUNITION_LOW_FRACTION else AMMUNITION_FULL,
+			held > 0
 		)
 
-		# The fill grows from the left, so an emptying magazine reads as a bar retreating
-		# rather than as a bar shrinking towards its middle — the same direction every gauge
-		# a player has ever read empties in.
-		var width: float = AMMUNITION_GAUGE_WIDTH_METRES * fraction
-		var fill: BoxMesh = _turret_gauge_fills[slot].mesh
-		fill.size = Vector3(
-			maxf(width, 0.001),
-			AMMUNITION_GAUGE_HEIGHT_METRES,
-			AMMUNITION_GAUGE_DEPTH_METRES * 1.4
+
+## A Charge gauge over every Silo, and over nothing else.
+##
+## `_sync_turret_gauges`' argument, applied to the other number a player triages on. The fill
+## goes amber the moment the Silo is **loaded**, because a loaded Silo is a different thing
+## from a full one: the Charges in the tube are spent whatever happens next, and that is the
+## state a player has to be able to see without walking over and reading a dial.
+func _sync_silo_gauges(sim: Simulation) -> void:
+	var silos: PackedInt64Array = PackedInt64Array()
+	for index: int in range(sim.query_machine_count()):
+		if sim.query_machine_is_silo(index):
+			silos.append(index)
+
+	_resize_pool(
+		_silo_gauge_backings,
+		silos.size(),
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		CHARGE_BACKING
+	)
+	_resize_pool(
+		_silo_gauge_fills,
+		silos.size(),
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		CHARGE_FULL
+	)
+
+	for slot: int in range(silos.size()):
+		var index: int = silos[slot]
+		var loaded: int = sim.query_silo_loaded_charges(index)
+		var held: int = sim.query_silo_charges(index) + loaded
+		var capacity: int = maxi(sim.query_silo_charge_capacity(index), 1)
+		_hang_gauge(
+			_silo_gauge_backings,
+			_silo_gauge_fills,
+			slot,
+			_machine_centre(sim, index)
+			+ Vector3(0.0, MACHINE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0),
+			clampf(float(held) / float(capacity), 0.0, 1.0),
+			CHARGE_EMPTY if held == 0 else CHARGE_BACKING,
+			CHARGE_LOADED if loaded > 0 else CHARGE_FULL,
+			held > 0
 		)
-		_turret_gauge_fills[slot].position = above + Vector3(
-			(width - AMMUNITION_GAUGE_WIDTH_METRES) * 0.5, 0.0, 0.0
-		)
-		_turret_gauge_fills[slot].visible = held > 0
-		_paint_gauge(
-			_turret_gauge_fills[slot],
-			AMMUNITION_LOW if fraction < AMMUNITION_LOW_FRACTION else AMMUNITION_FULL
-		)
+
+
+## Hangs one gauge: a dark backing bar at full width and a coloured fill in front of it.
+##
+## Extracted so the Charge gauge is the Ammunition gauge rather than a second one that looks
+## like it. The fill grows **from the left**, so an emptying bar reads as retreating rather
+## than as shrinking towards its middle — the same direction every gauge a player has ever
+## read empties in — and both meshes are unshaded, because a gauge a directional light can
+## darken is a gauge a player misreads at the worst moment.
+func _hang_gauge(
+	backings: Array[MeshInstance3D],
+	fills: Array[MeshInstance3D],
+	slot: int,
+	above: Vector3,
+	fraction: float,
+	backing_colour: Color,
+	fill_colour: Color,
+	fill_visible: bool
+) -> void:
+	var backing: BoxMesh = backings[slot].mesh
+	backing.size = Vector3(
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		AMMUNITION_GAUGE_DEPTH_METRES
+	)
+	backings[slot].position = above
+	_paint_gauge(backings[slot], backing_colour)
+
+	var width: float = AMMUNITION_GAUGE_WIDTH_METRES * fraction
+	var fill: BoxMesh = fills[slot].mesh
+	fill.size = Vector3(
+		maxf(width, 0.001),
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		AMMUNITION_GAUGE_DEPTH_METRES * 1.4
+	)
+	fills[slot].position = above + Vector3(
+		(width - AMMUNITION_GAUGE_WIDTH_METRES) * 0.5, 0.0, 0.0
+	)
+	fills[slot].visible = fill_visible
+	_paint_gauge(fills[slot], fill_colour)
 
 
 ## Colours a gauge bar, unshaded so it reads the same in the Factory's shadow as it does in
@@ -1160,6 +1274,7 @@ func _sync_hud(sim: Simulation) -> void:
 	lines.append_array(_delivery_lines(sim))
 	lines.append_array(_nest_store_lines(sim))
 	lines.append_array(_gear_lines(sim))
+	lines.append_array(_silo_lines(sim))
 	lines.append_array(_build_gun_lines(sim))
 
 	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and
@@ -1237,6 +1352,7 @@ func _sync_hud(sim: Simulation) -> void:
 			state == "running"
 			and not hurt
 			and not sim.query_machine_is_turret(index)
+			and not sim.query_machine_is_silo(index)
 			and not _is_digging_up_a_breach(sim, index)
 			and not is_hot.has(index)
 		):
@@ -1284,6 +1400,28 @@ func _sync_hud(sim: Simulation) -> void:
 					" — DRY" if held == 0
 					else " — %d shots" % sim.query_turret_shots_remaining(index)
 				)
+		# A Silo's stockpile and what is in its tube, on the Silo's own line. The Turret rule
+		# applied to the heaviest weapon in the game: "running" says nothing about whether
+		# there is artillery to call, and a load is irreversible, so what is committed is
+		# worth reading in words as well as off the gauge over its roof.
+		if sim.query_machine_is_silo(index):
+			line += " — charges %d/%d" % [
+				sim.query_silo_charges(index), sim.query_silo_charge_capacity(index)
+			]
+			if sim.query_silo_is_loaded(index):
+				line += " — LOADED %s x%d" % [
+					sim.query_silo_loaded_stratagem(index),
+					sim.query_silo_loaded_charges(index),
+				]
+			else:
+				line += " — empty tube"
+		# How long a dropped Sentry has left to live. A Turret a player did not build and
+		# cannot repair back into permanence is a Turret whose clock is the only thing worth
+		# knowing about it.
+		if sim.query_machine_is_temporary(index):
+			line += " — %ds left" % (
+				sim.query_machine_ticks_remaining(index) / Simulation.TICKS_PER_SECOND
+			)
 		if hurt:
 			line += (
 				" — health %d/%d"
@@ -1316,6 +1454,99 @@ func _sync_hud(sim: Simulation) -> void:
 		lines.append("walls %d — %d damaged" % [sim.query_wall_count(), breached])
 
 	_hud.text = "\n".join(lines)
+
+
+## The Silo: the dial a player is carrying, whether the thing in front of them would take it,
+## and a Painting in flight.
+##
+## **This is where the diegetic control is legible.** Loading is irreversible, so the whole
+## bargain depends on a player knowing what they are about to commit and whether it would
+## land *before* the key goes down — which is what `query_load_silo_refusal` is for, and why
+## the refusal is a projection rather than a message after the fact. The wording lives here
+## because a `Refusal` is a fact and a sentence about it is presentation, the same split
+## `BuildGun.refusal_text` makes.
+func _silo_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	if sim.query_stratagem_count() == 0:
+		return lines
+
+	# A Painting first and in capitals, because it is the one state in which a player can do
+	# nothing at all and the gauge is what the players covering them are watching.
+	if sim.query_player_is_painting(0):
+		var served: int = sim.query_player_paint_ticks_served(0)
+		var required: int = maxi(sim.query_player_paint_ticks_required(0), 1)
+		lines.append(
+			"PAINTING %s x%d — %s %d%%"
+			% [
+				sim.query_player_paint_stratagem(0),
+				sim.query_player_paint_charges(0),
+				_gauge_bar(served, required),
+				served * 100 / required,
+			]
+		)
+		lines.append("HOLD STILL — letting go wastes the charges")
+	else:
+		var dial: String = sim.query_player_dial_stratagem(0)
+		var line: String = "dial %s x%d" % [dial, sim.query_player_dial_charges(0)]
+		# The same Silo the load key would commit to, through the one function both ask —
+		# because a reason on screen about a different Silo from the one the key means is
+		# worse than no reason at all.
+		var aimed: Vector3i = PlayerController.silo_tile_for_loading(sim, 0)
+		var refusal: int = sim.query_load_silo_refusal(
+			0,
+			aimed,
+			sim.query_player_dial_stratagem_index(0),
+			sim.query_player_dial_charges(0)
+		)
+		if refusal == Simulation.Refusal.NONE:
+			line += " — LOAD READY (irreversible)"
+		elif refusal != Simulation.Refusal.NO_SILO_THERE:
+			line += " — %s" % load_refusal_text(refusal)
+		lines.append(line)
+
+	var wasted: int = sim.query_player_charges_wasted(0)
+	if wasted > 0:
+		lines.append("charges wasted to interrupted paintings: %d" % wasted)
+	return lines
+
+
+## What to tell a player about a load that will not happen.
+##
+## Separate from `BuildGun.refusal_text` because the reasons are different ones, and worded
+## for the act: a Silo's refusals are about a commitment rather than about a tile, so
+## "already loaded" has to read as "this is spent, not available".
+static func load_refusal_text(refusal: int) -> String:
+	match refusal:
+		Simulation.Refusal.NONE:
+			return ""
+		Simulation.Refusal.NO_SILO_THERE:
+			return "no silo there"
+		Simulation.Refusal.OUT_OF_REACH:
+			return "stand at the silo"
+		Simulation.Refusal.SILO_ALREADY_LOADED:
+			return "already loaded — fire it or lose it"
+		Simulation.Refusal.NOT_ENOUGH_CHARGES:
+			return "not enough charges assembled"
+		Simulation.Refusal.BAD_CHARGE_COUNT:
+			return "that is not a load"
+		Simulation.Refusal.STRATAGEM_IS_LOCKED:
+			return "not unlocked yet"
+		Simulation.Refusal.NO_SUCH_STRATAGEM:
+			return "no such stratagem"
+		Simulation.Refusal.PLAYER_IS_PAINTING:
+			return "both hands are on the designator"
+		Simulation.Refusal.PLAYER_IS_DOWN:
+			return "you are down"
+		Simulation.Refusal.RUN_IS_OVER:
+			return "the nest has fallen"
+	return "cannot load"
+
+
+## A bar of text standing for a fraction served. The Telegraph's gauge, reused: there is no
+## audio yet and no texture, so a channel's progress is a row of cells that fills.
+func _gauge_bar(served: int, required: int) -> String:
+	var filled: int = clampi(served * TELEGRAPH_GAUGE_CELLS / maxi(required, 1), 0, TELEGRAPH_GAUGE_CELLS)
+	return "[%s%s]" % ["#".repeat(filled), ".".repeat(TELEGRAPH_GAUGE_CELLS - filled)]
 
 
 ## The Telegraph, as the loudest thing on the HUD.
