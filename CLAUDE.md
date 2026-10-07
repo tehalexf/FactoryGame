@@ -12,9 +12,20 @@ tools/assets/generate_machines.sh  # regenerate every Machine mesh from its decl
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
+python3 tools/tuning_dashboard.py  # edit content/tuning.toml in a browser, with reset and rollback
+tools/tuning/run_tests.sh        # that dashboard's own tests, Python
 godot --path .                   # run the game
 godot --headless --path . --quit-after 120   # launch headless for 120 frames
 ```
+
+The tuning dashboard is the usable surface over the ~70 numbers in
+`content/tuning.toml`, every one of which is a guess until somebody plays with
+it. It writes the file and nothing else — the hot-reload below is what carries
+the change into a running Run — validates against the subset
+`sim/toml_document.gd` accepts *and* against the game's own loader before it
+writes, snapshots before every write, and marks what differs from the shipped
+defaults. `python3 tools/tuning_dashboard.py --check` reports the same thing
+without a browser.
 
 `tools/run_tests.sh` exits 0 when green and non-zero on any failure, load error,
 or an unfiltered run that executed no tests. Set `GODOT=/path/to/godot` to use a
