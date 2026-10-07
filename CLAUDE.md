@@ -61,6 +61,14 @@ facts have one authority each, and the asset suite fails if a mesh and the
 Simulation disagree — see [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md)
 section 6.
 
+A Machine's **silhouette is a gameplay requirement, not polish**: the core skill
+in a factory game is reading your own production line at a glance.
+`tools/assets/machine_silhouette.py` measures how far apart every pair of
+outlines is and the asset suite fails if any two converge, so changing a recipe
+cannot quietly turn two Machines back into the same dark box. The committed
+contact sheets in `docs/images/` are the same claim in a picture; rebuild them
+with `tools/assets/render_machines.sh`.
+
 The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
@@ -239,18 +247,12 @@ arrays, never as an object per Item.
 - **Open: `content/machine_ports.csv` is still not the Simulation's authority.** #19 added
   that file and the mesh markers that match it, declaring an exact edge and tile for each
   port. The Simulation accepts a Belt against *any* footprint edge tile, which is looser.
-  It still cannot adopt the file: the table describes ten Machine bodies and
-  `content/machines.csv` now defines four, and `coal_miner_mk1` has no row in it at all,
-  so loading it under its own documented rule ("machine_id must name a row in
-  machines.csv") would still fail the whole content load. The ticket that brings the
-  remaining Machines into `machines.csv` should make `Definitions` read the ports table
-  and tighten `_load_from_port` and `_hand_off` to the declared edge, tile and direction —
-  one declaration, not two.
-- **Open: `coal_miner_mk1` has no generated mesh.** #7 added it to `machines.csv` because
-  a Steam Boiler burns coal and nothing else mines any, and left
-  `content/machine_bodies.csv` alone: a row there means a `.glb` to generate and commit,
-  and the placeholder renderer draws every Machine as a box regardless. The art pass adds
-  the body, the ports and the mesh.
+  It still cannot adopt the file: the table describes eleven Machine bodies and
+  `content/machines.csv` defines four, so loading it under its own documented rule
+  ("machine_id must name a row in machines.csv") would still fail the whole content
+  load. The ticket that brings the remaining Machines into `machines.csv` should make
+  `Definitions` read the ports table and tighten `_load_from_port` and `_hand_off` to the
+  declared edge, tile and direction — one declaration, not two.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.

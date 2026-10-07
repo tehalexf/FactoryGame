@@ -16,7 +16,6 @@ is the entire workflow for changing a Machine's size.
 from __future__ import annotations
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -27,11 +26,10 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import machine_materials  # noqa: E402
 import machine_parts as parts  # noqa: E402
 import machine_recipes as recipes  # noqa: E402
 import machine_specs  # noqa: E402
-
-PALETTE_JSON = HERE / "dieselpunk_palette.json"
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -57,22 +55,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 def load_palette() -> dict[str, bpy.types.Material]:
     """Build the shared palette as real Blender materials, once per run.
 
-    Flat Principled BSDF with no texture nodes: these are procedural meshes and
-    texturing is a separate ticket. The numbers come from the palette file so the
-    same values reach every Machine, which is the only way a palette stays shared.
+    Flat Principled BSDF with no texture node anywhere, which is what keeps the
+    exported `.glb` free of images and byte-identical on every run. The surface a
+    player actually sees is the same palette entry wearing its generated texture,
+    built by `machine_materials` for Godot and for the contact sheet — one
+    declaration, three runtimes.
     """
-    declared = json.loads(PALETTE_JSON.read_text())["materials"]
-    built: dict[str, bpy.types.Material] = {}
-    for entry in declared:
-        material = bpy.data.materials.new(entry["name"])
-        # New materials arrive node-backed in Blender 4.x and later, and
-        # `use_nodes` is slated for removal in 6.0, so it is not set here.
-        principled = material.node_tree.nodes["Principled BSDF"]
-        principled.inputs["Base Color"].default_value = tuple(entry["base_color"])
-        principled.inputs["Metallic"].default_value = entry["metallic"]
-        principled.inputs["Roughness"].default_value = entry["roughness"]
-        built[entry["name"]] = material
-    return built
+    return machine_materials.build_blender_materials(textured=False)
 
 
 def clear_scene() -> None:
@@ -105,7 +94,7 @@ def build_machine(machine, palette: dict[str, bpy.types.Material]) -> None:
     if recipes.needs_standard_shell(machine):
         parts.plinth(assembly, half_x, half_y)
         parts.corner_posts(assembly, "CastIron", half_x, half_y,
-                           recipes.housing_height(machine) + 0.15)
+                           recipes.frame_height(machine))
 
     recipes.build(machine, assembly)
 
@@ -122,6 +111,10 @@ def build_machine(machine, palette: dict[str, bpy.types.Material]) -> None:
         mesh_data = bpy.data.meshes.new(f"{machine.machine_id}_{name}")
         mesh = assembly.take(name)
         bmesh.ops.recalc_face_normals(mesh, faces=mesh.faces)
+        # UVs last, after the normals are settled: the projection picks an axis
+        # per face from its normal, so an inverted face would otherwise be
+        # textured off the wrong plane.
+        parts.box_project_uvs(mesh)
         mesh.to_mesh(mesh_data)
         mesh.free()
         mesh_data.materials.append(palette[name])
@@ -155,8 +148,15 @@ def export(path: Path) -> None:
         export_skins=False,
         export_morph=False,
         export_materials='EXPORT',
+        # No image goes in the file. The generated texture set is eight
+        # 1024x1024 PNGs; embedding them in each of eleven Machines would put
+        # 130 MB of duplicated pixels in a public git repository to say something
+        # the engine can say once. The glTF material is identity — a palette
+        # name — and Godot substitutes the shared `StandardMaterial3D` for it on
+        # import, wired up by `machine_materials.py`. The UVs are exported,
+        # because they are geometry and nothing else can supply them.
         export_image_format='NONE',
-        export_texcoords=False,
+        export_texcoords=True,
         export_normals=True,
         export_tangents=False,
         export_extras=False,

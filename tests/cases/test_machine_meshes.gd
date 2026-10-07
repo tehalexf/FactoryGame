@@ -19,13 +19,20 @@ extends TestCase
 
 const MACHINE_DIR: String = "res://assets/machines"
 
-## The Milestone 1 bodies from docs/DESIGN.md: the eight Machines, plus the Nest
+## Where the shared palette materials live. One StandardMaterial3D per palette
+## entry, wired onto every Machine by the `_subresources` override in its
+## `.glb.import` — so eleven Machines share one copy of each generated texture
+## rather than embedding eight 1024x1024 PNGs apiece.
+const MATERIAL_DIR: String = "res://assets/machines/materials"
+
+## The Milestone 1 bodies from docs/DESIGN.md: the nine Machines, plus the Nest
 ## and a Belt segment. Written out rather than globbed, so deleting a mesh fails
 ## instead of quietly shrinking the expectation.
 const EXPECTED_MACHINES: Array[String] = [
 	"ammo_press_mk1",
 	"assembler_mk1",
 	"belt_straight",
+	"coal_miner_mk1",
 	"generator_mk1",
 	"miner_mk1",
 	"nest",
@@ -82,6 +89,76 @@ func test_no_machine_mesh_carries_a_skeleton() -> void:
 		var model: Node = scene.instantiate()
 		assert_null(_find_skeleton(model), "%s imported with a Skeleton3D" % machine_id)
 		model.free()
+
+
+func test_every_machine_mesh_arrives_wearing_the_shared_dieselpunk_materials() -> void:
+	# The thing only the real project can answer about the texture pass. The .glb
+	# carries geometry, UVs and a palette *name*; the surface itself is a shared
+	# StandardMaterial3D that this project's import settings substitute in. Asked
+	# of the engine rather than of the file, because an import that silently
+	# dropped the override would leave every byte-level check green and still put
+	# eleven flat-shaded blocks on the Factory floor.
+	var textured: int = 0
+	for machine_id: String in EXPECTED_MACHINES:
+		var scene: PackedScene = ResourceLoader.load(_path_for(machine_id)) as PackedScene
+		if scene == null:
+			continue
+		var model: Node = scene.instantiate()
+		var surfaces: Array[Material] = []
+		_collect_materials(model, surfaces)
+		assert_true(not surfaces.is_empty(), "%s has no materials" % machine_id)
+		for material: Material in surfaces:
+			var standard: StandardMaterial3D = material as StandardMaterial3D
+			if not assert_not_null(standard,
+					"%s: %s is not the shared material" % [machine_id, material]):
+				continue
+			assert_true(standard.resource_path.begins_with(MATERIAL_DIR),
+				"%s: %s came from the glTF, not from %s"
+					% [machine_id, standard.resource_name, MATERIAL_DIR])
+			if standard.albedo_texture != null:
+				textured += 1
+		model.free()
+	# Not every material wears a texture - a gauge bezel is a coloured dot - but
+	# a Factory in which none of them do is the defect this ticket was filed for.
+	assert_true(textured > 0, "no Machine surface carries a texture at all")
+
+
+func test_every_machine_mesh_carries_uvs_for_those_materials() -> void:
+	# A textured material on a mesh with no UV channel renders as one pixel of
+	# the texture stretched over the whole Machine, which looks like flat shading
+	# and is not.
+	for machine_id: String in EXPECTED_MACHINES:
+		var scene: PackedScene = ResourceLoader.load(_path_for(machine_id)) as PackedScene
+		if scene == null:
+			continue
+		var model: Node = scene.instantiate()
+		var meshes: Array[Mesh] = []
+		_collect_meshes(model, meshes)
+		for mesh: Mesh in meshes:
+			for surface: int in mesh.get_surface_count():
+				var format: int = (mesh as ArrayMesh).surface_get_format(surface)
+				assert_true((format & Mesh.ARRAY_FORMAT_TEX_UV) != 0,
+					"%s surface %d has no UVs" % [machine_id, surface])
+		model.free()
+
+
+func _collect_materials(node: Node, into: Array[Material]) -> void:
+	if node is MeshInstance3D:
+		var mesh: Mesh = (node as MeshInstance3D).mesh
+		if mesh != null:
+			for surface: int in mesh.get_surface_count():
+				var material: Material = mesh.surface_get_material(surface)
+				if material != null:
+					into.append(material)
+	for child: Node in node.get_children():
+		_collect_materials(child, into)
+
+
+func _collect_meshes(node: Node, into: Array[Mesh]) -> void:
+	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
+		into.append((node as MeshInstance3D).mesh)
+	for child: Node in node.get_children():
+		_collect_meshes(child, into)
 
 
 func _path_for(machine_id: String) -> String:

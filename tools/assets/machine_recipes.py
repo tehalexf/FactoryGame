@@ -11,10 +11,30 @@ footprint, the plinth, the frame posts and the port fittings are added for every
 Machine by the generator before the recipe runs, so a recipe only describes what
 makes *this* Machine recognisable at a hundred metres.
 
-**Silhouette is the whole job.** A player identifies a Machine across a Factory by
-its outline against the sky, never by its surface. So each recipe commits to one
-strong vertical gesture — a drill tower, a stack, a ram, a gantry, a drum, a
-flywheel, a launch tube — and resists adding a second.
+**Silhouette is the whole job, and it is a gameplay requirement.** The core skill
+in a factory game is reading your own production line at a glance; a player must
+know what a building is from its outline alone, at distance, in peripheral
+vision, while something is chasing them. So each recipe commits to one **gross
+form** — not one detail — and the forms are chosen to be mutually unmistakable:
+
+| Machine | The form, in one phrase |
+|---|---|
+| `miner` | an open drill derrick: a tall narrow lattice you can see sky through |
+| `coal_miner` | a pithead: two big winding wheels on a raked headframe |
+| `smelter` | a blast furnace: a bellied vessel that flares out and tapers in |
+| `boiler` | a horizontal drum on a brick setting, long and low |
+| `generator` | an engine bed under one oversized open-spoked flywheel |
+| `press` | an H-frame: two posts with a ram travelling through the gap |
+| `ammo_press` | a magazine drum lying across the top, under a raking feed |
+| `assembler` | a wide shed with a sawtooth roof, and nothing above it |
+| `silo` | one enormous vertical launch tube on a low fort |
+| `nest` | a stepped ziggurat under a beacon mast |
+| `belt` | a trestle deck, one tile long |
+
+Height, mass, roof shape, how many things rise and where — never surface
+detailing, which is gone by thirty metres. `tools/assets/machine_silhouette.py`
+measures the result and the asset suite fails if any two Machines converge, so
+this table is checked rather than asserted.
 """
 
 from __future__ import annotations
@@ -64,281 +84,419 @@ def needs_port_fittings(machine) -> bool:
     return machine.body != "belt"
 
 
+#: Bodies whose corner frame is deliberately shorter than their housing.
+#:
+#: The shared frame posts are what tie every Machine to the same factory, but
+#: four posts at full height draw a box around whatever is inside them — which is
+#: exactly the silhouette this ticket exists to break. A Machine whose form is a
+#: pyramid, an H-frame or a wheel keeps its posts down at plinth height, where
+#: they read as a bolted-down base instead of as a crate.
+_SHORT_FRAMES = {"press": 1.0, "nest": 1.3, "generator": 1.1, "smelter": 1.5}
+
+
+def frame_height(machine) -> float:
+    """How tall the shared corner posts stand on this body."""
+    return _SHORT_FRAMES.get(machine.body, housing_height(machine) + 0.15)
+
+
 # ---------------------------------------------------------------------------
 # Recipes
 # ---------------------------------------------------------------------------
 
 def _miner(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """A drill tower over a sloped spoil hopper. The silhouette is the mast."""
+    """A rotary drill derrick: a low shed under a tall open lattice tower.
+
+    The tower is the silhouette and it is deliberately **open**. A solid tapered
+    tower and a furnace stack are the same trapezoid in black, and the Miner and
+    the Smelter are the two Machines a player most needs to tell apart in the
+    first five minutes of a Run.
+    """
     top = housing_height(machine)
-    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.2)
-    # The mast: a tapered lattice-less tower, because a lattice at this scale
-    # reads as noise. Height is deliberately above the housing's own, so the
-    # Miner is the tallest thing on an early Factory floor.
-    mast_base, mast_top = top - 0.1, top + 2.5
-    a.add("CastIron", parts.frustum((1.1, 1.1), (0.66, 0.66), mast_top - mast_base,
-                                    center_bottom=(0.0, 0.0, mast_base)))
-    parts.rib_run(a, "WeldedSteel",
-                  (0.0, 0.0, mast_base + 0.4), (0.0, 0.0, mast_top - 0.3), 5,
-                  size=(1.18, 1.18, 0.09))
-    # The drill head and its spoil chute.
-    a.add("OiledSteel", parts.cylinder(0.3, 1.0, center=(0.0, 0.0, mast_top + 0.3),
-                                       segments=12))
-    a.add("OiledSteel", parts.cylinder(0.3, 0.7, center=(0.0, 0.0, mast_top + 1.05),
-                                       radius_top=0.0, segments=12))
-    a.add("Soot", parts.frustum((1.5, 1.5), (0.8, 0.8), 0.7,
+    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.24)
+    derrick_base, derrick_height = top - 0.1, 6.2
+    derrick_top = derrick_base + derrick_height
+    parts.truss_tower(a, "CastIron", 0.88, 0.36, derrick_base, derrick_height,
+                      leg=0.3, bands=5)
+    # The crown block, and the drill stem hanging down inside the derrick.
+    a.add("WeldedSteel", parts.box((1.0, 1.0, 0.34),
+                                   center=(0.0, 0.0, derrick_top + 0.17)))
+    a.add("OiledSteel", parts.cylinder(0.14, derrick_height * 0.8,
+                                       center=(0.0, 0.0, derrick_base + derrick_height * 0.4),
+                                       segments=10))
+    a.add("CastIron", parts.cylinder(0.26, 0.5, center=(0.0, 0.0, top + 0.3),
+                                     segments=12))
+    # The spoil hopper the Resource comes up into.
+    a.add("Soot", parts.frustum((1.6, 1.6), (0.9, 0.9), 0.8,
                                 center_bottom=(0.0, 0.0, 0.3)))
     for sx in (-1, 1):
-        parts.hydraulic_ram(a, (sx * (hx - 0.5), 0.0, 0.3), 0.85, 0.7)
-    parts.gauge_cluster(a, (0.0, -hy + 0.2, 1.55), count=2)
-    parts.access_door(a, (0.0, hy - 0.2, 0.95), (0.8, 1.3))
+        parts.hydraulic_ram(a, (sx * (hx - 0.5), hy * 0.45, 0.3), 0.8, 0.6)
+    parts.gauge_cluster(a, (0.0, -hy + 0.2, 1.25), count=2)
+    parts.access_door(a, (0.0, hy - 0.2, 0.95), (0.8, 1.2))
+
+
+def _coal_miner(machine, a: parts.Assembly, hx: float, hy: float) -> None:
+    """A pithead: two winding sheaves on a raked headframe over a coal bunker.
+
+    Coal is dug, not drilled, and a pithead is the one industrial silhouette a
+    player already knows. Two wheels, side by side, standing clear of everything
+    else on the Machine — a circle is a shape nothing else in the kit makes, and
+    two of them cannot be read as one.
+    """
+    top = housing_height(machine)
+    # A battered winding house — walls that lean inward — rather than the upright
+    # box the Generator has. The two share a 2x2 footprint and a wheel, so the
+    # base they stand on has to disagree as well as the thing above it.
+    a.add("OliveDrab", parts.prism((0.0, 0.0, 0.26), (hx * 2 - 0.5, hy * 2 - 0.5),
+                                   (0.0, 0.0, top), (hx * 2 - 1.6, hy * 2 - 1.6)))
+    a.add("OxideRed", parts.box((hx * 2 - 0.42, hy * 2 - 0.42, 0.1),
+                                center=(0.0, 0.0, 0.31), chamfer=0.02))
+    # The headframe, and the back-stays that rake away from it to the south. The
+    # rake is load-bearing to the look: a vertical frame would be a derrick.
+    frame_base, frame_height_m = top - 0.1, 3.1
+    wheel_z = frame_base + frame_height_m + 0.75
+    parts.truss_tower(a, "CastIron", 0.95, 0.82, frame_base, frame_height_m,
+                      leg=0.26, bands=3)
+    for sx in (-1, 1):
+        a.add("WeldedSteel", parts.prism(
+            (sx * (hx - 0.4), hy - 0.35, 0.3), (0.3, 0.3),
+            (sx * 0.75, 0.0, wheel_z - 0.3), (0.26, 0.26)))
+    a.add("WeldedSteel", parts.box((2.1, 0.46, 0.3), center=(0.0, 0.0, wheel_z)))
+    for sx in (-1, 1):
+        parts.spoked_wheel(a, (sx * 0.92, 0.0, wheel_z), 0.84, 0.24,
+                           axis="y", spokes=6)
+    # The bunker the coal drops into, and the winding engine house beside it.
+    a.add("Soot", parts.frustum((1.8, 1.4), (1.0, 0.8), 0.7,
+                                center_bottom=(0.0, hy * 0.3, 0.3)))
+    a.add("CastIron", parts.box((hx * 2 - 1.4, 0.9, 0.5),
+                                center=(0.0, -hy + 0.75, top + 0.2)))
+    parts.gauge_cluster(a, (0.0, -hy + 0.2, 1.3), count=2)
+    parts.access_door(a, (-hx * 0.45, -hy + 0.2, 1.0), (0.75, 1.3))
 
 
 def _smelter(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """A furnace shell with a tapped firebox and one dominating stack."""
+    """A blast furnace: a bellied vessel that flares out, then tapers in.
+
+    Not a box with a chimney. A furnace is a *shape* — wide at the bosh, pinched
+    at the throat — and that profile is the one thing in a Factory that cannot be
+    mistaken for a shed. The downcomer running back down the flank is the second
+    read, and it is a pipe rather than a stack on purpose.
+    """
     top = housing_height(machine)
-    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.22)
-    a.add("CastIron", parts.box((hx * 2 - 0.3, hy * 2 - 0.3, 0.3),
-                                center=(0.0, 0.0, top + 0.12)))
-    parts.chimney(a, (hx * 0.42, -hy * 0.42, top + 0.2), 2.9, radius=0.36)
-    # The tap: a glowing-hot mouth would need emission, which is a texture-pass
-    # concern, so the hole is modelled and left sooted.
-    a.add("Soot", parts.box((1.0, 0.3, 0.5), center=(0.0, hy - 0.26, 0.95)))
+    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.3)
+    hearth = top - 0.1
+    a.add("CastIron", parts.frustum((2.0, 2.0), (2.9, 2.9), 1.7,
+                                    center_bottom=(0.0, 0.0, hearth)))
+    a.add("OxideRed", parts.frustum((2.9, 2.9), (2.5, 2.5), 1.3,
+                                    center_bottom=(0.0, 0.0, hearth + 1.7)))
+    a.add("CastIron", parts.frustum((2.5, 2.5), (1.6, 1.6), 2.3,
+                                    center_bottom=(0.0, 0.0, hearth + 3.0)))
+    throat = hearth + 5.3
+    a.add("WeldedSteel", parts.cylinder(0.86, 0.26, center=(0.0, 0.0, throat),
+                                        segments=20))
+    a.add("CastIron", parts.cylinder(0.62, 0.9, center=(0.0, 0.0, throat + 0.45),
+                                     segments=16))
+    a.add("Soot", parts.cylinder(0.5, 0.2, center=(0.0, 0.0, throat + 0.95),
+                                 segments=16))
+    # Binding hoops, which is what a furnace has instead of a chimney's collar.
+    for level in (1.1, 2.3, 3.6):
+        half = 1.45 - max(0.0, (level - 1.7)) * 0.2
+        a.add("WeldedSteel", parts.box((half * 2 + 0.08, half * 2 + 0.08, 0.14),
+                                       center=(0.0, 0.0, hearth + level), chamfer=0.03))
+    # The downcomer: gas off the throat and back down the flank, a fat pipe that
+    # breaks the vessel's outline without pretending to be a second stack.
+    parts.pipe_run(a, [(0.0, 0.0, throat + 0.6),
+                       (hx - 0.42, 0.0, throat + 0.6),
+                       (hx - 0.42, 0.0, 1.0)], radius=0.26)
+    # The tap: a sooted mouth and the launder the iron runs down.
+    a.add("Soot", parts.box((1.1, 0.34, 0.55), center=(0.0, hy - 0.26, 0.95)))
     a.add("OxideRed", parts.frustum((1.3, 0.9), (1.0, 0.5), 0.5,
-                                    center_bottom=(0.0, hy - 0.55, 0.3)))
-    parts.gauge_cluster(a, (-hx * 0.45, -hy + 0.22, 1.9), count=3)
-    parts.pipe_run(a, [(-hx + 0.3, -hy + 0.35, 0.5),
-                       (-hx + 0.3, -hy + 0.35, top - 0.5),
-                       (hx * 0.42 - 0.3, -hy + 0.35, top - 0.5),
-                       (hx * 0.42 - 0.3, -hy * 0.42, top - 0.5)], radius=0.08)
-    parts.access_door(a, (-hx * 0.5, hy - 0.24, 1.35), (0.85, 1.5), face="y")
-    parts.catwalk(a, hx, hy, top + 0.3)
+                                    center_bottom=(0.0, hy - 0.6, 0.3)))
+    parts.gauge_cluster(a, (-hx * 0.55, -hy + 0.22, 1.1), count=3)
+    parts.access_door(a, (-hx * 0.5, hy - 0.24, 0.95), (0.85, 1.2), face="y")
 
 
 def _press(machine, a: parts.Assembly, hx: float, hy: float) -> None:
     """A two-post hydraulic press: crosshead up top, ram and die below. The
     silhouette is the gap the ram travels through, so nothing fills it."""
     top = housing_height(machine)
-    a.add("CastIron", parts.box((hx * 2 - 0.4, hy * 2 - 0.4, 0.7),
-                                center=(0.0, 0.0, 0.6)))
+    a.add("CastIron", parts.box((hx * 2 - 0.4, hy * 2 - 0.6, 0.8),
+                                center=(0.0, 0.0, 0.66)))
+    post_depth = 2.0
     for sx in (-1, 1):
-        a.add("WeldedSteel", parts.box((0.42, hy * 2 - 0.5, top + 1.3),
-                                       center=(sx * (hx - 0.35), 0.0, (top + 1.3) / 2.0)))
+        a.add("WeldedSteel", parts.box((0.46, post_depth, top + 1.9),
+                                       center=(sx * (hx - 0.36), 0.0, (top + 1.9) / 2.0)))
         parts.rivet_run(a, "WeldedSteel",
-                        (sx * (hx - 0.35), -hy + 0.3, 1.0),
-                        (sx * (hx - 0.35), hy - 0.3, 1.0), 4, axis="y")
-    crosshead = top + 1.0
-    a.add("CastIron", parts.box((hx * 2 - 0.4, hy * 2 - 0.7, 0.6),
+                        (sx * (hx - 0.36), -post_depth / 2.0 + 0.2, 1.2),
+                        (sx * (hx - 0.36), post_depth / 2.0 - 0.2, 1.2), 4, axis="y")
+    crosshead = top + 1.6
+    a.add("CastIron", parts.box((hx * 2 - 0.4, post_depth + 0.4, 0.7),
                                 center=(0.0, 0.0, crosshead)))
-    a.add("OliveDrab", parts.box((hx * 2 - 0.9, hy * 2 - 1.1, 0.5),
-                                 center=(0.0, 0.0, crosshead + 0.55)))
+    a.add("OliveDrab", parts.box((hx * 2 - 1.1, post_depth - 0.2, 0.55),
+                                 center=(0.0, 0.0, crosshead + 0.62)))
     # The ram hangs from the crosshead rather than standing on the bed, which is
     # what makes a press read as a press.
-    a.add("CastIron", parts.cylinder(0.26, 0.7, center=(0.0, 0.0, crosshead - 0.6),
+    a.add("CastIron", parts.cylinder(0.3, 0.8, center=(0.0, 0.0, crosshead - 0.75),
                                      segments=12))
-    a.add("OiledSteel", parts.cylinder(0.14, 0.8, center=(0.0, 0.0, crosshead - 1.3),
+    a.add("OiledSteel", parts.cylinder(0.16, 1.0, center=(0.0, 0.0, crosshead - 1.6),
                                        segments=12))
-    a.add("WeldedSteel", parts.box((1.0, 1.0, 0.26), center=(0.0, 0.0, crosshead - 1.8)))
-    a.add("OiledSteel", parts.box((1.3, 1.3, 0.18), center=(0.0, 0.0, 1.05)))
-    parts.pipe_run(a, [(hx - 0.6, -hy + 0.4, 1.0),
-                       (hx - 0.6, -hy + 0.4, crosshead + 0.2),
-                       (0.2, -hy + 0.4, crosshead + 0.2)])
-    parts.gauge_cluster(a, (0.0, -hy + 0.3, 1.5), count=2)
+    a.add("WeldedSteel", parts.box((1.1, 1.1, 0.3), center=(0.0, 0.0, crosshead - 2.2)))
+    a.add("OiledSteel", parts.box((1.4, 1.4, 0.2), center=(0.0, 0.0, 1.16)))
+    parts.pipe_run(a, [(hx - 0.75, -hy + 0.45, 1.2),
+                       (hx - 0.75, -hy + 0.45, crosshead + 0.3),
+                       (0.2, -hy + 0.45, crosshead + 0.3)])
+    parts.gauge_cluster(a, (0.0, -hy + 0.35, 1.7), count=2)
 
 
 def _assembler(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """A long housing under a travelling gantry. The silhouette is horizontal on
-    purpose: it is the one Machine that does not reach upward."""
+    """A wide shed under a sawtooth roof, and nothing at all above it.
+
+    The one Machine that does not reach upward, and the only roofline in the
+    Factory that is not flat. Three north-lit bays: a shape that cannot be read
+    as a stack, a mast, a drum or a crate, and that announces itself as the place
+    work is *done* rather than burned.
+    """
     top = housing_height(machine)
-    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.18)
+    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.2)
+    bays = 3
+    bay_width = (hx * 2 - 0.4) / bays
+    for index in range(bays):
+        centre_x = -hx + 0.2 + bay_width * (index + 0.5)
+        a.add("OliveDrab", parts.wedge((bay_width, hy * 2 - 0.4, 0.0),
+                                       (centre_x, 0.0, top), 0.25, 1.05))
+        # The glazed face of each tooth, which is what makes it read as a roof
+        # and not as a row of ramps.
+        a.add("GaugeGlass", parts.box((0.1, hy * 2 - 0.9, 0.74),
+                                      center=(centre_x + bay_width / 2.0 - 0.07,
+                                              0.0, top + 0.68), chamfer=0.01))
+        a.add("WeldedSteel", parts.box((0.16, hy * 2 - 0.4, 0.16),
+                                       center=(centre_x + bay_width / 2.0, 0.0,
+                                               top + 1.07)))
+    a.add("WeldedSteel", parts.box((hx * 2 - 0.3, hy * 2 - 0.3, 0.18),
+                                   center=(0.0, 0.0, top + 0.09)))
     a.add("GaugeGlass", parts.box((hx * 2 - 1.5, 0.08, 0.8),
-                                  center=(0.0, -hy + 0.17, 1.6), chamfer=0.01))
-    parts.rib_run(a, "WeldedSteel", (-hx + 0.6, hy - 0.2, 1.5), (hx - 0.6, hy - 0.2, 1.5),
-                  4, size=(0.16, 0.14, top - 0.7))
-    # The gantry: two rails and a carriage, inset so it never leaves the tiles.
-    rail = top + 0.55
-    for sy in (-1, 1):
-        a.add("WeldedSteel", parts.box((hx * 2 - 0.5, 0.17, 0.17),
-                                       center=(0.0, sy * (hy - 0.55), rail)))
-        for sx in (-1, 1):
-            a.add("WeldedSteel", parts.box((0.2, 0.2, 0.55),
-                                           center=(sx * (hx - 0.5), sy * (hy - 0.55),
-                                                   rail - 0.36)))
-    a.add("CastIron", parts.box((1.1, hy * 2 - 0.8, 0.3), center=(hx * 0.3, 0.0, rail)))
-    a.add("OiledSteel", parts.cylinder(0.1, 0.9, center=(hx * 0.3, 0.0, rail - 0.55),
-                                       segments=10))
-    a.add("OliveDrab", parts.box((0.5, 0.5, 0.3), center=(hx * 0.3, 0.0, rail - 1.1)))
-    parts.gauge_cluster(a, (hx * 0.55, -hy + 0.22, 2.1), count=3)
+                                  center=(0.0, -hy + 0.19, 1.5), chamfer=0.01))
+    parts.rib_run(a, "WeldedSteel", (-hx + 0.6, hy - 0.2, 1.3), (hx - 0.6, hy - 0.2, 1.3),
+                  4, size=(0.16, 0.14, top - 0.6))
+    parts.gauge_cluster(a, (hx * 0.55, -hy + 0.22, 2.0), count=3)
     parts.access_door(a, (-hx * 0.45, -hy + 0.2, 1.1), (0.8, 1.4))
 
 
 def _boiler(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """A fire-tube boiler: a riveted horizontal drum in a cradle, firebox at one
-    end, stack at the other. The drum is the whole identity."""
+    """A fire-tube boiler: a riveted drum lying in a brick setting, long and low.
+
+    The lowest wide Machine in the Factory and the only one whose mass is
+    horizontal and round. A steam dome at one end and a short stack at the other
+    make it asymmetric, which is the cue that survives being half-seen.
+    """
     top = housing_height(machine)
-    drum_radius = min(hy - 0.35, 1.0)
-    drum_z = 0.26 + drum_radius + 0.35
-    a.add("CastIron", parts.cylinder(drum_radius, hx * 2 - 0.9, center=(0.0, 0.0, drum_z),
-                                     axis="x", segments=20))
-    for sx in (-1, 1):
-        a.add("WeldedSteel", parts.cylinder(drum_radius * 1.06, 0.12,
-                                            center=(sx * (hx - 0.5), 0.0, drum_z),
-                                            axis="x", segments=20))
-        a.add("CastIron", parts.box((0.5, drum_radius * 1.6, drum_z - 0.26),
-                                    center=(sx * (hx - 0.55), 0.0,
-                                            0.26 + (drum_z - 0.26) / 2.0)))
-    # Riveted seams around the drum: a boiler without them is a water tank.
+    # The firebrick house, on the west half, with the stack on it. The drum sits
+    # on the east half and runs *along* the Belt line, so what faces a player
+    # walking the line is a 2.6 m riveted circle rather than another flat flank.
+    a.add("Soot", parts.box((hx - 0.35, hy * 2 - 0.3, top),
+                            center=(-hx * 0.5, 0.0, 0.26 + (top - 0.26) / 2.0),
+                            chamfer=0.05))
+    # The capping slab oversails the brickwork, and stops at hx - 0.2 so that it
+    # is still inside the footprint: everything on a Machine may go up and
+    # nothing may go sideways.
+    a.add("CastIron", parts.box((hx - 0.2, hy * 2 - 0.2, 0.26),
+                                center=(-hx * 0.5, 0.0, top + 0.1)))
+    parts.chimney(a, (-hx * 0.5, hy * 0.3, top + 0.2), 2.6, radius=0.32)
+    drum_radius = min(hy - 0.3, 1.3)
+    drum_z = 0.26 + drum_radius + 0.26
+    drum_length = hy * 2 - 0.5
+    a.add("CastIron", parts.cylinder(drum_radius, drum_length,
+                                     center=(hx * 0.46, 0.0, drum_z),
+                                     axis="y", segments=22))
+    for sy in (-1, 1):
+        a.add("WeldedSteel", parts.cylinder(drum_radius * 1.07, 0.16,
+                                            center=(hx * 0.46, sy * (hy - 0.33), drum_z),
+                                            axis="y", segments=22))
+    # The front tube plate, with the firebox mouth let into it: a boiler without
+    # one is a water tank.
+    a.add("OxideRed", parts.cylinder(drum_radius * 0.84, 0.18,
+                                     center=(hx * 0.46, -hy + 0.32, drum_z),
+                                     axis="y", segments=20))
+    a.add("Soot", parts.cylinder(drum_radius * 0.42, 0.14,
+                                 center=(hx * 0.46, -hy + 0.25, drum_z),
+                                 axis="y", segments=16))
     parts.rivet_run(a, "WeldedSteel",
-                    (-hx + 0.8, 0.0, drum_z + drum_radius - 0.02),
-                    (hx - 0.8, 0.0, drum_z + drum_radius - 0.02), 7,
+                    (hx * 0.46, -hy + 0.55, drum_z + drum_radius - 0.02),
+                    (hx * 0.46, hy - 0.55, drum_z + drum_radius - 0.02), 6,
                     radius=0.05, depth=0.05, axis="z")
-    a.add("OxideRed", parts.cylinder(drum_radius * 0.8, 0.2,
-                                     center=(-hx + 0.35, 0.0, drum_z), axis="x",
+    # Saddles, so the drum is carried rather than floating.
+    for sy in (-1, 1):
+        a.add("CastIron", parts.box((drum_radius * 1.8, 0.4, drum_z - 0.26),
+                                    center=(hx * 0.46, sy * (hy - 0.7),
+                                            0.26 + (drum_z - 0.26) / 2.0)))
+    # The steam dome and its safety valve, standing proud on the drum.
+    a.add("CastIron", parts.cylinder(0.46, 0.72,
+                                     center=(hx * 0.46, hy * 0.3,
+                                             drum_z + drum_radius + 0.26),
                                      segments=16))
-    a.add("Soot", parts.cylinder(drum_radius * 0.55, 0.12,
-                                 center=(-hx + 0.27, 0.0, drum_z), axis="x", segments=16))
-    parts.chimney(a, (hx - 0.75, 0.0, drum_z + drum_radius - 0.1), 1.9, radius=0.26)
-    parts.gauge_cluster(a, (0.0, -hy + 0.2, drum_z + 0.35), count=3)
-    parts.pipe_run(a, [(0.3, -hy + 0.3, drum_z + drum_radius - 0.1),
-                       (0.3, -hy + 0.3, top + 0.9),
-                       (hx - 0.1, -hy + 0.3, top + 0.9)], radius=0.09)
-    # A safety valve, standing proud. Boiler startup and pressure relief are
-    # diegetic controls, so the thing a player grabs has to be visible.
-    a.add("DullBrass", parts.cylinder(0.1, 0.4, center=(-hx * 0.3, 0.0,
-                                                        drum_z + drum_radius + 0.2),
-                                      segments=10))
-    a.add("OiledSteel", parts.cylinder(0.035, 0.42, center=(-hx * 0.3, -0.18,
-                                                            drum_z + drum_radius + 0.45),
-                                       axis="y", segments=6))
+    a.add("DullBrass", parts.cylinder(0.2, 0.32,
+                                      center=(hx * 0.46, hy * 0.3,
+                                              drum_z + drum_radius + 0.76),
+                                      segments=12))
+    parts.pipe_run(a, [(hx * 0.46, hy * 0.3, drum_z + drum_radius + 0.9),
+                       (-hx * 0.5 + 0.4, hy * 0.3, drum_z + drum_radius + 0.9),
+                       (-hx * 0.5 + 0.4, hy * 0.3, top + 0.4)], radius=0.09)
+    parts.gauge_cluster(a, (-hx * 0.5, -hy + 0.2, 1.5), count=3)
+    parts.access_door(a, (-hx * 0.5, hy - 0.2, 1.0), (0.8, 1.2))
 
 
 def _generator(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """A single-cylinder engine turning an oversized flywheel. The flywheel is
-    the silhouette, so it is as large as the footprint allows."""
+    """A single-cylinder engine under one oversized open-spoked flywheel.
+
+    The wheel is the whole Machine. It is as large as the footprint allows and it
+    stands clear of the engine bed, so the outline is a low block with a circle
+    rising out of it — and the sky between the spokes is what keeps it from
+    reading as a drum.
+    """
     top = housing_height(machine)
-    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.3)
-    radius = min(hx, hy) - 0.42
-    a.add("OiledSteel", parts.cylinder(radius, 0.26,
-                                       center=(0.0, -hy + 0.36, 0.26 + radius + 0.1),
-                                       axis="y", segments=24))
-    a.add("CastIron", parts.cylinder(radius * 0.34, 0.34,
-                                     center=(0.0, -hy + 0.4, 0.26 + radius + 0.1),
-                                     axis="y", segments=12))
-    # Spokes, as a rib array rather than as a real wheel.
-    for index in range(3):
-        from mathutils import Matrix  # type: ignore
-        spoke = parts.box((radius * 1.7, 0.2, 0.17),
-                          center=(0.0, 0.0, 0.0), chamfer=0.02)
-        import bmesh  # type: ignore
-        bmesh.ops.rotate(spoke, verts=spoke.verts, cent=(0, 0, 0),
-                         matrix=Matrix.Rotation(index * 1.0471975511965976, 3, 'Y'))
-        bmesh.ops.translate(spoke, verts=spoke.verts,
-                            vec=(0.0, -hy + 0.36, 0.26 + radius + 0.1))
-        a.add("CastIron", spoke)
-    a.add("CastIron", parts.cylinder(0.3, hx * 1.1, center=(0.0, hy * 0.3, top - 0.45),
+    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.22)
+    radius = min(hx, hy) - 0.28
+    wheel_z = 0.26 + radius + 0.2
+    parts.spoked_wheel(a, (0.0, -hy + 0.52, wheel_z), radius, 0.3,
+                       axis="y", spokes=6)
+    # The steam cylinder, the crosshead guide and the rod that ties them to the
+    # wheel: the mechanism a player can read the direction of.
+    a.add("CastIron", parts.cylinder(0.34, hx * 1.2, center=(0.0, hy * 0.42, top - 0.5),
                                      axis="x", segments=14))
-    a.add("OiledSteel", parts.cylinder(0.1, 0.9, center=(-hx * 0.75, hy * 0.3, top - 0.45),
-                                       axis="x", segments=10))
-    parts.chimney(a, (hx - 0.55, hy - 0.55, top), 1.5, radius=0.22)
-    parts.gauge_cluster(a, (0.0, hy - 0.2, 1.5), count=2)
+    a.add("WeldedSteel", parts.cylinder(0.4, 0.12,
+                                        center=(-hx * 0.6, hy * 0.42, top - 0.5),
+                                        axis="x", segments=14))
+    a.add("OiledSteel", parts.cylinder(0.09, hy * 1.1,
+                                       center=(hx * 0.55, 0.0, top - 0.5),
+                                       axis="y", segments=10))
+    a.add("OiledSteel", parts.cylinder(0.08, radius * 0.9,
+                                       center=(radius * 0.3, -hy + 0.52,
+                                               wheel_z - radius * 0.35),
+                                       segments=10))
+    parts.gauge_cluster(a, (0.0, hy - 0.2, 1.4), count=2)
     parts.pipe_run(a, [(-hx + 0.35, hy - 0.35, 0.6), (-hx + 0.35, hy - 0.35, top - 0.3)])
 
 
 def _ammo_press(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """A press with a magazine drum on top: the same mechanism as the Press, but
-    the drum says 'this one makes Ammunition' before you read the label."""
+    """A magazine drum lying across the top, under a raking feed arm.
+
+    The Press reaches up through a gap; this one lies down. The drum runs
+    east-west so it reads as a bar on the skyline rather than as another circle,
+    and the feed arm is the only raking line in the Factory.
+    """
     top = housing_height(machine)
     parts.painted_housing(a, hx, hy, 0.26, top, inset=0.2)
-    a.add("CastIron", parts.box((hx * 2 - 0.5, hy * 2 - 0.5, 0.26),
+    a.add("CastIron", parts.box((hx * 2 - 0.5, hy * 2 - 0.5, 0.24),
                                 center=(0.0, 0.0, top + 0.1)))
-    drum_radius = min(hx, hy) - 0.45
-    a.add("OliveDrab", parts.cylinder(drum_radius, 1.0,
-                                      center=(0.0, hy * 0.25, top + 0.75), segments=18))
-    a.add("WeldedSteel", parts.cylinder(drum_radius * 1.05, 0.1,
-                                        center=(0.0, hy * 0.25, top + 1.2), segments=18))
-    a.add("DullBrass", parts.cylinder(drum_radius * 0.42, 1.08,
-                                      center=(0.0, hy * 0.25, top + 0.75), segments=12))
+    drum_radius = 0.82
+    drum_z = top + 0.3 + drum_radius
+    a.add("OliveDrab", parts.cylinder(drum_radius, hx * 2 - 0.8,
+                                      center=(0.0, hy * 0.22, drum_z),
+                                      axis="x", segments=18))
     for sx in (-1, 1):
-        parts.hydraulic_ram(a, (sx * (hx - 0.45), -hy * 0.45, top + 0.12), 0.6, 0.55)
+        a.add("DullBrass", parts.cylinder(drum_radius * 0.44, 0.22,
+                                          center=(sx * (hx - 0.42), hy * 0.22, drum_z),
+                                          axis="x", segments=12))
+        a.add("WeldedSteel", parts.cylinder(drum_radius * 1.06, 0.12,
+                                            center=(sx * (hx - 0.62), hy * 0.22, drum_z),
+                                            axis="x", segments=18))
+    # The feed arm: a raking conveyor from the intake corner up over the drum.
+    a.add("WeldedSteel", parts.prism(
+        (-hx + 0.5, -hy + 0.5, 0.4), (0.8, 0.5),
+        (hx * 0.2, hy * 0.22 - 0.1, drum_z + drum_radius + 0.2), (0.7, 0.45)))
+    a.add("OiledSteel", parts.cylinder(0.12, 0.7,
+                                       center=(-hx + 0.5, -hy + 0.5, 0.55),
+                                       axis="x", segments=10))
     a.add("Soot", parts.frustum((0.9, 0.7), (0.5, 0.4), 0.45,
-                                center_bottom=(0.0, -hy + 0.42, 0.3)))
-    parts.gauge_cluster(a, (hx * 0.4, -hy + 0.22, 1.7), count=2)
-    parts.access_door(a, (-hx * 0.4, -hy + 0.2, 1.1), (0.75, 1.35))
+                                center_bottom=(hx * 0.35, -hy + 0.45, 0.3)))
+    parts.gauge_cluster(a, (-hx * 0.3, -hy + 0.22, 1.5), count=2)
+    parts.access_door(a, (hx * 0.4, hy - 0.2, 1.0), (0.75, 1.3))
 
 
 def _silo(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """An armoured magazine with a vertical launch tube and blast doors.
+    """One enormous vertical launch tube standing on a low raked fort.
 
     The Silo fires only what it was loaded with, and loading is irreversible, so
-    the mesh has to make the loading cradle and the tube unmistakable.
+    the mesh has to make the tube unmistakable — it is the tallest thing on the
+    Map and the only straight-sided column on it. The fort under it is kept low
+    and raked so nothing competes with the tube for the outline.
     """
     top = housing_height(machine)
-    parts.painted_housing(a, hx, hy, 0.26, top, inset=0.24)
-    a.add("CastIron", parts.box((hx * 2 - 0.35, hy * 2 - 0.35, 0.4),
+    a.add("OliveDrab", parts.prism((0.0, 0.0, 0.26), (hx * 2 - 0.3, hy * 2 - 0.3),
+                                   (0.0, 0.0, top), (hx * 2 - 1.5, hy * 2 - 1.5)))
+    a.add("CastIron", parts.box((hx * 2 - 1.7, hy * 2 - 1.7, 0.4),
                                 center=(0.0, 0.0, top + 0.16)))
-    tube_z = top + 0.3
-    a.add("CastIron", parts.cylinder(0.78, 4.4, center=(0.0, hy * 0.35, tube_z + 2.2),
-                                     segments=20))
-    a.add("WeldedSteel", parts.cylinder(0.9, 0.18, center=(0.0, hy * 0.35, tube_z + 0.4),
-                                        segments=20))
-    a.add("WeldedSteel", parts.cylinder(0.9, 0.18, center=(0.0, hy * 0.35, tube_z + 3.9),
-                                        segments=20))
-    a.add("Soot", parts.cylinder(0.64, 0.3, center=(0.0, hy * 0.35, tube_z + 4.35),
-                                 segments=20))
+    tube_base, tube_height, tube_radius = top + 0.3, 7.0, 1.42
+    a.add("CastIron", parts.cylinder(tube_radius, tube_height,
+                                     center=(0.0, 0.0, tube_base + tube_height / 2.0),
+                                     segments=24))
+    for fraction in (0.08, 0.42, 0.76):
+        a.add("WeldedSteel", parts.cylinder(tube_radius * 1.07, 0.22,
+                                            center=(0.0, 0.0,
+                                                    tube_base + tube_height * fraction),
+                                            segments=24))
+    a.add("WeldedSteel", parts.cylinder(tube_radius, 0.7,
+                                        center=(0.0, 0.0, tube_base + tube_height + 0.35),
+                                        radius_top=tube_radius * 1.3, segments=24))
+    a.add("Soot", parts.cylinder(tube_radius * 1.05, 0.3,
+                                 center=(0.0, 0.0, tube_base + tube_height + 0.75),
+                                 segments=24))
     parts.rivet_run(a, "WeldedSteel",
-                    (0.0, hy * 0.35 - 0.79, tube_z + 0.8),
-                    (0.0, hy * 0.35 - 0.79, tube_z + 3.5), 7,
-                    radius=0.05, depth=0.05, axis="y")
+                    (0.0, -tube_radius - 0.03, tube_base + 1.2),
+                    (0.0, -tube_radius - 0.03, tube_base + tube_height - 1.2), 9,
+                    radius=0.06, depth=0.06, axis="y")
     # The loading cradle: a hazard-striped rack on the north face, where the two
     # declared inputs arrive.
-    a.add("HazardYellow", parts.box((hx * 2 - 1.6, 0.3, 0.14),
-                                    center=(0.0, -hy + 0.3, 1.5)))
+    a.add("HazardYellow", parts.box((hx * 2 - 2.4, 0.3, 0.16),
+                                    center=(0.0, -hy + 0.35, 1.4)))
     for index in range(3):
         a.add("OiledSteel", parts.cylinder(0.14, 0.9,
-                                           center=(-1.4 + index * 1.4, -hy + 0.45, 1.75),
+                                           center=(-1.4 + index * 1.4, -hy + 0.5, 1.65),
                                            axis="y", segments=10))
-    parts.gauge_cluster(a, (hx * 0.6, -hy + 0.25, 2.3), count=3)
-    parts.hydraulic_ram(a, (-hx + 0.6, hy * 0.35, top + 0.2), 1.1, 0.9)
-    parts.hydraulic_ram(a, (hx - 0.6, hy * 0.35, top + 0.2), 1.1, 0.9)
-    parts.catwalk(a, hx, hy, top + 0.4)
+    for sx in (-1, 1):
+        parts.hydraulic_ram(a, (sx * 2.2, hy * 0.45, top + 0.2), 1.0, 0.8)
+    parts.gauge_cluster(a, (hx * 0.6, -hy + 0.3, 1.9), count=3)
+    # A railing around the fort's roof. The Silo is the tallest thing on the Map
+    # and a 7 m tube has no scale of its own; a handrail is a human-sized object,
+    # so it is what tells the eye how big the tube actually is.
+    parts.catwalk(a, hx - 0.9, hy - 0.9, top + 0.4)
 
 
 def _nest(machine, a: parts.Assembly, hx: float, hy: float) -> None:
-    """The structure the Run is lost with: a stepped bunker under a beacon mast.
+    """A stepped ziggurat under a beacon mast.
 
-    Built to read as *fortified* rather than industrial — stepped armour, a wide
-    base, a single light at the top that is visible from anywhere on the Map,
-    because it is both the thing to defend and the respawn point to run back to.
+    The structure the Run is lost with, built to read as *fortified* rather than
+    industrial. Three raked tiers: nothing else in the Factory steps, so the Nest
+    is identifiable from any direction and at any distance, which matters because
+    it is both the thing to defend and the point to run back to.
     """
     top = housing_height(machine)
-    a.add("CastIron", parts.box((hx * 2 - 0.3, hy * 2 - 0.3, 1.1),
-                                center=(0.0, 0.0, 0.26 + 0.55), chamfer=0.08))
-    a.add("OliveDrab", parts.frustum((hx * 2 - 1.0, hy * 2 - 1.0),
-                                     (hx * 2 - 2.2, hy * 2 - 2.2), top - 1.4,
-                                     center_bottom=(0.0, 0.0, 1.36)))
-    a.add("OxideRed", parts.box((hx * 2 - 2.3, hy * 2 - 2.3, 0.35),
-                                center=(0.0, 0.0, top - 0.05)))
+    tiers = ((0.26, 1.7, hx * 2 - 0.3, hx * 2 - 0.9),
+             (1.7, 3.2, hx * 2 - 1.6, hx * 2 - 2.2),
+             (3.2, top, hx * 2 - 2.9, hx * 2 - 3.5))
+    for index, (base, head, wide, narrow) in enumerate(tiers):
+        material = "CastIron" if index == 0 else "OliveDrab"
+        a.add(material, parts.prism((0.0, 0.0, base), (wide, wide),
+                                    (0.0, 0.0, head), (narrow, narrow)))
+        a.add("OxideRed", parts.box((narrow + 0.3, narrow + 0.3, 0.2),
+                                    center=(0.0, 0.0, head + 0.08), chamfer=0.04))
     # Observation slits, as recessed dark bands rather than as real holes.
     for sy in (-1, 1):
-        a.add("Soot", parts.box((hx * 2 - 2.0, 0.12, 0.3),
-                                center=(0.0, sy * (hy - 1.1), 2.0), chamfer=0.02))
-    mast_base = top + 0.1
-    a.add("WeldedSteel", parts.frustum((0.7, 0.7), (0.34, 0.34), 3.0,
-                                       center_bottom=(0.0, 0.0, mast_base)))
-    parts.rib_run(a, "WeldedSteel", (0.0, 0.0, mast_base + 0.5),
-                  (0.0, 0.0, mast_base + 2.6), 4, size=(0.76, 0.76, 0.08))
-    a.add("CastIron", parts.cylinder(0.3, 0.3, center=(0.0, 0.0, mast_base + 3.15),
-                                     segments=14))
-    a.add("GaugeGlass", parts.cylinder(0.26, 0.42, center=(0.0, 0.0, mast_base + 3.5),
+        a.add("Soot", parts.box((hx * 2 - 2.4, 0.12, 0.3),
+                                center=(0.0, sy * (hy - 1.25), 2.1), chamfer=0.02))
+    mast_base = top + 0.2
+    parts.truss_tower(a, "WeldedSteel", 0.55, 0.3, mast_base, 3.0,
+                      leg=0.22, bands=3)
+    beacon = mast_base + 3.2
+    a.add("CastIron", parts.cylinder(0.3, 0.3, center=(0.0, 0.0, beacon), segments=14))
+    a.add("GaugeGlass", parts.cylinder(0.26, 0.44, center=(0.0, 0.0, beacon + 0.36),
                                        segments=14))
-    a.add("CastIron", parts.cylinder(0.32, 0.12, center=(0.0, 0.0, mast_base + 3.77),
+    a.add("CastIron", parts.cylinder(0.32, 0.12, center=(0.0, 0.0, beacon + 0.64),
                                      segments=14))
     # The Delivery intake: progression is physical, so there is a real doorway to
     # carry goods through.
-    a.add("Soot", parts.box((1.5, 0.3, 2.0), center=(0.0, hy - 0.4, 1.3)))
-    a.add("HazardYellow", parts.box((1.75, 0.12, 0.16), center=(0.0, hy - 0.26, 2.38)))
-    parts.catwalk(a, hx - 0.9, hy - 0.9, top + 0.05)
-    parts.gauge_cluster(a, (hx - 1.4, -hy + 1.05, 1.6), count=2)
+    a.add("Soot", parts.box((1.5, 0.3, 1.9), center=(0.0, hy - 0.35, 1.2)))
+    a.add("HazardYellow", parts.box((1.75, 0.12, 0.16), center=(0.0, hy - 0.22, 2.25)))
+    parts.gauge_cluster(a, (hx - 1.5, -hy + 1.0, 1.5), count=2)
 
 
 def _belt(machine, a: parts.Assembly, hx: float, hy: float) -> None:
@@ -380,6 +538,7 @@ def _belt(machine, a: parts.Assembly, hx: float, hy: float) -> None:
 
 _RECIPES = {
     "miner": _miner,
+    "coal_miner": _coal_miner,
     "smelter": _smelter,
     "press": _press,
     "assembler": _assembler,

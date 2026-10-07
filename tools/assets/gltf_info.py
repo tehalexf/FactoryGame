@@ -19,6 +19,7 @@ from pathlib import Path
 
 GLB_MAGIC = 0x46546C67
 CHUNK_JSON = 0x4E4F534A
+CHUNK_BIN = 0x004E4942
 
 
 def read_gltf_json(path: str | Path) -> dict:
@@ -35,6 +36,78 @@ def read_gltf_json(path: str | Path) -> dict:
             offset += 8 + length + (-length % 4)
         raise ValueError(f"{path}: no JSON chunk in glb")
     return json.loads(data.decode("utf-8"))
+
+
+#: glTF component types that can index a triangle list.
+_INDEX_FORMAT = {5121: "B", 5123: "H", 5125: "I"}
+
+
+def read_glb(path: str | Path) -> tuple[dict, bytes]:
+    """The JSON document *and* the binary buffer of a `.glb`.
+
+    `read_gltf_json` answers questions about the declaration; this one is for the
+    questions only the vertex data can answer — what the silhouette is, whether
+    the UVs are the size they claim to be. Still standard library only, so it
+    stays a trustworthy second opinion on Blender's output.
+    """
+    data = Path(path).read_bytes()
+    if struct.unpack_from("<I", data, 0)[0] != GLB_MAGIC:
+        raise ValueError(f"{path}: not a binary glTF")
+    _, _, total = struct.unpack_from("<III", data, 0)
+    doc: dict | None = None
+    binary = b""
+    offset = 12
+    while offset < min(total, len(data)):
+        length, kind = struct.unpack_from("<II", data, offset)
+        body = data[offset + 8: offset + 8 + length]
+        if kind == CHUNK_JSON:
+            doc = json.loads(body.decode("utf-8"))
+        elif kind == CHUNK_BIN:
+            binary = bytes(body)
+        offset += 8 + length + (-length % 4)
+    if doc is None:
+        raise ValueError(f"{path}: no JSON chunk")
+    return doc, binary
+
+
+def _read_vectors(doc: dict, binary: bytes, index: int, components: int) -> list[tuple]:
+    accessor = doc["accessors"][index]
+    view = doc["bufferViews"][accessor["bufferView"]]
+    start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+    stride = view.get("byteStride", 0) or components * 4
+    layout = f"<{components}f"
+    return [struct.unpack_from(layout, binary, start + i * stride)
+            for i in range(accessor["count"])]
+
+
+def mesh_primitives(path: str | Path) -> list[dict]:
+    """Every triangle-list primitive as plain lists: positions, UVs, indices.
+
+    One dict per primitive with `mesh` (the mesh's name), `positions`, `uvs`
+    (empty when the primitive carries none) and `indices`.
+    """
+    doc, binary = read_glb(path)
+    out: list[dict] = []
+    for mesh in doc.get("meshes", []):
+        for prim in mesh.get("primitives", []):
+            attributes = prim.get("attributes", {})
+            if prim.get("mode", 4) != 4 or "POSITION" not in attributes:
+                continue
+            positions = _read_vectors(doc, binary, attributes["POSITION"], 3)
+            uvs = (_read_vectors(doc, binary, attributes["TEXCOORD_0"], 2)
+                   if "TEXCOORD_0" in attributes else [])
+            if "indices" in prim:
+                accessor = doc["accessors"][prim["indices"]]
+                code = _INDEX_FORMAT[accessor["componentType"]]
+                view = doc["bufferViews"][accessor["bufferView"]]
+                start = view.get("byteOffset", 0) + accessor.get("byteOffset", 0)
+                indices = list(struct.unpack_from(
+                    f"<{accessor['count']}{code}", binary, start))
+            else:
+                indices = list(range(len(positions)))
+            out.append({"mesh": mesh.get("name", ""), "positions": positions,
+                        "uvs": uvs, "indices": indices})
+    return out
 
 
 def _child_nodes(doc: dict) -> set[int]:
