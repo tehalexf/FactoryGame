@@ -33,8 +33,8 @@ const STEP_AT_FOUR: int = 4369
 const STEP_AT_EIGHT: int = 8738
 
 const MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id
-miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore
 """
 
 const RECIPES: String = """
@@ -51,6 +51,8 @@ items_per_second = 4
 items_per_tile = 4
 [machine]
 input_buffer_crafts = 2
+[power]
+baseline_supply_kw = 300
 """
 
 

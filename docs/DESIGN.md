@@ -69,7 +69,10 @@ justify itself early, while that is still cheap to discover.
   ports — no inserters. No fluids: water for Steam is an adjacency check.
 - **One Power grid**, total supply vs demand, shortfall *throttles* Machines
   rather than stopping them. Three generator classes feed it (Steam, Electric,
-  Exotic) with distinct fuel chains and distinct failure modes.
+  Exotic) with distinct fuel chains and distinct failure modes. The Nest carries a
+  small **baseline plant** — one Miner and one Smelter's worth — because a Factory
+  whose Machines are all throttled by the grid could not mine the coal its first
+  Boiler burns. Everything past that opening line is earned.
 - **Nodes never deplete.** No forced base relocation; a 40-hour Nest stays
   meaningful. Depth tiers gate value instead.
 - **Build Gun plus Survey View.** A raised downward camera while building,
