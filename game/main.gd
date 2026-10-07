@@ -13,9 +13,10 @@
 ## started remembering things, those things would need their own tests and their
 ## own determinism argument.
 ##
-## Milestone 1 step 1 has no rendering at all, so this currently drives an empty
-## Simulation and draws nothing. The first-person controller, Build Gun, Survey
-## View and HUD arrive in later tickets and attach here.
+## What it drives today: a Run on the starter Map, one opening Miner placed by an
+## ordinary build Input Action, and `WorldView` drawing placeholders and the extracted
+## count. The first-person controller, Build Gun and Survey View arrive in later
+## tickets and replace the fixed camera and the opening Miner with player intent.
 class_name Main
 extends Node
 
@@ -23,9 +24,22 @@ extends Node
 const WORLD_SEED: int = 1
 const PLAYER_COUNT: int = 1
 
+## The Machine a Run opens with, placed on the first Node so that there is something
+## producing to look at. Goes away when the Build Gun arrives.
+const STARTING_MINER: String = "miner_mk1"
+
 var _simulation: Simulation = null
 var _tick_pump: TickPump = null
 var _definition_watcher: DefinitionWatcher = null
+var _world_view: WorldView = null
+
+## Whether the opening Miner still has to be built.
+##
+## Temporary, and only here so this ticket has something to look at: the Build Gun
+## ticket is what turns placement into a player intent. Note what it is *not* — a
+## special path into the Simulation. It is an ordinary `BUILD_MACHINE` Input Action
+## on the first tick, so it records, replays and hashes like a player's own build.
+var _starting_miner_pending: bool = true
 
 ## A definition set the watcher produced that has not been handed to the Simulation
 ## yet, because definitions change on a tick like all other state and a frame does
@@ -48,8 +62,19 @@ func _init() -> void:
 		)
 
 
+func _ready() -> void:
+	# The view is created here rather than in `_init` because it is a node and wants a
+	# tree. Nothing about the Simulation depends on it existing: run headless and the
+	# same ticks happen, unobserved.
+	_world_view = WorldView.new()
+	_world_view.name = "WorldView"
+	add_child(_world_view)
+
+
 func _process(delta: float) -> void:
 	advance_frame(delta)
+	if _world_view != null:
+		_world_view.sync(_simulation)
 
 
 ## Runs however many whole ticks `delta_seconds` has earned.
@@ -90,6 +115,17 @@ func collect_input_actions() -> Array:
 		actions.append(InputAction.reload_definitions(0, _pending_definitions))
 		_pending_definitions = null
 
+	# The opening Miner, on the Map's first Node. Once only — a flag rather than a
+	# check against the Simulation, because the Godot layer does not get to decide
+	# anything from state it has read back.
+	if _starting_miner_pending:
+		_starting_miner_pending = false
+		var miner: int = _simulation.query_definitions().machine_index(STARTING_MINER)
+		if miner != -1 and _simulation.query_node_count() > 0:
+			actions.append(
+				InputAction.build_machine(0, miner, _simulation.query_node_tile(0))
+			)
+
 	var intent_x: int = 0
 	var intent_z: int = 0
 
@@ -116,6 +152,11 @@ func definition_watcher() -> DefinitionWatcher:
 
 func set_definition_watcher(watcher: DefinitionWatcher) -> void:
 	_definition_watcher = watcher
+
+
+## The view, once the tree has built it. Null when running headless without a tree.
+func world_view() -> WorldView:
+	return _world_view
 
 
 ## Read-only access for the rendering layer. Callers may only use `query_*` and

@@ -168,6 +168,41 @@ What that buys, and what every later ticket may rely on:
 In co-op this is the Host's intent broadcast like any other, and the digest is
 what lets a client whose own files hash differently refuse instead of desyncing.
 
+## The grid, the Map and Machines
+
+`sim/world_grid.gd` owns what the grid *is*; the Simulation owns what is on it.
+
+- Tiles are `Vector3i` and 2 m across, per `docs/DESIGN.md`. Building is flat, so
+  only layer 0 is buildable — that is `VERTICAL_BUILDING_ENABLED` and the layer
+  range it governs, in one place, so discrete floors are a flag rather than a
+  rewrite. A 4 m storey height is already reserved above the ground.
+- A footprint is anchored at a tile and grows along +x and +z. **Its size comes
+  from `content/machines.csv` and from nowhere else** — the Simulation, the
+  renderer and the Blender mesh generator all read those same two columns, and a
+  second copy would drift on the first balance change.
+- `sim/map_layout.gd` is the Map's geography: where the Nodes are, what Resource
+  each yields, what Depth tier it sits at. Deliberately *not* in `content/` —
+  those files are definitions and hot-reloadable, and moving a Node under a
+  Factory that is standing on it is a different Map, not a balance change.
+- **Nodes never deplete.** There is no quantity on a Node and nothing subtracts
+  from one. DESIGN.md decided that: a 40-hour Factory must never need relocating,
+  so Depth gates value instead.
+- A Miner's input is the ground under it. It produces only while its footprint
+  covers a Node whose Resource its Recipe produces, and otherwise accumulates no
+  progress at all — a Miner on bare rock is visibly idle rather than invisibly
+  banking time.
+- A Machine is placed by an Input Action, `InputAction.Kind.BUILD_MACHINE`, which
+  carries the Machine's definition *index* because an intent on the wire is
+  integers. The Simulation stores the resolved *id*, so a hot-reload that resorts
+  the table cannot renumber a Factory that is already standing. A build onto an
+  unbuildable tile or an occupied footprint is refused as a silent no-op: a
+  misaimed Build Gun is an ordinary thing for a player to do, and the hash does
+  not move.
+- A Machine does not run on the tick it was built, because it was placed during
+  that tick. One craft takes a whole number of ticks, floored from the Recipe's
+  seconds, minimum one, and progress is counted in ticks so nothing rounds away
+  over a long Run.
+
 ## Determinism rules
 
 From [ADR 0002](docs/adr/0002-deterministic-lockstep-inputs-only-networking.md).
