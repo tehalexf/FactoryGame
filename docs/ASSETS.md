@@ -40,11 +40,23 @@ reconstructing provenance later is far harder than logging it now.
 | `assets/characters/skeleton/` — Skeleton character, 5 animations (Attack, Death, Idle, Running, Spawn) | Quaternius, "LowPoly Animated Monsters" pack, <https://quaternius.itch.io/lowpoly-animated-monsters> (official itch.io release; <https://quaternius.com/packs/ultimatemonsters.html> hosts the same work) | **CC0 1.0** — public domain, no attribution required | Yes: intake `intake/Skeleton.fbx` and shipping `Skeleton.glb` |
 | `assets/characters/knight/` — Knight character, 12 animations (Idle, Walking, Run, Jump, Roll, Death, sword variants) | Quaternius, "LowPoly Animated Knight" pack, <https://quaternius.itch.io/lowpoly-animated-knight> | **CC0 1.0** | Yes: intake `intake/KnightCharacter.fbx` and shipping `KnightCharacter.glb` |
 | Reference humanoid rig — bone map only, no mesh committed | Quaternius, "Universal Base Characters" / "Universal Animation Library", <https://quaternius.itch.io/universal-base-characters> | **CC0 1.0** | Bone map only (`tools/assets/bone_maps/quaternius_universal_humanoid.json`); the 14 MB character itself is not committed |
+| `assets/generated/textures/` (8 tiling textures) | Generated locally, SDXL base 1.0 via `tools/aigen` | Authored for this project; model CreativeML Open RAIL++-M | Yes |
+| `assets/generated/icons/` (10 Item icons) | Generated locally, SDXL base 1.0 via `tools/aigen` | Authored for this project; model CreativeML Open RAIL++-M | Yes |
+| SDXL base 1.0 weights | `stabilityai/stable-diffusion-xl-base-1.0` @ `4621659` | CreativeML Open RAIL++-M | **No** — gitignored under `tools/aigen/models/`, re-downloaded by `setup.sh` |
 
 Both committed characters were converted with
 `tools/assets/rebuild_assets.sh`, which records the exact flags used. Each
 asset's intake FBX is committed alongside its `.glb` so the conversion can be
 re-derived rather than trusted.
+
+Generated art carries its full provenance in a manifest beside it
+(`assets/generated/*/manifest.json`): model id and revision, licence, every
+sampler setting, the image hash and the versions used. `generate.py --check`
+re-verifies that record against the files on disk without needing a GPU.
+
+The model licence covers the *weights*, which are not redistributed here; the
+OpenRAIL++-M terms place no ownership claim on generated output. The images
+themselves are ours and are safe to commit to a public repo.
 
 ## Known licence constraints
 
