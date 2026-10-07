@@ -164,6 +164,14 @@ Machines, Gear components, and Stratagems. There is no research menu and no
 science resource; progression is physical. Depth gates what is possible to
 deliver at all.
 
+**Nest Store** — What the Nest keeps of goods delivered past the open Delivery's
+bill, and the only way anything the Factory produces gets back into a player's
+pockets. A Belt running into the Nest pays the bill first and banks the rest; a
+player within reach of the Nest withdraws from it. Capped per Item, so a Belt
+pointed at a full one backs up visibly rather than voiding what it carries. The
+Nest is therefore where a Run banks as well as where it spends and what it
+defends.
+
 ## Aesthetic
 
 **Dieselpunk** — The project's visual language. 1920s-40s heavy industry: cast

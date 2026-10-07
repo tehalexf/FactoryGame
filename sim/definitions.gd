@@ -105,6 +105,7 @@ const TUNING_WRENCH_REACH_METRES: String = "wrench.reach_metres"
 const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
 const TUNING_NEST_HEALTH: String = "nest.health"
 const TUNING_NEST_DELIVERY_REACH: String = "nest.delivery_reach_metres"
+const TUNING_NEST_STORE_CAPACITY: String = "nest.store_capacity_per_item"
 const TUNING_WAVE_TELEGRAPH_SECONDS: String = "wave.telegraph_seconds"
 const TUNING_WAVE_SPAWN_INTERVAL_SECONDS: String = "wave.spawn_interval_seconds"
 const TUNING_WAVE_CALL_EARLY_BOUNTY: String = "wave.call_early_bounty_per_item"
@@ -185,8 +186,19 @@ var survey_pitch_degrees: int = 0
 var nest_health: int = 0
 
 ## How close a player stands to the Nest's footprint to hand a Delivery over, in
-## fixed-point metres.
+## fixed-point metres. The same reach a withdrawal is made from: banking and spending
+## happen at one counter, so there is one distance to stand at and not two.
 var nest_delivery_reach: int = 0
+
+## How many of **each** Item the Nest's store will hold, in whole Items.
+##
+## Per Item rather than one total across all of them, and no Item is named: the set of
+## Items is whatever the Recipes mention, so a per-Item key would be a second Item table
+## (the argument `player.starting_stock` makes). One number applied to each Item
+## independently also keeps a Belt of coal from crowding plate out of the store, which
+## would be a cross-Item interaction nobody tuned and whose outcome depended on arrival
+## order.
+var nest_store_capacity_per_item: int = 0
 
 ## How long the Telegraph runs in front of a Wave, in fixed-point seconds. A floor on
 ## the warning rather than a target for it: no Wave arrives before it has been
@@ -602,6 +614,7 @@ func digest() -> int:
 	hasher.feed_int(power_baseline_supply_kw)
 	hasher.feed_int(nest_health)
 	hasher.feed_int(nest_delivery_reach)
+	hasher.feed_int(nest_store_capacity_per_item)
 	hasher.feed_int(wave_telegraph_seconds)
 	hasher.feed_int(wave_spawn_interval_seconds)
 	hasher.feed_int(wave_call_early_bounty)
@@ -1215,6 +1228,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	power_baseline_supply_kw = tuning.require_int(TUNING_POWER_BASELINE_SUPPLY_KW)
 	nest_health = tuning.require_int(TUNING_NEST_HEALTH)
 	nest_delivery_reach = tuning.require_fixed(TUNING_NEST_DELIVERY_REACH)
+	nest_store_capacity_per_item = tuning.require_int(TUNING_NEST_STORE_CAPACITY)
 	wave_telegraph_seconds = tuning.require_fixed(TUNING_WAVE_TELEGRAPH_SECONDS)
 	wave_spawn_interval_seconds = tuning.require_fixed(TUNING_WAVE_SPAWN_INTERVAL_SECONDS)
 	wave_call_early_bounty = tuning.require_int(TUNING_WAVE_CALL_EARLY_BOUNTY)
@@ -1299,6 +1313,12 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				tuning,
 				TUNING_NEST_DELIVERY_REACH,
 				"a reach of nothing is a Delivery nobody can hand over"
+			)
+		if nest_store_capacity_per_item < 1:
+			_report_tuning(
+				tuning,
+				TUNING_NEST_STORE_CAPACITY,
+				"a store that holds nothing is a Nest nothing can be banked at"
 			)
 		if nest_health <= 0:
 			_report_tuning(
@@ -1567,6 +1587,7 @@ func _discard_content() -> void:
 	power_baseline_supply_kw = 0
 	nest_health = 0
 	nest_delivery_reach = 0
+	nest_store_capacity_per_item = 0
 	wave_telegraph_seconds = 0
 	wave_spawn_interval_seconds = 0
 	wave_call_early_bounty = 0

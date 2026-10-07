@@ -601,6 +601,10 @@ four and the gap does not, somewhere around Wave 16 the cumulative demand overta
 cumulative supply. **The way to survive Wave 20 is a second Ammo Press and the Smelter and
 Miner behind it** — production is the defence, in the most literal arithmetic available.
 
+Which a Run can now actually buy: the opening bill of 80 plate pays for the first line and
+nothing more, so the second Press comes out of the Nest's store. `test_nest_store.gd` proves
+that end to end against the shipped numbers; see the Nest's store, below.
+
 One thing a later ticket should know: **a Machine's output buffer is uncapped**, so a Belt
 that fills up banks the surplus in the Ammo Press indefinitely. The stockpile a player
 builds between Waves is real and unbounded, and it is what carries the early Waves.
@@ -980,14 +984,12 @@ whatever the Recipes mention, and a key called `starting_iron_plate` would be a 
 table. It is parsed by the same `item:count` function a Recipe's inputs and a Machine's
 `build_cost` go through, so there is one answer to what well-formed means.
 
-**Open, and the next ticket's work: nothing refills a player's pockets.** Build materials go
-one way — out, into Machines — and come back only from a demolish or the call-early bounty.
-The Nest's counter takes goods but keeps no store, so there is no way to turn Factory output
-back into something the Build Gun can spend. At 80 plates a Run can build its opening line
-and iterate on it, which is what #14 was asked for; a Run that wants a *second* Ammo Press
-(CLAUDE.md's own balance note above) needs a faucet. The obvious shape is the symmetric half
-of this ticket — the Nest holding what a Belt delivers past the open bill, and a withdraw
-intent beside `DELIVER_TO_NEST` — and it was deliberately left out rather than guessed at.
+**What refills a player's pockets is the Nest's store**, which is the symmetric half of the
+opening bill and the thing that makes the Run a loop rather than a one-way spend. Build
+materials used to go only outwards — into Machines, back only from a demolish or the
+call-early bounty — so nothing the Factory produced could reach the Build Gun and a Run could
+not fund a *second* Ammo Press out of its own output, which is exactly what the balance note
+above says you need. See the Nest's store, below.
 
 ### Rotation
 
@@ -1043,9 +1045,13 @@ Run's whole meaning.
   to the bill. Both go through `_accept_delivery`, and `_deliveries()` — one tick phase,
   straight after `_transport` — is the only thing that completes a tier. A tier that
   completed on one path and not the other would be two rules.
-- **The Nest keeps no store, so nothing is destroyed.** It takes only what the open tier is
-  still waiting for; an Item it does not want is refused and the Belt **backs up where a
-  player can see it**, exactly as it does against a full input buffer.
+- **Goods past the bill are banked rather than refused, and nothing is destroyed.** The open
+  tier takes what it is still waiting for and the Nest's store takes the rest, up to its cap;
+  past that an Item is refused and the Belt **backs up where a player can see it**, exactly
+  as it does against a full input buffer. `_nest_accepts` is the one way anything enters the
+  Nest, and it pays the bill before the store — a store that swallowed ore the open tier was
+  waiting on would quietly stall the chain a player is trying to finish. See the Nest's
+  store, below.
 - **Everything about the next Delivery is a query, and the HUD reads all of it.** Which
   tier, what it wants, how much has arrived, the Depth it is gated at, and
   `query_delivery_refusal` — a projection about a hand-over that has not happened, the same
@@ -1068,6 +1074,69 @@ Run's whole meaning.
   purpose. The frames, the Silo, the Charges and the Painting are later milestones; what a
   Run has unlocked is recorded, hashed and saved *now*, because that is the half that cannot
   be retrofitted onto a Run already in progress.
+
+## The Nest's store, and the faucet it is
+
+Where Factory output becomes something a player can spend again. Progression put the Nest at
+the centre of a Run; this is what makes it also the bank, so one location carries banking,
+spending and the thing you defend.
+
+- **A Belt into the Nest pays the open bill first and banks the rest.** `_nest_accepts` is
+  the one way goods enter the Nest and `_nest_would_accept` is its pure twin, which is what
+  lets `_hand_off_blocked` report a Belt backed up against a Nest with no bill and no room.
+  Two paths into one function, for the reason `_accept_delivery` already was one: a surplus
+  that banked off a Belt but not out of a hand would be two rules.
+- **The store is capped, at `nest.store_capacity_per_item`, and that was the decision.** An
+  unbounded store is simpler and it is wrong three times over. It is an infinite sink, so a
+  Belt pointed at the Nest can always hand off and **never backs up** — and back-pressure is
+  the one mechanism this game has for showing a player that a line is overproducing, at
+  exactly the place they are looking. It removes any reason to stop hoarding and build the
+  thing the materials are for, where a bounded one gives a late Factory's surplus somewhere to
+  *go*. And it is a number in `hash()` and in the save file with no bound on it at all.
+  Bounded, a full store refuses the hand-off and the Belt packs up, which is the rule a full
+  input buffer already obeys rather than a new one — so "nothing is destroyed" keeps its teeth.
+- **Per Item, not one pot.** One shared total would let a Belt of coal crowd plate out of the
+  store: a cross-Item interaction nobody tuned, and one whose outcome depended on which Belt
+  happened to arrive first. One number applied to each Item independently also names no Item
+  in `content/tuning.toml`, which is the argument `player.starting_stock` makes for being a
+  single quoted bill.
+- **Separate arrays from the Delivery counter, not one pot either.** What is banked is
+  spendable and what is on the counter is spent: `_delivery_items` clears when a tier
+  completes and `_nest_store_items` does not, so a HUD reading "2/3" can never be a surplus.
+  One pot would have to tell the two apart with a rule rather than with a field.
+- **`WITHDRAW_FROM_NEST` carries an Item and a count, where `DELIVER_TO_NEST` carries
+  nothing.** That asymmetry is deliberate: a hand-over has one open bill and one answer to
+  what the Nest wants, so the only choice is *when* to walk over. A withdrawal has neither —
+  the store holds several Items at once, and because nothing deposits by hand, a player forced
+  to take all of one Item to get any of it could never put the rest back. The Item travels as
+  an index into the sorted Item ids, for the reason a Machine does in `BUILD_MACHINE`, and the
+  count is clamped to what is there exactly as a hand-over is clamped to the bill.
+- **The refusal is a projection and the action consults it.** `query_withdraw_refusal(player,
+  item_index)` answers about a withdrawal that has not happened — the arrangement
+  `query_build_refusal` and `query_delivery_refusal` have — and `_apply_withdraw_from_nest`
+  calls the same function, so what a player is told and what the Simulation does are one rule.
+  It asks about the **Item and not an amount**: what a player hovering a store row wants to
+  know is whether there is anything to take, and a count in the signature would make that
+  answer depend on a number nobody has typed yet.
+- **One reach, not two.** A withdrawal is made from `nest.delivery_reach_metres`, through the
+  same `_player_is_at_the_nest`, so there is no spot a player can stand on where the Nest
+  takes goods but hands none back.
+- **A Nest that has fallen is not a counter.** `_nest_store_room` is zero once the Run is
+  over, as `_delivery_would_take` already is, and a withdrawal is refused `RUN_IS_OVER`. What
+  was banked stays banked, because nothing is destroyed; it simply cannot be reached.
+- **Which amount the key asks for is presentation.** `PlayerController.KEY_WITHDRAW` sends one
+  intent per Item the Machine on the Build Gun is still short of, for exactly the shortfall,
+  because build costs are the only sink for materials in the game and so "what the thing I am
+  holding still costs" is the amount a player wants every time. A counter with a row per Item
+  would send the same intent with different numbers and the Simulation would not know the
+  difference — the same split `BuildGun.refusal_text` makes.
+- **`test_nest_store.gd` ends with the acceptance test, and it runs on the shipped economy.**
+  `content/` unaltered: 80 plate, an opening line that costs 78, a second Ammo Press at 14.
+  It stands the whole line up, checks that a second Press is `MISSING_MATERIALS`, lets the
+  Smelter belt plate into the Nest, withdraws 14 and builds it. The Map is the test's own,
+  because the starter Map's Nodes are far enough apart that joining them up is a lesson in
+  Belt routing rather than a statement about materials — and it carries no Breach, so no Wave
+  interrupts the accounting. What is being measured is whether the Factory can pay.
 
 ## The float-to-fixed boundary
 
