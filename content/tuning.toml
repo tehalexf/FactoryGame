@@ -568,6 +568,14 @@ per_craft_per_depth = 1
 # bound as the Factory does, which is "infinitely scaling" (GLOSSARY.md) made of
 # integers. 240 a minute is about two Miners' worth, so the opening line is free and the
 # third Machine is the first bet.
+#
+# **#26 measured this and left it alone**, which is worth recording because it was the
+# obvious lever and it was the wrong one. The documented opening Factory makes about 380 a
+# minute against the 180 the Nest hides once the Map's two Hives have taken their cut, so it
+# carries a net 200 — and raising the decay to flatten that also makes the first three or
+# four Machines completely silent, which takes the early half of the lesson away. What #26
+# changed instead is **what a given Heat buys the Enemy**, in `content/waves.csv`. See "The
+# joint balance pass" in CLAUDE.md.
 decay_per_minute = 240
 
 # How long between Waves on a cold Factory, in seconds. Also how long the first Wave of

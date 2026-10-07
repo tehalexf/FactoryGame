@@ -594,7 +594,7 @@ func test_a_hotter_factory_is_sent_a_bigger_wave() -> void:
 	cold.step([InputAction.call_wave_early(0)])
 	_step(cold, cold.query_telegraph_ticks() - 1)
 	assert_eq(cold.query_wave_number(), 1)
-	# content/waves.csv opens at 6 a Breach and buys one more every 150 Heat.
+	# content/waves.csv opens at 6 a Breach and buys one more every 1200 Heat.
 	assert_eq(_crawlers_in_the_wave(cold), 6, "a cold Factory's Wave")
 
 	var hot: Simulation = _threat_sim()
@@ -604,7 +604,7 @@ func test_a_hotter_factory_is_sent_a_bigger_wave() -> void:
 	hot.step([InputAction.call_wave_early(0)])
 	_step(hot, hot.query_telegraph_ticks() - 1)
 	assert_eq(hot.query_wave_number(), 1)
-	assert_eq(_crawlers_in_the_wave(hot), 6 + 13, "2000 Heat at 150 Heat an Enemy")
+	assert_eq(_crawlers_in_the_wave(hot), 6 + 1, "2000 Heat at 1200 Heat an Enemy")
 
 
 func test_a_waves_size_is_capped_by_the_table_rather_than_growing_for_ever() -> void:
@@ -656,9 +656,11 @@ func test_a_wave_is_composed_once_rather_than_re_deciding_itself_while_it_spawns
 	sim.step([InputAction.call_wave_early(0)])
 	_step(sim, sim.query_telegraph_ticks() - 1)
 	var owed: int = sim.query_wave_spawns_remaining()
-	# 19 Crawlers, 2 Breakers and 1 Siege Hulk at 2000 Heat, per content/waves.csv — the Hulk
-	# joined the table in #16 behind a 1200-Heat threshold, so a Factory this loud is sent one.
-	assert_eq(owed, 21, "22 summoned, one already out of the Breach")
+	# 7 Crawlers at 2000 Heat, per content/waves.csv: the Chaff tier buys one more every 1200
+	# Heat and nothing else has opened yet. No Breaker and no Siege Hulk — #26 measured what
+	# one Ammo Press can feed and moved those tiers to 5200 and 6400, so a Factory has to be
+	# very much louder than this one before the Wave stops being Chaff.
+	assert_eq(owed, 6, "7 summoned, one already out of the Breach")
 
 	sim.step([InputAction.demolish(0, sim.query_node_tile(0))])
 	assert_eq(sim.query_heat(), 2000, "the Heat it already made stands")

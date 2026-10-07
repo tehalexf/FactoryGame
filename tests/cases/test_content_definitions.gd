@@ -377,13 +377,18 @@ func test_the_shipped_wave_table_loads_and_opens_at_the_first_wave() -> void:
 
 
 func test_a_wave_tier_grows_with_heat_up_to_the_ceiling_the_row_names() -> void:
-	# A worked example off the shipped row: opens at 6, one more every 150 Heat, capped at 40.
+	# A worked example off the shipped row: opens at 6, one more every 1200 Heat, capped at 40.
+	#
+	# 1200 rather than the 150 this was first written against because #26 measured what one
+	# Ammo Press can actually feed — about twelve Crawlers a Wave once the interval floors —
+	# and at 150 a Factory earned itself two extra Crawlers on its very first Wave. See
+	# `content/waves.csv`, which carries the whole derivation.
 	var definitions: Definitions = Definitions.load_from_directory(Definitions.CONTENT_DIR)
 	var entry: WaveEntry = definitions.wave_entry_at(0)
 	assert_eq(entry.count_at_heat(0), 6, "a cold Factory")
-	assert_eq(entry.count_at_heat(149), 6, "one Heat short of the next Enemy")
-	assert_eq(entry.count_at_heat(150), 7)
-	assert_eq(entry.count_at_heat(1500), 16)
+	assert_eq(entry.count_at_heat(1199), 6, "one Heat short of the next Enemy")
+	assert_eq(entry.count_at_heat(1200), 7)
+	assert_eq(entry.count_at_heat(4800), 10)
 	assert_eq(entry.count_at_heat(1000000), 40, "max_per_breach, and not one more")
 
 
