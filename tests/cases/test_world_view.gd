@@ -494,12 +494,14 @@ func _threatened_sim() -> Simulation:
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -590,12 +592,18 @@ func _besieged_sim() -> Simulation:
 		+ "siege_hulks,siege_hulk,0,1,0,1\n",
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_true(
+		not definitions.has_errors(),
+		"the besieged fixture's content must load: %s" % definitions.describe_errors()
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -826,12 +834,14 @@ func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -916,7 +926,7 @@ func test_a_machine_body_stands_on_the_ground_rather_than_half_buried() -> void:
 func _sim_with_an_undrawn_machine() -> Simulation:
 	var machines: String = (
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text()
-		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,0,smelt_iron_plate,\n"
+		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,0,0,smelt_iron_plate,\n"
 	)
 	var definitions: Definitions = Definitions.parse(
 		machines,
@@ -929,12 +939,14 @@ func _sim_with_an_undrawn_machine() -> Simulation:
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	return Simulation.new(1, 1, definitions)
 
@@ -1293,6 +1305,15 @@ placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
 """
 
 
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
+"""
+
+
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 """
@@ -1312,12 +1333,14 @@ func _unlocked_sim(world_seed: int) -> Simulation:
 		FileAccess.get_file_as_string("res://content/waves.csv"),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	return Simulation.new(world_seed, 1, definitions)
@@ -1424,22 +1447,23 @@ func test_the_hud_names_a_damaged_machine_and_counts_damaged_walls() -> void:
 
 
 # ── The weapon in frame ───────────────────────────────────────────────────────
-# A placeholder, and deliberately so — see the note above `WEAPON_BODY_DIRECTORY` in
-# `game/world_view.gd`. What is worth asserting is that every number it moves by comes out
-# of the Simulation, because that is the property the purchased arms will inherit when
-# somebody wires them in: the model follows the Run, never the other way round.
+# The model itself is `game/weapon_viewmodel.gd` and `tests/cases/test_weapon_viewmodel.gd`
+# is where its clips and its model swaps are asserted. What is worth asserting here is that
+# every number `WorldView` moves it by comes out of the Simulation: the model follows the
+# Run, never the other way round.
 
 func test_the_weapon_is_in_frame_and_follows_the_run() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 
 	# A Run opens with the Build Gun out, so the weapon has to be asked for — and the swap
-	# has to finish, because the model in frame is still the old one until the holster
-	# passes its midpoint. `player.holster_seconds` is 0.2, which is twelve ticks.
+	# has to finish, because the model in frame is still the old one until it has been put
+	# away. The holster and the draw are clips, so wait for the carriage rather than for a
+	# tick count.
 	sim.step([InputAction.set_build_mode(0, false)])
-	_run(sim, 12)
-	view.sync(sim)
+	assert_true(_settled(sim, view), "the holster and the draw finish")
 	assert_true(view.weapon_is_visible(), "the weapon is drawn once the holster is done")
+	assert_eq(view.weapon_model_id(), sim.query_player_weapon(0), "and it is the weapon")
 	var standing: Vector3 = view.weapon_offset()
 
 	# Walking sways it, and the sway is read off `query_player_velocity` rather than off a
@@ -1462,8 +1486,7 @@ func test_the_weapon_drops_out_of_frame_while_the_player_is_down() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([InputAction.set_build_mode(0, false)])
-	_run(sim, 12)
-	view.sync(sim)
+	assert_true(_settled(sim, view), "the weapon is out")
 	assert_true(view.weapon_is_visible())
 	assert_true(sim.query_player_is_alive(0), "and the player is on their feet to start with")
 	view.free()
@@ -1471,35 +1494,51 @@ func test_the_weapon_drops_out_of_frame_while_the_player_is_down() -> void:
 
 func test_the_build_gun_and_the_weapon_swap_places_rather_than_popping() -> void:
 	# The holster, which is what makes left mouse able to place *and* fire: one object goes
-	# down, the other comes up, and the crossover is the midpoint of the swap. Both facts
-	# come out of the Simulation — `query_player_held_is_build_gun` and
-	# `query_player_holster_blend` — so a later pass that puts real `Draw` and `PutAway`
-	# clips here drives them off the same two numbers.
+	# down, the other comes up, and the model in frame is the one *going away* for exactly
+	# as long as putting it away takes.
+	#
+	# **It goes through the same seam a weapon change does.** `WorldView._sync_weapon` reads
+	# `query_player_is_in_build_mode` and hands `WeaponViewmodel` the Build Gun's id; the
+	# `holster`, the model swap and the `draw` are `WeaponAnimator`'s, which is why the waits
+	# here are "until it settles" rather than a count of ticks — see
+	# `tests/cases/test_weapon_viewmodel.gd`.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 
 	view.sync(sim)
-	assert_true(view.build_gun_is_visible(), "a Run opens with the Build Gun in hand")
-	assert_false(view.weapon_is_visible(), "and the weapon holstered")
-	var at_rest: Vector3 = view.build_gun_offset()
-
-	# Mid-swap, the Build Gun is the thing on its way *down*, so it is still the object in
-	# frame and it is further out of it than it was at rest.
-	sim.step([InputAction.set_build_mode(0, false)])
-	_run(sim, 4)
-	view.sync(sim)
-	assert_true(view.build_gun_is_visible(), "still the thing going away")
-	assert_true(
-		view.build_gun_offset().y < at_rest.y,
-		"and on its way out of frame: %f against %f" % [view.build_gun_offset().y, at_rest.y]
+	assert_true(view.weapon_is_visible(), "a Run opens with something in hand")
+	assert_eq(
+		view.weapon_model_id(),
+		WorldView.BUILD_GUN_HELD_ID,
+		"and it is the Build Gun, because a Run opens in build mode"
 	)
+	assert_true(_settled(sim, view), "the opening draw finishes")
 
-	# Past the midpoint, they have changed over.
-	_run(sim, 12)
+	# The tick the key goes down the mode has already changed and the model has not: the
+	# Build Gun is the thing being put away, and you cannot holster a thing you have already
+	# swapped out.
+	sim.step([InputAction.set_build_mode(0, false)])
 	view.sync(sim)
-	assert_false(view.build_gun_is_visible(), "put away")
-	assert_true(view.weapon_is_visible(), "and the weapon drawn")
+	assert_false(sim.query_player_is_in_build_mode(0), "the mode flips instantly")
+	assert_eq(view.weapon_clip_role(), WeaponAnimator.HOLSTER, "and the Build Gun goes down")
+	assert_eq(view.weapon_model_id(), WorldView.BUILD_GUN_HELD_ID, "still the thing going away")
+
+	# Then they have changed over, and the weapon is what came up.
+	assert_true(_settled(sim, view), "the swap finishes")
+	assert_eq(view.weapon_model_id(), sim.query_player_weapon(0), "and the weapon is drawn")
 	view.free()
+
+
+## Steps until the thing in frame is being carried rather than drawn or stowed, and reports
+## whether it got there. Bounded, because a test that hangs is worse than one that fails.
+func _settled(sim: Simulation, view: WorldView) -> bool:
+	for tick: int in range(600):
+		sim.step([])
+		view.sync(sim)
+		var role: String = view.weapon_clip_role()
+		if role == WeaponAnimator.IDLE or role == WeaponAnimator.WALK:
+			return true
+	return false
 
 
 func test_the_weapon_does_not_grow_the_scene_tree_as_the_run_goes_on() -> void:

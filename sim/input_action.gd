@@ -10,7 +10,9 @@
 ## an ordered list of integer arguments whose meaning each kind defines. That
 ## keeps hashing, comparison and (later) serialisation written once, so adding a
 ## kind never touches this file's plumbing. Build intents, Recipe selections, Silo
-## loads and lever pulls all fit the same shape.
+## loads and lever pulls all fit the same shape — and #17 proved it: the dial, the
+## irreversible load and the Painting are three kinds, three constructors and three
+## accessors, with nothing in the plumbing touched.
 ##
 ## Construct these through the named static functions rather than by hand, so
 ## argument layouts stay in one place.
@@ -245,6 +247,63 @@ enum Kind {
 	## Meaningless on a solo Run and refused there, because **solo play has no Downed state**
 	## (GLOSSARY.md): there is nobody to revive you, so a player at zero health dies.
 	REVIVE = 19,
+	## Set the dial a player is carrying to a Silo. args = [Stratagem definition index,
+	## charge count].
+	##
+	## **The dial, not the load.** Nothing is committed by this and nothing is irreversible
+	## about it: it is where a player has wound the shell selector and the charge counter
+	## before they walk over, and it is Simulation state for both of the reasons
+	## `SELECT_MACHINE` is — the controller is forbidden to hold anything authoritative, and
+	## in co-op what somebody else is winding up is worth drawing.
+	##
+	## Absolute rather than a step, exactly as `SELECT_MACHINE` carries the Machine it wants
+	## rather than a scroll direction. Where the cycle is now is a query the controller reads;
+	## what it does with a key press is presentation.
+	##
+	## The Stratagem travels as an index into the definition set's sorted Stratagem ids,
+	## because an intent on the wire is integers. The charge count is clamped by the
+	## Simulation to between one and `silo.max_charges_per_load`, so a client cannot wind a
+	## bigger strike by sending a bigger number.
+	SET_SILO_DIAL = 20,
+	## Commit the dial into a Silo. args = [tile x, tile y, tile z, Stratagem definition
+	## index, charge count].
+	##
+	## **This is the irreversible one** (GLOSSARY.md: committing a Charge is irreversible).
+	## There is no unload intent and there will not be one: a Silo that is already loaded
+	## refuses a second load rather than replacing the first, so a player who picked the
+	## wrong shell lives with it or fires it away. That is the whole of what makes the
+	## decision weighty, and it is why DESIGN.md puts Silo loading on the diegetic list — the
+	## friction is problem-solving under pressure rather than transcription.
+	##
+	## A tile rather than a Machine index, exactly as `DEMOLISH` and `REPAIR` carry one: a
+	## player works a dial on a Machine in front of them, and an index into the Simulation's
+	## arrays is not something anything outside it may hold. Any tile of the Silo's footprint
+	## will do.
+	##
+	## The shell type and the count travel **as well as** living on the dial, for the reason a
+	## `BUILD_MACHINE` intent carries its rotation: the intent has to describe the commitment
+	## completely, so a recorded script says what went into the tube without being replayed
+	## from the beginning to find out.
+	LOAD_SILO = 21,
+	## Paint a target, calling in whatever a Silo is loaded with. args = [tile x, tile y,
+	## tile z].
+	##
+	## **Held, and sent every tick it is held**, like `REPAIR`, `REVIVE` and `FIRE`: a
+	## Painting is a channel, so what the Simulation needs each tick is "still on it, still
+	## that tile". Letting go is itself the act of interrupting, and **an interrupted Painting
+	## consumes the Charge and produces nothing** (GLOSSARY.md) — the Charges leave the Silo
+	## on the tick the channel begins, which is what makes that true by construction rather
+	## than by a rule somebody has to remember.
+	##
+	## The tile has to be the one the player is standing on, because **a player must stand at
+	## the target** (GLOSSARY.md). A tile travels anyway rather than nothing at all, for the
+	## reason a repair carries one: the intent describes what is being done, and a recorded
+	## script that said only "painting" would not say where.
+	##
+	## While it is in flight the player is **unable to act** — see `Refusal.PLAYER_IS_PAINTING`
+	## — and cannot walk. That is the price of every Stratagem and the best co-op moment the
+	## design has: one player committed and helpless while the others cover them.
+	PAINT = 22,
 	## Leave the ground. args = [1 while the key is held, 0 once released].
 	##
 	## **Held and sent every tick it is held**, like `MOVE` and `FIRE`, and consumed and
@@ -258,7 +317,7 @@ enum Kind {
 	## is a throttle and the speed belongs to the Simulation — so a client cannot jump higher
 	## by sending a bigger number, and jump height is a value somebody tuning the game can
 	## change mid-Run.
-	JUMP = 20,
+	JUMP = 23,
 	## Put the Build Gun or a weapon in the player's hands. args = [1 for the Build Gun,
 	## 0 for the weapon].
 	##
@@ -277,7 +336,7 @@ enum Kind {
 	## because in co-op it is worth seeing — not because anything asks it for permission.
 	## Switching is instant, unlimited, and works mid-Wave; `player.holster_seconds` delays
 	## only the animation.
-	SET_BUILD_MODE = 21,
+	SET_BUILD_MODE = 24,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -546,6 +605,67 @@ func gear_index() -> int:
 ## The slot a `FIT_COMPONENT` action names.
 func gear_slot_index() -> int:
 	return _arg(0)
+
+
+## Sets a player's dial: which Stratagem, and how many Charges of it one load commits.
+## Clamped by the Simulation to a count a load may actually carry.
+static func set_silo_dial(
+	acting_player: int, stratagem_index: int, charges: int
+) -> InputAction:
+	return InputAction.new(
+		Kind.SET_SILO_DIAL, acting_player, PackedInt64Array([stratagem_index, charges])
+	)
+
+
+## The Stratagem definition index a `SET_SILO_DIAL` action winds the dial to.
+func dial_stratagem_index() -> int:
+	return _arg(0)
+
+
+## How many Charges a `SET_SILO_DIAL` action winds the counter to.
+func dial_charges() -> int:
+	return _arg(1)
+
+
+## Commits a load into the Silo standing on a tile. **Irreversible**: there is no intent
+## that takes it back out, and a Silo already loaded refuses this rather than replacing what
+## is in the tube.
+static func load_silo(
+	acting_player: int, tile: Vector3i, stratagem_index: int, charges: int
+) -> InputAction:
+	return InputAction.new(
+		Kind.LOAD_SILO,
+		acting_player,
+		PackedInt64Array([tile.x, tile.y, tile.z, stratagem_index, charges])
+	)
+
+
+## The tile a `LOAD_SILO` action is working the dial on. Any tile of the Silo's footprint.
+func load_silo_tile() -> Vector3i:
+	return Vector3i(_arg(0), _arg(1), _arg(2))
+
+
+## The Stratagem definition index a `LOAD_SILO` action commits.
+func load_stratagem_index() -> int:
+	return _arg(3)
+
+
+## How many Charges a `LOAD_SILO` action commits.
+func load_charges() -> int:
+	return _arg(4)
+
+
+## Paints a target, channelling whatever a Silo is loaded with. Sent every tick it is held;
+## not sending it is how a player interrupts themselves, and the Charge is gone either way.
+static func paint(acting_player: int, tile: Vector3i) -> InputAction:
+	return InputAction.new(
+		Kind.PAINT, acting_player, PackedInt64Array([tile.x, tile.y, tile.z])
+	)
+
+
+## The tile a `PAINT` action is being held on.
+func paint_tile() -> Vector3i:
+	return Vector3i(_arg(0), _arg(1), _arg(2))
 
 
 ## Holds a revive on a Downed teammate. Sent every tick it is held.

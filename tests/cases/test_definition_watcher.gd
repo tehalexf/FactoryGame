@@ -23,8 +23,8 @@ extends TestCase
 const DIR: String = "user://definition_watcher_test"
 
 const MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,
 """
 
 const RECIPES: String = """
@@ -82,6 +82,9 @@ baseline_supply_kw = 300
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 200
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -165,6 +168,7 @@ func before_each() -> void:
 	_write(Definitions.WAVES_FILE, WAVES)
 	_write(Definitions.DELIVERIES_FILE, DELIVERIES)
 	_write(Definitions.GEAR_FILE, GEAR)
+	_write(Definitions.STRATAGEMS_FILE, STRATAGEMS)
 
 
 func after_each() -> void:
@@ -175,6 +179,7 @@ func after_each() -> void:
 		Definitions.WAVES_FILE,
 		Definitions.DELIVERIES_FILE,
 		Definitions.GEAR_FILE,
+		Definitions.STRATAGEMS_FILE,
 	]:
 		DirAccess.remove_absolute("%s/%s" % [DIR, file_name])
 	DirAccess.remove_absolute(DIR)
@@ -244,7 +249,7 @@ func test_adding_a_machine_and_recipe_produces_a_new_definition_set() -> void:
 	)
 	_write(
 		Definitions.MACHINES_FILE,
-		MACHINES + "smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,\n"
+		MACHINES + "smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,\n"
 	)
 
 	var reloaded: Definitions = watcher.check_now()
@@ -414,4 +419,10 @@ t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+## The Stratagems a Silo's Charges pay for, inline so the fixture is a complete definition
+## set. One row, because `Definitions` refuses an empty table.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """

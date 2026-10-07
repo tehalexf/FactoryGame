@@ -46,9 +46,9 @@ func _distant_nest_layout() -> MapLayout:
 ## The Press costs **ore** rather than plate, which is what lets this fixture show a Machine
 ## funded out of the Nest's store: the Item the Factory banks is the Item the Press is paid
 ## in. Nothing here is locked — what a Delivery unlocks is `test_delivery.gd`'s subject.
-const MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,0,0,400,1,0,0,0,mine_iron_ore,iron_plate:2
-press_mk1,Press Mk1,crafter,2,2,0,0,500,0,0,0,0,press_iron_frame,iron_ore:4
+const MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,0,0,400,1,0,0,0,0,mine_iron_ore,iron_plate:2
+press_mk1,Press Mk1,crafter,2,2,0,0,500,0,0,0,0,0,press_iron_frame,iron_ore:4
 """
 
 const RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -70,6 +70,15 @@ t01_opening,Opening Licence,1,iron_ore:3;iron_frame:2,,drum_magazine,
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 drum_magazine,Drum Magazine,magazine,,0,0,0,0,,0,0,0,0,-30,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 const WAVES: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
@@ -129,6 +138,9 @@ baseline_supply_kw = 300
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 5
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wall]
 health = 240
 [wrench]
@@ -195,12 +207,14 @@ func _content(tuning: String = TUNING) -> Definitions:
 		WAVES,
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 

@@ -163,6 +163,15 @@ const AMMUNITION_LOW: Color = Color(0.95, 0.74, 0.16)
 const AMMUNITION_BACKING: Color = Color(0.09, 0.08, 0.08)
 const AMMUNITION_DRY: Color = Color(0.88, 0.17, 0.14)
 
+## The Charge gauge's colours. Blue-white, so artillery reads as a different quantity from
+## Ammunition at a glance rather than after reading the number — and the backing goes red on an
+## empty Silo for the reason an empty magazine's does: absence of a bar has to mean "there is
+## no Silo there" and not "there is a Silo there with nothing in it".
+const CHARGE_FULL: Color = Color(0.58, 0.78, 1.0)
+const CHARGE_LOADED: Color = Color(1.0, 0.78, 0.35)
+const CHARGE_BACKING: Color = Color(0.09, 0.11, 0.16)
+const CHARGE_EMPTY: Color = Color(0.45, 0.07, 0.07)
+
 ## Below this fraction of a full magazine the gauge goes amber. Half, because a Turret's
 ## input buffer is `machine.input_buffer_crafts` crafts deep and half of that is the point
 ## at which a player still has time to go and look at the Belt.
@@ -259,6 +268,14 @@ var _pending_breach_meshes: Array[MeshInstance3D] = []
 var _turret_gauge_backings: Array[MeshInstance3D] = []
 var _turret_gauge_fills: Array[MeshInstance3D] = []
 
+## The Charge gauge over every Silo. The same two meshes and the same argument: mid-Wave a
+## player deciding whether to run for the Silo needs to know whether there is artillery in it,
+## and they are thirty metres away looking at the whole Factory. A **different colour** from a
+## magazine, because the two readings mean different things and a player must not have to
+## remember which bar is which.
+var _silo_gauge_backings: Array[MeshInstance3D] = []
+var _silo_gauge_fills: Array[MeshInstance3D] = []
+
 ## The instance transforms handed to the MultiMesh, in its own flat layout: twelve floats
 ## an instance, with the position in slots 3, 7 and 11. Built from the queries every frame
 ## and uploaded in one assignment, which is both the fast path and the only way to read
@@ -334,6 +351,7 @@ func sync(sim: Simulation) -> void:
 	_sync_pending_breaches(sim)
 	_sync_machines(sim)
 	_sync_turret_gauges(sim)
+	_sync_silo_gauges(sim)
 	_sync_enemies(sim)
 	_sync_siege_hulks(sim)
 	_sync_hives(sim)
@@ -465,6 +483,36 @@ func turret_gauge_width_metres(slot: int) -> float:
 	if not _turret_gauge_fills[slot].visible:
 		return 0.0
 	return (_turret_gauge_fills[slot].mesh as BoxMesh).size.x
+
+
+## How many Charge gauges are on screen. One per Silo and none for anything else.
+func silo_gauge_count() -> int:
+	return _silo_gauge_fills.size()
+
+
+## How wide a Silo's Charge gauge is drawn, in metres, and what colour its backing is reading.
+## For the smoke test, and for the same reason the Turret's pair exists.
+func silo_gauge_width_metres(slot: int) -> float:
+	if slot < 0 or slot >= _silo_gauge_fills.size():
+		return 0.0
+	if not _silo_gauge_fills[slot].visible:
+		return 0.0
+	return (_silo_gauge_fills[slot].mesh as BoxMesh).size.x
+
+
+func silo_gauge_backing_colour(slot: int) -> Color:
+	if slot < 0 or slot >= _silo_gauge_backings.size():
+		return Color.BLACK
+	return (_silo_gauge_backings[slot].material_override as StandardMaterial3D).albedo_color
+
+
+## What colour a Silo's gauge is *filling* in. The fill rather than the backing, because the
+## reading that matters about a Silo is whether the Charges in it are still spendable: a loaded
+## tube is already committed, and that is a different state from a full stockpile.
+func silo_gauge_fill_colour(slot: int) -> Color:
+	if slot < 0 or slot >= _silo_gauge_fills.size():
+		return Color.BLACK
+	return (_silo_gauge_fills[slot].material_override as StandardMaterial3D).albedo_color
 
 
 ## What colour a Turret's gauge is reading. The backing, because that is the half that turns
@@ -800,35 +848,101 @@ func _sync_turret_gauges(sim: Simulation) -> void:
 			+ Vector3(0.0, MACHINE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0)
 		)
 
-		var backing: BoxMesh = _turret_gauge_backings[slot].mesh
-		backing.size = Vector3(
-			AMMUNITION_GAUGE_WIDTH_METRES,
-			AMMUNITION_GAUGE_HEIGHT_METRES,
-			AMMUNITION_GAUGE_DEPTH_METRES
-		)
-		_turret_gauge_backings[slot].position = above
-		_paint_gauge(
-			_turret_gauge_backings[slot], AMMUNITION_DRY if held == 0 else AMMUNITION_BACKING
+		_hang_gauge(
+			_turret_gauge_backings,
+			_turret_gauge_fills,
+			slot,
+			above,
+			fraction,
+			AMMUNITION_DRY if held == 0 else AMMUNITION_BACKING,
+			AMMUNITION_LOW if fraction < AMMUNITION_LOW_FRACTION else AMMUNITION_FULL,
+			held > 0
 		)
 
-		# The fill grows from the left, so an emptying magazine reads as a bar retreating
-		# rather than as a bar shrinking towards its middle — the same direction every gauge
-		# a player has ever read empties in.
-		var width: float = AMMUNITION_GAUGE_WIDTH_METRES * fraction
-		var fill: BoxMesh = _turret_gauge_fills[slot].mesh
-		fill.size = Vector3(
-			maxf(width, 0.001),
-			AMMUNITION_GAUGE_HEIGHT_METRES,
-			AMMUNITION_GAUGE_DEPTH_METRES * 1.4
+
+## A Charge gauge over every Silo, and over nothing else.
+##
+## `_sync_turret_gauges`' argument, applied to the other number a player triages on. The fill
+## goes amber the moment the Silo is **loaded**, because a loaded Silo is a different thing
+## from a full one: the Charges in the tube are spent whatever happens next, and that is the
+## state a player has to be able to see without walking over and reading a dial.
+func _sync_silo_gauges(sim: Simulation) -> void:
+	var silos: PackedInt64Array = PackedInt64Array()
+	for index: int in range(sim.query_machine_count()):
+		if sim.query_machine_is_silo(index):
+			silos.append(index)
+
+	_resize_pool(
+		_silo_gauge_backings,
+		silos.size(),
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		CHARGE_BACKING
+	)
+	_resize_pool(
+		_silo_gauge_fills,
+		silos.size(),
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		CHARGE_FULL
+	)
+
+	for slot: int in range(silos.size()):
+		var index: int = silos[slot]
+		var loaded: int = sim.query_silo_loaded_charges(index)
+		var held: int = sim.query_silo_charges(index) + loaded
+		var capacity: int = maxi(sim.query_silo_charge_capacity(index), 1)
+		_hang_gauge(
+			_silo_gauge_backings,
+			_silo_gauge_fills,
+			slot,
+			_machine_centre(sim, index)
+			+ Vector3(0.0, MACHINE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0),
+			clampf(float(held) / float(capacity), 0.0, 1.0),
+			CHARGE_EMPTY if held == 0 else CHARGE_BACKING,
+			CHARGE_LOADED if loaded > 0 else CHARGE_FULL,
+			held > 0
 		)
-		_turret_gauge_fills[slot].position = above + Vector3(
-			(width - AMMUNITION_GAUGE_WIDTH_METRES) * 0.5, 0.0, 0.0
-		)
-		_turret_gauge_fills[slot].visible = held > 0
-		_paint_gauge(
-			_turret_gauge_fills[slot],
-			AMMUNITION_LOW if fraction < AMMUNITION_LOW_FRACTION else AMMUNITION_FULL
-		)
+
+
+## Hangs one gauge: a dark backing bar at full width and a coloured fill in front of it.
+##
+## Extracted so the Charge gauge is the Ammunition gauge rather than a second one that looks
+## like it. The fill grows **from the left**, so an emptying bar reads as retreating rather
+## than as shrinking towards its middle — the same direction every gauge a player has ever
+## read empties in — and both meshes are unshaded, because a gauge a directional light can
+## darken is a gauge a player misreads at the worst moment.
+func _hang_gauge(
+	backings: Array[MeshInstance3D],
+	fills: Array[MeshInstance3D],
+	slot: int,
+	above: Vector3,
+	fraction: float,
+	backing_colour: Color,
+	fill_colour: Color,
+	fill_visible: bool
+) -> void:
+	var backing: BoxMesh = backings[slot].mesh
+	backing.size = Vector3(
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		AMMUNITION_GAUGE_DEPTH_METRES
+	)
+	backings[slot].position = above
+	_paint_gauge(backings[slot], backing_colour)
+
+	var width: float = AMMUNITION_GAUGE_WIDTH_METRES * fraction
+	var fill: BoxMesh = fills[slot].mesh
+	fill.size = Vector3(
+		maxf(width, 0.001),
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		AMMUNITION_GAUGE_DEPTH_METRES * 1.4
+	)
+	fills[slot].position = above + Vector3(
+		(width - AMMUNITION_GAUGE_WIDTH_METRES) * 0.5, 0.0, 0.0
+	)
+	fills[slot].visible = fill_visible
+	_paint_gauge(fills[slot], fill_colour)
 
 
 ## Colours a gauge bar, unshaded so it reads the same in the Factory's shadow as it does in
@@ -1478,6 +1592,7 @@ func _sync_hud(sim: Simulation) -> void:
 	lines.append_array(_delivery_lines(sim))
 	lines.append_array(_nest_store_lines(sim))
 	lines.append_array(_gear_lines(sim))
+	lines.append_array(_silo_lines(sim))
 	lines.append_array(_build_gun_lines(sim))
 
 	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and
@@ -1555,6 +1670,7 @@ func _sync_hud(sim: Simulation) -> void:
 			state == "running"
 			and not hurt
 			and not sim.query_machine_is_turret(index)
+			and not sim.query_machine_is_silo(index)
 			and not _is_digging_up_a_breach(sim, index)
 			and not is_hot.has(index)
 		):
@@ -1602,6 +1718,28 @@ func _sync_hud(sim: Simulation) -> void:
 					" — DRY" if held == 0
 					else " — %d shots" % sim.query_turret_shots_remaining(index)
 				)
+		# A Silo's stockpile and what is in its tube, on the Silo's own line. The Turret rule
+		# applied to the heaviest weapon in the game: "running" says nothing about whether
+		# there is artillery to call, and a load is irreversible, so what is committed is
+		# worth reading in words as well as off the gauge over its roof.
+		if sim.query_machine_is_silo(index):
+			line += " — charges %d/%d" % [
+				sim.query_silo_charges(index), sim.query_silo_charge_capacity(index)
+			]
+			if sim.query_silo_is_loaded(index):
+				line += " — LOADED %s x%d" % [
+					sim.query_silo_loaded_stratagem(index),
+					sim.query_silo_loaded_charges(index),
+				]
+			else:
+				line += " — empty tube"
+		# How long a dropped Sentry has left to live. A Turret a player did not build and
+		# cannot repair back into permanence is a Turret whose clock is the only thing worth
+		# knowing about it.
+		if sim.query_machine_is_temporary(index):
+			line += " — %ds left" % (
+				sim.query_machine_ticks_remaining(index) / Simulation.TICKS_PER_SECOND
+			)
 		if hurt:
 			line += (
 				" — health %d/%d"
@@ -1634,6 +1772,99 @@ func _sync_hud(sim: Simulation) -> void:
 		lines.append("walls %d — %d damaged" % [sim.query_wall_count(), breached])
 
 	_hud.text = "\n".join(lines)
+
+
+## The Silo: the dial a player is carrying, whether the thing in front of them would take it,
+## and a Painting in flight.
+##
+## **This is where the diegetic control is legible.** Loading is irreversible, so the whole
+## bargain depends on a player knowing what they are about to commit and whether it would
+## land *before* the key goes down — which is what `query_load_silo_refusal` is for, and why
+## the refusal is a projection rather than a message after the fact. The wording lives here
+## because a `Refusal` is a fact and a sentence about it is presentation, the same split
+## `BuildGun.refusal_text` makes.
+func _silo_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	if sim.query_stratagem_count() == 0:
+		return lines
+
+	# A Painting first and in capitals, because it is the one state in which a player can do
+	# nothing at all and the gauge is what the players covering them are watching.
+	if sim.query_player_is_painting(0):
+		var served: int = sim.query_player_paint_ticks_served(0)
+		var required: int = maxi(sim.query_player_paint_ticks_required(0), 1)
+		lines.append(
+			"PAINTING %s x%d — %s %d%%"
+			% [
+				sim.query_player_paint_stratagem(0),
+				sim.query_player_paint_charges(0),
+				_gauge_bar(served, required),
+				served * 100 / required,
+			]
+		)
+		lines.append("HOLD STILL — letting go wastes the charges")
+	else:
+		var dial: String = sim.query_player_dial_stratagem(0)
+		var line: String = "dial %s x%d" % [dial, sim.query_player_dial_charges(0)]
+		# The same Silo the load key would commit to, through the one function both ask —
+		# because a reason on screen about a different Silo from the one the key means is
+		# worse than no reason at all.
+		var aimed: Vector3i = PlayerController.silo_tile_for_loading(sim, 0)
+		var refusal: int = sim.query_load_silo_refusal(
+			0,
+			aimed,
+			sim.query_player_dial_stratagem_index(0),
+			sim.query_player_dial_charges(0)
+		)
+		if refusal == Simulation.Refusal.NONE:
+			line += " — LOAD READY (irreversible)"
+		elif refusal != Simulation.Refusal.NO_SILO_THERE:
+			line += " — %s" % load_refusal_text(refusal)
+		lines.append(line)
+
+	var wasted: int = sim.query_player_charges_wasted(0)
+	if wasted > 0:
+		lines.append("charges wasted to interrupted paintings: %d" % wasted)
+	return lines
+
+
+## What to tell a player about a load that will not happen.
+##
+## Separate from `BuildGun.refusal_text` because the reasons are different ones, and worded
+## for the act: a Silo's refusals are about a commitment rather than about a tile, so
+## "already loaded" has to read as "this is spent, not available".
+static func load_refusal_text(refusal: int) -> String:
+	match refusal:
+		Simulation.Refusal.NONE:
+			return ""
+		Simulation.Refusal.NO_SILO_THERE:
+			return "no silo there"
+		Simulation.Refusal.OUT_OF_REACH:
+			return "stand at the silo"
+		Simulation.Refusal.SILO_ALREADY_LOADED:
+			return "already loaded — fire it or lose it"
+		Simulation.Refusal.NOT_ENOUGH_CHARGES:
+			return "not enough charges assembled"
+		Simulation.Refusal.BAD_CHARGE_COUNT:
+			return "that is not a load"
+		Simulation.Refusal.STRATAGEM_IS_LOCKED:
+			return "not unlocked yet"
+		Simulation.Refusal.NO_SUCH_STRATAGEM:
+			return "no such stratagem"
+		Simulation.Refusal.PLAYER_IS_PAINTING:
+			return "both hands are on the designator"
+		Simulation.Refusal.PLAYER_IS_DOWN:
+			return "you are down"
+		Simulation.Refusal.RUN_IS_OVER:
+			return "the nest has fallen"
+	return "cannot load"
+
+
+## A bar of text standing for a fraction served. The Telegraph's gauge, reused: there is no
+## audio yet and no texture, so a channel's progress is a row of cells that fills.
+func _gauge_bar(served: int, required: int) -> String:
+	var filled: int = clampi(served * TELEGRAPH_GAUGE_CELLS / maxi(required, 1), 0, TELEGRAPH_GAUGE_CELLS)
+	return "[%s%s]" % ["#".repeat(filled), ".".repeat(TELEGRAPH_GAUGE_CELLS - filled)]
 
 
 ## The Telegraph, as the loudest thing on the HUD.
@@ -2025,257 +2256,72 @@ func _place_camera(sim: Simulation) -> void:
 
 # ── The object in frame ───────────────────────────────────────────────────────
 #
-# **Two objects now, and which one is in frame is a query.** #29 made `B` a holster: the
-# Build Gun and the weapon swap places, one going down while the other comes up, and the
-# crossover is the midpoint of `player.holster_seconds`. `query_player_held_is_build_gun`
-# says which, `query_player_holster_blend` says how far out of frame — and those two queries
-# are the seam a real first-person pass plugs `Draw` and `PutAway` into, which is the whole
-# reason the placeholder below is worth having at all.
+# **One view model, and whatever is in the player's hands is one field of it.**
+# `WeaponViewmodel` is the whole of it, and it hangs off the camera so the model and the
+# aim climb together. Everything it moves by is read out of the Simulation — the velocity,
+# the kick, the tick a shot fired on, the rounds left in the player's pockets — so nothing
+# here is a second opinion about the Run and all of it replays.
 #
-# **This is the honest limit of what this ticket shipped, and it is worth being plain
-# about.** First-person combat lives or dies on animation and feel, and what is here is a
-# placeholder: one box for a frame and one for a barrel, parented to the camera, swaying
-# with the player's own velocity and kicking when a shot lands. Every number it moves by is
-# read out of the Simulation — the velocity, the kick, the tick a shot fired on — so nothing
-# here is a second opinion about the Run, and all of it replays.
+# **The Build Gun goes through the same door the weapons do.** #29 made `B` a holster: the
+# Build Gun and the weapon swap places, one going down while the other comes up. It landed
+# before #28 and built that as a second `Node3D` with its own meshes, its own sway and its
+# own drop out of frame. #28 then arrived with the real article — `held_facts` hands back a
+# struct whose `weapon` is an id and nothing more, `show_held` draws whatever that id names,
+# and `draw` and `holster` are first-class animation *roles* — so the swap is now one
+# assignment in `_sync_weapon`, and the stow, the model change and the draw come from
+# `WeaponAnimator`. There is no longer a second answer to "what is in frame" to keep in step
+# with the first.
 #
-# What it is *not* is the purchased first-person arms and their named takes
-# (`docs/LICENSED_ASSETS.md`: Shoot, Reload, Draw, PutAway, walk, run, idle, and the Pump
-# and Chamber variants, with exact frame ranges recorded). Those are FBX inside the
-# gitignored quarantine, and Godot cannot import an FBX at runtime — so using them needs a
-# Blender step that converts the named takes into a GLB outside the repository and a
-# runtime glTF load of the result. That is a ticket of its own, and `WEAPON_BODY_DIRECTORY`
-# below is the seam it plugs into: a GLB named for the weapon, loaded if it is there and
-# silently skipped if it is not, **so the repository stays buildable and testable for
-# anyone without those files** — which is the rule `docs/ASSETS.md` sets and the reason
-# none of it may be committed.
+# **The purchased arms are loaded at runtime from outside the repository, and are usually
+# not there.** They are non-redistributable (`docs/ASSETS.md`), Godot cannot import an FBX
+# at runtime, and nothing converted may be committed either — so
+# `tools/assets/convert_weapons.sh` writes a GLB per weapon into a gitignored directory and
+# `WeaponViewmodel` loads it if it finds it and draws two boxes if it does not. A clone
+# without the packs is a playable, testable game; see `docs/ASSET_PIPELINE.md` section 7.
+#
+# The Build Gun is named in that directory like anything else, so the day somebody models
+# one it arrives the same way, with the same clips, and this file does not change.
 
-## Where a converted first-person weapon mesh would live, outside the shipping tree. The
-## directory is gitignored and will usually not exist, which is an ordinary state and not a
-## warning — exactly as a Machine with no `.glb` is.
-const WEAPON_BODY_DIRECTORY: String = "res://assets_licensed/generated/gear/"
+## The id the Build Gun is held under. Not a row in `content/gear.csv` — a Build Gun is not
+## Gear and never fires — but `WeaponViewmodel` asks nothing of an id beyond being an id:
+## whatever `<id>.glb` the gear directory holds is what is drawn, and the placeholder stands
+## in when it holds nothing. `tests/cases/test_weapon_viewmodel.gd` pins that with this
+## exact id.
+const BUILD_GUN_HELD_ID: String = "build_gun"
 
-## How far down, right and forward of the camera the weapon sits, in metres. Pure feel, and
-## the three numbers most worth fiddling with in this file.
-const WEAPON_OFFSET: Vector3 = Vector3(0.22, -0.20, -0.45)
+var _weapon_view: WeaponViewmodel = null
 
-## How far the weapon drops out of frame while a player is Downed or dead, in metres. Far
-## enough to be gone, because a weapon still in frame while bleeding out reads as a bug.
-const WEAPON_STOWED_METRES: float = 0.9
 
-## How far the weapon swings as a player walks, in metres per metre per second of their own
-## speed, and the cap on it. Driven by `query_player_velocity` rather than by a clock, so a
-## player standing still has a steady weapon and a sprinting one does not.
-const WEAPON_SWAY_PER_SPEED: float = 0.012
-const WEAPON_SWAY_LIMIT_METRES: float = 0.06
-
-## How far the weapon recoils towards the camera on a shot, in metres, and how many ticks it
-## takes to come back. Separate from the Simulation's own view kick — that one moves the
-## *aim* and is authoritative; this one moves the model and is presentation.
-const WEAPON_RECOIL_METRES: float = 0.09
-const WEAPON_RECOIL_TICKS: int = 8
-
-## How far the held object drops out of frame at the midpoint of a holster swap, in metres,
-## and how far the Build Gun sits from the camera.
+## Puts whatever is in the player's hands in frame, where the Simulation says it should be.
 ##
-## **The holster is the one thing #29 added to this file's model layer, and it is
-## deliberately the simplest thing that is replaceable.** The duration is Simulation tuning
-## (`player.holster_seconds`) and the *shape* is one query — `query_player_holster_blend`
-## says how far out of frame, `query_player_held_is_build_gun` says which object — so a
-## later pass that swaps these boxes for the purchased arms and their real `Draw` and
-## `PutAway` takes drives the clips off the same two numbers and deletes nothing here but
-## the meshes.
-const HELD_SWAP_DROP_METRES: float = 0.45
-const BUILD_GUN_OFFSET: Vector3 = Vector3(0.20, -0.18, -0.40)
-
-var _weapon_view: Node3D = null
-var _weapon_body: MeshInstance3D = null
-var _weapon_barrel: MeshInstance3D = null
-var _weapon_loaded_id: String = ""
-var _build_gun_view: Node3D = null
-
-
-## Puts the weapon in frame, where the Simulation says it should be.
-##
-## Parented to the camera, so it inherits the view's yaw and pitch — including the recoil
-## the Simulation has in `query_player_camera_pitch_turns`, which is the point: the model
-## and the aim climb together because they are the same number.
+## **The holster is one field of one struct.** `query_player_is_in_build_mode` is hashed
+## Simulation state, so a replay reproduces a swap and in co-op what the other three are
+## holding is drawable; what that mode *looks like* on its way across is `WeaponAnimator`'s,
+## which is already timing a `holster` and a `draw` off the clip lengths of the model
+## actually on screen. #29's `query_player_holster_blend` and
+## `query_player_held_is_build_gun` describe the same transition a second time, from the
+## other side of the boundary, and two authorities for one swap is the duplication this
+## merge exists to remove — so they stay in the Simulation, where the Run's own tests pin
+## them, and the renderer reads the mode.
 func _sync_weapon(sim: Simulation) -> void:
 	if _weapon_view == null:
-		_weapon_view = Node3D.new()
+		_weapon_view = WeaponViewmodel.new()
 		_camera.add_child(_weapon_view)
-		_weapon_body = MeshInstance3D.new()
-		_weapon_body.mesh = BoxMesh.new()
-		(_weapon_body.mesh as BoxMesh).size = Vector3(0.07, 0.11, 0.34)
-		_weapon_body.material_override = _unshaded(Color(0.21, 0.22, 0.20))
-		_weapon_view.add_child(_weapon_body)
-		_weapon_barrel = MeshInstance3D.new()
-		_weapon_barrel.mesh = BoxMesh.new()
-		(_weapon_barrel.mesh as BoxMesh).size = Vector3(0.035, 0.035, 0.40)
-		_weapon_barrel.material_override = _unshaded(Color(0.14, 0.14, 0.15))
-		_weapon_view.add_child(_weapon_barrel)
 
-	# **What is in the hands, and which of the two is drawn.** The mode flips on the tick
-	# the key is pressed, because nothing is gated by a swap; the *model* in frame is still
-	# the old one until the swap passes its midpoint, which is what makes a holster read as
-	# putting one thing away and drawing another. Both of those facts are queries.
-	var holding_build_gun: bool = sim.query_player_held_is_build_gun(VIEWED_PLAYER)
-	var swap: float = Fixed.to_float(sim.query_player_holster_blend(VIEWED_PLAYER))
-
-	var weapon: String = sim.query_player_weapon(VIEWED_PLAYER)
-	_weapon_view.visible = (
-		not holding_build_gun
-		and not weapon.is_empty()
-		and sim.query_player_is_alive(VIEWED_PLAYER)
-	)
-	_load_weapon_body(weapon)
-	_sync_build_gun(sim, holding_build_gun, swap)
-
-	# A melee weapon is short and a rifle is long, read off the weapon's own reach rather
-	# than off a table here — so a fourth weapon looks different without this file changing.
-	var reach: float = Fixed.to_float(sim.query_player_weapon_range_metres(VIEWED_PLAYER))
-	(_weapon_barrel.mesh as BoxMesh).size = Vector3(
-		0.035, 0.035, clampf(0.12 + reach * 0.006, 0.12, 0.55)
-	)
-	_weapon_barrel.position = Vector3(0.0, 0.0, -(_weapon_barrel.mesh as BoxMesh).size.z * 0.6)
-
-	var sway: float = 0.0
-	var velocity: FixedVec2 = sim.query_player_velocity(VIEWED_PLAYER)
-	var speed: float = Vector2(Fixed.to_float(velocity.x), Fixed.to_float(velocity.z)).length()
-	sway = minf(speed * WEAPON_SWAY_PER_SPEED, WEAPON_SWAY_LIMIT_METRES)
-
-	var recoil: float = 0.0
-	var fired: int = sim.query_player_last_shot_tick(VIEWED_PLAYER)
-	if fired >= 0:
-		var since: int = sim.query_tick() - fired
-		if since >= 0 and since < WEAPON_RECOIL_TICKS:
-			recoil = WEAPON_RECOIL_METRES * (1.0 - float(since) / float(WEAPON_RECOIL_TICKS))
-
-	var stowed: float = 0.0
-	if not sim.query_player_is_alive(VIEWED_PLAYER):
-		stowed = WEAPON_STOWED_METRES
-	# Survey View lifts the camera to read the Factory, so the weapon comes down out of the
-	# way of the thing the player raised the camera to look at.
-	stowed += WEAPON_STOWED_METRES * Fixed.to_float(
-		sim.query_player_survey_blend(VIEWED_PLAYER)
-	)
-
-	_weapon_view.position = Vector3(
-		WEAPON_OFFSET.x + sway,
-		WEAPON_OFFSET.y - sway - stowed - swap * HELD_SWAP_DROP_METRES,
-		WEAPON_OFFSET.z + recoil
-	)
+	var facts: WeaponAnimator.Facts = _weapon_view.held_facts(sim, VIEWED_PLAYER)
+	if sim.query_player_is_in_build_mode(VIEWED_PLAYER):
+		facts.weapon = BUILD_GUN_HELD_ID
+		# No reach and no magazine, which is the whole difference between a tool and a gun:
+		# the placeholder barrel sizes itself off the reach, so a Build Gun reads as stubby,
+		# and `is_melee` is what tells the animator there is no round to chamber and no
+		# reload to play. Both are facts about the thing being held, not opinions about it.
+		facts.reach_metres = 0.0
+		facts.is_melee = true
+	_weapon_view.show_held(facts)
 
 
-## Puts the Build Gun in frame, where the Simulation says it should be.
-##
-## **A placeholder, and plainly so**: a boxy body with a flared nozzle and a thin emissive
-## rail, parented to the camera exactly as the weapon is. What makes it worth having is not
-## the geometry — it is that the *seam* is here. Which object is in hand and how far through
-## a swap it is are two queries, so a later pass replaces these meshes and drives real
-## `Draw` and `PutAway` clips off the same two numbers.
-##
-## Drawn with the same holster drop the weapon uses, from the same blend, so the two objects
-## cross over at the midpoint of a swap instead of one popping in.
-func _sync_build_gun(sim: Simulation, in_hand: bool, swap: float) -> void:
-	if _build_gun_view == null:
-		_build_gun_view = Node3D.new()
-		_camera.add_child(_build_gun_view)
-
-		var body: MeshInstance3D = MeshInstance3D.new()
-		body.mesh = BoxMesh.new()
-		(body.mesh as BoxMesh).size = Vector3(0.09, 0.13, 0.30)
-		body.material_override = _unshaded(Color(0.30, 0.26, 0.17))
-		_build_gun_view.add_child(body)
-
-		# The emitter: wider than the body and short, so the silhouette reads as a tool
-		# rather than as a gun at a glance. That distinction is the whole point of a
-		# holster — a player has to know what is in their hands without reading a label.
-		var nozzle: MeshInstance3D = MeshInstance3D.new()
-		nozzle.mesh = BoxMesh.new()
-		(nozzle.mesh as BoxMesh).size = Vector3(0.15, 0.15, 0.10)
-		nozzle.position = Vector3(0.0, 0.0, -0.20)
-		nozzle.material_override = _unshaded(Color(0.21, 0.19, 0.13))
-		_build_gun_view.add_child(nozzle)
-
-		var rail: MeshInstance3D = MeshInstance3D.new()
-		rail.mesh = BoxMesh.new()
-		(rail.mesh as BoxMesh).size = Vector3(0.02, 0.02, 0.26)
-		rail.position = Vector3(0.0, 0.08, -0.04)
-		# The hologram's own colour, so the thing in frame and the thing on the ground are
-		# visibly one tool.
-		rail.material_override = _unshaded(Color(0.35, 0.80, 1.00))
-		_build_gun_view.add_child(rail)
-
-	_build_gun_view.visible = in_hand and sim.query_player_is_alive(VIEWED_PLAYER)
-
-	# The same sway the weapon has, off the same query, so neither object is steadier than
-	# the player carrying it.
-	var velocity: FixedVec2 = sim.query_player_velocity(VIEWED_PLAYER)
-	var speed: float = Vector2(Fixed.to_float(velocity.x), Fixed.to_float(velocity.z)).length()
-	var sway: float = minf(speed * WEAPON_SWAY_PER_SPEED, WEAPON_SWAY_LIMIT_METRES)
-
-	var stowed: float = WEAPON_STOWED_METRES * Fixed.to_float(
-		sim.query_player_survey_blend(VIEWED_PLAYER)
-	)
-	_build_gun_view.position = Vector3(
-		BUILD_GUN_OFFSET.x + sway,
-		BUILD_GUN_OFFSET.y - sway - stowed - swap * HELD_SWAP_DROP_METRES,
-		BUILD_GUN_OFFSET.z
-	)
-
-
-## Whether the Build Gun is the object in frame. For the smoke test.
-func build_gun_is_visible() -> bool:
-	return _build_gun_view != null and _build_gun_view.visible
-
-
-## Where the Build Gun sits relative to the camera, in metres. For the smoke test.
-func build_gun_offset() -> Vector3:
-	if _build_gun_view == null:
-		return Vector3.ZERO
-	return _build_gun_view.position
-
-
-## Loads a converted first-person weapon mesh if there is one, and leaves the placeholder
-## boxes alone if there is not.
-##
-## Absence is an ordinary state. The directory is outside the shipping tree and gitignored,
-## so for anybody who has not built the conversion it simply is not there — and the game
-## still runs, which is the whole rule: nothing non-redistributable may be committed, and
-## nothing may be *required* either.
-func _load_weapon_body(weapon_id: String) -> void:
-	if weapon_id == _weapon_loaded_id:
-		return
-	_weapon_loaded_id = weapon_id
-	if weapon_id.is_empty():
-		return
-	var path: String = "%s%s.glb" % [WEAPON_BODY_DIRECTORY, weapon_id]
-	if not FileAccess.file_exists(path):
-		return
-	var document: GLTFDocument = GLTFDocument.new()
-	var state: GLTFState = GLTFState.new()
-	if document.append_from_file(path, state) != OK:
-		return
-	var loaded: Node = document.generate_scene(state)
-	if loaded == null:
-		return
-	_weapon_body.visible = false
-	_weapon_barrel.visible = false
-	_weapon_view.add_child(loaded)
-
-
-## An unshaded material. A view model is lit by whatever the level happens to be lit by,
-## which at eye level is nothing in particular, so a weapon that took the directional light
-## would vanish whenever a player faced away from the sun.
-func _unshaded(colour: Color) -> StandardMaterial3D:
-	var material: StandardMaterial3D = StandardMaterial3D.new()
-	material.albedo_color = colour
-	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	return material
-
-
-## Whether the weapon is in frame. For the smoke test.
+## Whether the thing in the player's hands is in frame — their weapon, or the Build Gun
+## while they are in build mode. For the smoke test.
 func weapon_is_visible() -> bool:
 	return _weapon_view != null and _weapon_view.visible
 
@@ -2286,6 +2332,36 @@ func weapon_offset() -> Vector3:
 	if _weapon_view == null:
 		return Vector3.ZERO
 	return _weapon_view.position
+
+
+## Which animation role the weapon in frame is playing — `idle`, `fire`, `reload`, `draw`
+## and the rest of `WeaponAnimator`'s vocabulary. For the smoke test.
+func weapon_clip_role() -> String:
+	if _weapon_view == null:
+		return ""
+	return _weapon_view.clip_role()
+
+
+## Which held object's model is on screen — a weapon id, or `BUILD_GUN_HELD_ID`. Lags what
+## the player is holding for exactly as long as putting the old one away takes. For the
+## smoke test.
+func weapon_model_id() -> String:
+	if _weapon_view == null:
+		return ""
+	return _weapon_view.model_weapon()
+
+
+## Whether a converted first-person model is in frame rather than the placeholder boxes.
+## False on any clone without the purchased packs, which is the ordinary case.
+func weapon_has_model() -> bool:
+	return _weapon_view != null and _weapon_view.has_model()
+
+
+## The view model itself, for anything that needs to put something other than a weapon in
+## the player's hands — `WeaponViewmodel.held_facts` and `show_held` are that seam, and
+## `_sync_weapon` is already its first caller: the Build Gun goes through it.
+func weapon_viewmodel() -> WeaponViewmodel:
+	return _weapon_view
 
 
 ## Where the camera is standing, in metres. For the smoke test, which asserts it against

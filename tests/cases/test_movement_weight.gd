@@ -45,7 +45,8 @@ func _sim_with(key: String, value: String) -> Simulation:
 		"\n".join(replaced),
 		FileAccess.get_file_as_string("res://content/waves.csv"),
 		FileAccess.get_file_as_string("res://content/deliveries.csv"),
-		FileAccess.get_file_as_string("res://content/gear.csv")
+		FileAccess.get_file_as_string("res://content/gear.csv"),
+		FileAccess.get_file_as_string("res://content/stratagems.csv")
 	)
 	assert_true(definitions.errors.is_empty(), definitions.describe_errors())
 	return Simulation.new(0, 1, definitions)
@@ -400,7 +401,13 @@ func test_asking_for_the_mode_you_are_already_in_does_nothing_at_all() -> void:
 func test_the_holster_plays_out_over_the_tuned_duration() -> void:
 	# `player.holster_seconds` is 0.2 — twelve ticks — and the blend peaks half way
 	# through, which is the moment the old thing has gone down and the new thing has not
-	# yet come up. That is what the renderer swaps models on.
+	# yet come up.
+	#
+	# **The renderer does not read this**, and has not since #28's view model landed: a
+	# `holster` and a `draw` are clips there, timed off the lengths of the model on screen.
+	# This is the Simulation's own answer to the same question, which is what anything that
+	# is not that renderer has — a co-op client's HUD, a replay viewer — so it is asserted
+	# here rather than deleted.
 	var sim: Simulation = Simulation.new()
 	sim.step([InputAction.set_build_mode(0, false)])
 	var peak: int = 0

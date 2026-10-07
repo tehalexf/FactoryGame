@@ -123,7 +123,13 @@ themselves are ours and are safe to commit to a public repo.
 - **RgsDev, and the unattributed FPS weapon pack** — purchased, non-redistributable.
   The FPS weapon pack records no vendor anywhere in its zips; that gap is logged
   in [LICENSED_ASSETS.md](LICENSED_ASSETS.md) rather than guessed at.
-  → `assets_licensed/`.
+  → `assets_licensed/`. These two are the first-person arms, and they are the one
+  asset path whose **output** is also quarantined: `tools/assets/convert_weapons.sh`
+  writes `assets_licensed/generated/gear/*.glb` and the game loads it at runtime,
+  because a converted GLB is a derivative of a non-redistributable asset and is
+  exactly as forbidden as the FBX. A clone without the packs gets placeholder
+  weapons and a game that builds, tests and plays — see
+  [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 7.
 - **Synty** — no redistribution. Godot is officially unsupported; FBX source
   requires conversion. → `assets_licensed/`.
 - **Quaternius, KayKit, Kenney** — CC0. Safe to commit, no attribution required.

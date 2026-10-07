@@ -78,6 +78,9 @@ baseline_supply_kw = 300
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 200
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -140,7 +143,7 @@ reach_metres = 4
 func _looking_sim(players: int = 1) -> Simulation:
 	var machines: String = FileAccess.get_file_as_string("res://content/machines.csv")
 	var recipes: String = FileAccess.get_file_as_string("res://content/recipes.csv")
-	var definitions: Definitions = Definitions.parse(machines, recipes, LOOK_TUNING, WAVES, DELIVERIES, GEAR)
+	var definitions: Definitions = Definitions.parse(machines, recipes, LOOK_TUNING, WAVES, DELIVERIES, GEAR, STRATAGEMS)
 	assert_true(definitions.errors.is_empty(), "the look fixture's content must load")
 	return Simulation.new(0, players, definitions)
 
@@ -547,6 +550,15 @@ func test_where_the_camera_has_got_to_is_part_of_the_state_hash() -> void:
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 

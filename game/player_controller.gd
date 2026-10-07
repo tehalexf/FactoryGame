@@ -128,7 +128,57 @@ const KEY_DELIVER: Key = KEY_F
 ## the one amount a player actually wants, which is what the Build Gun is already holding.
 ## A different UI — a counter with a row per Item — would send the same intent with different
 ## numbers, and the Simulation would not know the difference.
-const KEY_WITHDRAW: Key = KEY_T
+##
+## **Moved off `T`, which is the revive key.** `T` was bound to both from the moment this
+## key landed, so pressing it next to a Downed teammate withdrew *and* revived — a latent
+## collision #29 found and this merge fixes, because #29 retired `KEY_PLACE` (E) and left a
+## key free next to `KEY_DELIVER`. Withdrawing and delivering are the same act in opposite
+## directions, so `E` and `F` are the pair that belong together.
+const KEY_WITHDRAW: Key = KEY_E
+
+## The Silo's dial, and the designator.
+##
+## **These four are the diegetic controls DESIGN.md names first**, and they are keys for the
+## same reason the call-Wave lever is: the physical mechanism and its hero sound are an art
+## pass, and DESIGN.md is explicit that each diegetic control needs that sound before it
+## ships. What is already true of them is the half that matters — they are weighty,
+## infrequent and irreversible, and none of them is a menu.
+##
+## `KEY_SILO_SHELL` and `KEY_SILO_CHARGES` wind the two halves of the dial, each cycling
+## through its positions with a wrap at the end, because a dial has stops and not a text
+## field. Neither commits anything: they move a reading the Simulation holds, which the HUD
+## shows and `KEY_LOAD_SILO` sends. The cycles hold no state here — where each one is comes
+## out of `query_player_dial_*` and what is in it comes out of the definition set, which is
+## the arrangement the Machine wheel and the Gear slots already have.
+##
+## **The charge counter moved off `C`, which is now the Belt key.** #29 took `B` for the
+## holster and moved the Belt to `C`, which collided with this; the Belt stays, because the
+## bottom row `X` `C` `V` `B` — demolish, Belt, Wall, holster — is the build cluster and
+## pulling one key out of the middle of it would be the worse trade. `K` is free and sits
+## next to `KEY_LOAD_SILO` (`L`), so the counter and the commit are now under the same
+## finger, which is the pairing that actually gets used: wind the count, then load.
+const KEY_SILO_SHELL: Key = KEY_Z
+const KEY_SILO_CHARGES: Key = KEY_K
+
+## Committing the dial into the Silo the player is standing at. **An edge, and the one
+## irreversible act a player can perform**: there is no unload intent, and a Silo already
+## loaded refuses this rather than replacing what is in the tube. The HUD reads
+## `query_load_silo_refusal` so the reason — out of reach, not enough Charges, already
+## loaded — is on screen before the key goes down, which is what makes the irreversibility
+## fair rather than cruel.
+const KEY_LOAD_SILO: Key = KEY_L
+
+## Painting a target. **Held**, like the wrench and the trigger, because a Painting is a
+## channel: letting go is itself the act of interrupting, and the Charges are gone either
+## way. While it is down the player is rooted and every other intent is refused, which is
+## the price of a Stratagem and the reason this is the best co-op moment the design has.
+##
+## No aim crosses here. The tile painted is the tile the player is *standing on* — a player
+## must stand at the target (GLOSSARY.md) — and where they stand is authoritative fixed-point
+## Simulation state already, so the intent is derived from a query rather than from a camera
+## ray. That is the float-to-fixed rule honoured rather than dodged, exactly as `FIRE` honours
+## it by carrying nothing at all.
+const KEY_PAINT: Key = KEY_P
 
 ## Saving and resuming a Run. Gathered here with the rest so the rebinding ticket has
 ## one file to change, but deliberately **not** read by `sample_devices` and never
@@ -214,6 +264,12 @@ class DeviceSample extends RefCounted:
 	var fire_held: bool = false
 	## Held, not an edge: a revive is restoration over time, like a wrench.
 	var revive_held: bool = false
+	## Edges: one press is one click of the dial, and one commitment.
+	var silo_shell_cycled: bool = false
+	var silo_charges_cycled: bool = false
+	var load_silo_clicked: bool = false
+	## Held, not an edge: a Painting is a channel, and letting go interrupts it.
+	var paint_held: bool = false
 	## Which weapon frame was asked for this tick, as an index into the definition set's
 	## weapon frames, or -1. An edge: one press is one swap.
 	var weapon_chosen: int = -1
@@ -241,6 +297,9 @@ var _withdraw_clicked: bool = false
 var _wall_clicked: bool = false
 var _weapon_chosen: int = -1
 var _slot_cycled: int = -1
+var _silo_shell_cycled: bool = false
+var _silo_charges_cycled: bool = false
+var _load_silo_clicked: bool = false
 
 ## Whether a toggled sprint is currently latched on. Only read when
 ## `player.sprint_is_toggle` is true; see `_sprinting`, which is where the whole argument
@@ -293,6 +352,12 @@ func note_event(event: InputEvent) -> void:
 				_build_mode_clicked = true
 			elif key.keycode == KEY_SPRINT:
 				_sprint_clicked = true
+			elif key.keycode == KEY_SILO_SHELL:
+				_silo_shell_cycled = true
+			elif key.keycode == KEY_SILO_CHARGES:
+				_silo_charges_cycled = true
+			elif key.keycode == KEY_LOAD_SILO:
+				_load_silo_clicked = true
 			elif key.keycode >= KEY_WEAPON_FIRST and key.keycode < KEY_WEAPON_FIRST + WEAPON_KEY_COUNT:
 				_weapon_chosen = key.keycode - KEY_WEAPON_FIRST
 			elif key.keycode >= KEY_SLOT_FIRST and key.keycode < KEY_SLOT_FIRST + SLOT_KEY_COUNT:
@@ -323,6 +388,7 @@ func sample_devices() -> DeviceSample:
 	# The *edge* of the same button is gathered in `note_event`; build mode decides which
 	# of the two readings becomes an Input Action, and this function does not know.
 	sample.fire_held = Input.is_mouse_button_pressed(BUTTON_PRIMARY)
+	sample.paint_held = Input.is_key_pressed(KEY_PAINT)
 
 	sample.mouse_motion = _unsent_mouse_motion
 	sample.rotate_steps = _unsent_rotate_steps
@@ -338,6 +404,9 @@ func sample_devices() -> DeviceSample:
 	sample.wall_clicked = _wall_clicked
 	sample.weapon_chosen = _weapon_chosen
 	sample.slot_cycled = _slot_cycled
+	sample.silo_shell_cycled = _silo_shell_cycled
+	sample.silo_charges_cycled = _silo_charges_cycled
+	sample.load_silo_clicked = _load_silo_clicked
 
 	_unsent_mouse_motion = Vector2.ZERO
 	_unsent_rotate_steps = 0
@@ -353,6 +422,9 @@ func sample_devices() -> DeviceSample:
 	_wall_clicked = false
 	_weapon_chosen = -1
 	_slot_cycled = -1
+	_silo_shell_cycled = false
+	_silo_charges_cycled = false
+	_load_silo_clicked = false
 
 	return sample
 
@@ -470,6 +542,44 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	if sample.fire_held and not in_build_mode:
 		actions.append(InputAction.fire(player_id))
 
+	# The dial before the load, so a player who winds and commits in one tick commits what
+	# they can see — the rule that puts `select_machine` before `build_machine` and a weapon
+	# swap before the trigger.
+	if sample.silo_shell_cycled or sample.silo_charges_cycled:
+		var shell: int = _dial_shell(sim, player_id, sample.silo_shell_cycled)
+		if shell != -1:
+			actions.append(
+				InputAction.set_silo_dial(
+					player_id, shell, _dial_charges(sim, player_id, sample.silo_charges_cycled)
+				)
+			)
+
+	# Sent whatever the Simulation makes of it, exactly as a misaimed build intent is. Whether
+	# it lands — the reach, the stockpile, whether the tube is already full — is the
+	# Simulation's decision, and the HUD reads `query_load_silo_refusal` so a player knows
+	# which of them is in the way before they press a key they cannot take back.
+	if sample.load_silo_clicked:
+		var committed: int = sim.query_player_dial_stratagem_index(player_id)
+		if committed != -1:
+			actions.append(
+				InputAction.load_silo(
+					player_id,
+					silo_tile_for_loading(sim, player_id),
+					committed,
+					sim.query_player_dial_charges(player_id)
+				)
+			)
+
+	# Sent every tick the key is down and never on the edge, because the Simulation consumes
+	# and clears the intent each tick: "still on it, still that tile" is what it needs to know,
+	# and letting go is how a player interrupts themselves.
+	#
+	# The tile is the one the player is standing on, read back out of the Simulation. A player
+	# must stand at the target (GLOSSARY.md), so there is nothing here for a camera ray to
+	# decide and no float to cross.
+	if sample.paint_held:
+		actions.append(InputAction.paint(player_id, _standing_on(sim, player_id)))
+
 	if sample.revive_held:
 		var downed: int = _nearest_downed(sim, player_id)
 		if downed != -1:
@@ -584,6 +694,98 @@ func _next_component(sim: Simulation, player_id: int, slot_index: int) -> int:
 	if at == -1:
 		at = ring.size() - 1
 	return ring[(at + 1) % ring.size()]
+
+
+## Which Silo the load key would commit to, as a tile.
+##
+## **Shared with the HUD, which is the whole point of it being here.** A load cannot be taken
+## back, so the reason it would be refused has to be on screen before the key goes down — and
+## that is only true if the line a player reads and the intent the key sends are about the same
+## Silo. One function, called by both, in `game/` because *which* Silo a key means is
+## presentation in exactly the way `_withdrawals_for_the_build_gun`'s choice of amount is.
+##
+## The Silo the player is looking at, if they are looking at one: the **tool** aim rather than
+## the Build Gun's, for the reason a wrench uses it — a dial is on the side of a four-metre
+## body, and aiming down the ground plane means looking at your own feet to work something at
+## chest height.
+##
+## Otherwise the first Silo in reach, walked in index order, because standing at a Silo is what
+## working its dial means and a player stood next to one should not have to hunt for its flank
+## with a crosshair. **Reach is the Simulation's answer, not this layer's** — it is asked
+## through `query_load_silo_refusal`, so there is no second opinion about how far an arm goes.
+## Failing that the first Silo at all, so the HUD says "stand at the silo" rather than "no silo
+## there"; failing even that, the aimed tile, which refuses by naming exactly what is wrong.
+static func silo_tile_for_loading(sim: Simulation, player_id: int) -> Vector3i:
+	var aimed: Vector3i = BuildGun.aimed_tool_tile(sim, player_id)
+	var under_the_crosshair: int = sim.query_machine_at_tile(aimed)
+	if under_the_crosshair != -1 and sim.query_machine_is_silo(under_the_crosshair):
+		return aimed
+
+	var shell: int = sim.query_player_dial_stratagem_index(player_id)
+	var charges: int = sim.query_player_dial_charges(player_id)
+	var fallback: Vector3i = aimed
+	var found_one: bool = false
+	for index: int in range(sim.query_machine_count()):
+		if not sim.query_machine_is_silo(index):
+			continue
+		var tile: Vector3i = sim.query_machine_tile(index)
+		if not found_one:
+			fallback = tile
+			found_one = true
+		if (
+			sim.query_load_silo_refusal(player_id, tile, shell, charges)
+			!= Simulation.Refusal.OUT_OF_REACH
+		):
+			return tile
+	return fallback
+
+
+## The Stratagem index the dial should read after this tick, or -1 when the content declares
+## none at all.
+##
+## Cycles through the Stratagems the Run has **unlocked**, in index order, wrapping — so the
+## ring is only ever positions a Silo would accept, which is the same courtesy the Build Gun's
+## opening Machine is. Holds no state: where the dial is now comes out of
+## `query_player_dial_stratagem_index` and what is in the ring comes out of the definition
+## set.
+func _dial_shell(sim: Simulation, player_id: int, step_it: bool) -> int:
+	var ring: PackedInt64Array = PackedInt64Array()
+	for index: int in range(sim.query_stratagem_count()):
+		if sim.query_stratagem_is_unlocked(index):
+			ring.append(index)
+	if ring.is_empty():
+		return -1
+
+	var at: int = ring.find(sim.query_player_dial_stratagem_index(player_id))
+	if at == -1:
+		return ring[0]
+	if not step_it:
+		return ring[at]
+	return ring[(at + 1) % ring.size()]
+
+
+## The charge count the dial should read after this tick: one more, wrapping back to one past
+## the Simulation's own stop.
+##
+## A wrap rather than a clamp, because this is a counter a player clicks round rather than a
+## number they type — and because the Simulation clamps anyway, so a wrap here cannot send
+## something it would refuse.
+func _dial_charges(sim: Simulation, player_id: int, step_it: bool) -> int:
+	var held: int = maxi(sim.query_player_dial_charges(player_id), 1)
+	if not step_it:
+		return held
+	var stop: int = maxi(sim.query_max_charges_per_load(), 1)
+	return 1 if held >= stop else held + 1
+
+
+## The tile a player is standing on, out of the Simulation's own fixed-point position.
+##
+## Not a camera ray and not a float: where a player stands is authoritative state, so a
+## Painting's target is something the Simulation already knows exactly. The same argument
+## `FIRE` makes for carrying no aim at all.
+func _standing_on(sim: Simulation, player_id: int) -> Vector3i:
+	var here: FixedVec2 = sim.query_player_position(player_id)
+	return WorldGrid.tile_at_metres(here.x, here.z)
 
 
 ## The nearest Downed teammate to a player, or -1. Walked in player id order so a tie goes

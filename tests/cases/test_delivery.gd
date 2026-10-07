@@ -41,10 +41,10 @@ func _distant_nest_layout() -> MapLayout:
 	return layout
 
 
-const MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,0,0,400,1,0,0,0,mine_iron_ore,iron_plate:2
-miner_mk2,Miner Mk2,miner,2,2,0,0,500,2,0,0,0,mine_iron_ore,iron_plate:4
-press_mk1,Press Mk1,crafter,2,2,0,0,500,0,0,0,0,press_iron_frame,iron_plate:2
+const MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,0,0,400,1,0,0,0,0,mine_iron_ore,iron_plate:2
+miner_mk2,Miner Mk2,miner,2,2,0,0,500,2,0,0,0,0,mine_iron_ore,iron_plate:4
+press_mk1,Press Mk1,crafter,2,2,0,0,500,0,0,0,0,0,press_iron_frame,iron_plate:2
 """
 
 const RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -64,6 +64,16 @@ pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 drum_magazine,Drum Magazine,magazine,,0,0,0,0,,0,0,0,30,-30,0,0
 reflex_sight,Reflex Sight,sight,,0,0,0,0,,0,0,10,-40,0,0,0
 blast_shield,Blast Shield,plating,,0,0,0,0,,0,0,0,0,0,0,-20
+"""
+
+
+## The Stratagems this file's tiers unlock, invented here rather than taken from
+## `content/stratagems.csv` — the same thing the fixture does with its Machines and its Gear.
+## Two rows, because two tiers name one each, and `unlocks_stratagems` must name a row that
+## exists for the reason `unlocks_machines` must.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+orbital_barrage,Orbital Barrage,barrage,5,6,150,,,0
+resupply_drop,Resupply Drop,supply,3,0,0,iron_ore:10,,0
 """
 
 
@@ -130,6 +140,9 @@ baseline_supply_kw = 300
 health = 6000
 delivery_reach_metres = 5
 store_capacity_per_item = 2
+[silo]
+load_reach_metres = 4
+max_charges_per_load = 4
 [wall]
 health = 240
 [wrench]
@@ -198,12 +211,14 @@ func _content(
 		WAVES,
 		deliveries,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 

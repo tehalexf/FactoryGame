@@ -489,6 +489,32 @@ func test_belt_laying_lives_in_build_mode() -> void:
 	)
 
 
+func test_no_two_actions_share_a_key() -> void:
+	# The thing three branches landing at once kept nearly doing. #29 moved the Belt to `C`
+	# while #17 was putting the Silo's charge counter there, and `T` was quietly bound to
+	# *both* revive and withdraw from the moment #27 landed — press it next to a Downed
+	# teammate and you did both. A collision is invisible until somebody plays the game, so
+	# it is asserted rather than reviewed: the whole map, read off the constants, with the
+	# two banks of keys expanded.
+	var keys: Dictionary = {}
+	var constants: Dictionary = PlayerController.new().get_script().get_script_constant_map()
+	for name: String in constants:
+		if not name.begins_with("KEY_") or typeof(constants[name]) != TYPE_INT:
+			continue
+		var span: int = 1
+		if name == "KEY_WEAPON_FIRST":
+			span = PlayerController.WEAPON_KEY_COUNT
+		elif name == "KEY_SLOT_FIRST":
+			span = PlayerController.SLOT_KEY_COUNT
+		for step: int in range(span):
+			var key: int = int(constants[name]) + step
+			assert_false(
+				keys.has(key),
+				"%s and %s are the same key" % [name, keys.get(key, "")]
+			)
+			keys[key] = name
+
+
 func test_the_jump_key_becomes_a_jump_intent_and_leaves_the_ground() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
@@ -592,7 +618,8 @@ func _sim_with_tuning(key: String, value: String) -> Simulation:
 		"\n".join(replaced),
 		FileAccess.get_file_as_string("res://content/waves.csv"),
 		FileAccess.get_file_as_string("res://content/deliveries.csv"),
-		FileAccess.get_file_as_string("res://content/gear.csv")
+		FileAccess.get_file_as_string("res://content/gear.csv"),
+		FileAccess.get_file_as_string("res://content/stratagems.csv")
 	)
 	assert_true(definitions.errors.is_empty(), definitions.describe_errors())
 	return Simulation.new(1, 1, definitions)
