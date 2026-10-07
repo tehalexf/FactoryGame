@@ -94,6 +94,29 @@ class LicenceGuard(unittest.TestCase):
             self.assertIn("one.fbx", output)
             self.assertIn("two.fbx", output)
 
+    def test_allows_the_empty_gdignore_that_keeps_godot_out_of_the_quarantine(self):
+        """The one committable path inside the quarantine. It carries no data."""
+        with TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            marker = repo / "assets_licensed" / ".gdignore"
+            marker.parent.mkdir(parents=True)
+            marker.write_bytes(b"")
+            git(repo, "add", "-f", "assets_licensed/.gdignore")
+            result = run_guard(repo)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_fails_when_that_gdignore_is_not_empty(self):
+        """The exception is for a marker, not for a file that could carry data."""
+        with TemporaryDirectory() as tmp:
+            repo = make_repo(tmp)
+            marker = repo / "assets_licensed" / ".gdignore"
+            marker.parent.mkdir(parents=True)
+            marker.write_bytes(b"purchased\n")
+            git(repo, "add", "-f", "assets_licensed/.gdignore")
+            result = run_guard(repo)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("assets_licensed/.gdignore", result.stdout + result.stderr)
+
     def test_pass_is_quiet_enough_to_live_in_a_pre_commit_hook(self):
         with TemporaryDirectory() as tmp:
             repo = make_repo(tmp)

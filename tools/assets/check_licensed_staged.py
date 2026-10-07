@@ -14,6 +14,10 @@ It fails on:
   * anything staged whose path names a vendor that forbids redistribution, even
     outside the quarantine — renaming a purchased file does not launder it.
 
+There is one exception, and it holds no asset data: an *empty*
+`assets_licensed/.gdignore`, the marker that keeps Godot's importer out of the
+quarantine. Put a single byte in it and it is a violation again.
+
 Usage:
     python3 tools/assets/check_licensed_staged.py            # staged + history
     python3 tools/assets/check_licensed_staged.py --all      # every tracked file
@@ -31,6 +35,14 @@ import sys
 
 # Directories whose entire contents are non-redistributable.
 QUARANTINE_DIRS = ("assets_licensed/",)
+
+# The single exception, and it carries no asset data at all: Godot's marker file
+# telling the engine not to scan the quarantine. Without it in git, every fresh
+# clone points Godot's importer at gigabytes of third-party Unity projects and
+# raw WAV libraries, which is slow and was observed to stop the engine importing
+# the repository's own assets. It is allowed only while it is empty, so the
+# exception cannot be used to smuggle anything through.
+QUARANTINE_MARKER = "assets_licensed/.gdignore"
 
 # Vendors and marketplaces whose licences forbid redistribution. Matched against
 # the whole path, case-insensitively, on word-ish boundaries so that ordinary
@@ -79,7 +91,27 @@ def committed_paths() -> list[str]:
 
 
 def quarantined(paths: list[str]) -> list[str]:
-    return [p for p in paths if any(p.startswith(d) or f"/{d}" in p for d in QUARANTINE_DIRS)]
+    return [p for p in paths
+            if any(p.startswith(d) or f"/{d}" in p for d in QUARANTINE_DIRS)
+            and not is_empty_quarantine_marker(p)]
+
+
+def is_empty_quarantine_marker(path: str) -> bool:
+    """The one path inside the quarantine that may be committed — see
+    QUARANTINE_MARKER. Only while it is empty: a `.gdignore` with bytes in it is
+    a file smuggling data out of the quarantine, and is treated as a violation
+    like anything else."""
+    if path != QUARANTINE_MARKER:
+        return False
+    result = subprocess.run(["git", "cat-file", "-s", f":{path}"],
+                            capture_output=True, text=True)
+    if result.returncode != 0:
+        # Not in the index; ask the commit instead.
+        result = subprocess.run(["git", "cat-file", "-s", f"HEAD:{path}"],
+                                capture_output=True, text=True)
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip() == "0"
 
 
 def vendor_named(paths: list[str]) -> list[tuple[str, str]]:
