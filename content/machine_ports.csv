@@ -25,6 +25,7 @@
 # place only - machine_specs.port_position_mm in tools/assets/machine_specs.py.
 machine_id,port_id,direction,edge,tile,height_mm
 miner_mk1,ore,output,south,1,900
+coal_miner_mk1,coal,output,south,1,900
 smelter_mk1,ore,input,north,1,900
 smelter_mk1,coal,input,west,1,900
 smelter_mk1,ingot,output,south,1,900

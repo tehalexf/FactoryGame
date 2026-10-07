@@ -1,0 +1,13 @@
+[gd_resource type="StandardMaterial3D" load_steps=2 format=3]
+
+[ext_resource type="Texture2D" uid="uid://c08ul25srbak4" path="res://assets/generated/textures/cast_iron_plate.png" id="1_albedo"]
+
+[resource]
+resource_name = "CastIron"
+albedo_color = Color(0.52, 0.52, 0.55, 1)
+albedo_texture = ExtResource("1_albedo")
+texture_filter = 5
+uv1_scale = Vector3(0.625, 0.625, 0.625)
+metallic = 1
+metallic_specular = 0.5
+roughness = 0.62

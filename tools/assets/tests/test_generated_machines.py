@@ -214,14 +214,88 @@ class TheSharedPalette(unittest.TestCase):
                 self.assertGreaterEqual(len(gltf_info.material_names(doc)), 3)
 
 
-class TheGeneratedAsset(unittest.TestCase):
+class TheSurface(unittest.TestCase):
+    """The meshes carry UVs; the textures live beside them and are attached by
+    the engine. Both halves have to hold or a Machine renders as a flat block.
+
+    The division of labour: the `.glb` is geometry plus a palette *name*, and
+    `assets/machines/materials/<name>.tres` is the surface that name resolves to,
+    wired on by the `_subresources` override in each `.glb.import`. One copy of
+    each texture on disk, shared by every Machine.
+    """
+
     def test_embeds_no_textures(self):
-        """These are flat-shaded procedural meshes; texturing is a later ticket.
-        An embedded image here means something was imported by accident."""
+        """Eleven meshes times eight 1024x1024 PNGs would be 130 MB of duplicated
+        pixels in a public repository, to say something the engine says once by
+        sharing one material. An image in here means an exporter setting slipped."""
         for machine in machine_specs.load():
             with self.subTest(machine=machine.machine_id):
                 doc = gltf_info.read_gltf_json(glb_for(machine))
                 self.assertEqual(gltf_info.image_count(doc), 0)
+
+    def test_carries_exactly_one_uv_layer(self):
+        """One layer, because there is one thing to look up with it. None at all
+        is the flat-shaded block this ticket replaced; two is a layer nobody
+        maintains drifting out of date."""
+        for machine in machine_specs.load():
+            with self.subTest(machine=machine.machine_id):
+                doc = gltf_info.read_gltf_json(glb_for(machine))
+                self.assertEqual(gltf_info.uv_layer_count(doc), 1)
+
+    def test_measures_its_uvs_in_metres(self):
+        """The whole UV contract in one assertion: **one UV unit is one metre**.
+
+        Every face is projected along its dominant normal at world scale, so a
+        triangle's area in UV space equals the area of its own projection onto
+        that plane — exactly, not approximately. That makes texture density
+        identical on every part of every Machine, which is why
+        `dieselpunk_palette.json` can decide how big a texture is with one number
+        per material and no per-part layout to maintain.
+
+        It is also the check that catches the two mistakes this kind of
+        projection actually makes: a unit error (UVs in millimetres, or
+        normalised to 0..1) and a face textured off the wrong plane.
+        """
+        for machine in machine_specs.load():
+            checked = 0
+            for primitive in gltf_info.mesh_primitives(glb_for(machine)):
+                positions, uvs, order = (primitive["positions"], primitive["uvs"],
+                                         primitive["indices"])
+                self.assertTrue(uvs, f"{primitive['mesh']} has no UVs")
+                for i in range(0, len(order) - 2, 3):
+                    corners = [positions[order[i + k]] for k in range(3)]
+                    texels = [uvs[order[i + k]] for k in range(3)]
+                    world = _projected_area(corners)
+                    if world < 1e-6:
+                        continue  # a chamfer sliver edge-on to its own plane
+                    with self.subTest(machine=machine.machine_id,
+                                      mesh=primitive["mesh"], triangle=i // 3):
+                        self.assertAlmostEqual(
+                            _triangle_area(texels), world, delta=1e-4,
+                            msg="a UV unit is not a metre here")
+                    checked += 1
+            self.assertGreater(checked, 100,
+                               f"{machine.machine_id}: nothing was checked")
+
+
+def _triangle_area(points) -> float:
+    (ax, ay), (bx, by), (cx, cy) = points
+    return abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2.0
+
+
+def _projected_area(corners) -> float:
+    """A triangle's area projected onto the plane its own normal points most at."""
+    (ax, ay, az), (bx, by, bz), (cx, cy, cz) = corners
+    u = (bx - ax, by - ay, bz - az)
+    v = (cx - ax, cy - ay, cz - az)
+    normal = (u[1] * v[2] - u[2] * v[1],
+              u[2] * v[0] - u[0] * v[2],
+              u[0] * v[1] - u[1] * v[0])
+    axis = max(range(3), key=lambda i: abs(normal[i]))
+    return abs(normal[axis]) / 2.0
+
+
+class TheGeneratedAsset(unittest.TestCase):
 
     def test_carries_no_skeleton(self):
         """Machines are static. A skin here is a sign the shared humanoid rig

@@ -22,11 +22,16 @@ REPO = Path(__file__).resolve().parents[3]
 
 class TheMachineTable(unittest.TestCase):
     def test_declares_every_milestone_1_machine(self):
-        """DESIGN.md's Milestone 1 list, plus the Nest and a Belt segment."""
+        """DESIGN.md's Milestone 1 list, plus the Nest and a Belt segment.
+
+        `coal_miner_mk1` is here because a Steam Boiler burns coal and nothing
+        else mines any: #7 added it to `content/machines.csv` and it drew as a
+        placeholder box until it got a body.
+        """
         expected = {
-            "miner_mk1", "smelter_mk1", "press_mk1", "assembler_mk1",
-            "steam_boiler_mk1", "generator_mk1", "ammo_press_mk1", "silo_mk1",
-            "nest", "belt_straight",
+            "miner_mk1", "coal_miner_mk1", "smelter_mk1", "press_mk1",
+            "assembler_mk1", "steam_boiler_mk1", "generator_mk1",
+            "ammo_press_mk1", "silo_mk1", "nest", "belt_straight",
         }
         self.assertEqual({m.machine_id for m in machine_specs.load()}, expected)
 

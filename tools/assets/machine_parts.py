@@ -24,6 +24,8 @@ the result rather than trusting it.
 
 from __future__ import annotations
 
+import math
+
 import bmesh  # type: ignore
 from mathutils import Matrix, Vector  # type: ignore
 
@@ -31,6 +33,51 @@ from mathutils import Matrix, Vector  # type: ignore
 #: is what reads as "cast iron" rather than "untextured cube" — a larger one
 #: reads as soft plastic.
 CHAMFER = 0.03
+
+
+#: Name of the one UV layer every Machine mesh carries, matching the `uv1` the
+#: Godot materials read. Kept here rather than imported, because `machine_parts`
+#: runs inside Blender and must not depend on anything that is not already there.
+UV_LAYER = "UVMap"
+
+
+def box_project_uvs(mesh: bmesh.types.BMesh) -> None:
+    """Give every face a UV in **metres**, projected along its dominant normal.
+
+    This is what "UVs that suit a procedural body" means for geometry that is
+    assembled from boxes, cylinders and frustums rather than unwrapped by hand.
+    Three things follow from it, and all three are the point:
+
+    * **One UV unit is one metre, everywhere.** Texture density is identical on
+      every part of every Machine, so a 4 m Generator and an 8 m Silo are plated
+      with the same size of steel. How big a texture actually is, is then one
+      number per material in `dieselpunk_palette.json` and nothing else.
+    * **Nothing has to be maintained.** There is no layout to re-pack when a
+      recipe adds a part or a footprint changes, which is the whole reason the
+      geometry is generated in the first place.
+    * **It is seamless where it matters.** The generated textures tile, and a
+      world-space projection means two parts that meet on a plane carry on the
+      same tiling across the join rather than restarting.
+
+    The cost is a visible seam where a face turns a corner, which on welded plate
+    with a chamfer on every edge is where a seam belongs anyway.
+    """
+    layer = mesh.loops.layers.uv.get(UV_LAYER) or mesh.loops.layers.uv.new(UV_LAYER)
+    for face in mesh.faces:
+        normal = face.normal
+        axis = max(range(3), key=lambda i: abs(normal[i]))
+        # Flip the second coordinate on the faces that look the other way, so a
+        # texture is not mirrored between the two sides of a part.
+        facing = 1.0 if normal[axis] >= 0.0 else -1.0
+        for loop in face.loops:
+            x, y, z = loop.vert.co
+            if axis == 0:
+                u, v = y * facing, z
+            elif axis == 1:
+                u, v = -x * facing, z
+            else:
+                u, v = x, y * facing
+            loop[layer].uv = (u, v)
 
 
 def godot_mm_to_blender(position_mm) -> Vector:
@@ -141,6 +188,163 @@ def frustum(bottom_size, top_size, height: float,
         mesh.faces.new((lower[i], lower[j], upper[j], upper[i]))
     mesh.normal_update()
     return mesh
+
+
+def prism(bottom_center, bottom_size, top_center, top_size) -> bmesh.types.BMesh:
+    """A solid between two axis-aligned rectangles that need not share a centre.
+
+    `frustum` taper plus lean. A derrick leg, a stepped armour tier and a raked
+    buttress are all this one shape, and all three are silhouette work: a part
+    that leans is a part the eye reads as structure rather than as another box
+    edge.
+    """
+    mesh = bmesh.new()
+    bx, by = bottom_size[0] / 2.0, bottom_size[1] / 2.0
+    tx, ty = top_size[0] / 2.0, top_size[1] / 2.0
+    obx, oby, obz = bottom_center
+    otx, oty, otz = top_center
+    corners = ((-1, -1), (1, -1), (1, 1), (-1, 1))
+    lower = [mesh.verts.new((obx + sx * bx, oby + sy * by, obz)) for sx, sy in corners]
+    upper = [mesh.verts.new((otx + sx * tx, oty + sy * ty, otz)) for sx, sy in corners]
+    mesh.faces.new(list(reversed(lower)))
+    mesh.faces.new(upper)
+    for i in range(4):
+        j = (i + 1) % 4
+        mesh.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    mesh.normal_update()
+    return mesh
+
+
+def wedge(size, center_bottom, height_low: float,
+          height_high: float) -> bmesh.types.BMesh:
+    """A box whose top slopes along X: one bay of a sawtooth roof.
+
+    A sloping roofline is the cheapest way to make a wide low building stop
+    reading as a crate, and it is the one silhouette cue in the kit that cannot
+    be confused with a stack, a mast or a drum.
+    """
+    mesh = bmesh.new()
+    hx, hy = size[0] / 2.0, size[1] / 2.0
+    ox, oy, oz = center_bottom
+    corners = ((-1, -1, height_low), (1, -1, height_high),
+               (1, 1, height_high), (-1, 1, height_low))
+    lower = [mesh.verts.new((ox + sx * hx, oy + sy * hy, oz)) for sx, sy, _ in corners]
+    upper = [mesh.verts.new((ox + sx * hx, oy + sy * hy, oz + h)) for sx, sy, h in corners]
+    mesh.faces.new(list(reversed(lower)))
+    mesh.faces.new(upper)
+    for i in range(4):
+        j = (i + 1) % 4
+        mesh.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    mesh.normal_update()
+    return mesh
+
+
+def annulus(radius_outer: float, radius_inner: float, thickness: float,
+            center=(0.0, 0.0, 0.0), axis: str = "z",
+            segments: int = 20) -> bmesh.types.BMesh:
+    """A flat ring: the rim of a wheel you can see daylight through.
+
+    A filled disc would be simpler and is the wrong shape — a winding sheave and
+    a flywheel read as wheels precisely because the sky shows between the spokes,
+    and that hole is what stops them being mistaken for a drum at distance.
+    """
+    mesh = bmesh.new()
+    half = thickness / 2.0
+    rings: dict[tuple[str, float], list] = {}
+    for key, radius, z in (("back_out", radius_outer, -half),
+                           ("front_out", radius_outer, half),
+                           ("back_in", radius_inner, -half),
+                           ("front_in", radius_inner, half)):
+        rings[key] = [
+            mesh.verts.new((math.cos(2.0 * math.pi * i / segments) * radius,
+                            math.sin(2.0 * math.pi * i / segments) * radius, z))
+            for i in range(segments)]
+    for i in range(segments):
+        j = (i + 1) % segments
+        mesh.faces.new((rings["back_out"][i], rings["back_out"][j],
+                        rings["front_out"][j], rings["front_out"][i]))
+        mesh.faces.new((rings["front_in"][i], rings["front_in"][j],
+                        rings["back_in"][j], rings["back_in"][i]))
+        mesh.faces.new((rings["front_out"][i], rings["front_out"][j],
+                        rings["front_in"][j], rings["front_in"][i]))
+        mesh.faces.new((rings["back_in"][i], rings["back_in"][j],
+                        rings["back_out"][j], rings["back_out"][i]))
+    if axis == "x":
+        bmesh.ops.rotate(mesh, verts=mesh.verts, cent=(0, 0, 0),
+                         matrix=Matrix.Rotation(1.5707963267948966, 3, 'Y'))
+    elif axis == "y":
+        bmesh.ops.rotate(mesh, verts=mesh.verts, cent=(0, 0, 0),
+                         matrix=Matrix.Rotation(1.5707963267948966, 3, 'X'))
+    bmesh.ops.translate(mesh, vec=Vector(center), verts=mesh.verts)
+    mesh.normal_update()
+    return mesh
+
+
+# ---------------------------------------------------------------------------
+# Gross form — the parts that decide what a Machine is from fifty metres
+# ---------------------------------------------------------------------------
+
+def truss_tower(assembly: Assembly, material: str, base_half: float,
+                top_half: float, base_z: float, height: float, at=(0.0, 0.0),
+                leg: float = 0.26, bands: int = 4) -> None:
+    """Four raking legs and horizontal bands: a derrick, open to the sky.
+
+    Deliberately not a solid tapered box. A derrick and a chimney are the same
+    trapezoid when both are filled in, and the Miner and the Smelter are the two
+    Machines a player most needs to tell apart at the start of a Run. The gaps
+    between the legs are the difference.
+    """
+    top_z = base_z + height
+    ax, ay = at
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            assembly.add(material, prism(
+                (ax + sx * (base_half - leg / 2.0), ay + sy * (base_half - leg / 2.0), base_z),
+                (leg, leg),
+                (ax + sx * (top_half - leg / 2.0), ay + sy * (top_half - leg / 2.0), top_z),
+                (leg, leg)))
+    for index in range(bands):
+        fraction = (index + 1) / (bands + 1)
+        z = base_z + height * fraction
+        half = base_half + (top_half - base_half) * fraction
+        for sy in (-1, 1):
+            assembly.add("WeldedSteel",
+                         box((half * 2.0, 0.12, 0.14),
+                             center=(ax, ay + sy * (half - 0.06), z), chamfer=0.02))
+        for sx in (-1, 1):
+            assembly.add("WeldedSteel",
+                         box((0.12, half * 2.0, 0.14),
+                             center=(ax + sx * (half - 0.06), ay, z), chamfer=0.02))
+
+
+def spoked_wheel(assembly: Assembly, center, radius: float, thickness: float,
+                 axis: str = "y", spokes: int = 6,
+                 material: str = "CastIron") -> None:
+    """A big cast wheel on edge: a flywheel, or a pithead winding sheave.
+
+    A circle is the one silhouette primitive nothing else in the kit makes, so it
+    is worth the segments. Sized by the recipe rather than here, because how far
+    the wheel stands proud of its housing is the whole gesture.
+    """
+    center = Vector(center)
+    assembly.add(material, annulus(radius, radius * 0.78, thickness,
+                                   center=center, axis=axis, segments=24))
+    assembly.add("OiledSteel", cylinder(radius * 0.17, thickness * 1.6,
+                                        center=center, axis=axis, segments=12))
+    # A spoke lies in the wheel's plane, so which way it is long depends on which
+    # axis the wheel turns about.
+    long, thin, wide = radius * 1.62, thickness * 0.55, radius * 0.1
+    spoke_size = {"x": (thin, long, wide),
+                  "y": (long, thin, wide),
+                  "z": (long, wide, thin)}[axis]
+    rotation_axis = {"x": 'X', "y": 'Y', "z": 'Z'}[axis]
+    for index in range(spokes):
+        spoke = box(spoke_size, center=(0.0, 0.0, 0.0), chamfer=0.01)
+        bmesh.ops.rotate(spoke, verts=spoke.verts, cent=(0, 0, 0),
+                         matrix=Matrix.Rotation(index * math.pi / spokes,
+                                                3, rotation_axis))
+        bmesh.ops.translate(spoke, verts=spoke.verts, vec=center)
+        assembly.add(material, spoke)
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +567,13 @@ def port_fitting(assembly: Assembly, port, position_mm, machine) -> None:
     throat = (collar * 0.62, depth, height * 0.6) if along_x \
         else (depth, collar * 0.62, height * 0.6)
 
+    # A backing plate reaching inward from the boundary, so the collar is let
+    # into something whatever the recipe put behind it. Housings are inset from
+    # the footprint by varying amounts and a collar floating in front of a gap is
+    # the one defect in this part that only shows up in a render.
+    backing = (collar * 1.1, 0.55, height * 1.15) if along_x \
+        else (0.55, collar * 1.1, height * 1.15)
+    assembly.add("WeldedSteel", box(backing, center=at + inward * 0.3, chamfer=0.03))
     assembly.add("HazardYellow", box(size, center=at + inward * (depth / 2.0),
                                      chamfer=0.03))
     assembly.add("Soot", box(throat, center=at + inward * (depth * 0.95),
