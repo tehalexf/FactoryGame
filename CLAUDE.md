@@ -235,6 +235,15 @@ arrays, never as an object per Item.
   edge (an input port) or at the *entry tile* of another Belt. No inserter entity exists
   (DESIGN.md), there is no stored connection to go stale, and side-loading onto the
   middle of a Belt is deliberately not a connection.
+- **Open: `content/machine_ports.csv` is not yet the Simulation's authority.** #19 added
+  that file and the mesh markers that match it, declaring an exact edge and tile for each
+  port. The Simulation currently accepts a Belt against *any* footprint edge tile, which
+  is looser. It cannot simply adopt the file yet: the table describes ten Machine bodies
+  while `content/machines.csv` defines two, so loading it under its own documented rule
+  ("machine_id must name a row in machines.csv") would fail the whole content load. The
+  ticket that brings the remaining Machines into `machines.csv` should make `Definitions`
+  read the ports table and tighten `_load_from_port` and `_hand_off` to the declared
+  edge, tile and direction — one declaration, not two.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.

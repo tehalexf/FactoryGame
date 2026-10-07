@@ -354,7 +354,10 @@ func _hand_off_blocked(index: int) -> bool:
 ## there is room at the Belt's entry.
 ##
 ## The port is the Machine footprint tile the run starts against: Belts connect straight
-## into Machine ports and no inserter entity exists (DESIGN.md). The room check is what
+## into Machine ports and no inserter entity exists (DESIGN.md). Any footprint edge tile
+## counts for now; `content/machine_ports.csv` declares the exact edge and tile each port
+## sits on, and CLAUDE.md records why the Simulation cannot adopt that table yet and which
+## ticket should. The room check is what
 ## rate-limits loading — an Item can only enter once the last one is a full spacing
 ## clear, which is exactly the Belt's rated throughput and not a second number that
 ## could disagree with it.
