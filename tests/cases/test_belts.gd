@@ -304,9 +304,9 @@ func test_a_machine_holding_its_inputs_is_not_starved() -> void:
 # these tests bring their own content: a Miner whose Recipe takes 0.1 s, which floors to
 # 5 ticks and so offers 12 ore a second to a Belt rated for 4.
 
-const FAST_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,smelt_iron_plate,
+const FAST_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,smelt_iron_plate,
 """
 
 const FAST_RECIPES: String = """id,display_name,inputs,outputs,seconds

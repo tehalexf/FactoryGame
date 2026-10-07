@@ -27,10 +27,21 @@ enum Role {
 	## this one Role. They differ in their fuel chain and in how they fail, which are
 	## a Recipe and a row in a table, not a second simulation.
 	GENERATOR = 2,
+	## Consumes Belt-fed Ammunition and its output is **damage** rather than an Item
+	## (GLOSSARY.md). Its Recipe is the round it fires and the time between shots, so a
+	## Turret holding no Ammunition does not fire — which is the whole of the keystone
+	## loop: defence costs continuous production, never a one-time build.
+	##
+	## Not a separate combat subsystem. The same Recipe, inventory, Belt and Power rules
+	## apply, and a Recipe that produces no Item is exactly the trick `GENERATOR` already
+	## plays in the other direction. All three Turret classes DESIGN.md names — MG,
+	## Cannon, Repair Pylon — are this one Role, differing in `range_tiles`, `damage` and
+	## their Recipe, which are a row in a table and not a second simulation.
+	TURRET = 3,
 }
 
 ## Spelling of each Role in the file, indexed by the enum value.
-const ROLE_NAMES: Array = ["miner", "crafter", "generator"]
+const ROLE_NAMES: Array = ["miner", "crafter", "generator", "turret"]
 
 ## Largest footprint DESIGN.md allows, in tiles on the 2 m grid.
 const MAX_FOOTPRINT_TILES: int = 4
@@ -57,6 +68,21 @@ var health: int = 0
 
 ## Deepest Node tier this Machine reaches. 0 for anything that is not a Miner.
 var max_depth: int = 0
+
+## How far a Turret reaches, in whole tiles on the 2 m grid, measured from the centre
+## of its footprint. 0 for anything that is not a Turret.
+##
+## Tiles rather than metres because that is the unit a player lays a Factory out in, and
+## because the Simulation converts it once, at the one place it is compared — a second
+## copy in metres is a second number to disagree with this one.
+var range_tiles: int = 0
+
+## What one shot takes off an Enemy, in whole hit points. 0 for anything that is not a
+## Turret.
+##
+## Whole points, like a Crawler's health and a Crawler's bite: damage is counted in them
+## and never scaled, so there is no rounding rule anywhere in combat.
+var damage: int = 0
 
 ## What this Machine costs to build, as parallel arrays of Item id and count, sorted
 ## by id so the order is a property of the content rather than of how the row was
@@ -119,6 +145,18 @@ func is_generator() -> bool:
 	return role == Role.GENERATOR
 
 
+func is_turret() -> bool:
+	return role == Role.TURRET
+
+
+## Whether this Machine's Recipe is forbidden an output, because what the Machine
+## produces is not an Item. True of a generator, whose product is Power, and of a Turret,
+## whose product is damage. One predicate rather than two tests at every call site, so
+## the next role whose output is not an Item joins the rule rather than forgetting it.
+func produces_no_items() -> bool:
+	return is_generator() or is_turret()
+
+
 ## Feeds this definition into a hash, in a fixed order. `recipe_id` goes in rather
 ## than `recipe_index` so the digest describes what the file says, not how the
 ## loader happened to number things.
@@ -132,6 +170,8 @@ func feed_into(hasher: StateHasher) -> void:
 	hasher.feed_int(power_supply_kw)
 	hasher.feed_int(health)
 	hasher.feed_int(max_depth)
+	hasher.feed_int(range_tiles)
+	hasher.feed_int(damage)
 	hasher.feed_text(recipe_id)
 	hasher.feed_int(build_cost_items.size())
 	for index: int in range(build_cost_items.size()):

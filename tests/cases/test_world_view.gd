@@ -563,3 +563,54 @@ func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
 		"a Run that ended says so, and says how far it got: %s" % view.hud_text()
 	)
 	view.free()
+
+
+# ── A Turret's Ammunition, readable from a distance ───────────────────────────
+
+func test_a_turret_wears_an_ammunition_gauge_and_nothing_else_does() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(4, 0, 4)),
+	])
+	view.sync(sim)
+	assert_eq(view.turret_gauge_count(), 0, "a Miner has no magazine to read")
+
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("mg_turret_mk1"), Vector3i(10, 0, 4)),
+	])
+	view.sync(sim)
+	assert_eq(view.turret_gauge_count(), 1, "the Turret does")
+	# The 2x2 Turret anchored at (10,0,4) spans 20 m to 24 m along x and 8 m to 12 m along z,
+	# so the gauge hangs over (22 m, 10 m) — its own middle, not the Factory's.
+	var where: Vector3 = view.turret_gauge_position(0)
+	assert_true(is_equal_approx(where.x, 22.0), "expected x 22.0, got %f" % where.x)
+	assert_true(is_equal_approx(where.z, 10.0), "expected z 10.0, got %f" % where.z)
+	assert_true(where.y > WorldView.MACHINE_HEIGHT_METRES, "and above its roof, not inside it")
+	view.free()
+
+
+func test_an_empty_magazine_reads_red_from_across_the_factory() -> void:
+	# The gauge has to distinguish "this Turret has stopped" from "there is no Turret here",
+	# which is why the backing goes red rather than the fill simply vanishing.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("mg_turret_mk1"), Vector3i(10, 0, 4)
+		),
+	])
+	view.sync(sim)
+	assert_eq(sim.query_turret_ammunition(0), 0, "nothing has fed it")
+	assert_eq(view.turret_gauge_width_metres(0), 0.0, "so the fill is not drawn at all")
+	assert_eq(
+		view.turret_gauge_backing_colour(0),
+		WorldView.AMMUNITION_DRY,
+		"and the bar itself is red"
+	)
+	assert_true(
+		view.hud_text().contains("DRY"),
+		"the HUD says so too, got %s" % view.hud_text()
+	)
+	view.free()
