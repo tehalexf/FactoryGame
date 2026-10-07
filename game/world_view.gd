@@ -107,6 +107,37 @@ const PENDING_BREACH_HEIGHT_METRES: float = 0.35
 ## chokepoint still reads as a number of individuals.
 const ENEMY_SIZE_METRES: float = 0.9
 
+## How big a Siege Hulk is, in metres. Twice a tile across, because the one threat the Factory
+## cannot answer has to read as *the* thing on the horizon from the moment it appears — a boss a
+## player has to squint at is a boss they will not go out to meet.
+const SIEGE_HULK_SIZE_METRES: float = 4.0
+
+## The armoured front and the open rear of a Siege Hulk.
+##
+## **Two meshes and two materials, because the weak point has to be discoverable by looking.**
+## The whole shape of this fight is that the front shrugs off 85% of a hit and the back does not,
+## and nothing anywhere tells a player that in words — so the hull is cast iron and the vent on
+## the back glows. A player who empties half a magazine into the front and then walks round is
+## the player this geometry is for.
+const SIEGE_HULK_HULL: Color = Color(0.17, 0.18, 0.19)
+const SIEGE_HULK_VENT: Color = Color(0.95, 0.42, 0.10)
+
+## How big a Hive is, in metres, and what colour. A mound rather than a building: it is the
+## Enemy's, not the players', so it reads as grown rather than welded.
+const HIVE_SIZE_METRES: float = 4.0
+const HIVE_COLOUR: Color = Color(0.29, 0.20, 0.26)
+
+## A shell's impact marker: a flat ring of ground, as thin as a Breach's slab and as wide as
+## `siege_hulk.shell_blast_radius_metres` across.
+##
+## **The marker is the Telegraph, and it is drawn from the Simulation's own impact point** — so
+## what a player dodges is literally where the damage will be rather than an approximation of it.
+## It brightens as the shell comes down, because a static marker reads as scenery and the thing
+## a player needs is the sense of a countdown.
+const SHELL_MARKER_HEIGHT_METRES: float = 0.12
+const SHELL_MARKER_FAR: Color = Color(0.55, 0.30, 0.10, 0.55)
+const SHELL_MARKER_NEAR: Color = Color(1.00, 0.30, 0.15, 0.85)
+
 ## The Ammunition gauge floating over every Turret: how wide a full magazine reads, how
 ## thick the bar is, and how far above the Turret's roof it hangs.
 ##
@@ -190,6 +221,28 @@ var _enemy_meshes: MultiMeshInstance3D = null
 ## layout the Items use. Rebuilt from `query_enemy_*` every frame and uploaded in one
 ## assignment; nothing ever reads a position back out of it to make a decision.
 var _enemy_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## Every Siege Hulk on the Map: its hull, and the vent on its back.
+##
+## Two MultiMeshes rather than one, and still **never a node per Enemy** — a Hulk is an entry in
+## the same Enemy arrays as a Crawler (ADR 0001), so it is drawn the same way. It needs its own
+## buffers only because it needs its own *mesh*: a boss drawn with the Crawler's body at the
+## Crawler's size would be unreadable, and the vent has to be a second material for the weak
+## point to be visible at all. Two fixed nodes however many Hulks arrive.
+var _hulk_meshes: MultiMeshInstance3D = null
+var _hulk_vent_meshes: MultiMeshInstance3D = null
+var _hulk_transforms: PackedFloat32Array = PackedFloat32Array()
+var _hulk_vent_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## Every Hive on the Map, as instances of one mesh. One node however many Hives a Map carries,
+## for the reason the swarm is one node.
+var _hive_meshes: MultiMeshInstance3D = null
+var _hive_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## A marker on the ground per shell in the air. A pool rather than a MultiMesh because the
+## marker is scaled to the blast radius, which is hot-reloadable tuning, and because there are
+## only ever as many of these as there are Siege Hulks.
+var _shell_meshes: Array[MeshInstance3D] = []
 
 ## The Nest, and a slab per Breach. One node each and not a pool, because there is one
 ## Nest and the Breaches are fixed geography.
@@ -282,6 +335,9 @@ func sync(sim: Simulation) -> void:
 	_sync_machines(sim)
 	_sync_turret_gauges(sim)
 	_sync_enemies(sim)
+	_sync_siege_hulks(sim)
+	_sync_hives(sim)
+	_sync_shell_markers(sim)
 	_sync_belts(sim)
 	_sync_walls(sim)
 	_sync_items(sim)
@@ -339,6 +395,36 @@ func pending_breach_marker_count() -> int:
 func enemy_instance_count() -> int:
 	@warning_ignore("integer_division")
 	return _enemy_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many Siege Hulks and Hives are on screen, as instances rather than nodes. For the smoke
+## test that asserts the scene tree does not grow by one node for any of them.
+func siege_hulk_instance_count() -> int:
+	@warning_ignore("integer_division")
+	return _hulk_transforms.size() / FLOATS_PER_INSTANCE
+
+
+func hive_instance_count() -> int:
+	@warning_ignore("integer_division")
+	return _hive_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many shell impact markers are on the ground.
+func shell_marker_count() -> int:
+	return _shell_meshes.size()
+
+
+## Where a Siege Hulk instance is standing, and where a shell's marker is, in metres. For the
+## smoke tests — a MultiMesh keeps its buffer on the rendering server, so the copy this side is
+## the only readable record of what was drawn.
+func siege_hulk_instance_position(instance: int) -> Vector3:
+	return _instance_position(_hulk_transforms, instance)
+
+
+func shell_marker_position(index: int) -> Vector3:
+	if index < 0 or index >= _shell_meshes.size():
+		return Vector3.ZERO
+	return _shell_meshes[index].position
 
 
 ## Where an Enemy instance is standing, in metres. For the smoke test.
@@ -867,9 +953,19 @@ func _sync_enemies(sim: Simulation) -> void:
 		_enemy_meshes.multimesh = instanced
 		add_child(_enemy_meshes)
 
-	var total: int = sim.query_enemy_count()
+	# The swarm, which is every kind but the boss: a Siege Hulk is four metres of armour and is
+	# drawn by `_sync_siege_hulks` through its own mesh. Same arrays, same queries, different
+	# silhouette — which is the whole of what "a boss is one more array entry" costs the
+	# renderer.
+	var total: int = 0
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) != Simulation.ENEMY_KIND_SIEGE_HULK:
+			total += 1
 	_enemy_transforms.resize(total * FLOATS_PER_INSTANCE)
-	for index: int in range(total):
+	var instance: int = 0
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_SIEGE_HULK:
+			continue
 		var where: FixedVec2 = sim.query_enemy_position_metres(index)
 		# A Crawler faces the way the flowfield is sending it, which is a query like
 		# everything else here — the Simulation decides where it is going and this draws
@@ -879,14 +975,234 @@ func _sync_enemies(sim: Simulation) -> void:
 		var yaw: float = _yaw_for_direction(heading) if heading >= 0 else 0.0
 		_write_instance(
 			_enemy_transforms,
-			index,
+			instance,
 			Vector3(Fixed.to_float(where.x), 0.0, Fixed.to_float(where.z)),
 			yaw
 		)
+		instance += 1
 
 	_enemy_meshes.multimesh.instance_count = total
 	if total > 0:
 		_enemy_meshes.multimesh.buffer = _enemy_transforms
+
+
+## Every Siege Hulk on the Map, hull and vent, turned to face what it is pointed at.
+##
+## **The yaw comes out of `query_enemy_facing_point_metres` rather than out of a stored angle**,
+## because the Simulation holds a *point* — a point reduces the weak-point test to the sign of a
+## dot product and needs no arc-tangent in fixed point. The `atan2` is here, on the outbound side
+## of the boundary, which is exactly where a float belongs.
+##
+## The vent is drawn one offset *behind* the hull along that same facing, so the glowing end is
+## the end that is not armoured. That is the only place in this project where geometry carries a
+## rule: the weak point has to be discoverable by looking at the thing, and a HUD line naming it
+## would spend the discovery.
+func _sync_siege_hulks(sim: Simulation) -> void:
+	if _hulk_meshes == null:
+		_hulk_meshes = _instanced(_siege_hulk_hull_mesh())
+		_hulk_vent_meshes = _instanced(_siege_hulk_vent_mesh())
+
+	var total: int = 0
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_SIEGE_HULK:
+			total += 1
+	_hulk_transforms.resize(total * FLOATS_PER_INSTANCE)
+	_hulk_vent_transforms.resize(total * FLOATS_PER_INSTANCE)
+
+	var instance: int = 0
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) != Simulation.ENEMY_KIND_SIEGE_HULK:
+			continue
+		var where: FixedVec2 = sim.query_enemy_position_metres(index)
+		var at: Vector3 = Vector3(Fixed.to_float(where.x), 0.0, Fixed.to_float(where.z))
+		var facing: FixedVec2 = sim.query_enemy_facing_point_metres(index)
+		var nose_x: float = Fixed.to_float(facing.x) - at.x
+		var nose_z: float = Fixed.to_float(facing.z) - at.z
+		var length: float = sqrt(nose_x * nose_x + nose_z * nose_z)
+		# `_write_instance` maps local +z to (sin yaw, cos yaw), and every mesh in this file is
+		# modelled nose along +z, so the yaw that points the nose at a place is atan2 of the gap.
+		var yaw: float = 0.0
+		if length > 0.0:
+			yaw = atan2(nose_x / length, nose_z / length)
+		_write_instance(_hulk_transforms, instance, at, yaw)
+		var behind: float = SIEGE_HULK_SIZE_METRES * 0.42
+		_write_instance(
+			_hulk_vent_transforms,
+			instance,
+			at - Vector3(sin(yaw), 0.0, cos(yaw)) * behind,
+			yaw
+		)
+		instance += 1
+
+	_hulk_meshes.multimesh.instance_count = total
+	_hulk_vent_meshes.multimesh.instance_count = total
+	if total > 0:
+		_hulk_meshes.multimesh.buffer = _hulk_transforms
+		_hulk_vent_meshes.multimesh.buffer = _hulk_vent_transforms
+
+
+## Every Hive on the Map. One instance each through one MultiMesh, and the count falls for good
+## when one is destroyed — there is nothing in the Simulation that puts one back.
+func _sync_hives(sim: Simulation) -> void:
+	if _hive_meshes == null:
+		_hive_meshes = _instanced(_hive_mesh())
+
+	var total: int = sim.query_hive_count()
+	_hive_transforms.resize(total * FLOATS_PER_INSTANCE)
+	for index: int in range(total):
+		var centre: FixedVec2 = sim.query_tile_centre_metres(sim.query_hive_tile(index))
+		_write_instance(
+			_hive_transforms,
+			index,
+			Vector3(Fixed.to_float(centre.x), 0.0, Fixed.to_float(centre.z)),
+			0.0
+		)
+	_hive_meshes.multimesh.instance_count = total
+	if total > 0:
+		_hive_meshes.multimesh.buffer = _hive_transforms
+
+
+## A ring of ground wherever a shell is about to land, brightening as it comes down.
+##
+## Drawn from `query_shell_impact_metres` and `query_shell_blast_radius_metres`, so the marker is
+## the blast rather than a guess at it, and from `query_shell_ticks_remaining`, so the brightening
+## is the Simulation's own countdown rather than an animation this node invented.
+func _sync_shell_markers(sim: Simulation) -> void:
+	var diameter: float = Fixed.to_float(sim.query_shell_blast_radius_metres()) * 2.0
+	_resize_pool(
+		_shell_meshes,
+		sim.query_shell_count(),
+		diameter,
+		SHELL_MARKER_HEIGHT_METRES,
+		SHELL_MARKER_FAR
+	)
+	var flight: float = maxf(float(sim.query_shell_flight_ticks()), 1.0)
+	for index: int in range(sim.query_shell_count()):
+		var at: FixedVec2 = sim.query_shell_impact_metres(index)
+		var marker: MeshInstance3D = _shell_meshes[index]
+		# Re-sized every frame rather than at creation, because the blast radius is tuning and
+		# tuning is hot-reloadable: a marker that kept the size it was born with would be lying
+		# about the shell the moment somebody edited the file.
+		var box: BoxMesh = marker.mesh
+		box.size = Vector3(diameter, SHELL_MARKER_HEIGHT_METRES, diameter)
+		marker.position = Vector3(
+			Fixed.to_float(at.x), SHELL_MARKER_HEIGHT_METRES * 0.5, Fixed.to_float(at.z)
+		)
+		var closing: float = clampf(
+			1.0 - float(sim.query_shell_ticks_remaining(index)) / flight, 0.0, 1.0
+		)
+		var material: StandardMaterial3D = marker.material_override
+		material.albedo_color = SHELL_MARKER_FAR.lerp(SHELL_MARKER_NEAR, closing)
+
+
+## A `MultiMeshInstance3D` holding one mesh, added to the tree. The two lines every instanced
+## thing in this file needs, in one place.
+func _instanced(mesh: Mesh) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	instanced.mesh = mesh
+	node.multimesh = instanced
+	add_child(node)
+	return node
+
+
+## One Siege Hulk's hull: a wide armoured sled on four legs with a mortar tube over it, nose
+## along +z. Cast iron, and deliberately featureless at the front — the front is the end that
+## does not reward being shot at.
+func _siege_hulk_hull_mesh() -> Mesh:
+	var built: SurfaceTool = SurfaceTool.new()
+	built.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var size: float = SIEGE_HULK_SIZE_METRES
+	var block: BoxMesh = BoxMesh.new()
+	block.size = Vector3.ONE
+
+	# The hull: low, wide and long, which is what makes it read as a siege engine rather than a
+	# big Crawler.
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.70, size * 0.40, size * 0.95)),
+		Vector3(0.0, size * 0.42, 0.0)
+	))
+	# The glacis: a sloped plate across the front, which is the armour the player is going to
+	# waste a magazine on.
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.74, size * 0.30, size * 0.18)),
+		Vector3(0.0, size * 0.30, size * 0.50)
+	))
+	# The mortar, raised and pointed forward, so what it is aimed at is readable from the side.
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.22, size * 0.22, size * 0.80)),
+		Vector3(0.0, size * 0.74, size * 0.10)
+	))
+	# Four legs, outside the hull, so the outline has a gait.
+	for side: int in [-1, 1]:
+		for pair: int in [-1, 1]:
+			built.append_from(block, 0, Transform3D(
+				Basis.from_scale(Vector3(size * 0.14, size * 0.44, size * 0.14)),
+				Vector3(float(side) * size * 0.42, size * 0.22, float(pair) * size * 0.34)
+			))
+
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = SIEGE_HULK_HULL
+	material.metallic = 0.8
+	material.roughness = 0.55
+	built.set_material(material)
+	return built.commit()
+
+
+## The vent on a Siege Hulk's back: a glowing block, drawn behind the hull along its own facing.
+## Unshaded, for the reason a Turret's gauge is: a weak point a directional light can darken is a
+## weak point a player misreads at the worst moment.
+func _siege_hulk_vent_mesh() -> Mesh:
+	var built: SurfaceTool = SurfaceTool.new()
+	built.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var size: float = SIEGE_HULK_SIZE_METRES
+	var block: BoxMesh = BoxMesh.new()
+	block.size = Vector3.ONE
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.46, size * 0.34, size * 0.16)),
+		Vector3(0.0, size * 0.50, 0.0)
+	))
+	for side: int in [-1, 1]:
+		built.append_from(block, 0, Transform3D(
+			Basis.from_scale(Vector3(size * 0.10, size * 0.44, size * 0.12)),
+			Vector3(float(side) * size * 0.30, size * 0.56, 0.0)
+		))
+
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = SIEGE_HULK_VENT
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	built.set_material(material)
+	return built.commit()
+
+
+## One Hive: a mound of stacked chambers narrowing upward, with a mouth at the front. Grown
+## rather than welded, which is what keeps it from reading as something the players built.
+func _hive_mesh() -> Mesh:
+	var built: SurfaceTool = SurfaceTool.new()
+	built.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var size: float = HIVE_SIZE_METRES
+	var block: BoxMesh = BoxMesh.new()
+	block.size = Vector3.ONE
+
+	var tiers: int = 4
+	for tier: int in range(tiers):
+		var shrink: float = 1.0 - float(tier) * 0.22
+		built.append_from(block, 0, Transform3D(
+			Basis.from_scale(Vector3(size * 0.90 * shrink, size * 0.30, size * 0.90 * shrink)),
+			Vector3(0.0, size * (0.15 + float(tier) * 0.26), 0.0)
+		))
+	# The mouth, jutting out at the front, so a Hive has an end a player can stand in front of.
+	built.append_from(block, 0, Transform3D(
+		Basis.from_scale(Vector3(size * 0.34, size * 0.34, size * 0.40)),
+		Vector3(0.0, size * 0.22, size * 0.52)
+	))
+
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = HIVE_COLOUR
+	material.roughness = 0.9
+	built.set_material(material)
+	return built.commit()
 
 
 ## One Crawler: a low armoured carapace on six legs, nose along +z.
@@ -1157,6 +1473,8 @@ func _sync_hud(sim: Simulation) -> void:
 		]
 	)
 	lines.append_array(_heat_lines(sim))
+	lines.append_array(_siege_hulk_lines(sim))
+	lines.append_array(_sortie_lines(sim))
 	lines.append_array(_delivery_lines(sim))
 	lines.append_array(_nest_store_lines(sim))
 	lines.append_array(_gear_lines(sim))
@@ -1410,6 +1728,76 @@ func _heat_lines(sim: Simulation) -> PackedStringArray:
 		OS.get_keycode_string(PlayerController.KEY_CALL_WAVE),
 		_call_wave_text(sim.query_call_wave_early_refusal(VIEWED_PLAYER)),
 	])
+	return lines
+
+
+## Every Siege Hulk on the Map, and every shell in the air.
+##
+## In capitals, like the Telegraph, because it is the same category of thing: a warning about
+## something a player has to respond to rather than a reading they consult. What it reports is
+## how much is left of the Hulk, how far out it is standing, and **that its front is armoured** —
+## which is as far as this goes. It does not say where the weak point is: discovering that the
+## front is the wrong end is the fight, and a line of UI naming the answer would spend it. What
+## is on the Hulk itself is the glowing vent, which is where that information belongs.
+func _siege_hulk_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) != Simulation.ENEMY_KIND_SIEGE_HULK:
+			continue
+		var armour: int = sim.query_enemy_frontal_armour_percent(index)
+		lines.append(
+			"SIEGE HULK %d/%d — %s — ARMOURED FRONT %d%%"
+			% [
+				sim.query_enemy_health(index),
+				sim.query_enemy_max_health(index),
+				(
+					"BOMBARDING from %dm, beyond every Turret"
+					% Fixed.floor_to_int(sim.query_enemy_reach_metres(index))
+					if sim.query_enemy_is_bombarding(index)
+					else "closing"
+				),
+				armour,
+			]
+		)
+	for index: int in range(sim.query_shell_count()):
+		var at: FixedVec2 = sim.query_shell_impact_metres(index)
+		lines.append(
+			"INCOMING — %.1fs — (%d, %d)"
+			% [
+				float(sim.query_shell_ticks_remaining(index)) / float(Simulation.TICKS_PER_SECOND),
+				Fixed.floor_to_int(at.x),
+				Fixed.floor_to_int(at.z),
+			]
+		)
+	return lines
+
+
+## What leaving the Factory costs, on screen the whole time there is something out there worth
+## leaving for.
+##
+## **The bill before the commitment, not after it** — the arrangement every refusal in this
+## project has. A player deciding whether to sortie needs to know what a Hive is costing them per
+## minute, how far from a wrench they will be, how much of the Factory is already hurt and how
+## long until the next Wave; all four are projections the Simulation never reads back, so the
+## panel cannot change the Run it describes.
+func _sortie_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var hives: int = sim.query_hive_count()
+	if hives > 0:
+		lines.append(
+			"hives %d — hiding %d/min less heat — destroy one for good"
+			% [hives, sim.query_hive_heat_shadow_per_minute()]
+		)
+	elif sim.query_definitions().hive_health > 0 and sim.query_tick() > 0:
+		lines.append("hives cleared — the Nest hides everything it can again")
+
+	var out: int = Fixed.floor_to_int(sim.query_player_metres_from_the_nest(VIEWED_PLAYER))
+	var damaged: int = sim.query_machines_damaged()
+	if hives > 0 or damaged > 0 or out > 20:
+		lines.append(
+			"away from the nest %dm — %d machines damaged — next wave %ds"
+			% [out, damaged, sim.query_ticks_until_next_wave() / Simulation.TICKS_PER_SECOND]
+		)
 	return lines
 
 
