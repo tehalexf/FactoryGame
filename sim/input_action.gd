@@ -167,6 +167,27 @@ enum Kind {
 	## a thing, and an index into the Simulation's arrays is not something anything outside it
 	## may hold. Any tile of a Machine's footprint will do, and a Wall occupies one tile.
 	REPAIR = 14,
+	## Take goods back out of the Nest's store. args = [Item definition index, count].
+	##
+	## The symmetric half of `DELIVER_TO_NEST`: a Belt running into the Nest banks what the
+	## open Delivery's bill does not want, and this is how it comes back into a player's
+	## hands. Without it materials only ever left a player's pockets, and a Run could not
+	## fund a second Ammo Press out of its own output (issue #27).
+	##
+	## **Two arguments where the hand-over has none, and that asymmetry is deliberate.** A
+	## hand-over has one open bill and one answer to what the Nest wants, so the only thing
+	## a player chooses is when to walk over. A withdrawal has neither: the store holds
+	## several Items at once, and a player who had to take all of one to get any of it could
+	## never put the rest back — nothing deposits by hand. So the intent names what and how
+	## much, and the Simulation clamps the count to what is actually there, exactly as a
+	## hand-over is clamped to the bill.
+	##
+	## The Item travels as an index into the definition set's sorted Item ids rather than as
+	## a string, for the reason a Machine does in `BUILD_MACHINE`: an intent on the wire is
+	## integers. An index naming no Item is refused, as is a withdrawal made out of reach,
+	## from an empty store or after the Nest has fallen — a silent no-op in every case, and
+	## `Simulation.query_withdraw_refusal` is what says why, beforehand.
+	WITHDRAW_FROM_NEST = 15,
 	## Pull the trigger on whatever the player is holding. args = [].
 	##
 	## **No aim travels, and that is the strongest version of the rule rather than an
@@ -187,7 +208,7 @@ enum Kind {
 	## Pneumatic Wrench at what is in front of the player or sends a round down the line of
 	## aim is `content/gear.csv`'s `attack` column and nothing here — which is what makes a
 	## fourth weapon a row.
-	FIRE = 15,
+	FIRE = 16,
 	## Put a weapon frame in the player's hands. args = [Gear definition index].
 	##
 	## An index into the definition set's sorted Gear ids, for the reason `SELECT_MACHINE`
@@ -197,7 +218,7 @@ enum Kind {
 	##
 	## An index naming a component rather than a frame, or a piece of Gear no Delivery has
 	## unlocked, is refused as a silent no-op and the previous weapon stands.
-	EQUIP_WEAPON = 16,
+	EQUIP_WEAPON = 17,
 	## Fit a component to the weapon frame. args = [slot index, Gear definition index].
 	##
 	## **Both travel**, which is what makes the intent self-contained and what makes
@@ -209,7 +230,7 @@ enum Kind {
 	## The slot index is into the definition set's interned slots, which are exactly the
 	## `kind` values `content/gear.csv` names other than `weapon`. So a fourth slot is a row
 	## and this intent does not change.
-	FIT_COMPONENT = 17,
+	FIT_COMPONENT = 18,
 	## Hold a revive on a Downed teammate. args = [the player being revived].
 	##
 	## **Held, and sent every tick it is held**, exactly like `REPAIR`, and it is the same
@@ -223,7 +244,7 @@ enum Kind {
 	##
 	## Meaningless on a solo Run and refused there, because **solo play has no Downed state**
 	## (GLOSSARY.md): there is nobody to revive you, so a player at zero health dies.
-	REVIVE = 18,
+	REVIVE = 19,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -339,6 +360,25 @@ static func call_wave_early(acting_player: int) -> InputAction:
 ## Hands a player's goods over to the Nest, against the Delivery it is waiting on.
 static func deliver_to_nest(acting_player: int) -> InputAction:
 	return InputAction.new(Kind.DELIVER_TO_NEST, acting_player)
+
+
+## Takes `count` of an Item back out of the Nest's store, by index into the definition set's
+## sorted Item ids. Clamped by the Simulation to what the store is holding, so asking for
+## more than is there takes what is there rather than being refused.
+static func withdraw_from_nest(acting_player: int, item_index: int, count: int) -> InputAction:
+	return InputAction.new(
+		Kind.WITHDRAW_FROM_NEST, acting_player, PackedInt64Array([item_index, maxi(count, 0)])
+	)
+
+
+## The Item definition index a `WITHDRAW_FROM_NEST` action names.
+func withdraw_item_index() -> int:
+	return _arg(0)
+
+
+## How many of it a `WITHDRAW_FROM_NEST` action asks for.
+func withdraw_count() -> int:
+	return _arg(1)
 
 
 static func demolish(acting_player: int, tile: Vector3i) -> InputAction:

@@ -82,10 +82,10 @@ t01_munitions,Munitions Licence,1,iron_plate:1,,mg_drum_magazine,
 
 ## The shipped stock line, and the one this file uses instead.
 ##
-## Ammunition is in it because nothing refills a player's pockets yet — see
-## `content/tuning.toml`, where the shipped bill is deliberately still plate alone. A test
-## about firing has to be handed rounds from somewhere, and the honest place is the fixture
-## rather than the shipped game.
+## Ammunition is in it because the shipped bill is deliberately still plate alone — a Run is
+## meant to get its rounds out of an Ammo Press and the Nest's store (see
+## `content/tuning.toml`). A test about what a weapon *does* should not also have to build a
+## Factory first, so the fixture hands the player rounds and the shipped game does not.
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
 const ARMED_STOCK: String = 'starting_stock = "ammunition:400;iron_plate:80"'
 
@@ -865,6 +865,11 @@ func test_a_downed_or_dead_player_cannot_act_and_the_hud_is_told_why() -> void:
 	assert_eq(sim.query_repair_refusal(0, Vector3i(8, ground, 8)), Simulation.Refusal.PLAYER_IS_DOWN)
 	assert_eq(sim.query_delivery_refusal(0), Simulation.Refusal.PLAYER_IS_DOWN)
 	assert_eq(sim.query_call_wave_early_refusal(0), Simulation.Refusal.PLAYER_IS_DOWN)
+	assert_eq(
+		sim.query_withdraw_refusal(0, sim.query_definitions().item_index("ammunition")),
+		Simulation.Refusal.PLAYER_IS_DOWN,
+		"including the Nest counter: a Downed player is not shopping"
+	)
 
 	var before: FixedVec2 = sim.query_player_position(0)
 	sim.step([
@@ -1020,6 +1025,87 @@ func test_an_enemy_takes_a_machine_over_a_player_and_a_player_over_the_nest() ->
 		exposed.query_nest_max_health(),
 		"and the Nest it was standing at went untouched, because a player ranks above it"
 	)
+
+
+# ── The loop closed ───────────────────────────────────────────────────────────
+
+func test_a_player_can_take_the_ammunition_the_factory_made_and_fire_it() -> void:
+	# **The keystone loop, end to end, in one test.** The shipped `player.starting_stock` is
+	# plate alone on purpose, so a Run opens unable to fire a shot: what arms a player is the
+	# Factory. An Ammo Press makes rounds, a Belt banks them in the Nest past the open bill
+	# (#27), the player withdraws them at the counter, and then — and only then — the rifle
+	# works. Every link of that is somebody else's ticket; the one this file owns is the last.
+	var ground: int = WorldGrid.GROUND_LAYER
+	var layout: MapLayout = MapLayout.new()
+	layout.nest_tile = Vector3i(2, ground, -2)
+	layout.add_node(Vector3i(-6, ground, 10), "iron_ore", 1)
+	layout.add_breach(Vector3i(4, ground, -5))
+	layout.sort_breaches()
+	layout.sort_nodes()
+	# The shipped bill, not the fixture's: the whole point is that nothing was handed over.
+	var content: Definitions = _content(ONE_CRAWLER, [[ARMED_STOCK, SHIPPED_STOCK]])
+	assert_false(content.has_errors(), content.describe_errors())
+	var sim: Simulation = Simulation.new(11, 1, content, layout)
+
+	_equip(sim, "bolt_rifle")
+	assert_eq(sim.query_player_ammunition(0), 0, "a Run opens with no rounds at all")
+	assert_eq(
+		sim.query_fire_refusal(0),
+		Simulation.Refusal.OUT_OF_AMMUNITION,
+		"so the rifle is a stick until the Factory makes something"
+	)
+
+	var rounds: int = content.item_index("ammunition")
+	assert_true(rounds != -1, "Ammunition is an Item the Recipes mention")
+	assert_eq(
+		sim.query_withdraw_refusal(0, rounds),
+		Simulation.Refusal.NOTHING_TO_WITHDRAW,
+		"and there is nothing on the counter either, because nothing has been made"
+	)
+
+	# A Miner on the ore, a Smelter behind it, an Ammo Press behind that, and a Belt out of
+	# the Press into the Nest. Thirty-four plates of the eighty a Run opens with.
+	_build(sim, "miner_mk1", Vector3i(-6, ground, 10))
+	_build(sim, "smelter_mk1", Vector3i(1, ground, 10))
+	_build(sim, "ammo_press_mk1", Vector3i(1, ground, 5))
+	_belt(sim, Vector3i(-4, ground, 10), Vector3i(0, ground, 10))
+	_belt(sim, Vector3i(1, ground, 9), Vector3i(1, ground, 8))
+	_belt(sim, Vector3i(2, ground, 4), Vector3i(2, ground, 2))
+	assert_eq(sim.query_machine_count(), 3, "three Machines and three Belts")
+	assert_eq(sim.query_belt_count(), 3)
+
+	var banked: int = _step_until(
+		sim, 6000, func() -> bool: return sim.query_nest_store("ammunition") > 0
+	)
+	assert_true(banked != -1, "the Factory made rounds and the Nest banked them")
+
+	assert_eq(sim.query_withdraw_refusal(0, rounds), Simulation.Refusal.NONE, "at the counter")
+	sim.step([InputAction.withdraw_from_nest(0, rounds, 1)])
+	assert_eq(sim.query_player_ammunition(0), 1, "one round, out of the Factory's own output")
+
+	# And now the rifle works. One round, one Crawler — which is the sentence this whole
+	# pillar is for: **you fight with what your Factory made.** The lever brings the Wave on,
+	# because this Run has been building rather than waiting and the interval is two and a
+	# half minutes.
+	sim.step([InputAction.call_wave_early(0)])
+	_wait_for_a_crawler(sim)
+	_aim_at_the_diagonal(sim)
+	assert_eq(sim.query_fire_refusal(0), Simulation.Refusal.NONE, "loaded at last")
+	sim.step([InputAction.fire(0)])
+	assert_eq(sim.query_enemy_count(), 0, "and the round the Factory made killed something")
+	assert_eq(sim.query_player_ammunition(0), 0, "and it is gone, so the Factory makes another")
+
+
+## Lays a Belt along a run and steps the tick that lays it.
+func _belt(sim: Simulation, from_tile: Vector3i, to_tile: Vector3i) -> void:
+	sim.step([InputAction.build_belt(0, from_tile, to_tile)])
+
+
+## Builds a Machine by id at a tile and steps the tick that places it.
+func _build(sim: Simulation, machine_id: String, tile: Vector3i) -> void:
+	sim.step([
+		InputAction.build_machine(0, sim.query_definitions().machine_index(machine_id), tile)
+	])
 
 
 # ── Save and load ─────────────────────────────────────────────────────────────

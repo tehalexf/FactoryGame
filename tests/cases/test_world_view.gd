@@ -71,6 +71,40 @@ func test_the_view_shows_what_the_factory_has_extracted() -> void:
 	view.free()
 
 
+func test_the_hud_reads_the_nest_store_and_why_a_withdrawal_is_refused() -> void:
+	# The store is only useful if a player can see what is in it and why they cannot have it.
+	# A Run opens standing away from the Nest on the starter Map, with a Miner on the Build
+	# Gun it can already afford, so both halves of the reading are the opening state.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	assert_true(
+		view.hud_text().contains("nest store: empty"),
+		"an empty store must say so rather than going missing, got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("nothing on the Build Gun needs paying for"),
+		"a Machine the player can afford needs no withdrawal, got %s" % view.hud_text()
+	)
+
+	# Spend the opening bill on Machines until the Build Gun's own Machine is out of reach,
+	# which is when a player needs to be told what to do about it.
+	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	for which: int in range(10):
+		sim.step([InputAction.build_machine(0, miner, Vector3i(20 + which * 3, WorldGrid.GROUND_LAYER, 20))])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("take iron_plate"),
+		"the HUD must name what is short, got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("walk to the Nest"),
+		"and why it cannot be had — a Run opens out of reach of its own Nest, got %s" % view.hud_text()
+	)
+	view.free()
+
+
 func test_a_run_opens_with_an_empty_factory_for_the_player_to_build() -> void:
 	# The opening Miner, Belt and Smelter are gone. They existed so #4 and #5 had
 	# something to look at while nothing could build; a player now builds it themselves.

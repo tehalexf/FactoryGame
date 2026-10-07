@@ -65,15 +65,12 @@ eye_height_metres = 1.7
 # unlocked, and a Run's materials come out of the Factory.
 #
 # **Deliberately still plate alone, now that firing spends Ammunition out of these same
-# pockets.** A Run therefore opens able to build its line and swing a wrench, and not able
-# to fire a shot — which is uncomfortable and is the honest state of the game: nothing
-# refills a player's pockets yet. Build materials go one way, out into Machines, and the
-# Nest keeps no store to withdraw from. The two ways to get rounds into a hand today are
-# demolishing an Ammo Press, which hands back everything it was holding, and the
-# call-early bounty, which pays in this bill's Items. The ticket that gives the Nest a
-# store and a withdraw intent beside `DELIVER_TO_NEST` is what makes the Bolt Rifle a
-# thing a Run can actually use; putting rounds in this line instead would have conjured
-# them, and the whole point of the keystone loop is that the Factory is what arms you.
+# pockets.** A Run opens able to build its line and swing a wrench, and not able to fire a
+# shot — which is the point rather than an oversight: the whole of the keystone loop is that
+# the Factory is what arms you, and putting rounds in this line would have conjured them.
+# What fills a magazine is an Ammo Press, a Belt into the Nest and a withdrawal at the
+# counter. Whether a Run can actually keep one full that way is a balance question nobody
+# has played yet.
 starting_stock = "iron_plate:80"
 
 # A player's hit points, and what losing them costs.
@@ -276,6 +273,33 @@ health = 6000
 # interaction a player makes while a Wave is chewing on the Nest, so the reach is a couple
 # of tiles rather than a pixel-perfect spot to stand on.
 delivery_reach_metres = 5
+
+# How many of **each** Item the Nest's store will hold. A Belt running into the Nest
+# pays the open Delivery's bill first and banks the rest here, and a player standing
+# within the reach above takes it back out — which is the only way anything the Factory
+# makes gets back into a player's pockets, and therefore the only way a Run funds a
+# second Ammo Press out of its own output (issue #27).
+#
+# **Capped, and the cap is the interesting decision.** An unbounded store is simpler, and
+# it is wrong for three reasons. It is an infinite sink, so a Belt pointed at the Nest can
+# always hand off and never backs up — and back-pressure is the one way this game shows a
+# player that a line is overproducing, at exactly the place they are looking. It removes
+# any reason to stop hoarding and build the thing the materials are for. And it is a
+# number in the state hash and the save file with no bound on it at all.
+#
+# 200 against the shipped economy: the whole competent opening line costs 78 plate and the
+# second Ammo Press that #10 measured as the thing you need past Wave 16 costs 14, so a
+# full store of plate pays for either several times over. Deep enough that the cap is
+# never what stops a player progressing, shallow enough that a Factory left running at a
+# full Nest tells them so by stalling its own Belt.
+#
+# Per Item rather than one pot shared between them, so a Belt of coal cannot crowd plate
+# out of the store — that would be a cross-Item interaction nobody tuned, and one whose
+# outcome depended on which Belt happened to arrive first. One number applied to each Item
+# independently also means no Item is named here: the set of Items is whatever the Recipes
+# mention, and a key called `store_capacity_iron_plate` would be a second Item table, which
+# is the same argument `player.starting_stock` makes for being one quoted bill.
+store_capacity_per_item = 200
 
 [wave]
 

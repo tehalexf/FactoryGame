@@ -1158,6 +1158,7 @@ func _sync_hud(sim: Simulation) -> void:
 	)
 	lines.append_array(_heat_lines(sim))
 	lines.append_array(_delivery_lines(sim))
+	lines.append_array(_nest_store_lines(sim))
 	lines.append_array(_gear_lines(sim))
 	lines.append_array(_build_gun_lines(sim))
 
@@ -1458,6 +1459,84 @@ func _delivery_lines(sim: Simulation) -> PackedStringArray:
 		]
 	)
 	return lines
+
+
+## The Nest's store: what the Factory has banked past the open bill, and whether the player
+## can take it. Its own lines rather than part of the Delivery block above, because the store
+## is still there once the chain is finished and that block returns early when it is.
+##
+## The refusal reported is the one for **what the Build Gun is short of**, which is what the
+## key actually withdraws (`PlayerController.KEY_WITHDRAW`) — so the reading and the key agree
+## about the same act, rather than the HUD answering a question the key does not ask.
+func _nest_store_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var banked: PackedStringArray = PackedStringArray()
+	for item_id: String in sim.query_nest_store_items():
+		banked.append("%s %d" % [item_id, sim.query_nest_store(item_id)])
+	lines.append(
+		"nest store: %s — %d each max"
+		% [
+			"empty" if banked.is_empty() else ", ".join(banked),
+			sim.query_nest_store_capacity_per_item(),
+		]
+	)
+
+	var wanted: String = _what_the_build_gun_is_short_of(sim)
+	if wanted == "":
+		lines.append(
+			"take (%s) — nothing on the Build Gun needs paying for"
+			% OS.get_keycode_string(PlayerController.KEY_WITHDRAW)
+		)
+		return lines
+	lines.append(
+		"take %s (%s) — %s"
+		% [
+			wanted,
+			OS.get_keycode_string(PlayerController.KEY_WITHDRAW),
+			_withdraw_text(
+				sim.query_withdraw_refusal(
+					VIEWED_PLAYER, sim.query_definitions().item_index(wanted)
+				)
+			),
+		]
+	)
+	return lines
+
+
+## The first Item the Machine on the Build Gun costs more of than the player is carrying, or
+## "" when it is free, affordable, or there is nothing on the gun. The same question
+## `PlayerController._withdrawals_for_the_build_gun` asks, asked for the first Item only
+## because a line of HUD text reports one reason at a time.
+func _what_the_build_gun_is_short_of(sim: Simulation) -> String:
+	var definitions: Definitions = sim.query_definitions()
+	var machine: MachineDefinition = definitions.machine(
+		sim.query_player_selected_machine(VIEWED_PLAYER)
+	)
+	if machine == null:
+		return ""
+	for slot: int in range(machine.build_cost_items.size()):
+		var item_id: String = machine.build_cost_items[slot]
+		if sim.query_player_item(VIEWED_PLAYER, item_id) < machine.build_cost_counts[slot]:
+			return item_id
+	return ""
+
+
+## What to tell a player about taking materials back out of the Nest. Wording here, rule in
+## the Simulation — the same split `BuildGun.refusal_text` makes.
+func _withdraw_text(refusal: int) -> String:
+	match refusal:
+		Simulation.Refusal.NONE:
+			return "ready"
+		Simulation.Refusal.TOO_FAR_FROM_THE_NEST:
+			return "walk to the Nest"
+		Simulation.Refusal.NOTHING_TO_WITHDRAW:
+			return "the Nest has none banked"
+		Simulation.Refusal.NO_SUCH_ITEM:
+			return "no such Item"
+		Simulation.Refusal.RUN_IS_OVER:
+			return "the Run is over"
+		_:
+			return "unavailable"
 
 
 ## What to tell a player about handing a Delivery over. Wording here, rule in the

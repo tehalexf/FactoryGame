@@ -107,6 +107,7 @@ baseline_supply_kw = 300
 [nest]
 health = 6000
 delivery_reach_metres = 5
+store_capacity_per_item = 2
 [wall]
 health = 240
 [wrench]
@@ -423,9 +424,16 @@ func test_a_belt_is_refused_by_a_nest_whose_next_tier_is_out_of_depth() -> void:
 	var held: int = sim.query_delivery_goods_delivered("iron_ore")
 	for tick: int in range(600):
 		sim.step([])
-	assert_eq(sim.query_delivery_goods_delivered("iron_ore"), held, "no more ore crossed")
+	assert_eq(sim.query_delivery_goods_delivered("iron_ore"), held, "no more ore crossed the bill")
 	assert_eq(sim.query_delivery_goods_delivered("iron_frame"), 0, "and no frame did either")
-	assert_true(sim.query_belt_is_stalled(0), "the Belt stalled against a closed counter")
+	# The gate is on the Delivery and not on the Nest's doors: ore the gated tier will not
+	# take is banked instead, up to the cap, and the Belt stalls once there is no room either.
+	assert_eq(
+		sim.query_nest_store("iron_ore"),
+		sim.query_nest_store_capacity_per_item(),
+		"what the gated tier refused was banked, to the cap"
+	)
+	assert_true(sim.query_belt_is_stalled(0), "and then the Belt stalled against a full Nest")
 
 
 func test_a_belt_running_into_the_nest_pays_the_open_delivery() -> void:
@@ -467,9 +475,10 @@ func _belt_fed_miner(sim: Simulation) -> void:
 
 
 func test_a_belt_carrying_what_the_nest_does_not_want_backs_up_rather_than_vanishing() -> void:
-	# Nothing in this game destroys Items. A Nest that has stopped wanting ore refuses the
-	# hand-off, so the queue packs up behind it where a player can see it — the same way a
-	# full input buffer reads.
+	# Nothing in this game destroys Items. A Nest that has stopped wanting ore banks what it
+	# can and then refuses the hand-off, so the queue packs up behind it where a player can
+	# see it — the same way a full input buffer reads. `test_nest_store.gd` is where the store
+	# itself is the subject; what matters here is that the Nest is still not a hole.
 	var sim: Simulation = _sim(_belt_layout())
 	_belt_fed_miner(sim)
 
@@ -477,6 +486,11 @@ func test_a_belt_carrying_what_the_nest_does_not_want_backs_up_rather_than_vanis
 		sim.step([])
 
 	assert_true(sim.query_delivery_is_complete(0), "the first tier was paid on the way")
+	assert_eq(
+		sim.query_nest_store("iron_ore"),
+		sim.query_nest_store_capacity_per_item(),
+		"the store took what it had room for"
+	)
 	assert_true(sim.query_belt_is_full(0), "and the Belt behind it has packed solid")
 	assert_true(sim.query_belt_is_stalled(0), "stalled rather than quietly swallowing ore")
 
