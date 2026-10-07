@@ -48,6 +48,7 @@ var _controller: PlayerController = null
 var _tick_pump: TickPump = null
 var _definition_watcher: DefinitionWatcher = null
 var _world_view: WorldView = null
+var _audio: AudioDirector = null
 
 ## A definition set the watcher produced that has not been handed to the Simulation
 ## yet, because definitions change on a tick like all other state and a frame does
@@ -78,6 +79,16 @@ func _ready() -> void:
 	_world_view = WorldView.new()
 	_world_view.name = "WorldView"
 	add_child(_world_view)
+
+	# A sibling of the view rather than a child of it, because the two read the same
+	# queries and neither is upstream of the other — and in world space, which is
+	# where `WorldView` puts the camera that acts as the listener. Like the view, it
+	# is created here rather than in `_init` because it is a node and wants a tree,
+	# and like the view, nothing about the Simulation depends on it existing: run
+	# headless and the same ticks happen, unheard.
+	_audio = AudioDirector.new()
+	_audio.name = "AudioDirector"
+	add_child(_audio)
 
 	_capture_the_mouse()
 
@@ -126,6 +137,10 @@ func _process(delta: float) -> void:
 	advance_frame(delta)
 	if _world_view != null:
 		_world_view.sync(_simulation)
+	# After the view, so a cue about a Machine that has just appeared is played in
+	# the same frame the Machine is drawn in rather than the frame before it.
+	if _audio != null:
+		_audio.sync(_simulation)
 
 
 ## Runs however many whole ticks `delta_seconds` has earned.
@@ -228,6 +243,12 @@ func set_definition_watcher(watcher: DefinitionWatcher) -> void:
 ## The view, once the tree has built it. Null when running headless without a tree.
 func world_view() -> WorldView:
 	return _world_view
+
+
+## The sound, once the tree has built it. Null without a tree, for the reason the
+## view is.
+func audio_director() -> AudioDirector:
+	return _audio
 
 
 ## Read-only access for the rendering layer. Callers may only use `query_*` and
