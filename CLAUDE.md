@@ -235,8 +235,8 @@ what lets a client whose own files hash differently refuse instead of desyncing.
   renderer and the Blender mesh generator all read those same two columns, and a
   second copy would drift on the first balance change.
 - `sim/map_layout.gd` is the Map's **starting** geography: where the Nodes are, what
-  Resource each yields, what Depth tier it sits at, where the Nest stands and where the
-  Breaches a Run *opens* with are. Where the Breaches are **now** is Simulation state,
+  Resource each yields, what Depth tier it sits at, where the Nest stands, where the
+  Breaches a Run *opens* with are, and where the Hives stand. Where the Breaches are **now** is Simulation state,
   because deep mining opens more — see the Depth section. Deliberately *not* in `content/` —
   those files are definitions and hot-reloadable, and moving a Node under a
   Factory that is standing on it is a different Map, not a balance change.
@@ -425,10 +425,13 @@ array entries reach thousands. Milestone 1 ships twenty Crawlers **on the final
 architecture** so that the Chaff tier switching on later is more array entries rather
 than a rewrite. #11 added the Breaker and the claim held: a second kind is a constant in
 `sim/enemy_kind.gd`, four tuning keys, a row in `content/waves.csv` and two `match` arms —
-no second array, no second loop, and no node.
+no second array, no second loop, and no node. **#16 added the Siege Hulk — a boss — and it held
+again**, at the price the note promised: one more `if` in `_enemies`, one function, and the one
+piece of state the other kinds do not have (which way it is facing) as **two more parallel
+arrays rather than a class**. See the Siege Hulk section.
 
 - An Enemy is an index into parallel `PackedInt64Array`s — serial, kind, position in
-  fixed-point metres, health, spawn tick, bite cooldown. There is no Enemy class, no
+  fixed-point metres, health, spawn tick, bite cooldown, and the point it is facing. There is no Enemy class, no
   Enemy instance and no node. `WorldView` draws the whole swarm through one
   `MultiMeshInstance3D`, and `test_world_view` asserts that the scene tree does not
   grow by a single node when a Wave arrives.
@@ -1426,6 +1429,218 @@ and the Ammo Press's rate together, because every one of them is priced against 
 The two numbers most likely to be wrong are `gear.view_kick_degrees_per_shot` — the whole
 feel of automatic fire rides on it — and `gear.enemy_hit_radius_metres`, which decides
 whether a swarm at twenty metres is a target or a lottery.
+
+## The Siege Hulk, the Hives, and the sortie
+
+The ticket that makes the first-person pillar justify itself. Everything else in this game is
+solved by building; **a Siege Hulk cannot be**, and that is the whole reason it exists. If
+killing one is not fun, that is the most important thing this project can learn, so the
+mechanism is built to be *tuned by playing*: every number that decides how the fight feels is a
+key in `[siege_hulk]` or `[hive]`, and editing either applies to the Run you are standing in.
+
+### A boss is one more array entry
+
+The claim ADR 0001's whole Enemy scale target rests on, tested again and held again. A Siege
+Hulk is an entry in the same parallel arrays as a Crawler: a constant in `sim/enemy_kind.gd`, a
+name in `KIND_NAMES`, a row in `content/waves.csv`, four `match` arms beside the Crawler's and
+the Breaker's, and **one `if` in `_enemies`** that sends it to `_siege_hulk` instead of the
+bite-and-walk path. No class, no second index space, no combat subsystem.
+
+What it needed that no other kind does is **which way it is facing**, and that is *two more
+parallel arrays* (`_enemy_face_x` / `_enemy_face_z`) rather than a class — the shape this file
+has promised since #9. Held for every Enemy, including the ones it means nothing to, because a
+parallel array is parallel.
+
+- **A facing is a point, not an angle**, and that is the decision worth recording. An angle
+  needs an arc-tangent, which fixed point does not have and which would mean a second table
+  beside `Fixed.sin_turns`. A point reduces the weak-point test to **the sign of one dot
+  product**: the hit came from behind exactly when the gap to the shooter points away from the
+  gap to what the Hulk is facing. No normalisation, no rounding rule, no trigonometry, nothing
+  for two clients to disagree about. `WorldView` turns it into a yaw with an `atan2`, which is
+  `game/`'s business and a float it is allowed.
+- **A Hive is deliberately *not* an Enemy entry.** It is a structure with hit points, so it is
+  its own parallel arrays — the Enemy's half of the arrangement the Nest and the Walls already
+  have on the players' side. Making it an Enemy was the other candidate and it is wrong twice
+  over: it would put something that never moves through a movement loop and a flowfield on
+  every tick of every Run, and it would make `query_enemy_count` — the number the HUD draws as
+  "the swarm" and every Enemy test asserts on — permanently two higher on the shipped Map than
+  the Wave that is actually arriving. A Hulk *is* an Enemy: it walks, it hunts and it dies. A
+  Hive is furniture with hit points.
+
+### Does it move? It arrives, holds, and backs off from Turrets
+
+`_siege_hulk` is four clauses and the order is the design:
+
+1. **A player at its feet is answered first, and a stomp spends the shell's cooldown.** One
+   counter for both actions, so **a player standing there is a player whose Factory is not being
+   shelled.** Closing the distance pays off from the first second rather than only at the end,
+   which is the same trade standing in a doorway makes against a Crawler, at the same price.
+2. **A Turret that could reach it makes it back off.** `_withdraw_enemy` is the only thing in
+   the file that walks an Enemy *against* a field. This is "it cannot be defeated by Turrets
+   alone" as behaviour: push a Turret line out and it withdraws and goes on shelling.
+3. **Nothing in shelling reach means walk**, by the Crawlers' shared field — one more consumer
+   of a field that is already built rather than a third sweep.
+4. **Otherwise hold and bombard.**
+
+So it is neither a chase nor a statue. A chase across a Map at 1 m/s would be tedium; a thing
+that spawned already in position would have no legible arrival. It walks in, halts, and shells —
+and `test_siege_hulk.gd` asserts it is still standing in the same place twenty seconds later.
+
+**Where it halts is `siege_hulk.range_metres` and there is no second number.** It stops the
+moment anything it can shell is inside its own reach, so the stand-off *is* the reach. And
+`Definitions._check_siege_hulk_outranges_every_turret` refuses a content set in which any
+Turret's `range_tiles` covers that distance — so **"it bombards from beyond Turret range" is a
+property the content cannot be edited out of.** Adding a Cannon Turret that outranged the boss
+is now an error naming the row rather than a quietly solvable boss. That check is why tuning is
+read *last*, after `machines.csv`: it is exactly the cross-table question that ordering exists
+for.
+
+### A weak point, not a sponge
+
+The decision this ticket turned on. **A damage sponge is a timer**: more hit points only ever
+ask a player to hold the trigger for longer, and the answer to the boss would have been "bring
+more Ammunition" rather than "move". So the front shrugs off `siege_hulk.frontal_armour_percent`
+of a hit and the back does not, and a Hulk faces what it is shelling — which means flanking it
+means going round **while it is busy with the Factory**. That is the decision this whole ticket
+exists to put in front of a player, and it is made of movement rather than of inventory.
+
+- `_armoured` is the one place it is applied, and **a Turret's round goes through it too**, from
+  where the Turret stands. One rule, so a Hulk cannot be shrugging off a rifle and soaking an MG
+  round in the same tick.
+- A hit from exactly abreast counts as **behind**, generously and on purpose: the armour is the
+  thing a player has to discover, and a boundary that punished a flank that was not quite far
+  enough round would teach the wrong lesson.
+- **Nothing tells the player where the weak point is.** The HUD says `ARMOURED FRONT 85%` and
+  stops there; what carries the answer is the geometry — `WorldView` draws the hull in cast iron
+  and an **unshaded glowing vent on the back**, offset along the Hulk's own facing. A player who
+  empties half a magazine into the glacis and then walks round is the player that vent is for.
+  This is the only place in the project where geometry carries a rule, and a HUD line naming the
+  answer would spend the discovery.
+- Per-kind hit volumes arrived with it: `_enemy_hit_radius` / `_enemy_hit_height`, because
+  `gear.enemy_hit_*` is tuned for a low scuttling Crawler and a player who could miss four
+  metres of armour by a metre would read the gun as broken.
+
+### The bombardment, and why a shell is in the air
+
+- **Targeting is deterministic and reads no unordered collection.** Machines in index order on a
+  strict improvement in squared distance, then the Nest as one more candidate taken only on a
+  strict improvement — so a Machine and the Nest at the same distance hand the shell to the
+  Machine. The Factory is what a bombardment is for; the Nest is what is left when there is no
+  Factory.
+- **A shell takes `siege_hulk.shell_flight_seconds` to arrive, and that is the Telegraph rule
+  rather than a flourish.** Nothing in this project may arrive unannounced (DESIGN.md), so the
+  impact point is on the ground with a countdown for three seconds before anything happens
+  there — long enough to walk out of six metres. `_shells()` runs *before* `_enemies()` so a
+  shell fired this tick cannot land this tick, which is the same rule a Machine built this tick
+  obeys.
+- **A shell kills a player who stands in the marker**, at the same `shell_damage` it does a
+  Smelter. That is deliberate: a telegraphed, avoidable, lethal thing is a mechanic, and death
+  costs tempo and nothing else (GLOSSARY.md), so the punishment is affordable and the lesson is
+  cheap.
+- The blast is walked **from the highest index down** over Machines and Walls, because
+  `_damage_machine` may destroy one and `_remove_machine` closes the gap. The damage is
+  independent per target, so the direction cannot change the outcome — descending is what keeps
+  the indices valid while it happens.
+- `WorldView` draws the marker as a ring of ground scaled to `query_shell_blast_radius_metres`
+  and brightening with `query_shell_ticks_remaining`, so **what a player dodges is literally
+  where the damage will be** rather than an approximation of it.
+
+### A Hive raises Heat; it does not open a second Breach
+
+The other design question, and the answer is "raise Heat, not spawn", for a reason that is about
+a promise rather than about cost. **GLOSSARY.md says Enemies enter at Breaches, which are "known
+in advance and fortifiable".** A Hive that emitted its own Enemies would be a second entry point
+nobody can fortify, and it would quietly take that promise back. So a Hive's pressure is routed
+through the Breaches that already exist, by making the Factory louder than it is.
+
+And it **subtracts from `heat.decay_per_minute` rather than adding to Heat**, which is the half
+worth arguing about:
+
+- Adding would hunt an idle Run for standing still, and DESIGN.md is explicit that Heat is
+  throughput *in excess of what the Nest can hide* — a Factory producing nothing has nothing to
+  hide and is owed its silence. `test_siege_hulk.gd` asserts exactly that: two minutes on a Map
+  with a Hive and a Map without, both at Heat 0.
+- Subtracting says the Nest hides **less** while these things are watching. So a Hive taxes
+  *growth*: every craft counts for more while one stands, which is the same sentence pointed the
+  right way.
+- `_heat_decay_per_minute()` is the whole of the mechanic — one subtraction, derived every tick
+  from the live set, nothing stored and nothing to adjust when a Hive dies. A Hive takes **no
+  tick of its own**.
+- And it lands on a gauge a player already reads. `query_heat_decay_per_minute` is on the HUD;
+  killing a Hive moves it up, for ever, visibly. `query_hive_heat_shadow_per_minute` is the same
+  fact stated as a bill, for the sortie panel.
+
+**A destroyed Hive never comes back**, and that is structural rather than promised: nothing in
+`sim/simulation.gd` appends to the Hive arrays after construction. Where they stand is geography
+(`MapLayout`, sorted into canonical tile order like the Breaches); what is left of them is
+Simulation state, because that is the half a Run changes.
+
+**A Turret cannot touch a Hive, and that closes the obvious cheese by construction rather than
+by a rule.** A Turret acquires *Enemies*; a Hive is a structure. So a player who runs a
+fifty-tile Belt out to a Hive has built a Turret with nothing to shoot, and "requires leaving
+the Factory" survives the most determined attempt to build its way out of it.
+
+### What leaving costs, and making it visible first
+
+The honest answer is that the cost is **diffuse**, and it is diffuse on purpose: this project
+refuses to charge progress or resources for anything (GLOSSARY.md: death costs tempo, never
+progress). What a sortie actually costs is the wrench you are not holding, the Machine you are
+not rebuilding, the Wave clock that keeps running, and the shells that keep landing while you
+walk. The work this ticket did was to make all of it **readable before the commitment** rather
+than discovered on the way back — the arrangement every refusal in this file already has:
+
+- `query_hive_heat_shadow_per_minute` — what the Hives are costing, per minute, right now.
+- `query_player_metres_from_the_nest` — how far from a wrench you are, growing as you walk.
+- `query_machines_damaged` — how much of the Factory is already hurt.
+- plus `query_ticks_until_next_wave`, which was already there.
+
+All four are projections the Simulation never reads back, so the panel cannot change the Run it
+describes, and `test_the_bill_for_leaving_is_readable_before_the_player_commits` asserts the hash
+does not move when it is asked. `WorldView._sortie_lines` puts them on screen the whole time
+there is something out there worth leaving for.
+
+**This is the weakest part of the ticket and it is worth saying so.** A visible bill is not the
+same as a felt cost, and nobody has played it. The honest test is whether a player hesitates
+before walking out; if they do not, the lever to reach for is `hive.heat_shadow_per_minute` and
+`siege_hulk.shell_interval_seconds`, not a death penalty.
+
+### Where the balance stands, and what nobody has played
+
+Shipped numbers, not a measured Run.
+
+- 1800 hit points against the Drum Autocannon's 96 damage a second is about **nineteen seconds
+  of flanked, sustained fire** — and over two minutes through the frontal armour, which is the
+  number that says "stop shooting it in the face" without a line of UI saying so. Roughly 270
+  rounds out of the Factory either way, which is the pillar's whole point.
+- The Bolt Rifle's 60 m reach is *exactly* the stand-off, deliberately: a player who will not
+  leave the Nest **can** plink at it through its armour, for about five minutes of perfect fire.
+  The sortie is strongly incentivised rather than enforced.
+- 45 a stomp against a player's 150 is three stomps and a bit, and a 220-point shell kills
+  outright.
+- **The two Hives on the shipped Map changed the measured baseline, and the numbers in the
+  Turrets section above are from before them.** `hive.heat_shadow_per_minute` was tried at 100
+  first and that was wrong: it left the Nest hiding 40 a minute of 240, pushed #10's documented
+  competent Factory past `waves.csv`'s 500-Heat Breaker threshold on its *first* Wave, and cost
+  it five of its six Machines. At 30 the same Factory's first Wave lands at tick 7919 rather than
+  8217 and is sent eight Crawlers rather than seven — pressure added to the measurement rather
+  than thrown over it. It is still the number on this ticket most likely to be wrong.
+- **Nobody has played any of this.** The joint pass #10, #11, #12 and #15 are all waiting for
+  now also owes `[siege_hulk]`, `[hive]` and the Hulk's 1200-Heat row in `content/waves.csv` a
+  look, because every one of them is priced against the others. The two most likely to be wrong
+  after the Hive shadow are `siege_hulk.shell_interval_seconds` — the whole rhythm of the fight
+  rides on it — and `siege_hulk.frontal_armour_percent`, which decides whether the weak point
+  reads as a discovery or as a broken gun.
+
+### Does the fight have a shape?
+
+On paper, yes, and the shape is: *the shelling starts, you cannot answer it, you walk out, you
+learn the front is wrong, you go round, and while you are round the back the Factory is quiet
+because you are standing on its toes.* Three decisions in it that are not "hold the trigger" —
+when to leave, which side to be on, and whether to melee it to buy the Nest time. That is more
+shape than a sponge would have had.
+
+What no test can tell us is whether the walk out there is dead time and whether the flank reads
+as clever or as fiddly. Those are the two things to look for the first time somebody plays it.
 
 ## The Nest's store, and the faucet it is
 

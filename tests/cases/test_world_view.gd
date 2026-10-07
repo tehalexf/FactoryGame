@@ -577,6 +577,131 @@ func test_an_enemy_is_never_a_node() -> void:
 	view.free()
 
 
+## A Run under siege: the shipped Map and the shipped content, with the Wave table replaced by a
+## single Siege Hulk so one arrives on the first Wave of a cold Factory rather than at 1200 Heat.
+## The Map is the shipped one, which is where the Hives are.
+func _besieged_sim() -> Simulation:
+	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
+	var definitions: Definitions = Definitions.parse(
+		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
+		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
+		_soon(tuning).replace(SHIPPED_STOCK, STOCKED),
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "siege_hulks,siege_hulk,0,1,0,1\n",
+		DELIVERIES,
+		GEAR,
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml",
+		"waves.csv",
+		"deliveries.csv",
+		"gear.csv"
+	)
+	var sim: Simulation = Simulation.new(1, 1, definitions)
+	sim.step([InputAction.call_wave_early(0)])
+	return sim
+
+
+func test_a_siege_hulk_and_a_hive_are_never_nodes_either() -> void:
+	# The boss is one more entry in the Enemy arrays (ADR 0001), so it is one more instance in a
+	# buffer here — not a node, and not an exception to the rule the swarm obeys. The Hives are
+	# the same claim about something that is on the Map from tick 0.
+	var sim: Simulation = _besieged_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var quiet: int = view.get_child_count()
+	assert_eq(view.hive_instance_count(), 2, "the shipped Map's two Hives, as instances")
+
+	_run(sim, 20 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	assert_eq(sim.query_enemy_count(), 1, "a Siege Hulk is on the Map")
+	assert_eq(view.siege_hulk_instance_count(), 1, "drawn as one instance")
+	assert_eq(view.enemy_instance_count(), 0, "and not through the swarm's mesh, which is empty")
+	# A shell in the air is a pooled marker on the ground, which *is* a node — bounded by the
+	# number of Siege Hulks on the Map, exactly as a Breach's slab is bounded by the geography.
+	# What must never grow by a node is the Enemy, and that is what this measures.
+	assert_eq(
+		view.get_child_count(),
+		quiet + view.shell_marker_count(),
+		"and not one node was added for it beyond the markers for its shells"
+	)
+	view.free()
+
+
+func test_the_view_draws_a_siege_hulk_where_the_simulation_says_it_is() -> void:
+	var sim: Simulation = _besieged_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 20 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	if not assert_eq(sim.query_enemy_count(), 1, "a Siege Hulk is on the Map"):
+		view.free()
+		return
+	var where: FixedVec2 = sim.query_enemy_position_metres(0)
+	var drawn: Vector3 = view.siege_hulk_instance_position(0)
+	assert_true(
+		is_equal_approx(drawn.x, Fixed.to_float(where.x)),
+		"expected x %f, got %f" % [Fixed.to_float(where.x), drawn.x]
+	)
+	assert_true(
+		is_equal_approx(drawn.z, Fixed.to_float(where.z)),
+		"expected z %f, got %f" % [Fixed.to_float(where.z), drawn.z]
+	)
+	view.free()
+
+
+func test_the_view_marks_where_a_shell_will_land_before_it_lands() -> void:
+	# The marker is the Telegraph: it is drawn from the Simulation's own impact point, so what a
+	# player runs out of is literally where the damage will be.
+	var sim: Simulation = _besieged_sim()
+	var view: WorldView = WorldView.new()
+	var ticks: int = 0
+	while sim.query_shell_count() == 0 and ticks < 120 * Simulation.TICKS_PER_SECOND:
+		sim.step([])
+		ticks += 1
+	view.sync(sim)
+	if not assert_eq(sim.query_shell_count(), 1, "a shell is in the air after %d ticks" % ticks):
+		view.free()
+		return
+	assert_eq(view.shell_marker_count(), 1, "and there is a marker on the ground for it")
+	var at: FixedVec2 = sim.query_shell_impact_metres(0)
+	var marker: Vector3 = view.shell_marker_position(0)
+	assert_true(
+		is_equal_approx(marker.x, Fixed.to_float(at.x)),
+		"expected x %f, got %f" % [Fixed.to_float(at.x), marker.x]
+	)
+	assert_true(
+		is_equal_approx(marker.z, Fixed.to_float(at.z)),
+		"expected z %f, got %f" % [Fixed.to_float(at.z), marker.z]
+	)
+
+	# And it is gone once the shell has landed, because the query it is drawn from is.
+	_run(sim, sim.query_shell_flight_ticks() + 1)
+	view.sync(sim)
+	assert_eq(sim.query_shell_count(), 0, "the shell landed")
+	assert_eq(view.shell_marker_count(), 0, "and the marker went with it")
+	view.free()
+
+
+func test_the_hud_names_the_siege_hulk_and_the_bill_the_hives_are_charging() -> void:
+	# A sortie has to be a decision made knowingly, so the HUD carries the bill the whole time
+	# there is something out there worth leaving for. It deliberately does **not** say where the
+	# Hulk's weak point is: discovering that the front is the wrong end is the fight.
+	var sim: Simulation = _besieged_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 20 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	var text: String = view.hud_text()
+	assert_true(text.contains("SIEGE HULK"), "the thing that is shelling them: %s" % text)
+	assert_true(text.contains("ARMOURED FRONT"), "and that shooting it blind will not do: %s" % text)
+	assert_true(text.contains("hives 2"), "what is still standing out on the Map: %s" % text)
+	assert_true(
+		text.contains("hiding %d/min less heat" % sim.query_hive_heat_shadow_per_minute()),
+		"and what it is costing them: %s" % text
+	)
+	assert_true(text.contains("away from the nest"), "and how far from home they are: %s" % text)
+	view.free()
+
+
 func test_the_hud_reports_the_nest_the_wave_and_the_swarm() -> void:
 	var sim: Simulation = _threatened_sim()
 	var view: WorldView = WorldView.new()

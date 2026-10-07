@@ -13,8 +13,7 @@
 class_name EnemyKind
 extends RefCounted
 
-## Chaff: the weakest Enemy, which swarms toward the Nest (GLOSSARY.md). The only kind
-## Milestone 1 ships.
+## Chaff: the weakest Enemy, which swarms toward the Nest (GLOSSARY.md).
 const CRAWLER: int = 0
 
 ## A full-fidelity Enemy that preferentially attacks Machines rather than players
@@ -23,10 +22,17 @@ const CRAWLER: int = 0
 ## layout: a Breaker is an entry in the same arrays.
 const BREAKER: int = 1
 
+## The boss: a slow Enemy that bombards the Factory from beyond Turret range and cannot be
+## answered by defences (GLOSSARY.md). **One more entry in the same arrays**, which is the
+## claim ADR 0001 rests on: a boss is not an exception to the data layout, it is a kind
+## integer plus the one piece of state the other kinds do not have — which way it is facing —
+## carried as one more parallel array.
+const SIEGE_HULK: int = 2
+
 ## Every kind's name, **indexed by the kind's own integer**. The order is therefore the
 ## kind numbering and not a list that happens to be sorted; `index_of` is the only way
 ## round that is read, and it is the inverse by construction.
-const KIND_NAMES: Array = ["crawler", "breaker"]
+const KIND_NAMES: Array = ["crawler", "breaker", "siege_hulk"]
 
 
 ## The kind a name means, or -1 for a name no kind answers to. -1 rather than a

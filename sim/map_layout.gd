@@ -2,8 +2,7 @@
 ##
 ## One Map exists and it is handcrafted (GLOSSARY.md), so this is a layout rather
 ## than a generator — no seed is consulted and nothing here is random. Nodes, the
-## Nest and the Breaches; Hives join it with the ticket that sends Enemies out onto
-## the Map rather than into the Nest.
+## Nest, the Breaches and the Hives.
 ##
 ## Deliberately not in `content/`. The files there are the *definitions* a Factory
 ## is built from — Machines, Recipes, tuning — and are hot-reloadable mid-Run.
@@ -89,6 +88,23 @@ var breach_tile_x: PackedInt64Array = PackedInt64Array()
 var breach_tile_y: PackedInt64Array = PackedInt64Array()
 var breach_tile_z: PackedInt64Array = PackedInt64Array()
 
+## The Hives: Enemy structures out on the Map, one tile each, as parallel coordinate
+## arrays.
+##
+## **Geography, for the reason the Breaches are.** A Hive is a fixed place a player has to
+## walk to — "destroying one reduces pressure permanently but requires leaving the Factory"
+## (GLOSSARY.md) — and a Hive that moved would make that walk unplannable. What is *left* of
+## each one is Simulation state, because a Hive can be killed and a killed Hive never comes
+## back; where they stand is here, because moving one is a different Map rather than a
+## balance change.
+##
+## Sorted canonically on construction for the reason the Nodes and the Breaches are: Hives
+## brood Enemies in this order and their indices reach the state hash, so the order has to
+## be a property of the Map rather than of the order somebody typed the rows in.
+var hive_tile_x: PackedInt64Array = PackedInt64Array()
+var hive_tile_y: PackedInt64Array = PackedInt64Array()
+var hive_tile_z: PackedInt64Array = PackedInt64Array()
+
 
 ## The Map a Run starts on. Three Nodes at Depth 1 — two iron ore and one coal — and two
 ## deeper seams of iron out to the east, far enough apart that a Belt between them is a
@@ -121,12 +137,26 @@ static func starter() -> MapLayout:
 	layout.nest_tile = Vector3i(-6, WorldGrid.GROUND_LAYER, -6)
 	layout.add_breach(Vector3i(16, WorldGrid.GROUND_LAYER, -6))
 	layout.sort_breaches()
+	# Two Hives, both well clear of the ground the opening Factory wants and both a real walk
+	# from the Nest — 44 and 48 tiles, which is a little under half a minute each way at a
+	# sprint. They are out in opposite directions on purpose: one sortie does not pass the
+	# other, so a player who wants both back has to make the decision twice.
+	#
+	# They are standing from tick 0 rather than arriving later, because the pressure they add
+	# is the *baseline* a Run is played against: `hive.heat_per_minute` is already shortening
+	# the interval between Waves before the first Machine is placed, and clearing one is how a
+	# Factory buys permanent room to grow. A Map with no Hive is `empty()`, which is what a
+	# test studying the Factory asks for.
+	layout.add_hive(Vector3i(38, WorldGrid.GROUND_LAYER, 24))
+	layout.add_hive(Vector3i(-34, WorldGrid.GROUND_LAYER, -30))
+	layout.sort_hives()
 	return layout
 
 
-## A Map with no Nodes and no Breaches — the geography a test asks for when it is
+## A Map with no Nodes, no Breaches and no Hives — the geography a test asks for when it is
 ## studying the Factory and not the threat. It still has a Nest, because a Run always
-## has something to lose; with nowhere for Enemies to enter, no Wave arrives.
+## has something to lose; with nowhere for Enemies to enter, no Wave arrives, and with no
+## Hive nothing is raising Heat from outside.
 static func empty() -> MapLayout:
 	var layout: MapLayout = MapLayout.new()
 	layout.nest_tile = Vector3i(-6, WorldGrid.GROUND_LAYER, -6)
@@ -175,6 +205,44 @@ func sort_breaches() -> void:
 
 func _breach_precedes(a: int, b: int) -> bool:
 	return tile_precedes(breach_tile(a), breach_tile(b))
+
+
+func add_hive(tile: Vector3i) -> void:
+	hive_tile_x.append(tile.x)
+	hive_tile_y.append(tile.y)
+	hive_tile_z.append(tile.z)
+
+
+func hive_count() -> int:
+	return hive_tile_x.size()
+
+
+func hive_tile(index: int) -> Vector3i:
+	if index < 0 or index >= hive_count():
+		return Vector3i.ZERO
+	return Vector3i(hive_tile_x[index], hive_tile_y[index], hive_tile_z[index])
+
+
+## Orders Hives by tile — layer, then x, then z — for the reason `sort_breaches` orders
+## Breaches: Hives brood Enemies in this order, so it must be geography rather than
+## authoring order.
+func sort_hives() -> void:
+	var order: Array = []
+	for index: int in range(hive_count()):
+		order.append(index)
+	order.sort_custom(func(a: int, b: int) -> bool: return _hive_precedes(a, b))
+
+	var sorted: MapLayout = MapLayout.new()
+	for index: int in order:
+		sorted.add_hive(hive_tile(index))
+
+	hive_tile_x = sorted.hive_tile_x
+	hive_tile_y = sorted.hive_tile_y
+	hive_tile_z = sorted.hive_tile_z
+
+
+func _hive_precedes(a: int, b: int) -> bool:
+	return tile_precedes(hive_tile(a), hive_tile(b))
 
 
 func add_node(tile: Vector3i, resource_id: String, depth: int) -> void:

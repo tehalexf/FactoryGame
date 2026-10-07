@@ -79,6 +79,16 @@ const ENEMY_KIND_CRAWLER: int = EnemyKind.CRAWLER
 ## which field it steers by and what it bites.
 const ENEMY_KIND_BREAKER: int = EnemyKind.BREAKER
 
+## The boss: the Enemy kind that bombards the Factory from beyond Turret range. An **alias**
+## of `EnemyKind.SIEGE_HULK` for the reason the other two are aliases of theirs.
+##
+## It is an entry in the same Enemy arrays as a Crawler, which is the claim ADR 0001's whole
+## Enemy scale target rests on: a boss is one more kind integer plus the state the other kinds
+## do not have — which way it is facing — carried as **one more parallel array** rather than as
+## a class, a second index space or an exception anywhere in the loop. What it adds to
+## `_enemies` is two lines; what it adds to the data layout is two arrays.
+const ENEMY_KIND_SIEGE_HULK: int = EnemyKind.SIEGE_HULK
+
 ## How far past `depth.breach_offset_tiles` the search for somewhere to put a new Breach will
 ## widen if every tile on the ring is already taken. Four, which is far more slack than the
 ## shipped Map needs — the point is that a crowded corner of the Map degrades into a Breach a
@@ -128,6 +138,26 @@ const LIFE_DEAD: int = 2
 const MEND_NOTHING: int = BITE_NOTHING
 const MEND_MACHINE: int = BITE_MACHINE
 const MEND_WALL: int = BITE_WALL
+
+## What a Siege Hulk has found to shell, in the same `(what, which)` shape and the same index
+## spaces — a Machine or the Nest, and nothing else. A bombardment aimed at a Wall would be
+## the Hulk spending six seconds on the cheapest thing in the game; aimed at a player it would
+## be a homing shell rather than artillery.
+const BOMBARD_NOTHING: int = BITE_NOTHING
+const BOMBARD_MACHINE: int = BITE_MACHINE
+const BOMBARD_NEST: int = BITE_NEST
+
+## What a player's shot found, as the `x` of a `(what, which)` pair.
+##
+## Two index spaces rather than one, for the reason `BITE_*` names four: an Enemy index and a
+## Hive index are different spaces, and a plain -1 would collide with the perfectly ordinary
+## index 0. A Hive is a structure out on the Map rather than an Enemy that walks (GLOSSARY.md),
+## so it is its own arrays here exactly as the Nest and the Walls are their own arrays there —
+## and a round resolves against both in one pass, because a player aiming down a line does not
+## care which of the Enemy's two kinds of thing is standing in it.
+const HIT_NOTHING: int = 0
+const HIT_ENEMY: int = 1
+const HIT_HIVE: int = 2
 
 
 ## Why a Build Gun intent would be refused.
@@ -697,6 +727,49 @@ var _pending_breach_tile_z: PackedInt64Array = PackedInt64Array()
 var _pending_breach_announced_tick: PackedInt64Array = PackedInt64Array()
 var _pending_breach_ticks_left: PackedInt64Array = PackedInt64Array()
 
+## The Hives standing on the Map, in the canonical tile order `MapLayout` sorted them into,
+## and what is left of each.
+##
+## **A Hive is a structure rather than an Enemy that walks**, so it is its own parallel arrays
+## exactly as the Nest and the Walls are — the Enemy's half of the arrangement the Factory
+## already has. GLOSSARY.md calls it "an Enemy structure out on the Map that adds continuous
+## pressure": it does not path, it does not bite, and the only question it answers is how much
+## is left of it.
+##
+## Deliberately **not** an entry in the Enemy arrays, which was the other candidate and is the
+## wrong one twice over. It would put something that never moves through a movement loop and a
+## flowfield on every tick of every Run; and it would make `query_enemy_count` — the number the
+## HUD draws as "the swarm" and the number every Enemy test asserts on — permanently two
+## higher on the shipped Map than the Wave that is actually arriving. The Siege Hulk is the
+## thing this ticket makes one more Enemy entry, because a Hulk *is* an Enemy: it walks, it
+## hunts and it dies. A Hive is furniture with hit points.
+##
+## Where they are is geography and comes out of `MapLayout`; what is left of them is Simulation
+## state, because **a destroyed Hive never comes back**. That permanence is the whole mechanic:
+## "destroying one reduces pressure permanently but requires leaving the Factory"
+## (GLOSSARY.md), and there is nowhere in this file that appends to these arrays after
+## construction, which is what makes the sentence structural rather than a promise.
+var _hive_tile_x: PackedInt64Array = PackedInt64Array()
+var _hive_tile_y: PackedInt64Array = PackedInt64Array()
+var _hive_tile_z: PackedInt64Array = PackedInt64Array()
+var _hive_health: PackedInt64Array = PackedInt64Array()
+
+## The shells in the air: where each one will land, in fixed-point metres, and how many ticks
+## it has left to fly.
+##
+## **A shell is in flight rather than instantaneous, and that is the Telegraph rule rather
+## than a flourish.** Nothing in this project may arrive unannounced (DESIGN.md), so the impact
+## point is on the ground with a countdown for `siege_hulk.shell_flight_seconds` before
+## anything happens there — long enough to walk out of the blast, which is what turns a
+## bombardment from damage into a thing a player plays against.
+##
+## Appended in Enemy index order, which is ascending spawn serial, and landed in index order,
+## so which of two shells lands first is fixed by which Hulk fired first. No serial, because
+## nothing holds on to a shell: it is in the air for three seconds and then it is a crater.
+var _shell_x: PackedInt64Array = PackedInt64Array()
+var _shell_z: PackedInt64Array = PackedInt64Array()
+var _shell_ticks_left: PackedInt64Array = PackedInt64Array()
+
 ## Heat: the scalar that measures how much attention the Factory has drawn
 ## (GLOSSARY.md), and the thing that makes scaling up a bet rather than a free gain.
 ##
@@ -796,7 +869,33 @@ var _enemy_health: PackedInt64Array = PackedInt64Array()
 var _enemy_spawn_tick: PackedInt64Array = PackedInt64Array()
 
 ## Ticks until each Enemy may bite again. 0 means it bites the moment it is in contact.
+##
+## A Siege Hulk's shell runs on this same counter, and **so does its stomp**, which is the
+## whole of why melee against it is useful rather than suicidal: one action per interval means
+## a player standing at its feet is a player stopping the bombardment, at the only price this
+## game charges for anything.
 var _enemy_attack_cooldown: PackedInt64Array = PackedInt64Array()
+
+## The point in fixed-point metres each Enemy is facing — the thing it last shelled, stomped or
+## walked towards.
+##
+## **The one piece of state the Siege Hulk needs that no other kind does, and therefore one
+## more parallel array rather than a class.** It is what makes the weak point real: a Hulk's
+## front is armoured and its back is not, so "where did this hit come from" has to be a
+## question the Simulation can answer exactly.
+##
+## A *point* rather than an angle, and that is the decision worth recording. An angle would
+## need an arc-tangent, which fixed point does not have and which would mean a second table
+## beside `Fixed.sin_turns` — where a point reduces the whole question to the **sign of one dot
+## product**: the hit came from behind exactly when the gap to the shooter points away from the
+## gap to what the Hulk is facing. No normalisation, no rounding rule, no trigonometry, and
+## nothing for two clients to disagree about. The renderer turns it into a yaw with `atan2`,
+## which is `game/`'s business and a float it is allowed to have.
+##
+## Meaningless for a Crawler and a Breaker, which carry no armour, and held for them anyway
+## because a parallel array is parallel: one entry per Enemy, every Enemy, no branch.
+var _enemy_face_x: PackedInt64Array = PackedInt64Array()
+var _enemy_face_z: PackedInt64Array = PackedInt64Array()
 
 ## The serial the next Enemy to spawn will carry. Monotonic and never reused, so an
 ## Enemy has a stable identity across the ticks it exists for even as indices shift
@@ -1118,6 +1217,15 @@ func _init(
 	_breach_tile_y = layout.breach_tile_y.duplicate()
 	_breach_tile_z = layout.breach_tile_z.duplicate()
 
+	# The Hives, standing from tick 0 at full health. They take no tick of their own: what a
+	# Hive does is make the Nest worse at hiding (see `_heat_decay_per_minute`), which is a
+	# question asked of the live set rather than a thing done to it.
+	_hive_tile_x = layout.hive_tile_x.duplicate()
+	_hive_tile_y = layout.hive_tile_y.duplicate()
+	_hive_tile_z = layout.hive_tile_z.duplicate()
+	_hive_health.resize(_hive_tile_x.size())
+	_hive_health.fill(_definitions.hive_health)
+
 	var players: int = maxi(player_count, 1)
 	_player_x.resize(players)
 	_player_z.resize(players)
@@ -1261,6 +1369,10 @@ func step(actions: Array) -> void:
 	_heat_bleeds()
 	_breaches_open()
 	_waves()
+	# Before the Enemies, so a shell a Siege Hulk fires this tick cannot land this tick. The
+	# same rule a Machine built this tick and an Enemy through a Breach this tick obey, and
+	# here it is what makes the flight time a Telegraph rather than a decoration.
+	_shells()
 	_enemies()
 	# Last, because `_enemies` is what puts a player down: a bleed-out that advanced
 	# before the bite landed would charge a player a tick for a state they were not in
@@ -2581,7 +2693,13 @@ func _fire(index: int, definition: MachineDefinition) -> void:
 	if target == -1:
 		return
 	_turret_last_shot_tick[index] = _tick
-	_enemy_health[target] = maxi(_enemy_health[target] - definition.damage, 0)
+	# Armoured from where the Turret stands, exactly as a player's round is armoured from where
+	# the player stands — one rule, so a Siege Hulk cannot be shrugging off a rifle and soaking
+	# an MG round in the same tick. In practice a Turret never reaches a Hulk at all
+	# (`Definitions` refuses content where one could, and the Hulk backs away from one that
+	# does), so this is the rule being consistent rather than a case that fires often.
+	var points: int = _armoured(target, definition.damage, _machine_centre_metres(index))
+	_enemy_health[target] = maxi(_enemy_health[target] - points, 0)
 	if _enemy_health[target] == 0:
 		_remove_enemy(target)
 
@@ -2680,6 +2798,8 @@ func _remove_enemy(index: int) -> void:
 	_enemy_health.remove_at(index)
 	_enemy_spawn_tick.remove_at(index)
 	_enemy_attack_cooldown.remove_at(index)
+	_enemy_face_x.remove_at(index)
+	_enemy_face_z.remove_at(index)
 	_forget_target(serial)
 
 
@@ -3696,12 +3816,11 @@ func _shoot(player_id: int) -> void:
 		MAX_PITCH_TURNS
 	)
 
-	var target: int = _shot_target(
-		player_id, _facing(yaw), _tangent(pitch), _weapon_range_metres(player_id)
+	_resolve_a_hit(
+		player_id,
+		_shot_target(player_id, _facing(yaw), _tangent(pitch), _weapon_range_metres(player_id)),
+		_weapon_damage(player_id)
 	)
-	if target == -1:
-		return
-	_hit_enemy(target, _weapon_damage(player_id))
 
 
 ## A swing of a melee weapon at whatever is in front of the player.
@@ -3712,12 +3831,11 @@ func _shoot(player_id: int) -> void:
 ## neither does pitch — you do not miss a Crawler at your feet by looking at the horizon —
 ## which is also why a melee weapon consumes no draw from the generator.
 func _swing(player_id: int) -> void:
-	var target: int = _melee_target(
-		player_id, _facing(_player_yaw[player_id]), _weapon_range_metres(player_id)
+	_resolve_a_hit(
+		player_id,
+		_melee_target(player_id, _facing(_player_yaw[player_id]), _weapon_range_metres(player_id)),
+		_weapon_damage(player_id)
 	)
-	if target == -1:
-		return
-	_hit_enemy(target, _weapon_damage(player_id))
 
 
 ## A uniform fixed-point draw in [-1, 1), for scattering one axis of a shot.
@@ -3772,13 +3890,26 @@ func _aim_pitch_turns(player_id: int) -> int:
 ##    the distance along, against the capsule's own extent. This is what makes aiming up
 ##    and down mean something rather than firing a vertical plane of lead.
 ##
-## Walked in Enemy index order, which is ascending spawn serial by construction, and kept
-## on a **strict** improvement in distance along the line — so two Enemies exactly as far
-## away hand the hit to the earlier spawn, on every client. The same rule a Turret's
-## acquisition obeys, and for the same reason.
+## **The capsule is per kind, not one size for everything.** `gear.enemy_hit_*` is tuned for a
+## low scuttling Crawler; a Siege Hulk is a building on legs and a Hive is a building, and a
+## player who could miss either by a metre would read the gun as broken. `_enemy_hit_radius`
+## and `_enemy_hit_height` are where that lives, beside a kind's health and speed.
+##
+## **Hives are resolved in the same pass**, because a player aiming down a line does not care
+## which of the Enemy's two kinds of thing is standing in it. They are a second loop rather than
+## a second function for exactly that reason, and they are walked *after* the Enemies on the same
+## strict improvement — so an Enemy and a Hive exactly as far along hand the hit to the Enemy,
+## which is the right way round: the thing that is about to bite you outranks the thing that has
+## been sitting there all Run.
+##
+## Walked in Enemy index order, which is ascending spawn serial by construction, then in Hive
+## index order, which is canonical tile order, and kept on a **strict** improvement in distance
+## along the line — so two things exactly as far away hand the hit to the earlier spawn or the
+## earlier tile, on every client. The same rule a Turret's acquisition obeys, and for the same
+## reason.
 func _shot_target(
 	player_id: int, facing: FixedVec2, tangent: int, range_metres: int
-) -> int:
+) -> Vector2i:
 	var from_x: int = _player_x[player_id]
 	var from_z: int = _player_z[player_id]
 	# Eye height above the ground the player is *standing on*, plus however far off it they
@@ -3787,21 +3918,22 @@ func _shot_target(
 	# a lie about where a round comes from. Survey View is still excluded, because the
 	# camera is not where a shot leaves from (see the Gear section of CLAUDE.md).
 	var eye: int = _definitions.player_eye_height + _player_y[player_id]
-	var radius: int = _definitions.gear_enemy_hit_radius_metres
-	var top: int = _definitions.gear_enemy_hit_height_metres + radius
 
-	var best: int = -1
+	var best_what: int = HIT_NOTHING
+	var best_which: int = -1
 	var best_along: int = 0
 	for enemy: int in range(query_enemy_count()):
 		if _enemy_health[enemy] <= 0:
 			continue
+		var radius: int = _enemy_hit_radius(_enemy_kind[enemy])
+		var top: int = _enemy_hit_height(_enemy_kind[enemy]) + radius
 		var gap_x: int = _enemy_x[enemy] - from_x
 		var gap_z: int = _enemy_z[enemy] - from_z
 
 		var along: int = Fixed.mul(gap_x, facing.x) + Fixed.mul(gap_z, facing.z)
 		if along <= 0 or along > range_metres:
 			continue
-		if best != -1 and along >= best_along:
+		if best_what != HIT_NOTHING and along >= best_along:
 			continue
 
 		var across: int = absi(Fixed.mul(gap_x, facing.z) - Fixed.mul(gap_z, facing.x))
@@ -3812,9 +3944,33 @@ func _shot_target(
 		if height < -radius or height > top:
 			continue
 
-		best = enemy
+		best_what = HIT_ENEMY
+		best_which = enemy
 		best_along = along
-	return best
+
+	var hive_radius: int = _definitions.hive_hit_radius_metres
+	var hive_top: int = _definitions.hive_hit_height_metres + hive_radius
+	for hive: int in range(query_hive_count()):
+		var centre: FixedVec2 = WorldGrid.tile_centre_metres(query_hive_tile(hive))
+		var gap_x: int = centre.x - from_x
+		var gap_z: int = centre.z - from_z
+
+		var along: int = Fixed.mul(gap_x, facing.x) + Fixed.mul(gap_z, facing.z)
+		if along <= 0 or along > range_metres:
+			continue
+		if best_what != HIT_NOTHING and along >= best_along:
+			continue
+		if absi(Fixed.mul(gap_x, facing.z) - Fixed.mul(gap_z, facing.x)) > hive_radius:
+			continue
+		var height: int = eye + Fixed.mul(along, tangent)
+		if height < -hive_radius or height > hive_top:
+			continue
+
+		best_what = HIT_HIVE
+		best_which = hive
+		best_along = along
+
+	return Vector2i(best_what, best_which)
 
 
 ## The Enemy a melee swing catches, or -1: the nearest living one inside the weapon's
@@ -3824,12 +3980,13 @@ func _shot_target(
 ## would put an Enemy exactly on the boundary in or out of reach depending on a rounding
 ## rule, where multiplying both sides is exact integer arithmetic. The products stay far
 ## inside 64 bits — a melee reach is a few metres.
-func _melee_target(player_id: int, facing: FixedVec2, range_metres: int) -> int:
+func _melee_target(player_id: int, facing: FixedVec2, range_metres: int) -> Vector2i:
 	var from_x: int = _player_x[player_id]
 	var from_z: int = _player_z[player_id]
 	var within: int = range_metres * range_metres
 
-	var best: int = -1
+	var best_what: int = HIT_NOTHING
+	var best_which: int = -1
 	var best_gap: int = 0
 	for enemy: int in range(query_enemy_count()):
 		if _enemy_health[enemy] <= 0:
@@ -3841,11 +3998,48 @@ func _melee_target(player_id: int, facing: FixedVec2, range_metres: int) -> int:
 			continue
 		if Fixed.mul(gap_x, facing.x) + Fixed.mul(gap_z, facing.z) <= 0:
 			continue
-		if best != -1 and squared >= best_gap:
+		if best_what != HIT_NOTHING and squared >= best_gap:
 			continue
-		best = enemy
+		best_what = HIT_ENEMY
+		best_which = enemy
 		best_gap = squared
-	return best
+
+	# A Hive is a wall a wrench can chip at, which is the honest consequence of the Pneumatic
+	# Wrench being a weapon as well as a tool. Ranked after the Enemies for the reason a shot
+	# ranks them after: the thing that bites back goes first.
+	for hive: int in range(query_hive_count()):
+		var centre: FixedVec2 = WorldGrid.tile_centre_metres(query_hive_tile(hive))
+		var gap_x: int = centre.x - from_x
+		var gap_z: int = centre.z - from_z
+		var squared: int = gap_x * gap_x + gap_z * gap_z
+		if squared > within:
+			continue
+		if Fixed.mul(gap_x, facing.x) + Fixed.mul(gap_z, facing.z) <= 0:
+			continue
+		if best_what != HIT_NOTHING and squared >= best_gap:
+			continue
+		best_what = HIT_HIVE
+		best_which = hive
+		best_gap = squared
+	return Vector2i(best_what, best_which)
+
+
+## Lands a player's hit on whatever their weapon found.
+##
+## One function for both weapons and both kinds of target, so what a round does and what a
+## swing does cannot drift apart — and so the armour rule is applied in exactly one place.
+##
+## **The hit is measured from where the player is standing**, which is what makes a Siege Hulk's
+## weak point real: the same weapon doing the same damage takes 15% off its front and all of it
+## off its back, and the only difference is where the player chose to be. A Hive carries no
+## armour, because it has no front: it is a building, and the fight it gives is the walk there
+## and the Ammunition it costs.
+func _resolve_a_hit(player_id: int, target: Vector2i, points: int) -> void:
+	match target.x:
+		HIT_ENEMY:
+			_hit_enemy(target.y, _armoured(target.y, points, query_player_position(player_id)))
+		HIT_HIVE:
+			_damage_hive(target.y, points)
 
 
 ## Takes hit points off an Enemy and removes it if that was the last of them.
@@ -4067,7 +4261,7 @@ func _within_revive_reach(rescuer: int, target: int) -> bool:
 ## lowest player id on every client. A Downed player is **not** a target: they are already
 ## out of the fight, and finishing them would make the bleed-out window a fiction.
 func _player_in_contact(enemy: int) -> int:
-	var reach: int = _definitions.enemy_player_bite_reach_metres
+	var reach: int = _enemy_player_reach(_enemy_kind[enemy])
 	var within: int = reach * reach
 	var best: int = -1
 	var best_gap: int = 0
@@ -4085,6 +4279,20 @@ func _player_in_contact(enemy: int) -> int:
 		best_gap = squared
 	return best
 
+
+
+## How close a player has to be to an Enemy of a kind to be reached by it, in fixed-point
+## metres.
+##
+## `enemy.player_bite_reach_metres` measured from the Enemy's **body** rather than from the
+## point it stands on. For a Crawler and a Breaker those are the same thing and the number is
+## exactly what the tuning file says; a Siege Hulk is several metres across, and a player
+## standing inside its hull untouched because the centre is 1.6 m further away would be a free
+## kill rather than a brave one.
+func _enemy_player_reach(kind: int) -> int:
+	if kind == EnemyKind.SIEGE_HULK:
+		return _definitions.enemy_player_bite_reach_metres + _enemy_hit_radius(kind)
+	return _definitions.enemy_player_bite_reach_metres
 
 
 # ── What a player is carrying ────────────────────────────────────────────
@@ -4264,13 +4472,16 @@ func _note_a_craft(index: int, definition: MachineDefinition) -> void:
 ##
 ## Credit does not survive the Factory going cold: a Nest with nothing to hide cannot bank
 ## the shedding and spend it on a later spike, the same rule Power credit obeys.
+##
+## **What the Hives standing on the Map do is lower the rate** rather than add to the total —
+## see `_heat_decay_per_minute`.
 func _heat_bleeds() -> void:
 	if _heat <= 0:
 		_heat = 0
 		_heat_decay_credit = 0
 		return
 
-	_heat_decay_credit += _definitions.heat_decay_per_minute
+	_heat_decay_credit += _heat_decay_per_minute()
 	@warning_ignore("integer_division")
 	var shed: int = _heat_decay_credit / TICKS_PER_MINUTE
 	if shed > 0:
@@ -5021,6 +5232,12 @@ func _spawn_enemy(kind: int, tile: Vector3i) -> void:
 	_enemy_health.append(health)
 	_enemy_spawn_tick.append(_tick)
 	_enemy_attack_cooldown.append(0)
+	# Facing the Nest, which is where everything on this Map is ultimately going. It matters
+	# for a Siege Hulk and for nothing else: a Hulk that arrived facing its own feet would have
+	# every direction count as behind it, so its armour would be missing for the walk in.
+	var facing: FixedVec2 = _nest_centre_metres()
+	_enemy_face_x.append(facing.x)
+	_enemy_face_z.append(facing.z)
 	_next_enemy_serial += 1
 
 
@@ -5033,6 +5250,8 @@ func _enemy_health_for(kind: int) -> int:
 			return _definitions.crawler_health
 		EnemyKind.BREAKER:
 			return _definitions.breaker_health
+		EnemyKind.SIEGE_HULK:
+			return _definitions.siege_hulk_health
 		_:
 			return 0
 
@@ -5050,6 +5269,8 @@ func _enemy_speed(kind: int) -> int:
 			return _definitions.crawler_speed
 		EnemyKind.BREAKER:
 			return _definitions.breaker_speed
+		EnemyKind.SIEGE_HULK:
+			return _definitions.siege_hulk_speed
 		_:
 			return 0
 
@@ -5064,6 +5285,11 @@ func _enemy_damage(kind: int) -> int:
 			return _definitions.crawler_damage
 		EnemyKind.BREAKER:
 			return _definitions.breaker_damage
+		# A Siege Hulk's *stomp*, not its shell. The shell is
+		# `siege_hulk.shell_damage` and is dealt where it lands rather than by whatever fired
+		# it, which is the difference between artillery and a bite.
+		EnemyKind.SIEGE_HULK:
+			return _definitions.siege_hulk_stomp_damage
 		_:
 			return 0
 
@@ -5076,8 +5302,74 @@ func _enemy_attack_interval_ticks(kind: int) -> int:
 			return maxi(_seconds_to_ticks(_definitions.crawler_attack_interval_seconds), 1)
 		EnemyKind.BREAKER:
 			return maxi(_seconds_to_ticks(_definitions.breaker_attack_interval_seconds), 1)
+		EnemyKind.SIEGE_HULK:
+			return maxi(_seconds_to_ticks(_definitions.siege_hulk_shell_interval_seconds), 1)
 		_:
 			return 1
+
+
+## How wide an Enemy's hit volume is, in fixed-point metres.
+##
+## `gear.enemy_hit_radius_metres` is the Crawler's and the Breaker's, and it is tuned for a low
+## scuttling thing; a Siege Hulk is several metres across and a player who could miss one by a
+## metre would read the gun as broken rather than themselves as imprecise. One `match` beside
+## the other four, so a kind's size is where a kind's health and speed are.
+func _enemy_hit_radius(kind: int) -> int:
+	match kind:
+		EnemyKind.SIEGE_HULK:
+			return _definitions.siege_hulk_hit_radius_metres
+		_:
+			return _definitions.gear_enemy_hit_radius_metres
+
+
+## How tall an Enemy's hit volume is, in fixed-point metres.
+func _enemy_hit_height(kind: int) -> int:
+	match kind:
+		EnemyKind.SIEGE_HULK:
+			return _definitions.siege_hulk_hit_height_metres
+		_:
+			return _definitions.gear_enemy_hit_height_metres
+
+
+## How much of a hit an Enemy of a kind shrugs off **from the front**, as a whole percentage.
+## Zero for everything but the boss, which is what "Chaff is one-hit" means arithmetically.
+func _enemy_frontal_armour_percent(kind: int) -> int:
+	match kind:
+		EnemyKind.SIEGE_HULK:
+			return _definitions.siege_hulk_frontal_armour_percent
+		_:
+			return 0
+
+
+## How much of a hit an Enemy actually takes, given where in the world the hit came from.
+##
+## **This is the weak point, and it is the whole shape of the Siege Hulk fight.** The
+## alternative was a damage sponge, which is a timer rather than a fight: more hit points only
+## ever asks a player to hold the trigger for longer, and it would have made the answer to the
+## boss "bring more Ammunition" instead of "move".
+##
+## The test is the **sign of one dot product** and nothing else: the Hulk's facing is held as a
+## point (see `_enemy_face_x`), so the hit came from behind exactly when the gap to the shooter
+## points away from the gap to what the Hulk is facing. Exact integer arithmetic, no
+## normalisation, no arc-tangent and no rounding rule — so two clients cannot disagree about
+## whether a round found the vents.
+##
+## A hit from exactly abreast counts as **behind**, which is the generous reading on purpose:
+## the armour is the thing a player has to discover, and a boundary that punished a flank that
+## was not quite far enough round would teach the wrong lesson.
+func _armoured(index: int, points: int, from: FixedVec2) -> int:
+	if points <= 0 or not _is_enemy(index):
+		return 0
+	var percent: int = _enemy_frontal_armour_percent(_enemy_kind[index])
+	if percent <= 0:
+		return points
+	var face_x: int = _enemy_face_x[index] - _enemy_x[index]
+	var face_z: int = _enemy_face_z[index] - _enemy_z[index]
+	var to_x: int = from.x - _enemy_x[index]
+	var to_z: int = from.z - _enemy_z[index]
+	if Fixed.mul(face_x, to_x) + Fixed.mul(face_z, to_z) <= 0:
+		return points
+	return _scaled(points, -percent)
 
 
 ## Moves every Enemy one tick along the shared flowfield, and lets the ones in contact
@@ -5110,6 +5402,12 @@ func _enemies() -> void:
 		if _enemy_spawn_tick[index] == _tick:
 			continue
 		var kind: int = _enemy_kind[index]
+		# The boss, in two lines. Everything a Siege Hulk does differently from a Crawler is
+		# behind one call rather than spread through the loop as branches, which is what keeps
+		# the Chaff tier's loop the loop it was measured at.
+		if kind == EnemyKind.SIEGE_HULK:
+			_siege_hulk(index, nest_field)
+			continue
 		# A Breaker steers by the Factory and a Crawler by the Nest. Falling back on the
 		# other way round is `_enemy_direction`'s job, so the field an Enemy *moves* by and
 		# the field it decides whether it is cornered by are the same field.
@@ -5299,6 +5597,27 @@ func _towards_the_nest(tile: Vector3i) -> Vector3i:
 	return Vector3i.ZERO
 
 
+## Backs an Enemy one tick directly away from a point.
+##
+## The Siege Hulk's answer to a Turret, and the only thing in this file that walks an Enemy
+## *against* a field. It moves on whichever axis it is further out on, which is
+## `_towards_the_nest` run backwards: a straight line is not pathing, it is a refusal to stand
+## somewhere it can be shot. An Enemy exactly on top of the thing it is backing away from steps
+## along +x, so the degenerate case moves rather than freezing.
+func _withdraw_enemy(index: int, from: FixedVec2, step_metres: int) -> void:
+	if step_metres <= 0:
+		return
+	var gap_x: int = _enemy_x[index] - from.x
+	var gap_z: int = _enemy_z[index] - from.z
+	if gap_x == 0 and gap_z == 0:
+		_enemy_x[index] += step_metres
+		return
+	if absi(gap_x) >= absi(gap_z):
+		_enemy_x[index] += signi(gap_x) * step_metres
+		return
+	_enemy_z[index] += signi(gap_z) * step_metres
+
+
 ## How far a coordinate is from the nearer end of a span, signed towards it. 0 when it is
 ## already inside the span.
 func _gap_to_span(value: int, low: int, high: int) -> int:
@@ -5327,6 +5646,295 @@ func _enemy_direction(
 	if direction != -1:
 		return direction
 	return fallback[cell] if cell < fallback.size() else -1
+
+
+# ── The Siege Hulk ────────────────────────────────────────────────────────────
+#
+# The threat the Factory cannot answer, and the reason the first-person pillar exists
+# (DESIGN.md). Everything else in this game is solved by building; this is solved by a player
+# walking out of the Nest with what the Factory made.
+#
+# It is an entry in the Enemy arrays like everything else. What it adds is one function, two
+# parallel arrays and three tuning sections — no second index space, no class, no combat
+# subsystem, and no branch anywhere in the Crawler's path.
+
+## One Siege Hulk, one tick. Four clauses, and the order is the design.
+##
+## 1. **A player at its feet is answered first, and a stomp spends the shell's cooldown.** So
+##    closing the distance is immediately worth something even before the Hulk is dead: a
+##    player standing there is a player whose Factory is not being shelled. That is the same
+##    trade standing in a doorway makes against a Crawler, at the same price — your own skin —
+##    and it is what makes the sortie pay off from the first second rather than only at the
+##    end.
+## 2. **A Turret that could reach it makes it back off.** This is the acceptance criterion "it
+##    cannot be defeated by Turrets alone" as behaviour rather than as arithmetic: push a
+##    Turret line out towards it and it withdraws and goes on shelling from further away.
+##    `Definitions` already refuses content where a Turret's reach covers the stand-off, so in
+##    practice this clause fires only for a Turret a player has walked out into the field — and
+##    then it fires, rather than letting the Factory quietly solve the one thing it must not.
+## 3. **Nothing within shelling reach means walk.** It steers by the Crawlers' shared field,
+##    because what it is looking for is the Factory and the Nest is in the middle of it — one
+##    more consumer of a field that is already built rather than a third sweep.
+## 4. **Otherwise hold and bombard.** It stops the moment anything is in reach, so where it
+##    comes to rest *is* `siege_hulk.range_metres` and not a second number that could disagree
+##    with it. Legible from the HUD and from the Map: it walks in, it halts, it shells.
+func _siege_hulk(index: int, nest_field: PackedInt64Array) -> void:
+	var step_metres: int = _enemy_step_metres(EnemyKind.SIEGE_HULK)
+	var here: FixedVec2 = FixedVec2.new(_enemy_x[index], _enemy_z[index])
+
+	var victim: int = _player_in_contact(index)
+	if victim != -1:
+		_face_enemy_at(index, query_player_position(victim))
+		if _spend_the_hulks_cooldown(index):
+			return
+		_damage_player(victim, _enemy_damage(EnemyKind.SIEGE_HULK))
+		return
+
+	var turret: int = _turret_covering(index)
+	if turret != -1:
+		var threat: FixedVec2 = _machine_centre_metres(turret)
+		_face_enemy_at(index, threat)
+		_withdraw_enemy(index, threat, step_metres)
+		return
+
+	var target: Vector2i = _bombardment_target(index)
+	if target.x == BOMBARD_NOTHING:
+		_face_enemy_at(index, _nest_centre_metres())
+		_advance_enemy(index, nest_field, nest_field, step_metres)
+		return
+
+	var impact: FixedVec2 = _bombardment_point(target)
+	_face_enemy_at(index, impact)
+	if _spend_the_hulks_cooldown(index):
+		return
+	_lob_a_shell(impact)
+
+
+## Whether a Siege Hulk is still between actions, spending one tick of the wait if it is.
+##
+## One counter for the shell and the stomp, which is the whole of why melee against it works.
+## Reset one short of the interval, for the reason a bite cooldown is: this tick is the first of
+## the gap, so a Hulk acts every `siege_hulk.shell_interval_seconds` exactly.
+func _spend_the_hulks_cooldown(index: int) -> bool:
+	if _enemy_attack_cooldown[index] > 0:
+		_enemy_attack_cooldown[index] -= 1
+		return true
+	_enemy_attack_cooldown[index] = maxi(
+		_enemy_attack_interval_ticks(EnemyKind.SIEGE_HULK) - 1, 0
+	)
+	return false
+
+
+## Points an Enemy at a place. The front of a Siege Hulk is wherever this last said, which is
+## what `_armoured` measures a hit against.
+func _face_enemy_at(index: int, at: FixedVec2) -> void:
+	_enemy_face_x[index] = at.x
+	_enemy_face_z[index] = at.z
+
+
+## The Turret whose reach covers an Enemy, or -1. Walked in Machine index order, which is
+## construction order and the same on every client.
+func _turret_covering(enemy: int) -> int:
+	for index: int in range(query_machine_count()):
+		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+		if definition == null or not definition.is_turret():
+			continue
+		if _within_reach(index, definition, enemy):
+			return index
+	return -1
+
+
+## What a Siege Hulk would shell this tick, as a `(what, which)` pair, or `BOMBARD_NOTHING`.
+##
+## **Deterministic, and it reads no unordered collection.** The Machines are walked in index
+## order — construction order, identical on every client — on a **strict** improvement in
+## squared distance, so two Machines exactly as far away hand the shell to the one built first.
+## The Nest is one more candidate, compared last and taken only on a strict improvement, so a
+## Machine and the Nest at the same distance hand the shell to the Machine: the Factory is what
+## a bombardment is for, and the Nest is what is left when there is no Factory.
+##
+## Squared on both sides, for the reason a Turret's reach is: `Fixed.sqrt` floors, and a Machine
+## exactly on the boundary must not be in or out by a rounding rule.
+func _bombardment_target(index: int) -> Vector2i:
+	var here: FixedVec2 = FixedVec2.new(_enemy_x[index], _enemy_z[index])
+	var reach: int = _definitions.siege_hulk_range_metres
+	var within: int = reach * reach
+
+	var best: int = -1
+	var best_gap: int = 0
+	for machine: int in range(query_machine_count()):
+		var gap: int = _squared_metres_gap(here, _machine_centre_metres(machine))
+		if gap > within:
+			continue
+		if best != -1 and gap >= best_gap:
+			continue
+		best = machine
+		best_gap = gap
+
+	var nest_gap: int = _squared_metres_gap(here, _nest_centre_metres())
+	if nest_gap <= within and (best == -1 or nest_gap < best_gap):
+		return Vector2i(BOMBARD_NEST, -1)
+	if best != -1:
+		return Vector2i(BOMBARD_MACHINE, best)
+	return Vector2i(BOMBARD_NOTHING, -1)
+
+
+## Where a shell at a bombardment target would land, in fixed-point metres: the footprint
+## centre of whatever was chosen, for the reason a Turret measures from one.
+func _bombardment_point(target: Vector2i) -> FixedVec2:
+	if target.x == BOMBARD_MACHINE:
+		return _machine_centre_metres(target.y)
+	return _nest_centre_metres()
+
+
+## Puts a shell in the air at a place on the ground.
+##
+## It lands `siege_hulk.shell_flight_seconds` later and not sooner, and the place is state the
+## renderer and the HUD both read — so the marker a player dodges is literally where the damage
+## will be rather than an approximation of it.
+func _lob_a_shell(at: FixedVec2) -> void:
+	_shell_x.append(at.x)
+	_shell_z.append(at.z)
+	_shell_ticks_left.append(maxi(_shell_flight_ticks(), 1))
+
+
+## How long a shell is in the air, in whole ticks. At least one: a shell that landed on the
+## tick it was fired is the ambush the Telegraph exists to prevent, and `Definitions` refuses a
+## tuning value that would produce one, so this floor is the belt to that braces.
+func _shell_flight_ticks() -> int:
+	return maxi(_seconds_to_ticks(_definitions.siege_hulk_shell_flight_seconds), 1)
+
+
+## Advances every shell in the air by one tick and lands the ones that have arrived.
+##
+## Walked in index order, which is the order the shells were fired in, so which of two shells
+## lands first is a fact about which Hulk fired first. The landings are resolved before anything
+## is removed, and the removals then run from the highest index down, because removing from the
+## front of an array under a loop is the one way to make a deterministic pass disagree with
+## itself.
+func _shells() -> void:
+	if query_run_is_over() or _shell_ticks_left.is_empty():
+		return
+
+	var landed: PackedInt64Array = PackedInt64Array()
+	for index: int in range(_shell_ticks_left.size()):
+		_shell_ticks_left[index] -= 1
+		if _shell_ticks_left[index] <= 0:
+			landed.append(index)
+
+	for position: int in range(landed.size()):
+		_a_shell_lands(landed[position])
+	for position: int in range(landed.size() - 1, -1, -1):
+		_remove_shell(landed[position])
+
+
+## One shell, landing.
+##
+## Everything within `siege_hulk.shell_blast_radius_metres` of the impact point takes
+## `siege_hulk.shell_damage`: Machines, Walls, players and the Nest — which is the acceptance
+## criterion "it damages Machines and the Nest from that range" in one function rather than two
+## rules. A blast rather than a single target because that is what a bombardment *is*, and
+## because it gives dense building a cost that nothing else in the game charges for.
+##
+## Every distance is measured from a centre to a centre, squared on both sides, the way a
+## Turret's reach and a Pylon's are. And every loop runs from the highest index **down**,
+## because `_damage_machine` may destroy a Machine and `_remove_machine` closes the gap — the
+## damage is independent per target, so the direction cannot change the outcome, and descending
+## is what keeps the indices valid while it happens.
+func _a_shell_lands(index: int) -> void:
+	var at: FixedVec2 = FixedVec2.new(_shell_x[index], _shell_z[index])
+	var radius: int = _definitions.siege_hulk_shell_blast_radius_metres
+	var within: int = radius * radius
+	var points: int = _definitions.siege_hulk_shell_damage
+
+	for machine: int in range(query_machine_count() - 1, -1, -1):
+		if _squared_metres_gap(at, _machine_centre_metres(machine)) <= within:
+			_damage_machine(machine, points)
+	for wall: int in range(query_wall_count() - 1, -1, -1):
+		if _squared_metres_gap(at, WorldGrid.tile_centre_metres(query_wall_tile(wall))) <= within:
+			_damage_wall(wall, points)
+	# A player standing in the marker dies, which is what makes the marker worth reading. By
+	# distance rather than by tile, for the reason an Enemy reaches a player by distance: a
+	# player is a position in fixed-point metres and not a footprint.
+	for player_id: int in range(query_player_count()):
+		if _player_life_state[player_id] != LIFE_ALIVE:
+			continue
+		if _squared_metres_gap(at, query_player_position(player_id)) <= within:
+			_damage_player(player_id, points)
+	if _squared_metres_gap(at, _nest_centre_metres()) <= within:
+		_damage_the_nest(points)
+
+
+## Takes a shell out of the air, preserving the order of the rest.
+func _remove_shell(index: int) -> void:
+	_shell_x.remove_at(index)
+	_shell_z.remove_at(index)
+	_shell_ticks_left.remove_at(index)
+
+
+# ── The Hives ─────────────────────────────────────────────────────────────────
+#
+# Continuous pressure out on the Map, and the one thing in this game whose removal is
+# **permanent** (GLOSSARY.md). A Hive does two things and they are deliberately the same thing
+# from the player's side: it pays Heat into the Wave schedule every minute it lives, and it
+# sends an Enemy out every `hive.spawn_interval_seconds`. The first is what makes "reduces
+# pressure permanently" a number a player can read off the gauge they already watch — Heat
+# shortens the interval between Waves on the tick it rises, so a standing Hive is hunting the
+# Factory sooner, right now, for ever. The second is what makes it *pressure* rather than
+# arithmetic: the gaps between Waves stop being free.
+#
+# Both, rather than one, because either alone is half a mechanic. Heat alone would make a Hive
+# an invisible modifier on a countdown; a spawner alone would make it a Breach that is merely
+# further away, and killing it would relieve nothing a player could feel between Waves.
+
+## How much Heat the Nest actually sheds per minute: what `heat.decay_per_minute` says, less
+## `hive.heat_shadow_per_minute` for every Hive still standing, floored at nothing.
+##
+## **This one function is the whole of what a Hive does**, and the whole of why destroying one
+## is permanent relief. A Hive takes no tick of its own, holds no cooldown and sends nothing out
+## — it changes a rate, and the rate is read fresh every tick from the live set, so the moment
+## the last Hive falls the Nest is hiding everything it ever could again.
+##
+## Derived rather than stored, for the reason `_wave_interval_ticks` is derived: a stored rate
+## would have to be adjusted when a Hive died, and a per-event adjustment is the shape this file
+## refuses. One subtraction per tick out of two integers, nothing accumulated, nothing to drift.
+##
+## Floored at zero rather than allowed to go negative, because a negative decay is Heat the
+## Hives are *adding* — and that is the version of this mechanic that was rejected. Enough Hives
+## make the Nest unable to hide anything; they never make it loud on their own, because an idle
+## Factory is owed its silence (DESIGN.md).
+func _heat_decay_per_minute() -> int:
+	return maxi(
+		_definitions.heat_decay_per_minute
+		- query_hive_count() * _definitions.hive_heat_shadow_per_minute,
+		0
+	)
+
+
+## Takes hit points off a Hive, and removes it for good if that was the last of them.
+##
+## **There is no path back.** Nothing in this file appends to the Hive arrays after
+## construction, so a destroyed Hive is permanently destroyed and the pressure it was paying is
+## permanently gone — which is the whole of what GLOSSARY.md promises and the reason a sortie is
+## worth making at all.
+func _damage_hive(index: int, points: int) -> void:
+	if points <= 0 or not _is_hive(index):
+		return
+	_hive_health[index] = maxi(_hive_health[index] - points, 0)
+	if _hive_health[index] == 0:
+		_remove_hive(index)
+
+
+## Takes a Hive off the Map, preserving the order of the rest.
+func _remove_hive(index: int) -> void:
+	_hive_tile_x.remove_at(index)
+	_hive_tile_y.remove_at(index)
+	_hive_tile_z.remove_at(index)
+	_hive_health.remove_at(index)
+
+
+func _is_hive(index: int) -> bool:
+	return index >= 0 and index < _hive_health.size()
 
 
 ## Whether a tile is close enough to the Nest to bite it: the Nest's footprint covers it, or
@@ -5736,7 +6344,25 @@ func hash() -> int:
 	hasher.feed_ints(_enemy_health)
 	hasher.feed_ints(_enemy_spawn_tick)
 	hasher.feed_ints(_enemy_attack_cooldown)
+	# Which way every Enemy is facing. Hashed because it decides how much damage the *next*
+	# hit does: a Siege Hulk's armour is a function of this and of where the shooter stands, so
+	# two clients that disagreed about it would disagree about how long the boss lives.
+	hasher.feed_ints(_enemy_face_x)
+	hasher.feed_ints(_enemy_face_z)
 	hasher.feed_int(_next_enemy_serial)
+	# The Hives and what is left of each. Hashed because they decide the rate at which the Nest
+	# sheds Heat, and therefore when every subsequent Wave arrives: two Runs that have cleared a
+	# different number of them are not in the same state even if their Heat reads the same.
+	hasher.feed_ints(_hive_tile_x)
+	hasher.feed_ints(_hive_tile_y)
+	hasher.feed_ints(_hive_tile_z)
+	hasher.feed_ints(_hive_health)
+	# Every shell in the air, in the order they were fired. A shell is damage that has already
+	# been decided and has not landed yet, so a Run saved mid-bombardment has to restore the
+	# marker a player is running out of rather than forget it.
+	hasher.feed_ints(_shell_x)
+	hasher.feed_ints(_shell_z)
+	hasher.feed_ints(_shell_ticks_left)
 	# The Factory: what is built, where, how far through a craft it is, and what it
 	# is holding. All of it, because a divergence the harness cannot see is a
 	# divergence that reaches co-op.
@@ -7130,8 +7756,13 @@ func query_heat() -> int:
 ## How much Heat the Factory is shedding per minute, in heat units. The other half of the
 ## reading: Heat on its own says how loud the Factory is, and this says how much of that it
 ## is getting away with.
+##
+## **What the Hives are taking off it is already in this number**, which is the point of putting
+## it here rather than beside it: the gauge a player has been reading all Run is the gauge that
+## moves when they go out and kill one. `query_hive_heat_shadow_per_minute` is the same fact
+## stated as a bill, for the sortie panel.
 func query_heat_decay_per_minute() -> int:
-	return _definitions.heat_decay_per_minute
+	return _heat_decay_per_minute()
 
 
 ## How much Heat the Factory is currently generating per minute, in heat units — the sum of
@@ -7273,11 +7904,193 @@ func query_enemy_is_attacking(index: int) -> bool:
 	if not _is_enemy(index):
 		return false
 	var kind: int = _enemy_kind[index]
+	# A Siege Hulk does not bite what it is standing on: it shells something sixty metres away,
+	# or stomps whatever has walked up to it. Both are attacking, and neither is a contact
+	# target, so the question is asked of the Hulk's own behaviour rather than of the tile.
+	if kind == EnemyKind.SIEGE_HULK:
+		return query_enemy_is_bombarding(index) or _player_in_contact(index) != -1
 	var nest_field: PackedInt64Array = _flowfield()
 	var field: PackedInt64Array = (
 		_machine_flowfield() if kind == EnemyKind.BREAKER else nest_field
 	)
 	return _enemy_contact_target(index, kind, field, nest_field).x != BITE_NOTHING
+
+
+## The point an Enemy is facing, in fixed-point metres. The Simulation holds a *point* rather
+## than an angle because a point reduces the weak-point test to the sign of a dot product;
+## `WorldView` turns it into a yaw with an `atan2`, which is a float `game/` is allowed.
+func query_enemy_facing_point_metres(index: int) -> FixedVec2:
+	if not _is_enemy(index):
+		return FixedVec2.zero()
+	return FixedVec2.new(_enemy_face_x[index], _enemy_face_z[index])
+
+
+## The hit points an Enemy of this one's kind arrives with. What a HUD divides the remaining
+## health by, so a player can see a boss's bar actually moving.
+func query_enemy_max_health(index: int) -> int:
+	if not _is_enemy(index):
+		return 0
+	return _enemy_health_for(_enemy_kind[index])
+
+
+## How much of a hit this Enemy shrugs off when it is struck from the front, as a whole
+## percentage. 0 for everything but a Siege Hulk.
+##
+## Exposed so the HUD can say `ARMOURED` rather than leaving a player to conclude their gun is
+## broken. Deliberately **not** a query that says where the weak point is: discovering that the
+## front is the wrong end is the fight, and a line of UI naming the answer would spend it.
+func query_enemy_frontal_armour_percent(index: int) -> int:
+	if not _is_enemy(index):
+		return 0
+	return _enemy_frontal_armour_percent(_enemy_kind[index])
+
+
+## How far an Enemy reaches to attack — a Siege Hulk's shelling radius, and otherwise the reach
+## it bites a player at. In fixed-point metres, so a HUD can draw the ring a player is standing
+## inside.
+func query_enemy_reach_metres(index: int) -> int:
+	if not _is_enemy(index):
+		return 0
+	if _enemy_kind[index] == EnemyKind.SIEGE_HULK:
+		return _definitions.siege_hulk_range_metres
+	return _enemy_player_reach(_enemy_kind[index])
+
+
+## Whether a Siege Hulk is standing still with something inside its reach to shell.
+##
+## A **pure read**, re-decided every tick, for the reason `_mend_target` is one: a query that
+## moved a Hulk's target would move the state hash by being asked a question. It answers the
+## three things that have to be true for the bombardment to be happening — nobody at its feet,
+## no Turret able to reach it, and something in range — which is exactly the state the HUD and
+## the renderer both want to draw.
+func query_enemy_is_bombarding(index: int) -> bool:
+	if not _is_enemy(index) or _enemy_kind[index] != EnemyKind.SIEGE_HULK:
+		return false
+	if query_run_is_over() or _enemy_spawn_tick[index] == _tick:
+		return false
+	if _player_in_contact(index) != -1:
+		return false
+	if _turret_covering(index) != -1:
+		return false
+	return _bombardment_target(index).x != BOMBARD_NOTHING
+
+
+## Ticks until a Siege Hulk's next shell or stomp. One counter for both, which is why standing
+## at its feet stops the bombardment.
+func query_enemy_attack_ticks_remaining(index: int) -> int:
+	if not _is_enemy(index):
+		return 0
+	return _enemy_attack_cooldown[index]
+
+
+# ── The shells in the air ─────────────────────────────────────────────────────
+
+## How many shells are in the air.
+func query_shell_count() -> int:
+	return _shell_ticks_left.size()
+
+
+## Where a shell will land, in fixed-point metres. The marker a player runs out of is drawn from
+## this, so what they dodge is literally where the damage will be.
+func query_shell_impact_metres(index: int) -> FixedVec2:
+	if index < 0 or index >= query_shell_count():
+		return FixedVec2.zero()
+	return FixedVec2.new(_shell_x[index], _shell_z[index])
+
+
+## How many ticks a shell has left to fly. The countdown on the marker.
+func query_shell_ticks_remaining(index: int) -> int:
+	if index < 0 or index >= query_shell_count():
+		return 0
+	return _shell_ticks_left[index]
+
+
+## How far from the impact point a shell is felt, in fixed-point metres. What decides how big
+## the marker is drawn, so the ring on the ground is the blast rather than a guess at it.
+func query_shell_blast_radius_metres() -> int:
+	return _definitions.siege_hulk_shell_blast_radius_metres
+
+
+## How long a shell is in the air from firing to landing, in whole ticks. The full span the
+## marker's countdown is measured against, so the renderer is not told the number twice.
+func query_shell_flight_ticks() -> int:
+	return _shell_flight_ticks()
+
+
+# ── The Hives ─────────────────────────────────────────────────────────────────
+
+## How many Hives are still standing. Falls when one is destroyed and never rises again.
+func query_hive_count() -> int:
+	return _hive_health.size()
+
+
+## Where a Hive stands.
+func query_hive_tile(index: int) -> Vector3i:
+	if not _is_hive(index):
+		return Vector3i.ZERO
+	return Vector3i(_hive_tile_x[index], _hive_tile_y[index], _hive_tile_z[index])
+
+
+## What is left of a Hive, in whole hit points.
+func query_hive_health(index: int) -> int:
+	if not _is_hive(index):
+		return 0
+	return _hive_health[index]
+
+
+## The hit points a Hive stands at full.
+func query_hive_max_health() -> int:
+	return _definitions.hive_health
+
+
+## How much of the Nest's Heat shedding the standing Hives are drowning out between them, per
+## minute.
+##
+## **The bill a player is paying for not having gone out there yet, in the units of the gauge
+## they already watch.** It falls permanently when a Hive dies, which is what makes "destroying
+## one reduces pressure permanently" a number rather than a promise.
+func query_hive_heat_shadow_per_minute() -> int:
+	return (
+		_definitions.heat_decay_per_minute - _heat_decay_per_minute()
+	)
+
+
+# ── What leaving the Factory costs ────────────────────────────────────────────
+#
+# A sortie has to be a decision a player makes knowingly, which means the bill has to be
+# readable *before* they walk out rather than discovered when they get back. Both of these are
+# pure projections, like every other refusal and gauge in this file: the Simulation never reads
+# either of them back, and the HUD puts them on screen the whole time a Hive or a Siege Hulk is
+# standing.
+
+## How far a player is from the Nest's footprint centre, in fixed-point metres. How far from
+## home, and therefore how long the walk back to a wrench is.
+##
+## The one place in this file that takes a square root rather than comparing squares, and it is
+## safe for the reason `query_power_ratio` is safe to divide: it is a gauge the Simulation never
+## reads back, so the floor `Fixed.sqrt` applies cannot reach the state hash or move anything.
+func query_player_metres_from_the_nest(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	var here: FixedVec2 = query_player_position(player_id)
+	var centre: FixedVec2 = _nest_centre_metres()
+	var gap_x: int = here.x - centre.x
+	var gap_z: int = here.z - centre.z
+	return Fixed.sqrt(Fixed.mul(gap_x, gap_x) + Fixed.mul(gap_z, gap_z))
+
+
+## How many Machines are standing at less than full health.
+##
+## The other half of the bill: hand repair is what holds a Breaker off and what brings a shelled
+## Factory back, and it is the one thing a player cannot do from out on the Map. A count rather
+## than a list, because what a player deciding whether to leave needs is a number that is going
+## up.
+func query_machines_damaged() -> int:
+	var damaged: int = 0
+	for index: int in range(query_machine_count()):
+		if _machine_missing_health(index) > 0:
+			damaged += 1
+	return damaged
 
 
 ## The way out of a tile towards the Nest, as a `WorldGrid` direction, or -1 where there is

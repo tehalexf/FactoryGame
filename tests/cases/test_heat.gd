@@ -654,8 +654,9 @@ func test_a_wave_is_composed_once_rather_than_re_deciding_itself_while_it_spawns
 	sim.step([InputAction.call_wave_early(0)])
 	_step(sim, sim.query_telegraph_ticks() - 1)
 	var owed: int = sim.query_wave_spawns_remaining()
-	# 19 Crawlers and 2 Breakers at 2000 Heat, per content/waves.csv.
-	assert_eq(owed, 20, "21 summoned, one already out of the Breach")
+	# 19 Crawlers, 2 Breakers and 1 Siege Hulk at 2000 Heat, per content/waves.csv — the Hulk
+	# joined the table in #16 behind a 1200-Heat threshold, so a Factory this loud is sent one.
+	assert_eq(owed, 21, "22 summoned, one already out of the Breach")
 
 	sim.step([InputAction.demolish(0, sim.query_node_tile(0))])
 	assert_eq(sim.query_heat(), 2000, "the Heat it already made stands")
@@ -796,7 +797,14 @@ func test_determinism_the_fixture_really_did_heat_the_factory_up() -> void:
 	var sim: Simulation = Simulation.new(21, 1)
 	sim.step(_three_miners(sim))
 	var readings: PackedInt64Array = PackedInt64Array()
-	for minute: int in range(5):
+	# Three minutes, where the replay beside it runs five. The shipped Map carries two Hives
+	# since #16 and a standing Hive drowns out part of what the Nest can hide, so three
+	# undefended Miners now cross `content/waves.csv`'s 500-Heat Breaker threshold inside three
+	# minutes — and a Breaker eats the Miners that were making the Heat, after which the reading
+	# falls. That is the mechanic working rather than failing, and what this fixture is for is
+	# the climb, so it measures the climb. The replay still covers all five minutes, including
+	# the Factory being taken apart.
+	for minute: int in range(3):
 		_step(sim, Simulation.TICKS_PER_MINUTE)
 		readings.append(sim.query_heat())
 
