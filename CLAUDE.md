@@ -7,6 +7,7 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 ## Commands
 
 ```bash
+tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 godot --path .                   # run the game
@@ -17,7 +18,14 @@ godot --headless --path . --quit-after 120   # launch headless for 120 frames
 or an unfiltered run that executed no tests. Set `GODOT=/path/to/godot` to use a
 specific binary.
 
-It runs `--import` first on every invocation. That is not optional: `class_name`
+The asset-pipeline suite is separate because it drives Blender and Python rather
+than the engine's test runner; see
+[docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md). Run
+`bash tools/git/install_hooks.sh` once per clone to install its licence guard as
+a pre-commit hook — the repository is public and purchased assets must never be
+committed.
+
+`tools/run_tests.sh` runs `--import` first on every invocation. That is not optional: `class_name`
 globals resolve through `.godot/global_script_class_cache.cfg`, which only an
 import pass rebuilds, so a newly added class otherwise fails with a confusing
 "Identifier not declared in the current scope".
@@ -38,7 +46,8 @@ GDScript, not C#. C++ via GDExtension only when profiling demands it.
 sim/      the Simulation. Pure GDScript, no Godot node types, no floats.
 game/     the Godot layer. Input producers and state readers only.
 tests/    test runner, TestCase base, and tests/cases/ for the cases themselves.
-tools/    developer scripts.
+assets/   committed CC0 and self-authored assets. intake/ holds the source FBX.
+tools/    developer scripts. tools/assets/ is the asset pipeline and its tests.
 docs/     design, ADRs, asset licensing.
 ```
 

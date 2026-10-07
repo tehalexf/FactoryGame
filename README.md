@@ -29,6 +29,16 @@ godot --path .
 Both need Godot 4.7.2 on `PATH` as `godot`. See [CLAUDE.md](CLAUDE.md) for the
 full toolchain, the project layout, and the conventions the code follows.
 
+## Setup
+
+Once per clone, install the repo's git hooks. This repository is public and
+purchased assets forbid redistribution, so a pre-commit licence guard is not
+optional:
+
+```sh
+bash tools/git/install_hooks.sh
+```
+
 ## Reading order
 
 | Document | What it is |
@@ -37,6 +47,7 @@ full toolchain, the project layout, and the conventions the code follows.
 | [docs/DESIGN.md](docs/DESIGN.md) | The settled design and milestone plan. |
 | [CLAUDE.md](CLAUDE.md) | How to build, run and test; code layout and conventions. |
 | [docs/ASSETS.md](docs/ASSETS.md) | Asset sources, licenses, and what must never be committed. |
+| [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) | FBX-to-glTF conversion, the shared humanoid skeleton, and the licence guard. |
 | [docs/adr/](docs/adr/) | Architecture decision records. |
 
 ## Stack
