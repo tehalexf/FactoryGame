@@ -36,7 +36,14 @@ echo "importing on the Windows side..."
   "C:\\Users\\Alex\\godot\\Godot_v4.7.2-stable_win64_console.exe --headless --path C:\\Users\\Alex\\FactoryGame --import" \
   >/dev/null 2>&1 || true
 
-/mnt/c/Windows/System32/cmd.exe /c start "" \
-  "C:\\Users\\Alex\\godot\\Godot_v4.7.2-stable_win64.exe" \
-  --path "C:\\Users\\Alex\\FactoryGame" --resolution 1600x900 >/dev/null 2>&1
-echo "launched on Windows"
+# Launching is opt-in. Syncing used to launch too, which meant a window
+# appeared whenever anything was copied across, including from automation.
+if [ "${1:-}" = "--launch" ] || [ "${LAUNCH:-}" = "1" ]; then
+  /mnt/c/Windows/System32/cmd.exe /c start "" \
+    "C:\\Users\\Alex\\godot\\Godot_v4.7.2-stable_win64.exe" \
+    --path "C:\\Users\\Alex\\FactoryGame" --resolution 1600x900 >/dev/null 2>&1
+  echo "launched on Windows"
+else
+  echo "synced. run with --launch to start it, or launch it yourself from"
+  echo "  C:\\Users\\Alex\\FactoryGame"
+fi
