@@ -125,7 +125,7 @@ func test_a_wave_stops_once_it_has_sent_what_it_was_going_to_send() -> void:
 	for i: int in range(20 * Simulation.TICKS_PER_SECOND):
 		sim.step([])
 	assert_eq(sim.query_wave_number(), 1, "Wave 2 is two minutes out")
-	assert_eq(sim.query_enemy_count(), 6, "wave.crawlers_in_first_wave and no more")
+	assert_eq(sim.query_enemy_count(), 6, "the count_per_breach the Wave table names, and no more")
 	assert_eq(sim.query_wave_spawns_remaining(), 0)
 
 
