@@ -10,6 +10,16 @@ the Heat you generate brings the waves in faster. Every expansion is a bet.
 
 **Status:** design settled, implementation not started.
 
+## Setup
+
+Once per clone, install the repo's git hooks. This repository is public and
+purchased assets forbid redistribution, so a pre-commit licence guard is not
+optional:
+
+```sh
+bash tools/git/install_hooks.sh
+```
+
 ## Reading order
 
 | Document | What it is |
@@ -17,6 +27,7 @@ the Heat you generate brings the waves in faster. Every expansion is a bet.
 | [GLOSSARY.md](GLOSSARY.md) | Domain glossary. The project's vocabulary. Start here. |
 | [docs/DESIGN.md](docs/DESIGN.md) | The settled design and milestone plan. |
 | [docs/ASSETS.md](docs/ASSETS.md) | Asset sources, licenses, and what must never be committed. |
+| [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) | FBX-to-glTF conversion, the shared humanoid skeleton, and the licence guard. |
 | [docs/adr/](docs/adr/) | Architecture decision records. |
 
 ## Stack
