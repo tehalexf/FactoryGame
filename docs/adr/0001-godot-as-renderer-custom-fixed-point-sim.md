@@ -4,7 +4,13 @@ Date: 2026-10-06
 
 ## Status
 
-Accepted
+Accepted.
+
+**Amended 2026-10-06:** the engine version is Godot **4.7.2 stable**, not 4.6.
+4.7.2 is the current stable release and the version actually installed, and the
+industrial asset pack in [../ASSETS.md](../ASSETS.md) supports 4.3–4.7. The
+evaluation below was made against 4.6 and is left as written, because none of its
+reasoning turns on the minor version.
 
 ## Context
 
@@ -38,7 +44,7 @@ Relevant evidence:
 
 ## Decision
 
-Use **Godot 4.6 as a renderer and input layer only.** All game logic — grid,
+Use **Godot 4.7.2 as a renderer and input layer only.** All game logic — grid,
 Belts, Machines, Power, Heat, Enemy movement — lives in a custom data-oriented
 simulation that never touches the node tree. Enemies and Items are entries in
 arrays, drawn via MultiMesh, not nodes.
