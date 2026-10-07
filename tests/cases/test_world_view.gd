@@ -494,12 +494,14 @@ func _threatened_sim() -> Simulation:
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -590,12 +592,18 @@ func _besieged_sim() -> Simulation:
 		+ "siege_hulks,siege_hulk,0,1,0,1\n",
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_true(
+		not definitions.has_errors(),
+		"the besieged fixture's content must load: %s" % definitions.describe_errors()
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -826,12 +834,14 @@ func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -916,7 +926,7 @@ func test_a_machine_body_stands_on_the_ground_rather_than_half_buried() -> void:
 func _sim_with_an_undrawn_machine() -> Simulation:
 	var machines: String = (
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text()
-		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,0,smelt_iron_plate,\n"
+		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,0,0,smelt_iron_plate,\n"
 	)
 	var definitions: Definitions = Definitions.parse(
 		machines,
@@ -929,12 +939,14 @@ func _sim_with_an_undrawn_machine() -> Simulation:
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	return Simulation.new(1, 1, definitions)
 
@@ -1293,6 +1305,15 @@ placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
 """
 
 
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
+"""
+
+
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 """
@@ -1312,12 +1333,14 @@ func _unlocked_sim(world_seed: int) -> Simulation:
 		FileAccess.get_file_as_string("res://content/waves.csv"),
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	return Simulation.new(world_seed, 1, definitions)

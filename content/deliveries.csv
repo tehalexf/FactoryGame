@@ -40,8 +40,13 @@
 #                   (GLOSSARY.md) and the frames and components themselves arrive in a
 #                   later milestone; what a Run has unlocked is recorded, hashed and
 #                   saved from now, because that is the half that cannot be retrofitted.
-#   unlocks_stratagems  Stratagems this tier opens up, by id. Same standing as the Gear
-#                   list — the Silo, the Charges and the Painting arrive later.
+#   unlocks_stratagems  Stratagems this tier opens up, by id. Each must name a row in
+#                   stratagems.csv. **A Stratagem is locked because some tier here names
+#                   it**, the same authority `unlocks_machines` and `unlocks_gear` are, so
+#                   the Stratagems a Run opens with are exactly the ones no tier names —
+#                   which is `sentry_drop`, because the first thing a Silo is for is
+#                   covering ground and a Run that had to deliver before it could use the
+#                   Silo it just built would have paid twice.
 #
 # Any of the three unlock columns may be empty. A row with all three empty is an error:
 # a Delivery that unlocks nothing is a bill a player pays for nothing.
@@ -68,5 +73,5 @@
 #
 id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_munitions,Munitions Licence,1,coal:20,,mg_drum_magazine,
-t02_deep_mining,Deep Mining Licence,1,iron_plate:120;ammunition:60,miner_mk2,heavy_barrel;reflex_sight,resupply_drop
-t03_deep_survey,Deep Survey Licence,2,iron_plate:400;coal:200,miner_mk3,hardened_plating,orbital_barrage
+t02_deep_mining,Deep Mining Licence,1,iron_plate:120;ammunition:60,miner_mk2,heavy_barrel;reflex_sight,supply_drop
+t03_deep_survey,Deep Survey Licence,2,iron_plate:400;coal:200,miner_mk3,hardened_plating,artillery_barrage

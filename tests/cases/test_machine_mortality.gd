@@ -53,12 +53,14 @@ func _content(waves: String = ONE_BREAKER, overrides: Array = []) -> Definitions
 		waves,
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -532,9 +534,9 @@ func test_a_wrench_holds_a_machine_against_the_breaker_chewing_it() -> void:
 ## shipped Repair Pylon's own numbers. Nothing about the Pylon is special-cased here — its
 ## row is `content/machines.csv`'s, copied, and its reach, its pulse and its Recipe are the
 ## shipped ones. Power is left out of it so a brownout cannot be mistaken for starvation.
-const MEND_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-plate_seam_mk1,Plate Seam,miner,2,2,0,0,400,1,0,0,0,dig_plate,
-repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,0,0,300,0,6,0,40,mend_machinery,
+const MEND_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+plate_seam_mk1,Plate Seam,miner,2,2,0,0,400,1,0,0,0,0,dig_plate,
+repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,0,0,300,0,6,0,40,0,mend_machinery,
 """
 
 const MEND_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -549,8 +551,10 @@ func _mend_content(waves: String = ONE_CRAWLER) -> Definitions:
 	return Definitions.parse(
 		MEND_MACHINES, MEND_RECIPES, tuning.replace(SHIPPED_STOCK, STOCKED), waves, DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv", "deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -896,6 +900,15 @@ const STOCKED: String = 'starting_stock = "iron_plate:200"'
 const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
 pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
 placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
+## A Stratagem table that is not what this file is about. One row, so the table is not empty —
+## `Definitions` refuses an empty one, because a Silo with nothing to load is a Machine a
+## player can build, feed and never use. `test_silo.gd` is where the shipped table is
+## asserted, exactly as `test_delivery.gd` is where the shipped Delivery chain is.
+const STRATAGEMS: String = """id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 
