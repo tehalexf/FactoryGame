@@ -24,11 +24,28 @@ enum Kind {
 	## [-ONE, ONE]. A direction and throttle, not a destination — the Simulation
 	## owns speed, so a client cannot move faster by sending a larger number.
 	MOVE = 1,
+	## Replace the Simulation's content definitions. args = [digest of the new set].
+	## The set itself travels in `payload`.
+	##
+	## A reload is an Input Action rather than a method on the façade for three
+	## reasons: it is ordered with every other intent, so the tick it lands on is
+	## unambiguous; it appears in a recorded script, so a replay reproduces it; and
+	## in co-op it is the Host's intent broadcast like any other, which is where the
+	## digest earns its place — every client reloads its own copy of the files, and a
+	## client whose copy hashes differently can refuse instead of desyncing silently.
+	RELOAD_DEFINITIONS = 2,
 }
 
 var kind: Kind = Kind.NONE
 var player_id: int = 0
 var args: PackedInt64Array = PackedInt64Array()
+
+## Out-of-band payload, used by `RELOAD_DEFINITIONS` and nothing else. The one
+## action whose subject is a blob rather than a handful of integers: a definition
+## set is the same kind of thing as the world state transferred on join, not an
+## intent. It is not hashed directly — `args[0]` holds its digest, and that is what
+## goes into the hash — so the generic encoding above stays the whole wire format.
+var payload: RefCounted = null
 
 
 func _init(action_kind: Kind = Kind.NONE, acting_player: int = 0, action_args: PackedInt64Array = PackedInt64Array()) -> void:
@@ -50,6 +67,32 @@ static func move(acting_player: int, intent_x: int, intent_z: int) -> InputActio
 			Fixed.clamp_fixed(intent_z, -Fixed.ONE, Fixed.ONE),
 		])
 	)
+
+
+## Replaces the Simulation's content definitions with `definitions`.
+##
+## The digest goes into `args` so that the action's hash describes the set it
+## carries. A Simulation refuses the action if the payload is missing, failed to
+## load, or does not hash to the digest claimed here.
+static func reload_definitions(acting_player: int, definitions: Definitions) -> InputAction:
+	var digest: int = 0 if definitions == null else definitions.digest()
+	var action: InputAction = InputAction.new(
+		Kind.RELOAD_DEFINITIONS, acting_player, PackedInt64Array([digest])
+	)
+	action.payload = definitions
+	return action
+
+
+## The definition set a `RELOAD_DEFINITIONS` action carries, or null.
+func reload_payload() -> Definitions:
+	if payload is Definitions:
+		return payload
+	return null
+
+
+## The digest the action claims its payload has.
+func declared_digest() -> int:
+	return _arg(0)
 
 
 ## Fixed-point movement intent along x. Zero for any other kind.
@@ -76,8 +119,12 @@ func equals(other: InputAction) -> bool:
 	return kind == other.kind and player_id == other.player_id and args == other.args
 
 
+## A copy. The payload is shared rather than copied, which is safe because a loaded
+## definition set is immutable — hot-reload builds a new one instead of editing one.
 func duplicate_action() -> InputAction:
-	return InputAction.new(kind, player_id, args.duplicate())
+	var copy: InputAction = InputAction.new(kind, player_id, args.duplicate())
+	copy.payload = payload
+	return copy
 
 
 ## A missing argument reads as zero rather than crashing. A malformed action

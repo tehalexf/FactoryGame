@@ -31,10 +31,20 @@ class Divergence extends RefCounted:
 	## Set when the replay was fed different inputs than were recorded, which
 	## would otherwise look like a divergence in the Simulation.
 	var script_mismatch: bool = false
+	## Set when the replay is running against a different set of content definitions
+	## than the recording was made under. Also not a divergence in the Simulation:
+	## it is two different games being compared.
+	var definitions_mismatch: bool = false
 
 	func describe() -> String:
 		if script_mismatch:
 			return "replay was fed a different Input Action script than was recorded"
+		if definitions_mismatch:
+			return (
+				"replay is running against different content definitions than were"
+				+ " recorded (expected digest %d, got %d)"
+				% [expected_hash, actual_hash]
+			)
 		if is_identical:
 			return "identical across %d compared states" % ticks_compared
 		if tick == 0:
@@ -46,14 +56,24 @@ class Divergence extends RefCounted:
 
 
 ## Runs `script` against a fresh Simulation and captures the hash at every point.
-static func record(script: InputScript, world_seed: int = 0, player_count: int = 1) -> ReplayRecording:
-	var sim: Simulation = Simulation.new(world_seed, player_count)
+## `definitions` is the content the Run uses. Leaving it null records against
+## whatever is in content/ and makes the replay read those files again, which is what
+## a fixture wants: if the content changes, the replay says so.
+static func record(
+	script: InputScript,
+	world_seed: int = 0,
+	player_count: int = 1,
+	definitions: Definitions = null
+) -> ReplayRecording:
+	var sim: Simulation = Simulation.new(world_seed, player_count, definitions)
 
 	var recording: ReplayRecording = ReplayRecording.new()
 	recording.world_seed = world_seed
 	recording.player_count = player_count
 	recording.input_script = script
 	recording.script_digest = script.digest()
+	recording.definitions = definitions
+	recording.definitions_digest = sim.query_definition_digest()
 
 	recording.hashes = PackedInt64Array()
 	recording.hashes.append(sim.hash())
@@ -87,7 +107,20 @@ static func verify(recording: ReplayRecording, replacement_sim: Simulation = nul
 
 	var sim: Simulation = replacement_sim
 	if sim == null:
-		sim = Simulation.new(recording.world_seed, recording.player_count)
+		sim = Simulation.new(
+			recording.world_seed, recording.player_count, recording.definitions
+		)
+
+	# Checked before any tick, and before the starting hash, because "the content
+	# changed" and "the Simulation diverged" are different findings and only one of
+	# them is a bug in the Simulation.
+	if sim.query_definition_digest() != recording.definitions_digest:
+		divergence.is_identical = false
+		divergence.definitions_mismatch = true
+		divergence.tick = 0
+		divergence.expected_hash = recording.definitions_digest
+		divergence.actual_hash = sim.query_definition_digest()
+		return divergence
 
 	# The starting state is compared before any tick is stepped. Lockstep's first
 	# requirement is an identical state to start from, so a mismatch here is a

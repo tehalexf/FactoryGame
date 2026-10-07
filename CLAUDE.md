@@ -37,6 +37,7 @@ GDScript, not C#. C++ via GDExtension only when profiling demands it.
 ```
 sim/      the Simulation. Pure GDScript, no Godot node types, no floats.
 game/     the Godot layer. Input producers and state readers only.
+content/  Machine, Recipe and tuning definitions. Data, not code.
 tests/    test runner, TestCase base, and tests/cases/ for the cases themselves.
 tools/    developer scripts.
 docs/     design, ADRs, asset licensing.
@@ -61,12 +62,93 @@ Everything behind it — grid, Belts, Machines, Power, Heat, Waves, Turrets, Sil
 Delivery — is tested *through* those three, never directly. A test that reaches
 into a module's internals breaks when the module is refactored and tells you
 nothing about whether the game works. The one exception is leaf utility libraries
-with contracts of their own (`Fixed`, `DeterministicRng`, `StateHasher`), which
-are tested directly because their rounding and bit-level behaviour cannot be
-observed any other way.
+with contracts of their own — `Fixed`, `DeterministicRng`, `StateHasher`, and the
+definition loaders `CsvTable`, `TomlDocument` and `Definitions` — which are tested
+directly because their rounding, bit-level behaviour and error messages cannot be
+observed any other way. "line 7 of recipes.csv names a rate that is not a number"
+is not something `step`, `hash` or a query can tell you.
 
 Queries return copies, never references into state. The Godot layer holds no
 authoritative state whatsoever.
+
+## Content definitions
+
+Machines, Recipes and tuning values are **data**, in `content/`:
+
+```
+content/machines.csv    one row per Machine
+content/recipes.csv     one row per Recipe
+content/tuning.toml     balance numbers that are not per-Machine or per-Recipe
+```
+
+**Adding a Machine or a Recipe is a row. It is never a code change.** There is no
+registry, no enum and no Item table — the set of Items is exactly the set the
+Recipes mention, interned in sorted order. Every column is documented in the
+header comment of the file it belongs to; read that before adding a row.
+
+`content/.gdignore` is load-bearing. Without it Godot's importer claims every
+`.csv` in the directory as a translation table, warns on each import, and strips
+the rows from an export. These files are read with `FileAccess`, not `load()`.
+
+`Definitions.load_from_directory` returns a set that either loaded or did not:
+
+- Machines, Recipes and Items are **sorted by id**, and tuning keys are sorted
+  too, so the index space is a function of the content and not of the order rows
+  happen to be written in. Row order, comments and blank lines cannot reach the
+  state hash.
+- A malformed value is an **error naming the file, the row and the column**.
+  There are no defaults anywhere: a typo'd rate does not become 0, a missing
+  tuning key does not become 0, a Machine pointing at a Recipe that does not
+  exist is not quietly Recipe-less.
+- A set with any error at all carries **no definitions**. Half a definition set
+  is more dangerous than none, because it looks usable.
+- A tuning key nothing reads is a **warning**, because a file carrying a number
+  that does nothing lies to whoever is tuning it.
+
+`sim/csv_table.gd` and `sim/toml_document.gd` are the only parsers. Both are
+hand-rolled: Godot ships no TOML parser, and vendoring one into a public repo is
+out (`docs/ASSETS.md`). The TOML subset is sections, `key = value`, comments,
+integers, decimals, quoted strings, `true`/`false` — and nothing else. Arrays,
+inline tables and dates are valid TOML and are refused by name and line number.
+If you need a fourth data file, reuse `CsvTable` rather than writing a parser.
+
+Rates are written in decimal because that is how a human reasons about them, and
+cross into fixed point exactly once, through `Fixed.from_decimal_string`, which
+floors like every other lossy operation. No float exists at any point.
+
+## Hot-reload
+
+Editing a content file while the game runs applies the change when you save it.
+
+`game/definition_watcher.gd` owns the filesystem and clock half — both are
+forbidden inside `sim/`, which is why it lives in `game/` next to `TickPump`. It
+detects change by **content digest**, not modification time, so two saves in the
+same second are not mistaken for one. `Main` polls it and queues the result.
+
+**The reload is an Input Action**, `InputAction.Kind.RELOAD_DEFINITIONS`, not a
+method on the façade. It therefore goes through `step`, is ordered with every
+other intent, lands in a recorded script, and replays exactly. The façade is
+still three things.
+
+What that buys, and what every later ticket may rely on:
+
+- A reload **changes the state hash** at the tick it is applied. The definition
+  digest and a reload generation counter are both hashed.
+- A reload is **not undoable**. Reloading the original files does not restore the
+  earlier hash, because the Run did change.
+- A reload that **failed to load is refused** — so is one with no payload, and
+  one whose declared digest disagrees with the set it carries. A refusal leaves
+  the definitions and the generation counter untouched and the Run running. A
+  typo mid-edit must never take a Run down.
+- A `ReplayRecording` carries the **digest of the definitions it was made under**.
+  `verify` compares that before it compares a single tick and reports
+  `definitions_mismatch` — so a fixture cannot quietly pass against content that
+  has since changed, and a content change is never misreported as a tick
+  divergence. Leave `definitions` null in a fixture and the replay re-reads
+  `content/`, which is what makes that check bite.
+
+In co-op this is the Host's intent broadcast like any other, and the digest is
+what lets a client whose own files hash differently refuse instead of desyncing.
 
 ## Determinism rules
 
@@ -112,6 +194,11 @@ var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(record
 assert_true(divergence.is_identical, divergence.describe())
 ```
 
+`record` takes an optional `Definitions`. Leave it out in a fixture: the replay
+then re-reads `content/`, and a content change that would alter the Run is
+reported as a `definitions_mismatch` rather than passing unnoticed. Pass one when
+the scenario needs content the shipped files do not have.
+
 `verify` takes an optional replacement Simulation, which is how a save/load round
 trip gets proved exact and how the harness itself is proved to have teeth.
 
@@ -131,7 +218,13 @@ trip gets proved exact and how the harness itself is proved to have teeth.
 - Domain vocabulary from `GLOSSARY.md`, capitalised: Nest, Breach, Factory,
   Machine, Belt, Heat, Wave, Turret, Silo, Charge, Delivery.
 - Fixed-point constants are written `Fixed.from_rational(1, 3)`, never as a
-  decimal literal.
+  decimal literal. In a *data* file a rate is written in decimal and parsed with
+  `Fixed.from_decimal_string`.
+- **Every test method must assert something.** A GDScript runtime error — a call
+  to a method that does not exist, an index out of range — aborts the method on
+  the spot with nothing a test can catch, so the runner counts assertions and
+  fails a method that made none. If a test's happy path returns early, assert
+  explicitly rather than falling off the end.
 
 ## Test runner
 

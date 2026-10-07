@@ -191,3 +191,56 @@ func test_clamp_bounds_a_value() -> void:
 	assert_eq(Fixed.clamp_fixed(Fixed.from_int(5), low, high), Fixed.from_int(5), "inside")
 	assert_eq(Fixed.clamp_fixed(Fixed.from_int(1), low, high), low, "below")
 	assert_eq(Fixed.clamp_fixed(Fixed.from_int(9), low, high), high, "above")
+
+
+# ── Parsing decimals from content files ───────────────────────────────────────
+# Tuning files and Recipe tables are written by a human in decimal. The crossing
+# from that text into a Simulation quantity has to be exact and float-free, so it
+# gets the same scrutiny as the arithmetic.
+
+func test_a_whole_decimal_string_parses_exactly() -> void:
+	assert_eq(Fixed.from_decimal_string("4"), 4 * 65536)
+	assert_eq(Fixed.from_decimal_string("0"), 0)
+
+
+func test_a_dyadic_decimal_string_parses_exactly() -> void:
+	# 1.5 and 0.25 are exactly representable in 16 fractional bits.
+	assert_eq(Fixed.from_decimal_string("1.5"), 98304)
+	assert_eq(Fixed.from_decimal_string("0.25"), 16384)
+
+
+func test_a_repeating_decimal_string_floors() -> void:
+	# 3.2 is 16/5, so 3.2 * 65536 is 1048576/5 = 209715.2, which floors to 209715.
+	assert_eq(Fixed.from_decimal_string("3.2"), 209715)
+
+
+func test_a_negative_decimal_string_floors_toward_negative_infinity() -> void:
+	# -3.2 * 65536 is -209715.2. Flooring is sign-independent, so this is -209716,
+	# one unit below the negation of 3.2 — the documented rounding rule, applied
+	# without exception.
+	assert_eq(Fixed.from_decimal_string("-3.2"), -209716)
+	assert_eq(Fixed.from_decimal_string("-1.5"), -98304)
+
+
+func test_a_leading_plus_is_accepted() -> void:
+	assert_eq(Fixed.from_decimal_string("+2.5"), 163840)
+
+
+func test_surrounding_whitespace_is_ignored() -> void:
+	assert_eq(Fixed.from_decimal_string("  1.5  "), 98304)
+
+
+func test_decimal_strings_are_recognised_before_they_are_parsed() -> void:
+	# The recogniser exists so a loader can reject junk by name rather than have a
+	# typo silently parse as zero.
+	assert_true(Fixed.is_decimal_string("12"))
+	assert_true(Fixed.is_decimal_string("-0.125"))
+	assert_true(Fixed.is_decimal_string("+7.0"))
+	assert_false(Fixed.is_decimal_string(""))
+	assert_false(Fixed.is_decimal_string("1.2.3"))
+	assert_false(Fixed.is_decimal_string("1,5"))
+	assert_false(Fixed.is_decimal_string("fast"))
+	assert_false(Fixed.is_decimal_string("1."))
+	assert_false(Fixed.is_decimal_string(".5"))
+	assert_false(Fixed.is_decimal_string("-"))
+	assert_false(Fixed.is_decimal_string("1 5"))
