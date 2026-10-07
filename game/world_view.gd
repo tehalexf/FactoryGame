@@ -288,6 +288,8 @@ func sync(sim: Simulation) -> void:
 	_sync_hologram(sim)
 	_sync_hud(sim)
 	_place_camera(sim)
+	# After the camera, because the weapon hangs off it.
+	_sync_weapon(sim)
 
 
 ## How many placeholders are on screen — Nodes plus Machines.
@@ -1156,6 +1158,7 @@ func _sync_hud(sim: Simulation) -> void:
 	)
 	lines.append_array(_heat_lines(sim))
 	lines.append_array(_delivery_lines(sim))
+	lines.append_array(_gear_lines(sim))
 	lines.append_array(_build_gun_lines(sim))
 
 	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and
@@ -1522,6 +1525,168 @@ func _place_camera(sim: Simulation) -> void:
 	)
 
 
+# ── The weapon in frame ───────────────────────────────────────────────────────
+#
+# **This is the honest limit of what this ticket shipped, and it is worth being plain
+# about.** First-person combat lives or dies on animation and feel, and what is here is a
+# placeholder: one box for a frame and one for a barrel, parented to the camera, swaying
+# with the player's own velocity and kicking when a shot lands. Every number it moves by is
+# read out of the Simulation — the velocity, the kick, the tick a shot fired on — so nothing
+# here is a second opinion about the Run, and all of it replays.
+#
+# What it is *not* is the purchased first-person arms and their named takes
+# (`docs/LICENSED_ASSETS.md`: Shoot, Reload, Draw, PutAway, walk, run, idle, and the Pump
+# and Chamber variants, with exact frame ranges recorded). Those are FBX inside the
+# gitignored quarantine, and Godot cannot import an FBX at runtime — so using them needs a
+# Blender step that converts the named takes into a GLB outside the repository and a
+# runtime glTF load of the result. That is a ticket of its own, and `WEAPON_BODY_DIRECTORY`
+# below is the seam it plugs into: a GLB named for the weapon, loaded if it is there and
+# silently skipped if it is not, **so the repository stays buildable and testable for
+# anyone without those files** — which is the rule `docs/ASSETS.md` sets and the reason
+# none of it may be committed.
+
+## Where a converted first-person weapon mesh would live, outside the shipping tree. The
+## directory is gitignored and will usually not exist, which is an ordinary state and not a
+## warning — exactly as a Machine with no `.glb` is.
+const WEAPON_BODY_DIRECTORY: String = "res://assets_licensed/generated/gear/"
+
+## How far down, right and forward of the camera the weapon sits, in metres. Pure feel, and
+## the three numbers most worth fiddling with in this file.
+const WEAPON_OFFSET: Vector3 = Vector3(0.22, -0.20, -0.45)
+
+## How far the weapon drops out of frame while a player is Downed or dead, in metres. Far
+## enough to be gone, because a weapon still in frame while bleeding out reads as a bug.
+const WEAPON_STOWED_METRES: float = 0.9
+
+## How far the weapon swings as a player walks, in metres per metre per second of their own
+## speed, and the cap on it. Driven by `query_player_velocity` rather than by a clock, so a
+## player standing still has a steady weapon and a sprinting one does not.
+const WEAPON_SWAY_PER_SPEED: float = 0.012
+const WEAPON_SWAY_LIMIT_METRES: float = 0.06
+
+## How far the weapon recoils towards the camera on a shot, in metres, and how many ticks it
+## takes to come back. Separate from the Simulation's own view kick — that one moves the
+## *aim* and is authoritative; this one moves the model and is presentation.
+const WEAPON_RECOIL_METRES: float = 0.09
+const WEAPON_RECOIL_TICKS: int = 8
+
+var _weapon_view: Node3D = null
+var _weapon_body: MeshInstance3D = null
+var _weapon_barrel: MeshInstance3D = null
+var _weapon_loaded_id: String = ""
+
+
+## Puts the weapon in frame, where the Simulation says it should be.
+##
+## Parented to the camera, so it inherits the view's yaw and pitch — including the recoil
+## the Simulation has in `query_player_camera_pitch_turns`, which is the point: the model
+## and the aim climb together because they are the same number.
+func _sync_weapon(sim: Simulation) -> void:
+	if _weapon_view == null:
+		_weapon_view = Node3D.new()
+		_camera.add_child(_weapon_view)
+		_weapon_body = MeshInstance3D.new()
+		_weapon_body.mesh = BoxMesh.new()
+		(_weapon_body.mesh as BoxMesh).size = Vector3(0.07, 0.11, 0.34)
+		_weapon_body.material_override = _unshaded(Color(0.21, 0.22, 0.20))
+		_weapon_view.add_child(_weapon_body)
+		_weapon_barrel = MeshInstance3D.new()
+		_weapon_barrel.mesh = BoxMesh.new()
+		(_weapon_barrel.mesh as BoxMesh).size = Vector3(0.035, 0.035, 0.40)
+		_weapon_barrel.material_override = _unshaded(Color(0.14, 0.14, 0.15))
+		_weapon_view.add_child(_weapon_barrel)
+
+	var weapon: String = sim.query_player_weapon(VIEWED_PLAYER)
+	_weapon_view.visible = not weapon.is_empty() and sim.query_player_is_alive(VIEWED_PLAYER)
+	_load_weapon_body(weapon)
+
+	# A melee weapon is short and a rifle is long, read off the weapon's own reach rather
+	# than off a table here — so a fourth weapon looks different without this file changing.
+	var reach: float = Fixed.to_float(sim.query_player_weapon_range_metres(VIEWED_PLAYER))
+	(_weapon_barrel.mesh as BoxMesh).size = Vector3(
+		0.035, 0.035, clampf(0.12 + reach * 0.006, 0.12, 0.55)
+	)
+	_weapon_barrel.position = Vector3(0.0, 0.0, -(_weapon_barrel.mesh as BoxMesh).size.z * 0.6)
+
+	var sway: float = 0.0
+	var velocity: FixedVec2 = sim.query_player_velocity(VIEWED_PLAYER)
+	var speed: float = Vector2(Fixed.to_float(velocity.x), Fixed.to_float(velocity.z)).length()
+	sway = minf(speed * WEAPON_SWAY_PER_SPEED, WEAPON_SWAY_LIMIT_METRES)
+
+	var recoil: float = 0.0
+	var fired: int = sim.query_player_last_shot_tick(VIEWED_PLAYER)
+	if fired >= 0:
+		var since: int = sim.query_tick() - fired
+		if since >= 0 and since < WEAPON_RECOIL_TICKS:
+			recoil = WEAPON_RECOIL_METRES * (1.0 - float(since) / float(WEAPON_RECOIL_TICKS))
+
+	var stowed: float = 0.0
+	if not sim.query_player_is_alive(VIEWED_PLAYER):
+		stowed = WEAPON_STOWED_METRES
+	# Survey View lifts the camera to read the Factory, so the weapon comes down out of the
+	# way of the thing the player raised the camera to look at.
+	stowed += WEAPON_STOWED_METRES * Fixed.to_float(
+		sim.query_player_survey_blend(VIEWED_PLAYER)
+	)
+
+	_weapon_view.position = Vector3(
+		WEAPON_OFFSET.x + sway,
+		WEAPON_OFFSET.y - sway - stowed,
+		WEAPON_OFFSET.z + recoil
+	)
+
+
+## Loads a converted first-person weapon mesh if there is one, and leaves the placeholder
+## boxes alone if there is not.
+##
+## Absence is an ordinary state. The directory is outside the shipping tree and gitignored,
+## so for anybody who has not built the conversion it simply is not there — and the game
+## still runs, which is the whole rule: nothing non-redistributable may be committed, and
+## nothing may be *required* either.
+func _load_weapon_body(weapon_id: String) -> void:
+	if weapon_id == _weapon_loaded_id:
+		return
+	_weapon_loaded_id = weapon_id
+	if weapon_id.is_empty():
+		return
+	var path: String = "%s%s.glb" % [WEAPON_BODY_DIRECTORY, weapon_id]
+	if not FileAccess.file_exists(path):
+		return
+	var document: GLTFDocument = GLTFDocument.new()
+	var state: GLTFState = GLTFState.new()
+	if document.append_from_file(path, state) != OK:
+		return
+	var loaded: Node = document.generate_scene(state)
+	if loaded == null:
+		return
+	_weapon_body.visible = false
+	_weapon_barrel.visible = false
+	_weapon_view.add_child(loaded)
+
+
+## An unshaded material. A view model is lit by whatever the level happens to be lit by,
+## which at eye level is nothing in particular, so a weapon that took the directional light
+## would vanish whenever a player faced away from the sun.
+func _unshaded(colour: Color) -> StandardMaterial3D:
+	var material: StandardMaterial3D = StandardMaterial3D.new()
+	material.albedo_color = colour
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	return material
+
+
+## Whether the weapon is in frame. For the smoke test.
+func weapon_is_visible() -> bool:
+	return _weapon_view != null and _weapon_view.visible
+
+
+## Where the weapon sits relative to the camera, in metres. For the smoke test, which
+## asserts it moves with what the Simulation says rather than with a remembered value.
+func weapon_offset() -> Vector3:
+	if _weapon_view == null:
+		return Vector3.ZERO
+	return _weapon_view.position
+
+
 ## Where the camera is standing, in metres. For the smoke test, which asserts it against
 ## the queries rather than against a remembered value.
 func camera_position() -> Vector3:
@@ -1563,6 +1728,93 @@ func _crosshair() -> Control:
 ## The refusal is in **words**, not only in a red box: "cannot build there" with no reason
 ## is the silent failure this ticket exists to remove. The wording lives in `BuildGun`
 ## because it is presentation; the rule lives in the Simulation.
+## What the player is holding, what is on it, and what is left of them.
+##
+## Every figure read out of a query, so none of it can be stale and none of it is a second
+## opinion. The effective numbers — damage, reach, scatter, rate — are the Simulation's own
+## arithmetic rather than this layer multiplying percentages, which is what makes the line a
+## player reads and the round that leaves the barrel one fact.
+func _gear_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+
+	# What is left of the player, first and in capitals when it matters. A Downed player
+	# reads one line and it counts down, because the only useful thing to know while
+	# bleeding out is how long a teammate has.
+	if sim.query_player_is_downed(VIEWED_PLAYER):
+		lines.append(
+			"DOWN — bleeding out, %ds left"
+			% [sim.query_player_downed_ticks_remaining(VIEWED_PLAYER) / Simulation.TICKS_PER_SECOND]
+		)
+	elif sim.query_player_is_dead(VIEWED_PLAYER):
+		lines.append(
+			"DEAD — back at the Nest in %ds"
+			% [sim.query_player_respawn_ticks_remaining(VIEWED_PLAYER) / Simulation.TICKS_PER_SECOND]
+		)
+	else:
+		lines.append(
+			"health %d/%d"
+			% [
+				sim.query_player_health(VIEWED_PLAYER),
+				sim.query_player_max_health(VIEWED_PLAYER),
+			]
+		)
+
+	var weapon: String = sim.query_player_weapon(VIEWED_PLAYER)
+	if weapon.is_empty():
+		lines.append("gear: nothing in your hands")
+		return lines
+
+	# The frame and what it actually does. `spread` is in degrees on the way out because
+	# degrees is what `content/gear.csv` is written in; the Simulation works in turns.
+	var reach: int = sim.query_player_weapon_range_metres(VIEWED_PLAYER)
+	var line: String = (
+		"gear: %s — %d dmg, %dm, %.1f° spread, %d tick"
+		% [
+			weapon,
+			sim.query_player_weapon_damage(VIEWED_PLAYER),
+			Fixed.floor_to_int(reach),
+			Fixed.to_float(sim.query_player_weapon_spread_degrees(VIEWED_PLAYER)),
+			sim.query_player_weapon_interval_ticks(VIEWED_PLAYER),
+		]
+	)
+	if sim.query_player_weapon_is_melee(VIEWED_PLAYER):
+		line += " — melee"
+	lines.append(line)
+
+	# The magazine, and `DRY` beside it, which is the one word that decides whether a player
+	# backs off. The same arrangement a Turret's gauge has, and read off the same kind of
+	# projection: `query_fire_refusal` is what the Simulation itself obeys.
+	if not sim.query_player_weapon_is_melee(VIEWED_PLAYER):
+		var magazine: String = (
+			"%s %d — %d shots"
+			% [
+				sim.query_player_weapon_ammunition_item(VIEWED_PLAYER),
+				sim.query_player_ammunition(VIEWED_PLAYER),
+				sim.query_player_shots_remaining(VIEWED_PLAYER),
+			]
+		)
+		if sim.query_fire_refusal(VIEWED_PLAYER) == Simulation.Refusal.OUT_OF_AMMUNITION:
+			magazine += "  DRY"
+		lines.append(magazine)
+
+	# Every slot, named whether or not anything is in it. An empty slot is the thing a
+	# player is trying to fill, so hiding it would hide the build goal.
+	var fitted: PackedStringArray = PackedStringArray()
+	for slot: int in range(sim.query_definitions().gear_slot_count()):
+		var component: String = sim.query_player_component(VIEWED_PLAYER, slot)
+		fitted.append(
+			"%s %s"
+			% [
+				sim.query_definitions().gear_slot_id(slot),
+				"—" if component.is_empty() else component,
+			]
+		)
+	if not fitted.is_empty():
+		lines.append("fitted: %s" % ", ".join(fitted))
+
+	return lines
+
+
 func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 	var lines: PackedStringArray = PackedStringArray()
 

@@ -63,7 +63,99 @@ eye_height_metres = 1.7
 # said in its own comment that Delivery progression would decide where materials really
 # come from. It does: past this bill, what a player can build is what the Nest has
 # unlocked, and a Run's materials come out of the Factory.
+#
+# **Deliberately still plate alone, now that firing spends Ammunition out of these same
+# pockets.** A Run therefore opens able to build its line and swing a wrench, and not able
+# to fire a shot — which is uncomfortable and is the honest state of the game: nothing
+# refills a player's pockets yet. Build materials go one way, out into Machines, and the
+# Nest keeps no store to withdraw from. The two ways to get rounds into a hand today are
+# demolishing an Ammo Press, which hands back everything it was holding, and the
+# call-early bounty, which pays in this bill's Items. The ticket that gives the Nest a
+# store and a withdraw intent beside `DELIVER_TO_NEST` is what makes the Bolt Rifle a
+# thing a Run can actually use; putting rounds in this line instead would have conjured
+# them, and the whole point of the keystone loop is that the Factory is what arms you.
 starting_stock = "iron_plate:80"
+
+# A player's hit points, and what losing them costs.
+#
+# Whole points, exactly as a Machine's and the Nest's are. 150 against a Crawler's 10 a
+# bite is fifteen seconds of standing in a swarm, and against a Breaker's 60 it is three
+# bites — so Chaff is survivable inattention and a Breaker is not, which is the same
+# sentence DESIGN.md writes about Machines.
+health = 150
+
+# How long a Downed player bleeds out before dying, in seconds. The window a teammate has
+# to reach them and hold the revive down.
+#
+# **Solo play has no Downed state at all** (GLOSSARY.md) — there is nobody to revive you,
+# so a Downed state on a one-player Run would be a pause with no counterplay. On a solo
+# Run a player at zero health dies outright and this number is never consulted.
+downed_bleed_out_seconds = 20
+
+# How long a dead player waits before respawning at the Nest, in seconds.
+#
+# **This is the entire cost of dying.** Nothing is dropped, nothing is unlearnt, no
+# Delivery is undone and no Machine falls down: death costs tempo and never progress or
+# resources (GLOSSARY.md, DESIGN.md). Eight seconds is long enough that a wipe mid-Wave
+# visibly loses ground at the Factory and short enough that it is never a break.
+respawn_delay_seconds = 8
+
+# How long one teammate takes to bring a Downed player back up, in seconds. What it costs
+# the rescuer is the same thing hand repair costs: standing still, in the open, during a
+# Wave, doing nothing else.
+revive_seconds = 4
+
+# How close a teammate stands to do it, in metres.
+revive_reach_metres = 3
+
+# The Gear a Run opens holding, by id. Must name a `weapon` row in gear.csv that no
+# Delivery tier locks.
+#
+# A key here rather than a constant in sim/, for the reason `starting_stock` is one:
+# naming a piece of Gear inside the Simulation is the thing this project does not do.
+# The wrench, because it is also the repair tool — a Run opens able to mend what it built.
+starting_weapon = "pneumatic_wrench"
+
+[gear]
+
+# First-person combat: the numbers that are not per-weapon. The per-weapon ones are
+# content/gear.csv, which is where damage, range, spread, rate and Ammunition cost live.
+#
+# **Everything in this section is feel.** No test can assert that a weapon is satisfying,
+# so the mechanism is built to be tuned by playing: edit, save, and the Run you are
+# standing in applies it.
+
+# How wide and how tall an Enemy's hit volume is, in metres.
+#
+# An Enemy is a point in the Simulation — a position and a kind, never a node — so a shot
+# needs something to resolve against, and that is a capsule of this radius standing this
+# tall on the Enemy's position. 0.6 m across is roughly a Crawler's body; 1.6 m tall is
+# generous on purpose, because the alternative is a player having to pitch exactly onto a
+# low scuttling thing at thirty metres, which reads as the gun being broken rather than as
+# precision.
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+
+# How far a shot kicks the view up, in degrees, and how long the kick takes to come back
+# down, in seconds.
+#
+# **Recoil is Simulation state, not a camera animation.** It moves where the *next* shot
+# goes as well as where the camera points, because a kick only the renderer knew about
+# would be a lie about aiming — and because the pitch it moves is authoritative state
+# already.
+#
+# The recovery is **proportional to what is left**, not a flat amount per second, which
+# makes `recover_seconds` a time constant rather than a duration: each second the kick
+# sheds all but about a third of itself. That is what makes a held trigger settle at a
+# bounded bloom instead of walking off the top of the screen — a flat recovery cannot keep
+# up with a weapon firing eight times a second, and the first version of this did not.
+#
+# Together with each weapon's `seconds_per_shot` these two decide how controllable
+# automatic fire is. At 0.35 degrees a shot every 0.125 s against a 0.4 s constant, the
+# Drum Autocannon settles around a degree and a half off the point of aim — enough that a
+# long burst sprays and a tapped one does not, which is the whole trade.
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.4
 
 [belt]
 
@@ -320,6 +412,19 @@ breaker_damage = 60
 
 # How long between one Breaker's bites, in seconds.
 breaker_attack_interval_seconds = 1
+
+# How close an Enemy has to be to a player to bite them, in metres.
+#
+# A distance rather than tile contact, unlike everything else an Enemy bites. The Nest, a
+# Machine and a Wall all stand on tiles; a player is a position in fixed-point metres, and
+# asking which tile they are standing on would make a bite land or miss depending on which
+# side of a boundary they were on — which is not something a player could ever read.
+#
+# A player ranks **below a Machine** in what an Enemy chooses to bite, which is what keeps
+# GLOSSARY.md's Breaker a Machine-hunter: a Breaker with a Smelter in reach chews the
+# Smelter even with a player standing next to it. What it is above is the Nest, so
+# standing in a doorway is a real way to buy the Nest time.
+player_bite_reach_metres = 1.6
 
 [depth]
 

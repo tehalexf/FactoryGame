@@ -105,6 +105,61 @@ static func aimed_tile(
 	)
 
 
+## The tile a hand tool is aimed at: where the camera ray crosses a horizontal plane at
+## `plane_height_metres`, pulled back to within `reach_metres` of the player.
+##
+## `aimed_tile` above is the Build Gun's aim and only ever looks at the *ground*, because
+## building is flat and a hologram snaps to a floor tile. A wrench does not: a player
+## standing at a Smelter is looking at its body, several metres up, and a ground-plane ray
+## from that angle lands somewhere behind the Machine or nowhere at all. So this is the
+## same crossing against a different plane — the waist height of the Factory rather than
+## its floor — and it is what the Pneumatic Wrench's repair aims through.
+##
+## Here rather than at the call site for the reason the whole module exists: a conversion
+## written where it is needed is a conversion nobody has tested, and this one has the same
+## three obligations as the rest of this file. It floors toward negative infinity, it is
+## bounded by reach, and a ray that never meets the plane lands at the limit of reach
+## ahead of the player instead of at infinity.
+##
+## **Nothing about firing crosses here, and that is deliberate.** A round goes where the
+## player is aiming, and where the player is aiming is already authoritative fixed-point
+## Simulation state — `_player_yaw` and `_player_pitch`, put there by the quantised `LOOK`
+## intent. A tile or a direction carried in a `FIRE` action would be a *second* opinion
+## about the aim, derived from a float, and in lockstep the second opinion is the one that
+## diverges. See `InputAction.Kind.FIRE`.
+static func aimed_tile_at_height(
+	camera: Vector3,
+	forward: Vector3,
+	plane_height_metres: float,
+	reach_metres: float,
+	tile_size_metres: float
+) -> Vector3i:
+	var direction: Vector3 = forward.normalized()
+	var reach: float = maxf(reach_metres, 0.0)
+	var plane: float = plane_height_metres
+	if is_nan(plane) or is_inf(plane):
+		plane = 0.0
+
+	var offset: Vector2 = Vector2.ZERO
+	var level: Vector2 = Vector2(direction.x, direction.z)
+	var gap: float = camera.y - plane
+	# Towards the plane and not already level with it. A ray going the other way, or one
+	# so nearly parallel that it would meet the plane kilometres away, falls through to
+	# the reach-limited answer below.
+	if absf(direction.y) > LEVEL_EPSILON and gap * direction.y < 0.0:
+		offset = level * (gap / -direction.y)
+	elif level.length() > LEVEL_EPSILON:
+		offset = level.normalized() * reach
+
+	if offset.length() > reach:
+		offset = offset.normalized() * reach
+
+	var size: float = maxf(tile_size_metres, LEVEL_EPSILON)
+	return Vector3i(
+		floori((camera.x + offset.x) / size), GROUND_LAYER, floori((camera.z + offset.y) / size)
+	)
+
+
 ## Which way a camera is pointing, from the yaw and pitch the Simulation is holding.
 ##
 ## Outbound, so it is an ordinary use of `Fixed.to_float`: the angles are authoritative

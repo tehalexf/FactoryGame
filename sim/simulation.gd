@@ -101,6 +101,27 @@ const BITE_NEST: int = 1
 const BITE_MACHINE: int = 2
 const BITE_WALL: int = 3
 
+## A player. The fourth thing in the Factory with hit points, added when players acquired
+## health — and it slots into the same pair rather than into a second mechanism, which is
+## what #11 said it would: "a player is one more clause in `_enemy_contact_target`, ranked
+## below a Machine". The `y` is a player id rather than an index into an array that shifts,
+## because player ids do not shift.
+const BITE_PLAYER: int = 4
+
+## What state a player's life is in. Three values and no more: a player is on their feet,
+## is Downed and bleeding out, or is dead and waiting to come back at the Nest
+## (GLOSSARY.md).
+##
+## One integer rather than two flags, because the three are mutually exclusive and a pair
+## of booleans would make "Downed and dead at once" representable. Held alongside
+## `_player_life_since_tick`, so how long a player has been in the state they are in is
+## arithmetic rather than a second counter to keep in step — and a state entered *this*
+## tick has elapsed zero ticks by construction, which is the same "does not act on the tick
+## it arrived" rule a Machine and an Enemy obey.
+const LIFE_ALIVE: int = 0
+const LIFE_DOWNED: int = 1
+const LIFE_DEAD: int = 2
+
 ## What a Repair Pylon has found to mend, in the same shape and the same index spaces, less
 ## the Nest — mending the Nest would un-end a Run, and `_run_over_tick` exists so that nothing
 ## can (see `_damage_the_nest`).
@@ -166,6 +187,46 @@ enum Refusal {
 	## The wrench was held on something further away than `wrench.reach_metres`. Repairing is
 	## melee: a player has to come and stand at the Machine.
 	OUT_OF_REACH = 17,
+	## The player is Downed or dead. One reason covering both, because what a player can do
+	## in either is the same — nothing — and a HUD that distinguished them would be saying
+	## twice what `query_player_is_downed` already says once.
+	##
+	## **A refusal rather than a mode.** Nothing in the Simulation asks "is acting currently
+	## permitted"; what it asks is whether *this* player is on their feet, which is a fact
+	## about them in the same way being out of reach is a fact about where they stand. So
+	## the Build Gun's hologram goes on reporting the real reason it will not place, and
+	## building is still never gated (DESIGN.md).
+	PLAYER_IS_DOWN = 18,
+	## The player is holding no weapon — which a Run never opens in, because
+	## `player.starting_weapon` is required, but which a hot-reload that deleted a row can
+	## produce mid-Run.
+	NO_WEAPON = 19,
+	## The weapon is loaded but the player is not carrying enough of what it spends.
+	## **Firing consumes Ammunition from the player's own pockets**, so this is the
+	## first-person half of the keystone loop: the Factory is what keeps you shooting.
+	OUT_OF_AMMUNITION = 20,
+	## The weapon has not finished its interval between shots. Not a failure and not worth
+	## a HUD line of its own — it is what a trigger held down looks like between rounds —
+	## but the projection has to name it rather than report `NONE` about a tick in which
+	## nothing happens.
+	WEAPON_NOT_READY = 21,
+	## The intent names no piece of Gear in the current definition set.
+	NO_SUCH_GEAR = 22,
+	## The Gear exists but no Delivery has unlocked it yet. The same standing
+	## `CONTENT_IS_LOCKED` has for a Machine, and a separate reason because a player
+	## reading "locked" wants to know *what* is locked.
+	GEAR_IS_LOCKED = 23,
+	## A component was fitted to a slot that is not the one its own row names, or a weapon
+	## frame was fitted as though it were a component. Refused rather than redirected: the
+	## intent is meant to describe the fitting completely, and silently moving it somewhere
+	## else would make a recorded script lie about what happened.
+	WRONG_SLOT = 24,
+	## A revive was held on a player who is not Downed — on their feet, already dead, or the
+	## rescuer themselves.
+	NOTHING_TO_REVIVE = 25,
+	## A revive was held on a solo Run. **Solo play has no Downed state** (GLOSSARY.md),
+	## so there is never anybody to pick up.
+	NO_TEAMMATE = 26,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -298,6 +359,93 @@ var _player_build_rotation: PackedInt64Array = PackedInt64Array()
 ## Nest has unlocked.
 var _player_item_ids: Array = []
 var _player_item_counts: Array = []
+
+## What is left of each player, in whole hit points, and whether they are on their feet.
+##
+## **A player had no health in the Simulation until this ticket**, which is why #11 could
+## only read GLOSSARY.md's "a Breaker prefers Machines rather than players" as "rather than
+## the Nest". Now there is a third term, and nothing in `_enemy_contact_target` changed
+## beyond gaining a clause ranked below a Machine — the shape #11 promised.
+##
+## Whole points, like a Machine's and the Nest's, for the reason those are: damage is
+## counted in them and a fraction of a hit point is a rounding rule nobody needs.
+var _player_health: PackedInt64Array = PackedInt64Array()
+
+## `LIFE_ALIVE`, `LIFE_DOWNED` or `LIFE_DEAD`, and the tick that state began on.
+##
+## The tick rather than a countdown, so how long a player has been Downed is
+## `_tick - _player_life_since_tick` — arithmetic over two numbers that are hashed anyway,
+## with no second counter to keep in step and no chance of a timer surviving a transition.
+## It also gives the "does not act on the tick it arrived" rule for free: a player Downed
+## this tick has been Downed for zero ticks, so they do not spend a tick of their bleed-out
+## on the tick they lost their footing.
+var _player_life_state: PackedInt64Array = PackedInt64Array()
+var _player_life_since_tick: PackedInt64Array = PackedInt64Array()
+
+## The weapon frame in each player's hands, by Gear id.
+##
+## The *id* rather than the Gear index, for the reason `_player_selected_machine` holds an
+## id: a hot-reload resorts the table, and a player must not find a different weapon in
+## their hands because somebody added a row.
+var _player_weapon: PackedStringArray = PackedStringArray()
+
+## What is fitted to each player's frame: one **sorted** `PackedStringArray` of Gear ids
+## per player, holding only what is actually fitted.
+##
+## **This is where "power comes from combination rather than from tiers" is stored**, and
+## it is the same shape a player's pockets are, for the same two reasons. Ids rather than
+## indices, so a hot-reload that resorts the Gear table cannot swap one component for
+## another under a player's hands — and **ids rather than one entry per slot**, because a
+## slot's *index* is interned from the table too and a reload that added a kind would
+## renumber the slots while a positional array stayed put. A slot is not stored anywhere:
+## which slot a component occupies is its own row's `kind`, so there is one authority for
+## that and the fitted set cannot contradict it.
+##
+## Sorted, so iteration order is a property of what is fitted rather than of the order it
+## was fitted in — the rule every other id array in this file obeys.
+var _player_component_ids: Array = []
+
+## Ticks each player still has to wait before their weapon will fire again, and the tick it
+## last fired on.
+##
+## The cooldown is counted down rather than compared against a stored tick, because
+## `seconds_per_shot` is hot-reloadable: a stored "fired at tick n" compared against a rate
+## that changed mid-interval would jump the next shot forward or back, where a counter just
+## finishes the interval it started. The last-shot tick is kept beside it because the
+## renderer needs to know when to play the Shoot take and the muzzle flash, and a view that
+## inferred it from a cooldown would miss a shot whose interval is one tick.
+var _player_fire_cooldown: PackedInt64Array = PackedInt64Array()
+var _player_last_shot_tick: PackedInt64Array = PackedInt64Array()
+
+## How far each shot has kicked the view up and not yet come back down, in fixed-point
+## turns.
+##
+## **Recoil is Simulation state because it moves where the next shot goes**, not merely
+## where the camera points. A kick that only the renderer knew about would be a lie about
+## aiming, and the pitch it adds to is authoritative state already. It recovers linearly
+## towards zero at `gear.view_kick_recover_seconds`, so the climb of a held burst is a
+## straight line a player can learn to pull against — which is the whole of what makes
+## automatic fire a skill rather than a dice roll.
+var _player_view_kick_turns: PackedInt64Array = PackedInt64Array()
+
+## Each rescuer's unspent fraction of a hit point of revive, as an integer credit against
+## `TICKS_PER_SECOND`.
+##
+## The same mechanism `_player_repair_credit` is, for the same reason and with the same
+## rule: one floor applied to the total and never one per tick, and credit does not survive
+## letting go or walking out of reach. A revive is hand repair pointed at a person.
+var _player_revive_credit: PackedInt64Array = PackedInt64Array()
+
+## Whether each player is holding the trigger this tick, and who each is holding a revive
+## on (-1 for nobody).
+##
+## **Per tick and deliberately not hashed**, exactly like the walking throttle and the
+## wrench: `_fight` and `_revive` consume and clear both before the tick ends, so they are
+## zero at every point a hash is taken, and a player who lets go stops. Automatic fire is
+## therefore the absence of letting go rather than a latch somebody has to remember to
+## clear.
+var _player_fire_held: PackedInt64Array = PackedInt64Array()
+var _player_revive_target: PackedInt64Array = PackedInt64Array()
 
 ## The Map's Nodes, as parallel arrays in the canonical order `MapLayout` sorted
 ## them into. None of this changes during a Run: a Node is inexhaustible (DESIGN.md),
@@ -881,6 +1029,35 @@ func _init(
 	_player_selected_machine.resize(players)
 	_player_selected_machine.fill(_opening_machine())
 
+	# On their feet, whole, holding what `player.starting_weapon` names and with every
+	# slot empty. A Run opens with a frame and nothing fitted to it, because every
+	# component is behind a Delivery — which is the pillar's whole shape: a build goal is
+	# a Factory goal.
+	_player_health.resize(players)
+	_player_health.fill(_definitions.player_health)
+	_player_life_state.resize(players)
+	_player_life_state.fill(LIFE_ALIVE)
+	_player_life_since_tick.resize(players)
+	_player_life_since_tick.fill(0)
+	_player_weapon.resize(players)
+	_player_weapon.fill(_definitions.player_starting_weapon)
+	_player_fire_cooldown.resize(players)
+	_player_fire_cooldown.fill(0)
+	# -1 rather than 0, so "has never fired" is distinguishable from "fired on tick 0" —
+	# the renderer plays a muzzle flash off this and a Run must not open with one.
+	_player_last_shot_tick.resize(players)
+	_player_last_shot_tick.fill(-1)
+	_player_view_kick_turns.resize(players)
+	_player_view_kick_turns.fill(0)
+	_player_revive_credit.resize(players)
+	_player_revive_credit.fill(0)
+	_player_fire_held.resize(players)
+	_player_fire_held.fill(0)
+	_player_revive_target.resize(players)
+	_player_revive_target.fill(-1)
+	for player_id: int in range(players):
+		_player_component_ids.append(PackedStringArray())
+
 	# The opening stock, granted once at construction. Deliberately not re-granted on a
 	# hot-reload: raising the bill mid-Run must not be a way to conjure materials.
 	for player_id: int in range(players):
@@ -912,6 +1089,11 @@ func step(actions: Array) -> void:
 	# Before the Factory runs, so a Machine a player brought back this tick is a Machine
 	# that works this tick. Hand repair is a player act and belongs beside the other two.
 	_repair()
+	# Beside hand repair, because both are a player spending a tick of attention on
+	# something in front of them, and after `_walk` so a shot leaves from where the player
+	# now stands rather than from where they stood last tick.
+	_revive()
+	_fight()
 	_transport()
 	_deliveries()
 	_aim()
@@ -922,6 +1104,11 @@ func step(actions: Array) -> void:
 	_breaches_open()
 	_waves()
 	_enemies()
+	# Last, because `_enemies` is what puts a player down: a bleed-out that advanced
+	# before the bite landed would charge a player a tick for a state they were not in
+	# yet. A player Downed this tick therefore starts bleeding on the next one, which is
+	# the same rule a Machine built this tick and an Enemy through a Breach this tick obey.
+	_lives()
 
 	_tick += 1
 
@@ -961,6 +1148,14 @@ func _apply(action: InputAction) -> void:
 			_apply_build_wall(action)
 		InputAction.Kind.REPAIR:
 			_apply_repair(action)
+		InputAction.Kind.FIRE:
+			_apply_fire(action)
+		InputAction.Kind.EQUIP_WEAPON:
+			_apply_equip_weapon(action)
+		InputAction.Kind.FIT_COMPONENT:
+			_apply_fit_component(action)
+		InputAction.Kind.REVIVE:
+			_apply_revive(action)
 
 
 ## Records the throttle a player asked for this tick. Applying it is `_walk`'s job,
@@ -1040,6 +1235,17 @@ func _walk() -> void:
 	)
 
 	for player_id: int in range(query_player_count()):
+		# A Downed player is immobilised (GLOSSARY.md) and a dead one is not on the Map at
+		# all, so neither walks. Stopped outright rather than decelerated: going down is a
+		# collapse, and a corpse that slid another two metres would read as a bug. The
+		# throttle is consumed anyway, so the per-tick arrays are still zero at the hash.
+		if _player_life_state[player_id] != LIFE_ALIVE:
+			_player_velocity_x[player_id] = 0
+			_player_velocity_z[player_id] = 0
+			_player_intent_forward[player_id] = 0
+			_player_intent_strafe[player_id] = 0
+			continue
+
 		# Sprinting scales the speed a player is reaching for, not their acceleration, so
 		# a sprint ramps up over the same time a walk does rather than snapping.
 		var player_speed: int = speed
@@ -2283,6 +2489,11 @@ func _apply_build_machine(action: InputAction) -> void:
 ## and `query_build_refusal` reports it, so what a player is told and what the
 ## Simulation does are the same rule rather than two copies of it.
 func _build_refusal(player_id: int, machine_index: int, tile: Vector3i, rotation: int) -> int:
+	# A player who is Downed or dead is not building. **Still not a build mode** — nothing
+	# here asks whether building is currently permitted (DESIGN.md), it asks whether *this*
+	# player is on their feet, which is a fact about them in the same way their wallet is.
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
 	var definition: MachineDefinition = _definitions.machine_at(machine_index)
 	if definition == null:
 		return Refusal.NO_SUCH_MACHINE
@@ -2388,6 +2599,8 @@ func _apply_demolish(action: InputAction) -> void:
 func _demolish_refusal(player_id: int, tile: Vector3i) -> int:
 	if not _is_player(player_id):
 		return Refusal.NOTHING_THERE
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
 	if (
 		query_machine_at_tile(tile) != -1
 		or query_belt_at_tile(tile) != -1
@@ -2600,6 +2813,8 @@ func _apply_build_wall(action: InputAction) -> void:
 func _build_wall_refusal(player_id: int, tile: Vector3i) -> int:
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
 	if not WorldGrid.is_buildable(tile):
 		return Refusal.OFF_THE_MAP
 	if (
@@ -2687,6 +2902,8 @@ func _repair_refusal(player_id: int, tile: Vector3i) -> int:
 		return Refusal.RUN_IS_OVER
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
 
 	var machine: int = query_machine_at_tile(tile)
 	var wall: int = query_wall_at_tile(tile)
@@ -2714,6 +2931,771 @@ func _within_wrench_reach(player_id: int, tile: Vector3i) -> bool:
 	var gap_z: int = centre.z - _player_z[player_id]
 	var reach: int = _definitions.wrench_reach_metres
 	return gap_x * gap_x + gap_z * gap_z <= reach * reach
+
+
+# ── Gear: the frame, its components, and what they add up to ──────────────────
+#
+# Gear is modular (GLOSSARY.md): one weapon frame accepts components — barrels, magazines,
+# sights — each made on a different production line, and **power comes from combination
+# rather than from tiers.** Nothing in this file names a weapon, a component or a slot;
+# all of that is `content/gear.csv`, so a fourth weapon is a row exactly as a Cannon
+# Turret was.
+#
+# The arithmetic is one rule applied five times: every component's percentage for a
+# modifier is **added up**, and the sum is applied to the frame's own quoted figure with
+# one integer multiply and one floor. Additive rather than multiplicative so that two
+# components can be reasoned about in either order and so that nothing rounds at each
+# link — a chain of fixed-point multiplications would make the order they were fitted in
+# reach the state hash, which is both a determinism hazard and a design one.
+
+## Which modifier `_component_percent` is being asked about. Constants rather than six
+## near-identical loops, and not a `String` key, because a typo'd key would read as "no
+## component changes this" and be invisible.
+const MOD_DAMAGE: int = 0
+const MOD_RANGE: int = 1
+const MOD_SPREAD: int = 2
+const MOD_INTERVAL: int = 3
+const MOD_AMMUNITION: int = 4
+const MOD_DAMAGE_TAKEN: int = 5
+
+
+## The weapon frame a player is holding, or null — which a Run never opens in, because
+## `player.starting_weapon` is required to name one, but which a hot-reload that deleted
+## the row can produce mid-Run.
+func _weapon_of(player_id: int) -> GearDefinition:
+	if not _is_player(player_id):
+		return null
+	var definition: GearDefinition = _definitions.gear(_player_weapon[player_id])
+	if definition == null or not definition.is_weapon():
+		return null
+	return definition
+
+
+## Every component fitted to a player's frame, in the sorted id order they are held in.
+## A fitted id that no longer names a component — a hot-reload deleted the row, or turned
+## it into a frame — contributes nothing rather than crashing, which is the same
+## degradation a Machine whose definition went away gets.
+func _fitted_components(player_id: int) -> Array:
+	var fitted: Array = []
+	if not _is_player(player_id):
+		return fitted
+	for gear_id: String in _player_component_ids[player_id]:
+		var definition: GearDefinition = _definitions.gear(gear_id)
+		if definition != null and not definition.is_weapon():
+			fitted.append(definition)
+	return fitted
+
+
+## The sum of one modifier across everything fitted, in whole percent. Zero with nothing
+## fitted, which is what makes a bare frame exactly what its row says it is.
+func _component_percent(player_id: int, which: int) -> int:
+	var total: int = 0
+	for definition: GearDefinition in _fitted_components(player_id):
+		match which:
+			MOD_DAMAGE:
+				total += definition.damage_percent
+			MOD_RANGE:
+				total += definition.range_percent
+			MOD_SPREAD:
+				total += definition.spread_percent
+			MOD_INTERVAL:
+				total += definition.interval_percent
+			MOD_AMMUNITION:
+				total += definition.ammunition_percent
+			MOD_DAMAGE_TAKEN:
+				total += definition.damage_taken_percent
+	return total
+
+
+## A quoted figure with a percentage added to it: `floor(value * (100 + percent) / 100)`.
+##
+## **One floor, applied once**, which is the rule this project applies to the Power duty
+## cycle, Heat's decay and hand repair — and the reason the modifiers are percentages of
+## the frame rather than fixed-point multipliers. Works unchanged on a whole number of hit
+## points and on a fixed-point count of metres, because both are integers and neither is
+## ever negative.
+##
+## A total below -100% clamps at nothing rather than going negative: a weapon that did
+## negative damage would heal what it shot, and content that asks for that is content
+## somebody got wrong rather than a mechanic.
+static func _scaled(value: int, percent: int) -> int:
+	if value <= 0:
+		return 0
+	@warning_ignore("integer_division")
+	return value * maxi(100 + percent, 0) / 100
+
+
+# The whole of a weapon's effective behaviour, frame plus everything fitted. Each is a
+# pure read, so a query can ask any of them without moving the state hash — which is what
+# lets the HUD show a player what a component did before they go and find out.
+
+func _weapon_damage(player_id: int) -> int:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null:
+		return 0
+	return _scaled(weapon.damage, _component_percent(player_id, MOD_DAMAGE))
+
+
+func _weapon_range_metres(player_id: int) -> int:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null:
+		return 0
+	return _scaled(weapon.range_metres, _component_percent(player_id, MOD_RANGE))
+
+
+## How far a shot may scatter, in fixed-point **turns** — degrees in the file because that
+## is how a human reasons about an angle, turns everywhere in here because radians need PI
+## and PI is a float.
+func _weapon_spread_turns(player_id: int) -> int:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null:
+		return 0
+	var degrees: int = _scaled(weapon.spread_degrees, _component_percent(player_id, MOD_SPREAD))
+	return Fixed.div(degrees, Fixed.from_int(DEGREES_PER_TURN))
+
+
+## How many ticks between one shot and the next. Floored to whole ticks and never less
+## than one, exactly as a Recipe's duration is: a rate counted in ticks is exact, where a
+## fractional one would make the gap between two shots depend on when in the second they
+## happened to fall.
+func _weapon_interval_ticks(player_id: int) -> int:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null:
+		return 0
+	var seconds: int = _scaled(
+		weapon.seconds_per_shot, _component_percent(player_id, MOD_INTERVAL)
+	)
+	return maxi(Fixed.floor_to_int(Fixed.mul(seconds, Fixed.from_int(TICKS_PER_SECOND))), 1)
+
+
+## How many rounds one shot spends. A ranged weapon always spends at least one, whatever a
+## component says: a weapon somebody tuned to free is not a weapon this loop can price.
+func _weapon_ammunition_per_shot(player_id: int) -> int:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null or not weapon.is_ranged():
+		return 0
+	return maxi(
+		_scaled(weapon.ammunition_per_shot, _component_percent(player_id, MOD_AMMUNITION)), 1
+	)
+
+
+# ── Equipping and fitting ─────────────────────────────────────────────────────
+
+func _apply_equip_weapon(action: InputAction) -> void:
+	if _equip_refusal(action.player_id, action.gear_index()) != Refusal.NONE:
+		return
+	# The resolved id, not the index — so a hot-reload that resorts the table cannot
+	# change what is in a player's hands, which is the rule `_player_selected_machine`
+	# already obeys.
+	_player_weapon[action.player_id] = _definitions.gear_at(action.gear_index()).id
+	# A weapon swap interrupts the interval the old one was part-way through. Deliberate,
+	# and the alternative is worse: carrying the cooldown across would let a player fire a
+	# slow weapon, swap to a fast one, and get the fast one's next shot early.
+	_player_fire_cooldown[action.player_id] = 0
+
+
+## Why putting a weapon in a player's hands would be refused, or `Refusal.NONE`.
+##
+## A pure projection about an equip that has not happened, the same arrangement
+## `query_build_refusal` has and for the same reason: a HUD can grey a weapon out and say
+## why before the key is pressed, and a refusal leaves the hash alone.
+func _equip_refusal(player_id: int, gear_index: int) -> int:
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
+	var definition: GearDefinition = _definitions.gear_at(gear_index)
+	if definition == null:
+		return Refusal.NO_SUCH_GEAR
+	if not definition.is_weapon():
+		return Refusal.WRONG_SLOT
+	if _definitions.locks_gear(definition.id) and _unlocked_gear_ids.find(definition.id) == -1:
+		return Refusal.GEAR_IS_LOCKED
+	return Refusal.NONE
+
+
+func _apply_fit_component(action: InputAction) -> void:
+	var player_id: int = action.player_id
+	var slot_index: int = action.gear_slot_index()
+	var gear_index: int = action.gear_index()
+	if _fit_refusal(player_id, slot_index, gear_index) != Refusal.NONE:
+		return
+
+	var slot_id: String = _definitions.gear_slot_id(slot_index)
+	_clear_slot(player_id, slot_id)
+	if gear_index < 0:
+		return
+
+	# Inserted in sorted order, not fitting order, for the reason a player's pockets are
+	# sorted: what is on a frame has to be a property of the set rather than of how it got
+	# there, or two players holding the same Gear would hash differently.
+	var fitted: PackedStringArray = _player_component_ids[player_id]
+	var gear_id: String = _definitions.gear_at(gear_index).id
+	fitted.insert(fitted.bsearch(gear_id), gear_id)
+	_player_component_ids[player_id] = fitted
+
+
+## Takes whatever occupies a slot off a player's frame. Which slot a fitted component
+## occupies is read back off its own row rather than remembered, so there is one authority
+## for it and nothing to fall out of step.
+func _clear_slot(player_id: int, slot_id: String) -> void:
+	var fitted: PackedStringArray = _player_component_ids[player_id]
+	for index: int in range(fitted.size() - 1, -1, -1):
+		var definition: GearDefinition = _definitions.gear(fitted[index])
+		if definition == null or definition.slot_id() == slot_id:
+			fitted.remove_at(index)
+	_player_component_ids[player_id] = fitted
+
+
+## Why fitting a component would be refused, or `Refusal.NONE`. A Gear index of -1 empties
+## the slot, which is always allowed of a slot that exists.
+func _fit_refusal(player_id: int, slot_index: int, gear_index: int) -> int:
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
+	if _definitions.gear_slot_id(slot_index).is_empty():
+		return Refusal.WRONG_SLOT
+	if gear_index < 0:
+		return Refusal.NONE
+	var definition: GearDefinition = _definitions.gear_at(gear_index)
+	if definition == null:
+		return Refusal.NO_SUCH_GEAR
+	# Refused rather than redirected to the slot the row names. The intent is meant to
+	# describe the fitting completely — a recorded script has to say what went where
+	# without being replayed to find out — so a pairing the two tables disagree about is a
+	# mistake rather than something to quietly correct.
+	if definition.slot_id() != _definitions.gear_slot_id(slot_index):
+		return Refusal.WRONG_SLOT
+	if _definitions.locks_gear(definition.id) and _unlocked_gear_ids.find(definition.id) == -1:
+		return Refusal.GEAR_IS_LOCKED
+	return Refusal.NONE
+
+
+# ── Firing ────────────────────────────────────────────────────────────────────
+
+func _apply_fire(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	_player_fire_held[action.player_id] = 1
+
+
+## One tick of combat for every player: recoil comes back down, the interval between
+## shots runs down, and a held trigger fires if everything it needs is in place.
+##
+## The intent is consumed whatever comes of it, so a player who stops sending `FIRE` stops
+## firing and the per-tick array is zero at every point a hash is taken — the arrangement
+## the walking throttle and the wrench both have.
+##
+## **The cooldown is advanced in the `elif`, not before the attempt**, so that
+## `query_fire_refusal` and what actually happens can never disagree about a given tick.
+## Decrementing first would leave a tick where the projection says the weapon is ready and
+## the mechanism has not fired yet.
+func _fight() -> void:
+	for player_id: int in range(query_player_count()):
+		var held: bool = _player_fire_held[player_id] != 0
+		_player_fire_held[player_id] = 0
+
+		_recover_view_kick(player_id)
+
+		if held and _fire_refusal(player_id) == Refusal.NONE:
+			_pull_the_trigger(player_id)
+		elif _player_fire_cooldown[player_id] > 0:
+			_player_fire_cooldown[player_id] -= 1
+
+
+## Brings the view back down from a shot's kick, by one tick's worth.
+##
+## **Proportional to what is left, not a flat amount**, and this is the one place in the
+## project where that is the right shape. Heat's decay is flat and the Power duty cycle is
+## an integer credit precisely because both *accumulate* over a forty-hour Run and a
+## per-tick ratio would shed a fraction each time and drift. Recoil is the opposite kind of
+## quantity: it converges on **zero**, so a proportional step cannot drift anywhere — and
+## shedding a fraction of what is left is what makes automatic fire controllable at all.
+##
+## A flat recovery was tried first and is unusable. A weapon firing eight times a second
+## adds eight kicks a second, and a flat recovery of one kick per `recover_seconds` sheds
+## two — so the view climbs without bound and a held trigger ends up pointed at the sky.
+## Proportional recovery settles instead: the kick reaches the height at which one tick of
+## shedding equals one shot's worth of climb, and sits there. That bloom is the thing a
+## player learns to pull against, and `gear.view_kick_recover_seconds` is what decides how
+## high it sits.
+##
+## Floored, with a minimum step of one, so a kick always reaches exactly zero rather than
+## converging on it forever.
+func _recover_view_kick(player_id: int) -> void:
+	if _player_view_kick_turns[player_id] <= 0:
+		return
+	var span: int = maxi(_seconds_to_ticks(_definitions.gear_view_kick_recover_seconds), 1)
+	@warning_ignore("integer_division")
+	var step: int = maxi(_player_view_kick_turns[player_id] / span, 1)
+	_player_view_kick_turns[player_id] = maxi(_player_view_kick_turns[player_id] - step, 0)
+
+
+## How far one shot kicks the view, in fixed-point turns.
+func _kick_per_shot_turns() -> int:
+	return Fixed.div(
+		_definitions.gear_view_kick_degrees_per_shot, Fixed.from_int(DEGREES_PER_TURN)
+	)
+
+
+## Why a held trigger would do nothing this tick, or `Refusal.NONE`.
+##
+## A pure projection about a shot that has not happened — the same arrangement
+## `query_build_refusal` and `query_repair_refusal` have — so the HUD can read `DRY` off
+## the weapon rather than off a count a player has to do themselves.
+func _fire_refusal(player_id: int) -> int:
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null:
+		return Refusal.NO_WEAPON
+	if _player_fire_cooldown[player_id] > 0:
+		return Refusal.WEAPON_NOT_READY
+	if weapon.is_ranged():
+		if query_player_item(player_id, weapon.ammunition_item) < _weapon_ammunition_per_shot(player_id):
+			return Refusal.OUT_OF_AMMUNITION
+	return Refusal.NONE
+
+
+## One shot. Spends the round, starts the interval, resolves the hit and *then* kicks the
+## view — in that order, because the round leaves before the barrel climbs and a kick
+## applied first would make a weapon fight its own first shot.
+##
+## **Firing consumes Ammunition from the player's own inventory** (issue #15), out of the
+## same pockets the Build Gun spends from, which is the first-person half of the keystone
+## loop: the Factory is what keeps you shooting, exactly as it is what keeps a Turret
+## shooting.
+func _pull_the_trigger(player_id: int) -> void:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	_player_last_shot_tick[player_id] = _tick
+	_player_fire_cooldown[player_id] = maxi(_weapon_interval_ticks(player_id) - 1, 0)
+
+	if weapon.is_melee():
+		_swing(player_id)
+		return
+
+	_take_from_player(
+		player_id, weapon.ammunition_item, _weapon_ammunition_per_shot(player_id)
+	)
+	_shoot(player_id)
+	_player_view_kick_turns[player_id] = mini(
+		_player_view_kick_turns[player_id] + _kick_per_shot_turns(), MAX_PITCH_TURNS
+	)
+
+
+## A round down the line of aim, scattered by the weapon's spread.
+##
+## **Two RNG draws every shot, hit or miss**, so the stream is a function of how many
+## times the trigger was pulled rather than of what happened to be standing there — which
+## is what keeps a replay identical when a Crawler dies a tick earlier on one client than
+## on another. The draws are consumed before anything is looked up, in player index order,
+## so the order is total and the same everywhere.
+##
+## The shot leaves from the player's **eye height**, not from the camera: Survey View
+## lifts the camera to twenty-six metres and is explicitly not a mode (DESIGN.md), so a
+## player who raises it to read their Factory must not thereby be firing from a helicopter.
+func _shoot(player_id: int) -> void:
+	var spread: int = _weapon_spread_turns(player_id)
+	var yaw: int = Fixed.wrap_turns(_player_yaw[player_id] + Fixed.mul(spread, _scatter()))
+	var pitch: int = Fixed.clamp_fixed(
+		_aim_pitch_turns(player_id) + Fixed.mul(spread, _scatter()),
+		-MAX_PITCH_TURNS,
+		MAX_PITCH_TURNS
+	)
+
+	var target: int = _shot_target(
+		player_id, _facing(yaw), _tangent(pitch), _weapon_range_metres(player_id)
+	)
+	if target == -1:
+		return
+	_hit_enemy(target, _weapon_damage(player_id))
+
+
+## A swing of a melee weapon at whatever is in front of the player.
+##
+## Deliberately **not** the ray a round follows: a swing is a sweep, so what it catches is
+## the nearest living Enemy inside the weapon's reach that is in front of the player at
+## all, rather than one the player has to have centred. Spread does not enter into it and
+## neither does pitch — you do not miss a Crawler at your feet by looking at the horizon —
+## which is also why a melee weapon consumes no draw from the generator.
+func _swing(player_id: int) -> void:
+	var target: int = _melee_target(
+		player_id, _facing(_player_yaw[player_id]), _weapon_range_metres(player_id)
+	)
+	if target == -1:
+		return
+	_hit_enemy(target, _weapon_damage(player_id))
+
+
+## A uniform fixed-point draw in [-1, 1), for scattering one axis of a shot.
+func _scatter() -> int:
+	return _rng.next_fixed() * 2 - Fixed.ONE
+
+
+## The unit vector a yaw points along, on the horizontal plane. Godot's convention, the
+## same one `_wanted_velocity` walks a player by, so forward is one definition and not two.
+func _facing(yaw: int) -> FixedVec2:
+	return FixedVec2.new(-Fixed.sin_turns(yaw), -Fixed.cos_turns(yaw))
+
+
+## How much height a shot gains per metre travelled, from its pitch.
+##
+## A division rather than a second table, and it is safe: pitch is clamped to
+## `MAX_PITCH_TURNS`, which is 0.24 of a turn, so the cosine never comes closer to zero
+## than about 0.063 and the tangent is bounded at roughly sixteen.
+func _tangent(pitch: int) -> int:
+	return Fixed.div(Fixed.sin_turns(pitch), Fixed.cos_turns(pitch))
+
+
+## Where a player is actually aiming: their own pitch plus whatever recoil has not come
+## back down yet, clamped like any other pitch.
+##
+## **Recoil moves the aim and not merely the camera.** A kick the renderer applied on its
+## own would be a lie about where the next round goes, and the whole reason recoil is
+## Simulation state is that it is part of aiming rather than part of drawing.
+func _aim_pitch_turns(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return Fixed.clamp_fixed(
+		_player_pitch[player_id] + _player_view_kick_turns[player_id],
+		-MAX_PITCH_TURNS,
+		MAX_PITCH_TURNS
+	)
+
+
+## The Enemy a round meets first, or -1.
+##
+## **The whole of combat resolution, and every line of it is integer arithmetic.** An
+## Enemy is a point in the Simulation — a position and a kind, never a node (#9) — so a
+## round is resolved against a capsule standing on that point:
+## `gear.enemy_hit_radius_metres` across and `gear.enemy_hit_height_metres` tall. Three
+## tests, in the order that rejects most cheaply:
+##
+## 1. **How far along the line it is.** Behind the player or past the weapon's reach is a
+##    miss. The dot product of the gap with the unit facing, which is two multiplies.
+## 2. **How far off the line it is.** The magnitude of the cross product, against the
+##    radius — the perpendicular distance from the line, exactly.
+## 3. **How high the round is by then.** Eye height plus the tangent of the pitch times
+##    the distance along, against the capsule's own extent. This is what makes aiming up
+##    and down mean something rather than firing a vertical plane of lead.
+##
+## Walked in Enemy index order, which is ascending spawn serial by construction, and kept
+## on a **strict** improvement in distance along the line — so two Enemies exactly as far
+## away hand the hit to the earlier spawn, on every client. The same rule a Turret's
+## acquisition obeys, and for the same reason.
+func _shot_target(
+	player_id: int, facing: FixedVec2, tangent: int, range_metres: int
+) -> int:
+	var from_x: int = _player_x[player_id]
+	var from_z: int = _player_z[player_id]
+	var eye: int = _definitions.player_eye_height
+	var radius: int = _definitions.gear_enemy_hit_radius_metres
+	var top: int = _definitions.gear_enemy_hit_height_metres + radius
+
+	var best: int = -1
+	var best_along: int = 0
+	for enemy: int in range(query_enemy_count()):
+		if _enemy_health[enemy] <= 0:
+			continue
+		var gap_x: int = _enemy_x[enemy] - from_x
+		var gap_z: int = _enemy_z[enemy] - from_z
+
+		var along: int = Fixed.mul(gap_x, facing.x) + Fixed.mul(gap_z, facing.z)
+		if along <= 0 or along > range_metres:
+			continue
+		if best != -1 and along >= best_along:
+			continue
+
+		var across: int = absi(Fixed.mul(gap_x, facing.z) - Fixed.mul(gap_z, facing.x))
+		if across > radius:
+			continue
+
+		var height: int = eye + Fixed.mul(along, tangent)
+		if height < -radius or height > top:
+			continue
+
+		best = enemy
+		best_along = along
+	return best
+
+
+## The Enemy a melee swing catches, or -1: the nearest living one inside the weapon's
+## reach that is in front of the player.
+##
+## Compared **squared**, for the reason a Turret's reach is: `Fixed.sqrt` floors, which
+## would put an Enemy exactly on the boundary in or out of reach depending on a rounding
+## rule, where multiplying both sides is exact integer arithmetic. The products stay far
+## inside 64 bits — a melee reach is a few metres.
+func _melee_target(player_id: int, facing: FixedVec2, range_metres: int) -> int:
+	var from_x: int = _player_x[player_id]
+	var from_z: int = _player_z[player_id]
+	var within: int = range_metres * range_metres
+
+	var best: int = -1
+	var best_gap: int = 0
+	for enemy: int in range(query_enemy_count()):
+		if _enemy_health[enemy] <= 0:
+			continue
+		var gap_x: int = _enemy_x[enemy] - from_x
+		var gap_z: int = _enemy_z[enemy] - from_z
+		var squared: int = gap_x * gap_x + gap_z * gap_z
+		if squared > within:
+			continue
+		if Fixed.mul(gap_x, facing.x) + Fixed.mul(gap_z, facing.z) <= 0:
+			continue
+		if best != -1 and squared >= best_gap:
+			continue
+		best = enemy
+		best_gap = squared
+	return best
+
+
+## Takes hit points off an Enemy and removes it if that was the last of them.
+##
+## Removed here and now rather than at the end of the tick, which is the rule `_fire`
+## already follows: a second shot later in the same loop must not land on a corpse, and
+## every Turret holding the dead serial has to be told.
+func _hit_enemy(index: int, points: int) -> void:
+	if points <= 0 or index < 0 or index >= _enemy_health.size():
+		return
+	_enemy_health[index] = maxi(_enemy_health[index] - points, 0)
+	if _enemy_health[index] == 0:
+		_remove_enemy(index)
+
+
+# ── Downed, dead, and back at the Nest ────────────────────────────────────────
+#
+# **Death costs tempo and never progress or resources** (GLOSSARY.md, DESIGN.md). A player
+# who dies drops nothing, unlearns nothing, and comes back holding exactly what they fell
+# holding — which is why `_respawn` touches position, health and the clock and nothing
+# else. The Factory is what can be taken from you (#11); you cannot.
+
+## Whether a player may act at all this tick. Consulted by every refusal a player's intent
+## goes through, so being Downed is a *fact about the player* rather than a mode somebody
+## has to remember to check — and so the HUD gets the real reason out of the same function
+## that does the refusing.
+func _player_can_act(player_id: int) -> bool:
+	return _is_player(player_id) and _player_life_state[player_id] == LIFE_ALIVE
+
+
+## Takes hit points off a player, and puts them down if that was the last of them.
+##
+## `damage_taken_percent` is where armour lands: the one Gear modifier that is not about
+## the weapon, applied with the same single floor every other modifier gets. A total that
+## would take a bite below nothing clamps at nothing rather than healing.
+func _damage_player(player_id: int, points: int) -> void:
+	if points <= 0 or not _player_can_act(player_id):
+		return
+	var taken: int = _scaled(points, _component_percent(player_id, MOD_DAMAGE_TAKEN))
+	if taken <= 0:
+		return
+	_player_health[player_id] = maxi(_player_health[player_id] - taken, 0)
+	if _player_health[player_id] > 0:
+		return
+	_go_down(player_id)
+
+
+## What happens at zero health.
+##
+## **Solo play has no Downed state** (GLOSSARY.md), and this is the whole of that rule:
+## there is nobody to revive you, so a Downed state on a one-player Run would be a pause
+## with no counterplay in it. A solo player dies outright and waits out the respawn; a
+## player with teammates goes down, immobilised and bleeding, and the window is theirs to
+## use.
+func _go_down(player_id: int) -> void:
+	_player_life_state[player_id] = (
+		LIFE_DOWNED if query_player_count() > 1 else LIFE_DEAD
+	)
+	_player_life_since_tick[player_id] = _tick
+	_player_velocity_x[player_id] = 0
+	_player_velocity_z[player_id] = 0
+	_player_view_kick_turns[player_id] = 0
+	_player_fire_cooldown[player_id] = 0
+	_player_revive_credit[player_id] = 0
+
+
+## Advances every player's bleed-out and respawn by one tick.
+##
+## Elapsed time is `_tick - _player_life_since_tick`, so a player who went down *this*
+## tick has been down for zero ticks and does not spend one of their window on the tick
+## they lost their footing — the same rule a Machine built this tick and an Enemy through
+## a Breach this tick obey.
+func _lives() -> void:
+	for player_id: int in range(query_player_count()):
+		var elapsed: int = _tick - _player_life_since_tick[player_id]
+		match _player_life_state[player_id]:
+			LIFE_DOWNED:
+				if elapsed >= _downed_ticks():
+					_player_life_state[player_id] = LIFE_DEAD
+					_player_life_since_tick[player_id] = _tick
+			LIFE_DEAD:
+				if elapsed >= _respawn_ticks():
+					_respawn(player_id)
+
+
+## Puts a player back on their feet at the Nest, whole.
+##
+## At the middle of the Nest's footprint, which is the one place on the Map that is always
+## there and never moves. Nothing else is touched: not what they are carrying, not what
+## the Run has unlocked, not the weapon in their hands or the components on it. **That is
+## the acceptance criterion, written as the absence of code** — there is nowhere here for
+## a death penalty to be added without somebody arguing for it first.
+func _respawn(player_id: int) -> void:
+	var at: FixedVec2 = _nest_centre_metres()
+	_player_x[player_id] = at.x
+	_player_z[player_id] = at.z
+	_player_velocity_x[player_id] = 0
+	_player_velocity_z[player_id] = 0
+	_player_health[player_id] = _definitions.player_health
+	_player_life_state[player_id] = LIFE_ALIVE
+	_player_life_since_tick[player_id] = _tick
+	_player_view_kick_turns[player_id] = 0
+	_player_fire_cooldown[player_id] = 0
+	_player_revive_credit[player_id] = 0
+
+
+## The middle of the Nest's footprint, in fixed-point metres. Exact: a tile centre is a
+## whole number of metres, so the average of two of them lands on a half-metre at worst.
+func _nest_centre_metres() -> FixedVec2:
+	var anchor: Vector3i = query_nest_tile()
+	var size: Vector2i = query_nest_footprint()
+	var near: FixedVec2 = WorldGrid.tile_centre_metres(anchor)
+	var far: FixedVec2 = WorldGrid.tile_centre_metres(
+		Vector3i(anchor.x + maxi(size.x - 1, 0), anchor.y, anchor.z + maxi(size.y - 1, 0))
+	)
+	var two: int = Fixed.from_int(2)
+	return FixedVec2.new(Fixed.div(near.x + far.x, two), Fixed.div(near.z + far.z, two))
+
+
+func _downed_ticks() -> int:
+	return maxi(_seconds_to_ticks(_definitions.player_downed_bleed_out_seconds), 1)
+
+
+func _respawn_ticks() -> int:
+	return maxi(_seconds_to_ticks(_definitions.player_respawn_delay_seconds), 0)
+
+
+func _revive_ticks() -> int:
+	return maxi(_seconds_to_ticks(_definitions.player_revive_seconds), 1)
+
+
+# ── Reviving ──────────────────────────────────────────────────────────────────
+
+func _apply_revive(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	_player_revive_target[action.player_id] = action.revive_target()
+
+
+## Brings every Downed player a rescuer is standing over back up, by one tick's worth.
+##
+## **Hand repair pointed at a person**, and the same mechanism down to the arithmetic: an
+## integer credit against the revive's own length, so over any window a Downed player has
+## regained exactly `floor(ticks * health / revive_ticks)` — one floor applied to the
+## total, never one per tick. Credit does not survive letting go or walking out of reach,
+## the rule Power credit, Heat credit and the wrench all obey. What it costs the rescuer is
+## what a wrench costs: standing still, in the open, during a Wave, doing nothing else.
+##
+## Rescuers are walked in player index order, so two people reviving the same teammate in
+## the same tick both contribute and the order they do it in is the one every client
+## agrees on.
+func _revive() -> void:
+	for player_id: int in range(query_player_count()):
+		var target: int = _player_revive_target[player_id]
+		_player_revive_target[player_id] = -1
+
+		if _revive_refusal(player_id, target) != Refusal.NONE:
+			_player_revive_credit[player_id] = 0
+			continue
+
+		_player_revive_credit[player_id] += _definitions.player_health
+		var span: int = _revive_ticks()
+		@warning_ignore("integer_division")
+		var points: int = _player_revive_credit[player_id] / span
+		if points <= 0:
+			continue
+		_player_revive_credit[player_id] -= points * span
+
+		_player_health[target] = mini(
+			_player_health[target] + points, _definitions.player_health
+		)
+		if _player_health[target] < _definitions.player_health:
+			continue
+		_player_life_state[target] = LIFE_ALIVE
+		_player_life_since_tick[target] = _tick
+		_player_revive_credit[player_id] = 0
+
+
+## Why a held revive would pick nobody up, or `Refusal.NONE`. A pure projection about a
+## revive that has not happened, the same arrangement every other refusal in this file is.
+func _revive_refusal(rescuer: int, target: int) -> int:
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	if not _is_player(rescuer):
+		return Refusal.NO_SUCH_PLAYER
+	# Solo play has no Downed state, so on a one-player Run there is never anybody to pick
+	# up and this is the honest reason rather than "nothing to revive".
+	if query_player_count() <= 1:
+		return Refusal.NO_TEAMMATE
+	if not _player_can_act(rescuer):
+		return Refusal.PLAYER_IS_DOWN
+	if target == rescuer or not _is_player(target):
+		return Refusal.NOTHING_TO_REVIVE
+	if _player_life_state[target] != LIFE_DOWNED:
+		return Refusal.NOTHING_TO_REVIVE
+	if not _within_revive_reach(rescuer, target):
+		return Refusal.OUT_OF_REACH
+	return Refusal.NONE
+
+
+## Whether a rescuer is close enough to reach a Downed player. Compared squared, for the
+## reason the wrench's reach is.
+func _within_revive_reach(rescuer: int, target: int) -> bool:
+	var gap_x: int = _player_x[target] - _player_x[rescuer]
+	var gap_z: int = _player_z[target] - _player_z[rescuer]
+	var reach: int = _definitions.player_revive_reach_metres
+	return gap_x * gap_x + gap_z * gap_z <= reach * reach
+
+
+## The player an Enemy is close enough to bite, or -1.
+##
+## A distance rather than tile contact, unlike everything else an Enemy bites: the Nest, a
+## Machine and a Wall all stand on tiles, and a player is a position in fixed-point metres.
+## Asking which tile a player is standing on would make a bite land or miss depending on
+## which side of a tile boundary they happened to be, which is not something a player could
+## ever read off the screen.
+##
+## Walked in player index order and kept on a strict improvement, so a tie goes to the
+## lowest player id on every client. A Downed player is **not** a target: they are already
+## out of the fight, and finishing them would make the bleed-out window a fiction.
+func _player_in_contact(enemy: int) -> int:
+	var reach: int = _definitions.enemy_player_bite_reach_metres
+	var within: int = reach * reach
+	var best: int = -1
+	var best_gap: int = 0
+	for player_id: int in range(query_player_count()):
+		if _player_life_state[player_id] != LIFE_ALIVE:
+			continue
+		var gap_x: int = _player_x[player_id] - _enemy_x[enemy]
+		var gap_z: int = _player_z[player_id] - _enemy_z[enemy]
+		var squared: int = gap_x * gap_x + gap_z * gap_z
+		if squared > within:
+			continue
+		if best != -1 and squared >= best_gap:
+			continue
+		best = player_id
+		best_gap = squared
+	return best
+
 
 
 # ── What a player is carrying ────────────────────────────────────────────
@@ -3254,6 +4236,8 @@ func _call_wave_early_refusal(player_id: int) -> int:
 		return Refusal.NO_BREACH
 	if player_id < 0 or player_id >= query_player_count():
 		return Refusal.NO_SUCH_PLAYER
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
 	if _wave_queue_cursor < _wave_queue_kind.size():
 		return Refusal.WAVE_STILL_ARRIVING
 	if _wave_called_early == 1 or _telegraph_is_showing():
@@ -3335,6 +4319,8 @@ func _apply_deliver_to_nest(action: InputAction) -> void:
 func _delivery_refusal(player_id: int) -> int:
 	if not _is_player(player_id):
 		return Refusal.NO_SUCH_PLAYER
+	if not _player_can_act(player_id):
+		return Refusal.PLAYER_IS_DOWN
 	if query_run_is_over():
 		return Refusal.RUN_IS_OVER
 	var index: int = _next_delivery_index()
@@ -3642,6 +4628,8 @@ func _enemy_bites(
 			_damage_machine(target.y, points)
 		BITE_WALL:
 			_damage_wall(target.y, points)
+		BITE_PLAYER:
+			_damage_player(target.y, points)
 	# One short of the interval, because this tick is the first of the wait. A bite every
 	# `attack_interval_seconds` exactly, with nothing rounding.
 	_enemy_attack_cooldown[index] = maxi(_enemy_attack_interval_ticks(kind) - 1, 0)
@@ -3656,10 +4644,16 @@ func _enemy_bites(
 ##    is (GLOSSARY.md: it preferentially attacks Machines rather than players) and it is what
 ##    makes Machine mortality *felt* rather than merely true — a Crawler walking past a
 ##    Smelter proves nothing about whether the Smelter was ever at risk.
-## 2. **Either kind bites the Nest it is standing at.** A Breaker that has run out of Factory
+## 2. **Either kind bites a player standing within reach.** #15 added this clause and
+##    nothing else, which is what #11 promised it would be. Ranked *below* a Machine, so a
+##    Breaker still prefers the Factory with somebody standing in front of it — which is
+##    what makes GLOSSARY.md's sentence literal rather than aspirational — and *above* the
+##    Nest, so putting yourself in a doorway buys the Nest time at the price of your own
+##    skin.
+## 3. **Either kind bites the Nest it is standing at.** A Breaker that has run out of Factory
 ##    is still an Enemy at the gate, and the Nest is still the only thing whose loss ends the
 ##    Run.
-## 3. **Either kind chews its way out of a pocket it cannot route out of.** Without this,
+## 4. **Either kind chews its way out of a pocket it cannot route out of.** Without this,
 ##    sealing a Breach behind a ring of Walls would be a cheese rather than a defence: no
 ##    route means `_enemy_direction` falls back on walking straight at the Nest, and a swarm
 ##    would drift through solid Walls. With it, sealing buys exactly as much time as the
@@ -3679,6 +4673,17 @@ func _enemy_contact_target(
 		var machine: int = _machine_in_contact(tile)
 		if machine != -1:
 			return Vector2i(BITE_MACHINE, machine)
+
+	# A player standing within reach, of either kind. **Ranked below a Machine and above
+	# the Nest**, which is exactly where #11 said this clause would go when players
+	# acquired health — and it is what finally makes GLOSSARY.md's Breaker literal: a
+	# Breaker with a Smelter in reach chews the Smelter with a player standing next to it,
+	# which is the whole of "preferentially attacks Machines rather than players". Above
+	# the Nest, so standing in a doorway is a real way to buy the Nest time, at the only
+	# price this game charges for anything: your own attention and your own skin.
+	var victim: int = _player_in_contact(index)
+	if victim != -1:
+		return Vector2i(BITE_PLAYER, victim)
 
 	if _nest_in_contact(tile):
 		return Vector2i(BITE_NEST, -1)
@@ -4250,6 +5255,34 @@ func hash() -> int:
 	# back. The *held* half of the wrench intent is deliberately absent, for the reason the
 	# walking throttle is: `_repair` consumes and clears it, so it is zero here every time.
 	hasher.feed_ints(_player_repair_credit)
+	# What is left of every player, and whether they are on their feet. The arrays that
+	# decide whether a player is in the fight at all, so a divergence in any of them is a
+	# divergence about who is playing. `_player_life_since_tick` is hashed with the state it
+	# belongs to because the two together *are* the clock: how long somebody has been
+	# bleeding out is arithmetic over them rather than a third number.
+	hasher.feed_ints(_player_health)
+	hasher.feed_ints(_player_life_state)
+	hasher.feed_ints(_player_life_since_tick)
+	hasher.feed_ints(_player_revive_credit)
+	# The Gear in every player's hands, and what is fitted to it. Ids rather than indices,
+	# for the reason `_player_selected_machine` holds an id: a hash over indices would agree
+	# between two clients whose Gear table sorted differently.
+	for gear_id: String in _player_weapon:
+		hasher.feed_text(gear_id)
+	for player_id: int in range(query_player_count()):
+		var fitted: PackedStringArray = _player_component_ids[player_id]
+		hasher.feed_int(fitted.size())
+		for gear_id: String in fitted:
+			hasher.feed_text(gear_id)
+	# The weapon's own clock and the recoil it has not shed. Both decide what the *next*
+	# tick's shot does — the cooldown decides whether there is one, the kick decides where
+	# it goes — so neither may sit outside the hash. The last-shot tick is here because a
+	# saved Run has to restore the muzzle flash it was in the middle of rather than invent
+	# one. The **held** half of the trigger is deliberately absent, for the reason the
+	# walking throttle is: `_fight` consumes and clears it, so it is zero here every time.
+	hasher.feed_ints(_player_fire_cooldown)
+	hasher.feed_ints(_player_last_shot_tick)
+	hasher.feed_ints(_player_view_kick_turns)
 	# The Belts, and every Item riding one. Items are derived state — recomputed
 	# identically on every client and never replicated (ADR 0002) — and that is exactly
 	# why they have to be hashed: the guarantee that they are identical everywhere is
@@ -4385,12 +5418,17 @@ func query_player_camera_height_metres(player_id: int) -> int:
 
 
 ## Where a player's camera is pointing, in fixed-point turns from level. The player's
-## own pitch on foot, tilted down to the tuned Survey View angle as the camera rises.
+## own pitch on foot — **recoil included** — tilted down to the tuned Survey View angle as
+## the camera rises.
+##
+## The kick is in here rather than applied by the renderer because it is in the aim: what
+## the camera shows and where the next round goes are one number (`_aim_pitch_turns`), and
+## a view that kicked on its own would be lying about the second.
 func query_player_camera_pitch_turns(player_id: int) -> int:
 	if not _is_player(player_id):
 		return 0
 	return Fixed.lerp_fixed(
-		_player_pitch[player_id], -_survey_pitch_turns(), _survey_blend(player_id)
+		_aim_pitch_turns(player_id), -_survey_pitch_turns(), _survey_blend(player_id)
 	)
 
 
@@ -4415,6 +5453,231 @@ func query_player_pitch_turns(player_id: int) -> int:
 	if not _is_player(player_id):
 		return 0
 	return _player_pitch[player_id]
+
+
+## How far from level a player is **aiming**, in fixed-point turns: their own pitch plus
+## whatever recoil has not come back down. What `query_player_pitch_turns` reports is the
+## pitch they asked for; this is the pitch the next round will take.
+func query_player_aim_pitch_turns(player_id: int) -> int:
+	return _aim_pitch_turns(player_id)
+
+
+## How far recoil has pushed the view up and not yet let it back down, in fixed-point
+## turns. For a HUD that wants to draw the crosshair bloom; the aim already has it.
+func query_player_view_kick_turns(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_view_kick_turns[player_id]
+
+
+# ── Gear, health and mortality ────────────────────────────────────────────────
+
+## What is left of a player, in whole hit points, and what whole is.
+func query_player_health(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_health[player_id]
+
+
+func query_player_max_health(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _definitions.player_health
+
+
+## Whether a player is on their feet. The predicate every refusal consults, exposed so the
+## HUD and the renderer read the same answer the Simulation acts on.
+func query_player_is_alive(player_id: int) -> bool:
+	return _player_can_act(player_id)
+
+
+## Whether a player is Downed — at zero health, immobilised, bleeding out, and revivable
+## by a teammate (GLOSSARY.md). **Never true on a solo Run**: there is nobody to revive
+## you, so a solo player at zero health dies.
+func query_player_is_downed(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	return _player_life_state[player_id] == LIFE_DOWNED
+
+
+## Whether a player is dead and waiting to come back at the Nest.
+func query_player_is_dead(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	return _player_life_state[player_id] == LIFE_DEAD
+
+
+## How many ticks a Downed player has left before they die, or 0 if they are not Downed.
+## What the klaxon counts down, and what a teammate deciding whether to come is reading.
+func query_player_downed_ticks_remaining(player_id: int) -> int:
+	if not query_player_is_downed(player_id):
+		return 0
+	return maxi(_downed_ticks() - (_tick - _player_life_since_tick[player_id]), 0)
+
+
+## How many ticks a dead player has left before they respawn, or 0 if they are not dead.
+## **The whole of what death costs**, counted out where a player can watch it.
+func query_player_respawn_ticks_remaining(player_id: int) -> int:
+	if not query_player_is_dead(player_id):
+		return 0
+	return maxi(_respawn_ticks() - (_tick - _player_life_since_tick[player_id]), 0)
+
+
+## Why a held revive would pick nobody up, or `Refusal.NONE`. A projection about a revive
+## that has not happened, the same arrangement `query_build_refusal` has.
+func query_revive_refusal(rescuer: int, target: int) -> int:
+	return _revive_refusal(rescuer, target)
+
+
+## The Gear id of the weapon frame in a player's hands.
+func query_player_weapon(player_id: int) -> String:
+	if not _is_player(player_id):
+		return ""
+	return _player_weapon[player_id]
+
+
+## The Gear *index* of the weapon frame in a player's hands, or -1 when it names nothing
+## in the current definition set — which a hot-reload that deleted the row can do.
+##
+## An index for the renderer's and the controller's benefit, derived on the way out, for
+## the reason `query_player_selected_machine_index` is: the id is authoritative and the
+## index is a convenience over the table as it stands right now.
+func query_player_weapon_index(player_id: int) -> int:
+	if not _is_player(player_id):
+		return -1
+	return _definitions.gear_index(_player_weapon[player_id])
+
+
+## Whether what a player is holding swings rather than shoots. What the controller reads
+## to decide whether to draw a wrench or a rifle, and nothing in the Simulation branches
+## on it outside `_pull_the_trigger`.
+func query_player_weapon_is_melee(player_id: int) -> bool:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	return weapon != null and weapon.is_melee()
+
+
+## The Gear id fitted into one of the frame's slots, or empty.
+##
+## The slot is named by index into the definition set's interned slots — the `kind` values
+## `content/gear.csv` mentions other than `weapon` — which is the same index a
+## `FIT_COMPONENT` intent carries.
+func query_player_component(player_id: int, slot_index: int) -> String:
+	var slot_id: String = _definitions.gear_slot_id(slot_index)
+	if slot_id.is_empty():
+		return ""
+	for definition: GearDefinition in _fitted_components(player_id):
+		if definition.slot_id() == slot_id:
+			return definition.id
+	return ""
+
+
+## Every Gear id fitted to a player's frame, sorted. A copy, like every other query.
+func query_player_components(player_id: int) -> PackedStringArray:
+	if not _is_player(player_id):
+		return PackedStringArray()
+	var fitted: PackedStringArray = _player_component_ids[player_id]
+	return fitted.duplicate()
+
+
+## Whether a piece of Gear is available to a player this Run.
+##
+## Gear a Delivery tier names is locked until that tier is completed; Gear no tier names
+## is open from tick 0. One authority — `Definitions.locks_gear` — exactly as
+## `query_machine_is_unlocked` has one.
+func query_gear_is_unlocked(gear_index: int) -> bool:
+	var definition: GearDefinition = _definitions.gear_at(gear_index)
+	if definition == null:
+		return false
+	if not _definitions.locks_gear(definition.id):
+		return true
+	return _unlocked_gear_ids.find(definition.id) != -1
+
+
+## Why putting a weapon in a player's hands would be refused, or `Refusal.NONE`.
+func query_equip_refusal(player_id: int, gear_index: int) -> int:
+	return _equip_refusal(player_id, gear_index)
+
+
+## Why fitting a component into a slot would be refused, or `Refusal.NONE`. A Gear index
+## of -1 asks about emptying the slot.
+func query_fit_refusal(player_id: int, slot_index: int, gear_index: int) -> int:
+	return _fit_refusal(player_id, slot_index, gear_index)
+
+
+## Why a held trigger would do nothing this tick, or `Refusal.NONE`. What the HUD reads to
+## say `DRY`, and the same function `_fight` obeys, so the reason on screen and the reason
+## nothing happened are one rule.
+func query_fire_refusal(player_id: int) -> int:
+	return _fire_refusal(player_id)
+
+
+# What a player's weapon actually does, frame plus everything fitted. These five are the
+# acceptance criterion "component combinations measurably change weapon behaviour" made
+# observable: a test fits a barrel and reads the damage back, and so does a player.
+
+func query_player_weapon_damage(player_id: int) -> int:
+	return _weapon_damage(player_id)
+
+
+func query_player_weapon_range_metres(player_id: int) -> int:
+	return _weapon_range_metres(player_id)
+
+
+## How far a shot may scatter, in fixed-point **degrees** — turns inside the Simulation,
+## degrees on the way out, because degrees is what the file is written in and what a HUD
+## would show.
+func query_player_weapon_spread_degrees(player_id: int) -> int:
+	return Fixed.mul(_weapon_spread_turns(player_id), Fixed.from_int(DEGREES_PER_TURN))
+
+
+func query_player_weapon_interval_ticks(player_id: int) -> int:
+	return _weapon_interval_ticks(player_id)
+
+
+func query_player_weapon_ammunition_per_shot(player_id: int) -> int:
+	return _weapon_ammunition_per_shot(player_id)
+
+
+## The Item a player's weapon spends, or empty for a melee weapon. What the HUD counts the
+## magazine in, read off the weapon rather than named anywhere in `game/`.
+func query_player_weapon_ammunition_item(player_id: int) -> String:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null:
+		return ""
+	return weapon.ammunition_item
+
+
+## How many rounds a player is carrying for the weapon in their hands, and how many shots
+## that is. Zero for a melee weapon, which spends nothing.
+func query_player_ammunition(player_id: int) -> int:
+	var weapon: GearDefinition = _weapon_of(player_id)
+	if weapon == null or not weapon.is_ranged():
+		return 0
+	return query_player_item(player_id, weapon.ammunition_item)
+
+
+func query_player_shots_remaining(player_id: int) -> int:
+	var per_shot: int = _weapon_ammunition_per_shot(player_id)
+	if per_shot <= 0:
+		return 0
+	@warning_ignore("integer_division")
+	return query_player_ammunition(player_id) / per_shot
+
+
+## Ticks a player still has to wait before their weapon fires again.
+func query_player_fire_cooldown_ticks(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_fire_cooldown[player_id]
+
+
+## The tick a player last fired on, or -1 if they never have. What the renderer plays a
+## muzzle flash and a Shoot take off — hashed state rather than something the view infers,
+## so a saved Run restores the shot it was in the middle of.
+func query_player_last_shot_tick(player_id: int) -> int:
+	if not _is_player(player_id):
+		return -1
+	return _player_last_shot_tick[player_id]
 
 
 ## The content definitions this Run is using.

@@ -26,6 +26,12 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+health = 150
+downed_bleed_out_seconds = 20
+respawn_delay_seconds = 8
+revive_seconds = 4
+revive_reach_metres = 3
+starting_weapon = "pneumatic_wrench"
 starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
@@ -59,8 +65,14 @@ breach_tier = 2
 breach_crafts = 40
 breach_offset_tiles = 6
 breach_telegraph_seconds = 45
+[gear]
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.5
 [enemy]
 crawler_health = 30
+player_bite_reach_metres = 1.6
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
@@ -386,7 +398,8 @@ func test_a_save_made_under_different_content_definitions_is_refused() -> void:
 	# somewhere useful.
 	var sim: Simulation = Simulation.new(1, 1)
 	var other_content: Definitions = Definitions.parse(
-		ALTERED_MACHINES, ALTERED_RECIPES, ALTERED_TUNING, WAVES, DELIVERIES
+		ALTERED_MACHINES, ALTERED_RECIPES, ALTERED_TUNING, WAVES, DELIVERIES,
+		GEAR
 	)
 
 	var loaded: RunSave.Load = RunSave.deserialise(RunSave.serialise(sim), other_content)
@@ -543,6 +556,16 @@ func test_an_item_id_with_awkward_characters_survives_the_round_trip() -> void:
 		var encoded: String = RunSave.encode_text(original)
 		assert_false(encoded.contains(" "), "an encoded token must not contain a separator")
 		assert_eq(RunSave.decode_text(encoded), original, "round trip of %s" % [original])
+
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
 
 
 ## The Delivery tiers, inline so the fixture is a complete definition set. Progression is

@@ -11,7 +11,7 @@
 ##
 ## Change is detected by **content**, not by modification time. Modification times
 ## have one-second granularity, so two saves in the same second would read as one;
-## they also change when an editor touches a file it did not alter. Hashing the three
+## they also change when an editor touches a file it did not alter. Hashing the content
 ## files is a few kilobytes of reading, which is why `poll` only does it a couple of
 ## times a second rather than every frame.
 ##
@@ -107,6 +107,7 @@ func _read_content_digest() -> int:
 		Definitions.TUNING_FILE,
 		Definitions.WAVES_FILE,
 		Definitions.DELIVERIES_FILE,
+		Definitions.GEAR_FILE,
 	]:
 		var path: String = "%s/%s" % [directory, file_name]
 		var file: FileAccess = FileAccess.open(path, FileAccess.READ)

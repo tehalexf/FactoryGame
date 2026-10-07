@@ -43,6 +43,7 @@ const RECIPES_FILE: String = "recipes.csv"
 const TUNING_FILE: String = "tuning.toml"
 const WAVES_FILE: String = "waves.csv"
 const DELIVERIES_FILE: String = "deliveries.csv"
+const GEAR_FILE: String = "gear.csv"
 
 const MACHINE_COLUMNS: Array = [
 	"id",
@@ -82,6 +83,25 @@ const DELIVERY_COLUMNS: Array = [
 	"unlocks_stratagems",
 ]
 
+const GEAR_COLUMNS: Array = [
+	"id",
+	"display_name",
+	"kind",
+	"attack",
+	"damage",
+	"range_metres",
+	"spread_degrees",
+	"seconds_per_shot",
+	"ammunition_item",
+	"ammunition_per_shot",
+	"damage_percent",
+	"range_percent",
+	"spread_percent",
+	"interval_percent",
+	"ammunition_percent",
+	"damage_taken_percent",
+]
+
 ## Tuning keys the Simulation reads. Each must be present.
 const TUNING_PLAYER_SPRINT_MULTIPLIER: String = "player.sprint_speed_multiplier"
 const TUNING_PLAYER_WALK_SPEED: String = "player.walk_speed_metres_per_second"
@@ -93,6 +113,17 @@ const TUNING_PLAYER_LOOK_SENSITIVITY: String = (
 )
 const TUNING_PLAYER_EYE_HEIGHT: String = "player.eye_height_metres"
 const TUNING_PLAYER_STARTING_STOCK: String = "player.starting_stock"
+const TUNING_PLAYER_HEALTH: String = "player.health"
+const TUNING_PLAYER_DOWNED_SECONDS: String = "player.downed_bleed_out_seconds"
+const TUNING_PLAYER_RESPAWN_SECONDS: String = "player.respawn_delay_seconds"
+const TUNING_PLAYER_REVIVE_SECONDS: String = "player.revive_seconds"
+const TUNING_PLAYER_REVIVE_REACH: String = "player.revive_reach_metres"
+const TUNING_PLAYER_STARTING_WEAPON: String = "player.starting_weapon"
+const TUNING_GEAR_ENEMY_HIT_RADIUS: String = "gear.enemy_hit_radius_metres"
+const TUNING_GEAR_ENEMY_HIT_HEIGHT: String = "gear.enemy_hit_height_metres"
+const TUNING_GEAR_VIEW_KICK_DEGREES: String = "gear.view_kick_degrees_per_shot"
+const TUNING_GEAR_VIEW_KICK_RECOVER_SECONDS: String = "gear.view_kick_recover_seconds"
+const TUNING_ENEMY_BITE_REACH: String = "enemy.player_bite_reach_metres"
 const TUNING_SURVEY_HEIGHT: String = "survey.height_metres"
 const TUNING_SURVEY_TRANSITION_SECONDS: String = "survey.transition_seconds"
 const TUNING_SURVEY_PITCH_DEGREES: String = "survey.pitch_degrees"
@@ -170,6 +201,56 @@ var player_eye_height: int = 0
 ## Empty is legal and means a Run opens empty-handed.
 var player_starting_stock_items: PackedStringArray = PackedStringArray()
 var player_starting_stock_counts: PackedInt64Array = PackedInt64Array()
+
+## A player's hit points. Whole points, exactly as a Machine's and the Nest's are:
+## damage is counted in them and a fraction of a hit point is a rounding rule nobody
+## needs. The number that decides how long a player survives standing in the open, which
+## is the thing hand repair spends.
+var player_health: int = 0
+
+## How long a Downed player bleeds out before dying, in fixed-point seconds. The window
+## a teammate has to reach them. **Solo play has no Downed state at all** (GLOSSARY.md) —
+## there is nobody to revive you — so on a one-player Run this number is never consulted.
+var player_downed_bleed_out_seconds: int = 0
+
+## How long a dead player waits before respawning at the Nest, in fixed-point seconds.
+## The whole of what death costs: tempo, never progress and never resources.
+var player_respawn_delay_seconds: int = 0
+
+## How long one teammate takes to bring a Downed player back up, in fixed-point seconds.
+## Spent as an integer credit against the tick rate, so the total is exact.
+var player_revive_seconds: int = 0
+
+## How close a teammate has to stand to revive, in fixed-point metres.
+var player_revive_reach_metres: int = 0
+
+## The Gear a Run opens holding, by id. Must name a `weapon` row in `content/gear.csv`.
+##
+## A tuning key rather than a constant in `sim/`, for the reason `starting_stock` is one:
+## naming a piece of Gear in the Simulation is the thing this project does not do. Which
+## weapon a Run starts with is a balance decision, and a fourth weapon becoming the
+## opening one must be an edit to a file.
+var player_starting_weapon: String = ""
+
+## How far from the line of a shot an Enemy may stand and still be hit, in fixed-point
+## metres, and how tall its hit volume is.
+##
+## An Enemy is a point in the Simulation (#9: a position and a kind, never a node), so a
+## shot needs a volume to resolve against and these two are it: a capsule of this radius
+## standing this tall on the Enemy's tile. **Both are pure feel.** Too thin and a swarm is
+## unhittable at twenty metres; too fat and spread stops meaning anything.
+var gear_enemy_hit_radius_metres: int = 0
+var gear_enemy_hit_height_metres: int = 0
+
+## How far a shot kicks the view up, in fixed-point degrees, and how long the kick takes
+## to come back down, in fixed-point seconds.
+##
+## Recoil is Simulation state because it moves where the *next* shot goes, not merely
+## where the camera points — a kick that only the renderer knew about would be a lie
+## about aiming. Both are the most feel-critical numbers in this file after the weapons'
+## own spread.
+var gear_view_kick_degrees_per_shot: int = 0
+var gear_view_kick_recover_seconds: int = 0
 
 ## How high the Survey View camera rises to, in fixed-point metres.
 var survey_height: int = 0
@@ -266,6 +347,14 @@ var breaker_damage: int = 0
 ## How long between one Breaker's bites, in fixed-point seconds.
 var breaker_attack_interval_seconds: int = 0
 
+## How close an Enemy has to be to a player to bite them, in fixed-point metres.
+##
+## A distance rather than tile contact, unlike everything else an Enemy bites: the Nest,
+## a Machine and a Wall all stand on tiles and a player does not — a player is a position
+## in fixed-point metres, and asking which tile they are standing on would make a bite
+## land or miss depending on which side of a tile boundary they were on.
+var enemy_player_bite_reach_metres: int = 0
+
 ## A Wall's hit points. A Wall is not a Machine (DESIGN.md), so this is tuning rather
 ## than a row in `machines.csv`, exactly as a Belt's rating is.
 var wall_health: int = 0
@@ -302,6 +391,19 @@ var _recipe_ids: PackedStringArray = PackedStringArray()
 var _item_ids: PackedStringArray = PackedStringArray()
 var _waves: Array = []
 var _deliveries: Array = []
+var _gear: Array = []
+var _gear_ids: PackedStringArray = PackedStringArray()
+
+## Every slot a component can be fitted into, sorted. **Interned from the Gear table's
+## `kind` column rather than declared anywhere**, exactly as the Items are interned from
+## what the Recipes mention: writing `barrel` in a row is what makes a barrel slot exist,
+## so a fourth slot is a row and never a code change. Index order here is the slot index
+## a `FIT_COMPONENT` intent carries.
+var _gear_slot_ids: PackedStringArray = PackedStringArray()
+
+## The Gear indices of the `weapon` rows, ascending. What the weapon-select keys step
+## through, so a fourth weapon joins the list by being a row.
+var _weapon_gear_indices: PackedInt64Array = PackedInt64Array()
 
 
 # ── Loading ───────────────────────────────────────────────────────────────────
@@ -311,7 +413,7 @@ var _deliveries: Array = []
 static func load_from_directory(dir_path: String) -> Definitions:
 	var missing: PackedStringArray = PackedStringArray()
 	for file_name: String in [
-		MACHINES_FILE, RECIPES_FILE, TUNING_FILE, WAVES_FILE, DELIVERIES_FILE
+		MACHINES_FILE, RECIPES_FILE, TUNING_FILE, WAVES_FILE, DELIVERIES_FILE, GEAR_FILE
 	]:
 		var path: String = "%s/%s" % [dir_path, file_name]
 		if not FileAccess.file_exists(path):
@@ -328,6 +430,7 @@ static func load_from_directory(dir_path: String) -> Definitions:
 	var tuning: String = _read_file("%s/%s" % [dir_path, TUNING_FILE])
 	var waves: String = _read_file("%s/%s" % [dir_path, WAVES_FILE])
 	var deliveries: String = _read_file("%s/%s" % [dir_path, DELIVERIES_FILE])
+	var gear: String = _read_file("%s/%s" % [dir_path, GEAR_FILE])
 
 	var definitions: Definitions = parse(
 		machines,
@@ -335,11 +438,13 @@ static func load_from_directory(dir_path: String) -> Definitions:
 		tuning,
 		waves,
 		deliveries,
+		gear,
 		"%s/%s" % [dir_path, MACHINES_FILE],
 		"%s/%s" % [dir_path, RECIPES_FILE],
 		"%s/%s" % [dir_path, TUNING_FILE],
 		"%s/%s" % [dir_path, WAVES_FILE],
-		"%s/%s" % [dir_path, DELIVERIES_FILE]
+		"%s/%s" % [dir_path, DELIVERIES_FILE],
+		"%s/%s" % [dir_path, GEAR_FILE]
 	)
 	return definitions
 
@@ -353,11 +458,13 @@ static func parse(
 	tuning_source: String,
 	waves_source: String,
 	deliveries_source: String,
+	gear_source: String,
 	machines_path: String = MACHINES_FILE,
 	recipes_path: String = RECIPES_FILE,
 	tuning_path: String = TUNING_FILE,
 	waves_path: String = WAVES_FILE,
-	deliveries_path: String = DELIVERIES_FILE
+	deliveries_path: String = DELIVERIES_FILE,
+	gear_path: String = GEAR_FILE
 ) -> Definitions:
 	var definitions: Definitions = Definitions.new()
 
@@ -368,23 +475,32 @@ static func parse(
 	var deliveries: CsvTable = CsvTable.parse(
 		deliveries_source, deliveries_path, PackedStringArray(DELIVERY_COLUMNS)
 	)
+	var gear: CsvTable = CsvTable.parse(gear_source, gear_path, PackedStringArray(GEAR_COLUMNS))
 
 	definitions._read_recipes(recipes)
 	definitions._intern_items()
 	definitions._read_machines(machines)
 	definitions._check_machines_against_recipes(machines)
-	definitions._read_tuning(tuning)
+	# Gear before the Delivery table, because `unlocks_gear` has to name a Gear row — the
+	# same rule `unlocks_machines` already obeys: one authority, checked rather than
+	# assumed. And **tuning last**, because `player.starting_weapon` has to name a weapon
+	# frame that no Delivery tier locks, which is a question only the two tables together
+	# can answer. Nothing in the three tables reads a tuning value, so the order costs
+	# nothing.
+	definitions._read_gear(gear)
 	definitions._read_waves(waves)
 	definitions._read_deliveries(deliveries)
+	definitions._read_tuning(tuning)
 
 	# Errors are gathered in file order — machines, then Recipes, then tuning, then the
-	# Wave table, then the Delivery table — so the report reads like a list of things to
-	# go and fix.
+	# Wave table, the Delivery table and the Gear table — so the report reads like a list
+	# of things to go and fix.
 	definitions.errors.append_array(machines.errors)
 	definitions.errors.append_array(recipes.errors)
 	definitions.errors.append_array(tuning.errors)
 	definitions.errors.append_array(waves.errors)
 	definitions.errors.append_array(deliveries.errors)
+	definitions.errors.append_array(gear.errors)
 
 	if definitions.has_errors():
 		definitions._discard_content()
@@ -549,6 +665,83 @@ func locks_machine(machine_id: String) -> bool:
 	return false
 
 
+## Whether some Delivery tier is what unlocks a piece of Gear — the same question as
+## whether a Run starts without it. The Gear a Run opens with is exactly the Gear no tier
+## names, which is why there is no `locked` column in `gear.csv` either.
+func locks_gear(gear_id: String) -> bool:
+	for definition: DeliveryDefinition in _deliveries:
+		if definition.unlocks_gear.find(gear_id) != -1:
+			return true
+	return false
+
+
+# ── Gear ──────────────────────────────────────────────────────────────────────
+# Weapon frames and the components that fit them, sorted by id. Index order is what a
+# `EQUIP_WEAPON` or `FIT_COMPONENT` intent carries, so — exactly as with the Machines —
+# it is a property of the table rather than of the order somebody typed the rows in, and
+# the Simulation stores the resolved *id* so a hot-reload cannot change what is in a
+# player's hands.
+
+func gear_count() -> int:
+	return _gear.size()
+
+
+func gear_ids() -> PackedStringArray:
+	return _gear_ids.duplicate()
+
+
+func has_gear(id: String) -> bool:
+	return _gear_ids.find(id) != -1
+
+
+func gear_index(id: String) -> int:
+	return _gear_ids.find(id)
+
+
+func gear_at(index: int) -> GearDefinition:
+	if index < 0 or index >= _gear.size():
+		return null
+	return _gear[index]
+
+
+## A piece of Gear by id, or null. Null rather than a blank definition, so a mistyped id
+## cannot be mistaken for a weapon with every value at zero.
+func gear(id: String) -> GearDefinition:
+	return gear_at(gear_index(id))
+
+
+## How many slots a weapon frame has. Exactly the number of distinct `kind` values the
+## Gear table names other than `weapon`.
+func gear_slot_count() -> int:
+	return _gear_slot_ids.size()
+
+
+func gear_slot_ids() -> PackedStringArray:
+	return _gear_slot_ids.duplicate()
+
+
+func gear_slot_id(index: int) -> String:
+	if index < 0 or index >= _gear_slot_ids.size():
+		return ""
+	return _gear_slot_ids[index]
+
+
+func gear_slot_index(slot_id: String) -> int:
+	return _gear_slot_ids.find(slot_id)
+
+
+## How many weapon frames there are, and the Gear index of the nth. What the weapon keys
+## step through; a fourth weapon joins by being a row.
+func weapon_count() -> int:
+	return _weapon_gear_indices.size()
+
+
+func weapon_gear_index(nth: int) -> int:
+	if nth < 0 or nth >= _weapon_gear_indices.size():
+		return -1
+	return _weapon_gear_indices[nth]
+
+
 # ── Hashing ───────────────────────────────────────────────────────────────────
 
 ## Reduces the whole definition set to one integer.
@@ -583,6 +776,16 @@ func digest() -> int:
 	hasher.feed_int(_deliveries.size())
 	for definition: DeliveryDefinition in _deliveries:
 		definition.feed_into(hasher)
+
+	hasher.feed_int(_gear.size())
+	for definition: GearDefinition in _gear:
+		definition.feed_into(hasher)
+	# The slots too, even though they are derived from the rows above. They are the index
+	# space a `FIT_COMPONENT` intent travels in, so a set that interned them differently
+	# is a set a recorded script means something different under.
+	hasher.feed_int(_gear_slot_ids.size())
+	for slot_id: String in _gear_slot_ids:
+		hasher.feed_text(slot_id)
 
 	hasher.feed_int(player_walk_speed)
 	hasher.feed_int(player_sprint_multiplier)
@@ -627,6 +830,17 @@ func digest() -> int:
 	hasher.feed_int(wall_health)
 	hasher.feed_int(wrench_repair_points_per_second)
 	hasher.feed_int(wrench_reach_metres)
+	hasher.feed_int(player_health)
+	hasher.feed_int(player_downed_bleed_out_seconds)
+	hasher.feed_int(player_respawn_delay_seconds)
+	hasher.feed_int(player_revive_seconds)
+	hasher.feed_int(player_revive_reach_metres)
+	hasher.feed_text(player_starting_weapon)
+	hasher.feed_int(gear_enemy_hit_radius_metres)
+	hasher.feed_int(gear_enemy_hit_height_metres)
+	hasher.feed_int(gear_view_kick_degrees_per_shot)
+	hasher.feed_int(gear_view_kick_recover_seconds)
+	hasher.feed_int(enemy_player_bite_reach_metres)
 
 	# Errors are part of the verdict, not of the content, but a set that failed to
 	# load must never share a digest with one that loaded empty.
@@ -1138,6 +1352,11 @@ func _check_delivery_values(table: CsvTable, row: int, definition: DeliveryDefin
 			table.report_row(
 				row, 'unlocks_machines: "%s" is not a Machine in machines.csv' % machine_id
 			)
+	for gear_id: String in definition.unlocks_gear:
+		if _gear_ids.find(gear_id) == -1:
+			table.report_row(
+				row, 'unlocks_gear: "%s" is not a piece of Gear in gear.csv' % gear_id
+			)
 	if (
 		definition.unlocks_machines.is_empty()
 		and definition.unlocks_gear.is_empty()
@@ -1162,6 +1381,7 @@ func _check_delivery_values(table: CsvTable, row: int, definition: DeliveryDefin
 func _check_delivery_chain(table: CsvTable) -> void:
 	var deepest_so_far: int = 0
 	var claimed: PackedStringArray = PackedStringArray()
+	var claimed_gear: PackedStringArray = PackedStringArray()
 	for definition: DeliveryDefinition in _deliveries:
 		if definition.min_depth < deepest_so_far:
 			table.report_row(
@@ -1181,6 +1401,216 @@ func _check_delivery_chain(table: CsvTable) -> void:
 				)
 				continue
 			claimed.append(machine_id)
+		for gear_id: String in definition.unlocks_gear:
+			if claimed_gear.has(gear_id):
+				table.report_row(
+					definition.source_row,
+					'unlocks_gear: "%s" is already unlocked by an earlier tier' % gear_id
+				)
+				continue
+			claimed_gear.append(gear_id)
+
+
+# ── Reading the Gear table ────────────────────────────────────────────────────
+
+func _read_gear(table: CsvTable) -> void:
+	for row: int in range(table.row_count()):
+		var definition: GearDefinition = GearDefinition.new()
+		definition.source_row = row
+		definition.id = table.require_id(row, "id")
+		definition.display_name = table.value(row, "display_name")
+		definition.kind = table.require_id(row, "kind")
+		definition.damage = table.require_int(row, "damage")
+		definition.range_metres = table.require_fixed(row, "range_metres")
+		definition.spread_degrees = table.require_fixed(row, "spread_degrees")
+		definition.seconds_per_shot = table.require_fixed(row, "seconds_per_shot")
+		definition.ammunition_item = table.value(row, "ammunition_item").strip_edges()
+		definition.ammunition_per_shot = table.require_int(row, "ammunition_per_shot")
+		definition.damage_percent = table.require_int(row, "damage_percent")
+		definition.range_percent = table.require_int(row, "range_percent")
+		definition.spread_percent = table.require_int(row, "spread_percent")
+		definition.interval_percent = table.require_int(row, "interval_percent")
+		definition.ammunition_percent = table.require_int(row, "ammunition_percent")
+		definition.damage_taken_percent = table.require_int(row, "damage_taken_percent")
+
+		_read_gear_attack(table, row, definition)
+		_check_gear_values(table, row, definition)
+
+		if definition.id.is_empty():
+			continue
+		if _gear_ids.find(definition.id) != -1:
+			table.report_row(row, 'id: "%s" is already defined' % definition.id)
+			continue
+
+		_gear_ids.append(definition.id)
+		_gear.append(definition)
+
+	_sort_gear()
+	_intern_gear_slots()
+
+	if table.row_count() == 0 and not table.has_errors():
+		table.report_row(
+			-1,
+			(
+				"the table has no rows — a Run with no Gear is a Run with nothing to fight"
+				+ " with, and first-person combat is a pillar rather than an option"
+			)
+		)
+	elif _weapon_gear_indices.is_empty() and not table.has_errors():
+		table.report_row(
+			-1, 'the table names no row of kind "%s" — there is no frame to hold' % GearDefinition.WEAPON_KIND
+		)
+
+
+## Reads the `attack` column, which is required on a weapon and must be empty on a
+## component. Empty-and-required and present-and-forbidden are two different mistakes and
+## each gets its own sentence, because a loader that said only "bad attack" would leave
+## the author guessing which.
+func _read_gear_attack(table: CsvTable, row: int, definition: GearDefinition) -> void:
+	var text: String = table.value(row, "attack").strip_edges()
+	var is_weapon: bool = definition.kind == GearDefinition.WEAPON_KIND
+
+	if text.is_empty():
+		if is_weapon:
+			table.report_row(
+				row,
+				"attack: a weapon has to reach somehow — expected one of %s"
+				% ", ".join(PackedStringArray(GearDefinition.ATTACK_NAMES))
+			)
+		return
+
+	if not is_weapon:
+		table.report_row(
+			row,
+			(
+				'attack: only a weapon frame reaches anything, and this row is a "%s"'
+				+ " component — leave it empty"
+			) % definition.kind
+		)
+		return
+
+	var attack: int = GearDefinition.parse_attack(text)
+	if attack == -1:
+		table.report_row(
+			row,
+			'attack: expected one of %s, got "%s"'
+			% [", ".join(PackedStringArray(GearDefinition.ATTACK_NAMES)), text]
+		)
+		return
+	definition.attack = attack
+
+
+## The whole of what a well-formed Gear row is, and the half of "there is no Rifle Mk2"
+## that a schema can enforce: a weapon states what it is and carries no modifiers, and a
+## component carries nothing but modifiers.
+func _check_gear_values(table: CsvTable, row: int, definition: GearDefinition) -> void:
+	if definition.kind.is_empty():
+		return
+
+	if definition.kind == GearDefinition.WEAPON_KIND:
+		if definition.damage <= 0:
+			table.report_row(row, "damage: a weapon that takes nothing off an Enemy is not a weapon")
+		if definition.range_metres <= 0:
+			table.report_row(row, "range_metres: a weapon that reaches nowhere hits nothing")
+		if definition.spread_degrees < 0:
+			table.report_row(row, "spread_degrees: a negative scatter is not tighter aim, it is nonsense")
+		if definition.seconds_per_shot <= 0:
+			table.report_row(
+				row, "seconds_per_shot: a weapon that fires in no time does unbounded damage"
+			)
+		if definition.changes_anything():
+			table.report_row(
+				row,
+				(
+					"a weapon frame carries no modifiers — power comes from the components"
+					+ " fitted to it, and a modifier here would be a tier in disguise"
+				)
+			)
+		_check_gear_ammunition(table, row, definition)
+		return
+
+	# A component.
+	if definition.damage != 0 or definition.range_metres != 0 or definition.spread_degrees != 0:
+		table.report_row(
+			row,
+			(
+				"damage, range_metres and spread_degrees belong to the frame — a component"
+				+ " says what it does to those, in the percent columns"
+			)
+		)
+	if definition.seconds_per_shot != 0:
+		table.report_row(row, "seconds_per_shot: belongs to the frame — use interval_percent")
+	if not definition.ammunition_item.is_empty() or definition.ammunition_per_shot != 0:
+		table.report_row(
+			row,
+			(
+				"ammunition_item and ammunition_per_shot belong to the frame — use"
+				+ " ammunition_percent"
+			)
+		)
+	if not definition.changes_anything():
+		table.report_row(
+			row,
+			(
+				"every modifier is 0, so fitting this changes nothing measurable — a"
+				+ " component a player earned and cannot feel is a Delivery paid for nothing"
+			)
+		)
+
+
+## Checks a weapon's Ammunition against the interned Items. A ranged weapon spends an
+## Item out of the player's own pockets, and the Items that exist are exactly the ones
+## some Recipe mentions — so a weapon firing `plasma` is content somebody broke rather
+## than a weapon that never runs dry.
+func _check_gear_ammunition(table: CsvTable, row: int, definition: GearDefinition) -> void:
+	if definition.attack == GearDefinition.Attack.RANGED:
+		if definition.ammunition_item.is_empty():
+			table.report_row(
+				row,
+				(
+					"ammunition_item: a ranged weapon spends something, because defence"
+					+ " costing continuous production is the whole keystone loop"
+				)
+			)
+		elif _item_ids.find(definition.ammunition_item) == -1:
+			table.report_row(
+				row,
+				(
+					'ammunition_item: "%s" is not an Item any Recipe mentions, so nothing'
+					+ " in the Factory could ever make one"
+				) % definition.ammunition_item
+			)
+		if definition.ammunition_per_shot < 1:
+			table.report_row(
+				row, "ammunition_per_shot: a ranged weapon spends at least one round a shot"
+			)
+		return
+
+	if not definition.ammunition_item.is_empty():
+		table.report_row(
+			row, "ammunition_item: a melee weapon spends a player's presence, not an Item"
+		)
+	if definition.ammunition_per_shot != 0:
+		table.report_row(row, "ammunition_per_shot: a melee weapon spends no rounds")
+
+
+## Collects the slots out of the Gear table's own `kind` column, sorted, and records
+## which rows are weapon frames.
+##
+## There is no slot table, for the reason there is no Item table: writing `barrel` in a
+## row is what makes a barrel slot exist. A kind nothing uses therefore cannot exist, and
+## a fourth slot is a row.
+func _intern_gear_slots() -> void:
+	_gear_slot_ids.clear()
+	_weapon_gear_indices.clear()
+	for index: int in range(_gear.size()):
+		var definition: GearDefinition = _gear[index]
+		if definition.is_weapon():
+			_weapon_gear_indices.append(index)
+			continue
+		if _gear_slot_ids.find(definition.kind) == -1:
+			_gear_slot_ids.append(definition.kind)
+	_gear_slot_ids.sort()
 
 
 func _delivery_id_taken(id: String) -> bool:
@@ -1248,6 +1678,17 @@ func _read_tuning(tuning: TomlDocument) -> void:
 		TUNING_WRENCH_REPAIR_POINTS_PER_SECOND
 	)
 	wrench_reach_metres = tuning.require_fixed(TUNING_WRENCH_REACH_METRES)
+	player_health = tuning.require_int(TUNING_PLAYER_HEALTH)
+	player_downed_bleed_out_seconds = tuning.require_fixed(TUNING_PLAYER_DOWNED_SECONDS)
+	player_respawn_delay_seconds = tuning.require_fixed(TUNING_PLAYER_RESPAWN_SECONDS)
+	player_revive_seconds = tuning.require_fixed(TUNING_PLAYER_REVIVE_SECONDS)
+	player_revive_reach_metres = tuning.require_fixed(TUNING_PLAYER_REVIVE_REACH)
+	player_starting_weapon = tuning.require_string(TUNING_PLAYER_STARTING_WEAPON).strip_edges()
+	gear_enemy_hit_radius_metres = tuning.require_fixed(TUNING_GEAR_ENEMY_HIT_RADIUS)
+	gear_enemy_hit_height_metres = tuning.require_fixed(TUNING_GEAR_ENEMY_HIT_HEIGHT)
+	gear_view_kick_degrees_per_shot = tuning.require_fixed(TUNING_GEAR_VIEW_KICK_DEGREES)
+	gear_view_kick_recover_seconds = tuning.require_fixed(TUNING_GEAR_VIEW_KICK_RECOVER_SECONDS)
+	enemy_player_bite_reach_metres = tuning.require_fixed(TUNING_ENEMY_BITE_REACH)
 
 	# A rate or a capacity of zero is not a slow Belt, it is a Belt that cannot work.
 	# Refused by name rather than accepted and puzzled over later.
@@ -1445,6 +1886,62 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				TUNING_WRENCH_REACH_METRES,
 				"a wrench a player cannot reach anything with mends nothing"
 			)
+		if player_health <= 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_HEALTH, "a player who starts at zero is Downed on tick 0"
+			)
+		if player_downed_bleed_out_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_DOWNED_SECONDS,
+				(
+					"a Downed player who dies instantly gives a teammate no window at all,"
+					+ " and the window is the whole of what Downed is"
+				)
+			)
+		if player_respawn_delay_seconds < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_RESPAWN_SECONDS, "a delay cannot be negative time"
+			)
+		if player_revive_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_REVIVE_SECONDS,
+				"an instant revive costs the rescuer nothing, and what it should cost is exposure"
+			)
+		if player_revive_reach_metres <= 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_REVIVE_REACH, "a revive is done standing over somebody"
+			)
+		if gear_enemy_hit_radius_metres <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_GEAR_ENEMY_HIT_RADIUS,
+				"an Enemy with no width is a point no shot can ever meet"
+			)
+		if gear_enemy_hit_height_metres <= 0:
+			_report_tuning(
+				tuning, TUNING_GEAR_ENEMY_HIT_HEIGHT, "an Enemy with no height cannot be aimed at"
+			)
+		if gear_view_kick_degrees_per_shot < 0:
+			_report_tuning(
+				tuning,
+				TUNING_GEAR_VIEW_KICK_DEGREES,
+				"recoil pushes the view up, never down — 0 is a weapon that does not kick"
+			)
+		if gear_view_kick_recover_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_GEAR_VIEW_KICK_RECOVER_SECONDS,
+				"a kick that never comes back down walks the view off the top of the Map"
+			)
+		if enemy_player_bite_reach_metres <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_ENEMY_BITE_REACH,
+				"an Enemy that cannot reach a player is an Enemy a player cannot lose to"
+			)
+		_check_starting_weapon(tuning)
 
 	# Checked after every read, so this names exactly the keys nothing asked for.
 	for key: String in tuning.unread_keys():
@@ -1504,6 +2001,48 @@ func _read_starting_stock(tuning: TomlDocument) -> void:
 		player_starting_stock_counts.insert(slot, count_text.to_int())
 
 
+## Checks `player.starting_weapon` against the Gear table.
+##
+## Two separate mistakes with two separate sentences: an id no row answers to, and an id
+## that names a *component* rather than a frame. The second is the likelier one and the
+## more confusing to debug, because the row exists.
+func _check_starting_weapon(tuning: TomlDocument) -> void:
+	if player_starting_weapon.is_empty():
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_WEAPON,
+			"a Run has to open holding something — name a weapon row in gear.csv"
+		)
+		return
+	var definition: GearDefinition = gear(player_starting_weapon)
+	if definition == null:
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_WEAPON,
+			'"%s" is not a row in gear.csv' % player_starting_weapon
+		)
+		return
+	if not definition.is_weapon():
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_WEAPON,
+			(
+				'"%s" is a "%s" component rather than a weapon frame — a component is fitted'
+				+ " to a weapon, not held instead of one"
+			) % [player_starting_weapon, definition.kind]
+		)
+		return
+	if locks_gear(player_starting_weapon):
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_WEAPON,
+			(
+				'"%s" is unlocked by a Delivery tier, so a Run cannot open holding it —'
+				+ " the Gear a Run opens with is exactly the Gear no tier names"
+			) % player_starting_weapon
+		)
+
+
 func _report_tuning(tuning: TomlDocument, key: String, detail: String) -> void:
 	errors.append("%s:%d: %s: %s" % [tuning.source_path, tuning.line_of(key), key, detail])
 
@@ -1531,6 +2070,13 @@ func _sort_recipes() -> void:
 		_recipe_ids.append(definition.id)
 
 
+func _sort_gear() -> void:
+	_gear.sort_custom(func(a: GearDefinition, b: GearDefinition) -> bool: return a.id < b.id)
+	_gear_ids.clear()
+	for definition: GearDefinition in _gear:
+		_gear_ids.append(definition.id)
+
+
 func _sort_waves() -> void:
 	_waves.sort_custom(func(a: WaveEntry, b: WaveEntry) -> bool: return a.id < b.id)
 
@@ -1551,6 +2097,10 @@ func _discard_content() -> void:
 	_item_ids.clear()
 	_waves.clear()
 	_deliveries.clear()
+	_gear.clear()
+	_gear_ids.clear()
+	_gear_slot_ids.clear()
+	_weapon_gear_indices.clear()
 	player_walk_speed = 0
 	player_sprint_multiplier = 0
 	player_walk_acceleration = 0
@@ -1592,6 +2142,17 @@ func _discard_content() -> void:
 	wall_health = 0
 	wrench_repair_points_per_second = 0
 	wrench_reach_metres = 0
+	player_health = 0
+	player_downed_bleed_out_seconds = 0
+	player_respawn_delay_seconds = 0
+	player_revive_seconds = 0
+	player_revive_reach_metres = 0
+	player_starting_weapon = ""
+	gear_enemy_hit_radius_metres = 0
+	gear_enemy_hit_height_metres = 0
+	gear_view_kick_degrees_per_shot = 0
+	gear_view_kick_recover_seconds = 0
+	enemy_player_bite_reach_metres = 0
 
 
 static func _read_file(path: String) -> String:

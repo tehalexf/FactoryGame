@@ -52,11 +52,13 @@ func _content(waves: String = ONE_BREAKER, overrides: Array = []) -> Definitions
 		tuning.replace(SHIPPED_STOCK, STOCKED),
 		waves,
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -361,20 +363,29 @@ func test_demolishing_a_wall_takes_it_down() -> void:
 
 # ── Sealing a Breach buys time; it does not stop a Wave ───────────────────────
 
-## A Map whose Nest is far away and whose single Breach sits at the origin, so four Walls
-## seal it completely — the field is four-connected, so an orthogonal ring is a seal.
+## A Map whose Nest is far away and whose single Breach sits six tiles east of the origin,
+## so four Walls seal it completely — the field is four-connected, so an orthogonal ring is
+## a seal.
+##
+## **Six tiles east rather than on the origin, because that is where the player is standing.**
+## A player who has sent no `MOVE` is at (0, 0), and since #15 a Crawler bites a player it
+## can reach before it chews the Wall in front of it — so a Breach at the origin would have
+## this fixture measuring the player's hit points instead of the Wall's. Twelve metres is
+## well outside `enemy.player_bite_reach_metres`.
 func _sealed_layout() -> MapLayout:
 	var layout: MapLayout = MapLayout.new()
 	layout.nest_tile = Vector3i(-30, WorldGrid.GROUND_LAYER, -30)
-	layout.add_node(Vector3i(8, WorldGrid.GROUND_LAYER, 3), "iron_plate", 1)
-	layout.add_breach(Vector3i(0, WorldGrid.GROUND_LAYER, 0))
+	layout.add_node(Vector3i(14, WorldGrid.GROUND_LAYER, 3), "iron_plate", 1)
+	layout.add_breach(Vector3i(6, WorldGrid.GROUND_LAYER, 0))
 	layout.sort_breaches()
 	layout.sort_nodes()
 	return layout
 
 
-## The four tiles that ring the Breach at the origin, in the order they are built.
-const SEAL_TILES: Array = [Vector3i(1, 0, 0), Vector3i(-1, 0, 0), Vector3i(0, 0, 1), Vector3i(0, 0, -1)]
+## The four tiles that ring the Breach, in the order they are built. Index 0 is the one on
+## the Breach's +x side, which is the first direction `_structure_in_contact` looks in and
+## therefore the Wall a cornered Crawler starts on.
+const SEAL_TILES: Array = [Vector3i(7, 0, 0), Vector3i(5, 0, 0), Vector3i(6, 0, 1), Vector3i(6, 0, -1)]
 
 
 func _seal_the_breach(sim: Simulation) -> void:
@@ -537,7 +548,9 @@ func _mend_content(waves: String = ONE_CRAWLER) -> Definitions:
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
 	return Definitions.parse(
 		MEND_MACHINES, MEND_RECIPES, tuning.replace(SHIPPED_STOCK, STOCKED), waves, DELIVERIES,
-		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv", "deliveries.csv"
+		GEAR,
+		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv", "deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -550,9 +563,9 @@ func _pylon_sim() -> Simulation:
 	var ground: int = WorldGrid.GROUND_LAYER
 	var sim: Simulation = Simulation.new(11, 1, _mend_content(), _sealed_layout())
 	sim.step([InputAction.call_wave_early(0)])
-	_build(sim, "repair_pylon_mk1", Vector3i(4, ground, 3))
-	_build(sim, "plate_seam_mk1", Vector3i(8, ground, 3))
-	sim.step([InputAction.build_belt(0, Vector3i(7, ground, 3), Vector3i(6, ground, 3))])
+	_build(sim, "repair_pylon_mk1", Vector3i(10, ground, 3))
+	_build(sim, "plate_seam_mk1", Vector3i(14, ground, 3))
+	sim.step([InputAction.build_belt(0, Vector3i(13, ground, 3), Vector3i(12, ground, 3))])
 	_seal_the_breach(sim)
 	return sim
 
@@ -597,7 +610,7 @@ func test_a_repair_pylon_spends_repair_material_to_do_it() -> void:
 	assert_true(chewing != -1)
 
 	# Cut the supply: the Belt is gone, so the input buffer runs down and stays down.
-	sim.step([InputAction.demolish(0, Vector3i(7, WorldGrid.GROUND_LAYER, 3))])
+	sim.step([InputAction.demolish(0, Vector3i(13, WorldGrid.GROUND_LAYER, 3))])
 	var dry: int = _step_until(
 		sim, 900, func() -> bool: return sim.query_machine_input(0, "iron_plate") == 0
 	)
@@ -616,9 +629,9 @@ func test_a_repair_pylon_over_a_whole_factory_does_nothing_at_all() -> void:
 	# roles share. Deliberately not starvation — it has its material, it has no patient.
 	var ground: int = WorldGrid.GROUND_LAYER
 	var sim: Simulation = Simulation.new(11, 1, _mend_content(ONE_CRAWLER), _sealed_layout())
-	_build(sim, "repair_pylon_mk1", Vector3i(4, ground, 3))
-	_build(sim, "plate_seam_mk1", Vector3i(8, ground, 3))
-	sim.step([InputAction.build_belt(0, Vector3i(7, ground, 3), Vector3i(6, ground, 3))])
+	_build(sim, "repair_pylon_mk1", Vector3i(10, ground, 3))
+	_build(sim, "plate_seam_mk1", Vector3i(14, ground, 3))
+	sim.step([InputAction.build_belt(0, Vector3i(13, ground, 3), Vector3i(12, ground, 3))])
 	var loaded: int = _step_until(
 		sim, 600, func() -> bool: return sim.query_machine_input(0, "iron_plate") > 0
 	)
@@ -875,6 +888,16 @@ func test_a_damaged_factory_round_trips_through_a_save() -> void:
 
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
 const STOCKED: String = 'starting_stock = "iron_plate:200"'
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
 
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,

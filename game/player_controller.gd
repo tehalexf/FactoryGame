@@ -48,6 +48,49 @@ const KEY_WALL: Key = KEY_V
 ## Simulation clears it every tick and a player who walks away stops mending.
 const KEY_REPAIR: Key = KEY_R
 
+## Placing a Machine. **Moved off the left mouse button**, which became the trigger when
+## there was something to pull it with.
+##
+## Not a happy binding and not a permanent one. The real answer is a hand — a holster that
+## puts either the Build Gun or a weapon in front of the player — and DESIGN.md already
+## says where the Gear and Recipe interfaces go: a menu. Until that ticket, a key, because
+## the alternative was making the two acts fight over one button and the first thing a
+## player would discover is that shooting builds a Smelter.
+##
+## It is deliberately *not* a mode: nothing in the Simulation asks whether building is
+## allowed, and the Build Gun still works mid-Wave, mid-burst and in Survey View
+## (GLOSSARY.md, DESIGN.md).
+const KEY_PLACE: Key = KEY_E
+
+## Picking a Downed teammate up. **Held**, like the wrench, and for the same reason: a
+## revive is restoration over time and what it costs the rescuer is standing still in the
+## open. Does nothing on a solo Run — solo play has no Downed state (GLOSSARY.md).
+const KEY_REVIVE: Key = KEY_T
+
+## The weapon keys. One per weapon frame `content/gear.csv` declares, in the sorted order
+## the table interns them in, so a fourth weapon becomes the fourth key without this file
+## changing.
+const KEY_WEAPON_FIRST: Key = KEY_1
+
+## How many weapon keys there are. Three because `KEY_1` to `KEY_3` is what a hand reaches
+## without looking; a fifth weapon would want the Gear menu rather than `KEY_5`.
+const WEAPON_KEY_COUNT: int = 3
+
+## The slot keys. One per interned Gear slot, in the sorted order the table interns them
+## in, each cycling through the components that fit it — so `KEY_4` is the first slot,
+## `KEY_5` the second, and a fourth slot added as a row gets `KEY_7` for free.
+##
+## A key that cycles rather than a key per component, because Gear assembly is a *menu*
+## (DESIGN.md puts routine high-frequency choices in menus and keeps diegetic controls for
+## weighty infrequent ones), and the menu is a later ticket. Cycling holds no state here:
+## what comes next is a function of what the Simulation says is fitted and what the
+## definition set says exists.
+const KEY_SLOT_FIRST: Key = KEY_4
+
+## How many slot keys there are. Four, which is one more than the three slots
+## `content/gear.csv` ships, so adding a slot does not immediately need this file.
+const SLOT_KEY_COUNT: int = 4
+
 ## The lever that calls the next Wave early (GLOSSARY.md, DESIGN.md).
 ##
 ## A key for now, and a diegetic lever on the Nest when the art pass gets there — DESIGN.md
@@ -94,8 +137,15 @@ const KEY_LOAD: Key = KEY_F9
 ## enough that a line is a few presses rather than a dozen, short enough to aim.
 const BELT_RUN_TILES: int = 4
 
-## Primary places, secondary rotates — the issue's words, and the genre's convention.
-const BUTTON_PLACE: MouseButton = MOUSE_BUTTON_LEFT
+## Primary fires, secondary rotates the hologram. The primary was the place button until
+## there was a weapon to put on it; see `KEY_PLACE`.
+##
+## **Held, not an edge**, unlike every other mouse action here: a weapon with an interval
+## between shots fires as often as that interval allows for as long as the trigger is down,
+## so automatic fire is the absence of letting go rather than a second control. Polled in
+## `sample_devices` rather than gathered from events, for that reason — an edge counted
+## between frames is a click, and a trigger is not a click.
+const BUTTON_FIRE: MouseButton = MOUSE_BUTTON_LEFT
 const BUTTON_ROTATE: MouseButton = MOUSE_BUTTON_RIGHT
 
 
@@ -122,6 +172,16 @@ class DeviceSample extends RefCounted:
 	var wall_clicked: bool = false
 	## Held, not an edge: a wrench mends for as long as it is on the Machine.
 	var repair_held: bool = false
+	## Held, not an edge: a weapon fires as often as its interval allows while the trigger
+	## is down, so automatic fire is one reading rather than a stream of clicks.
+	var fire_held: bool = false
+	## Held, not an edge: a revive is restoration over time, like a wrench.
+	var revive_held: bool = false
+	## Which weapon frame was asked for this tick, as an index into the definition set's
+	## weapon frames, or -1. An edge: one press is one swap.
+	var weapon_chosen: int = -1
+	## Which Gear slot's component was cycled this tick, as a slot index, or -1. An edge.
+	var slot_cycled: int = -1
 	## Signed quarter turns of hologram rotation asked for this tick.
 	var rotate_steps: int = 0
 	## Signed steps through the Machine list, from the mouse wheel.
@@ -139,6 +199,8 @@ var _belt_clicked: bool = false
 var _call_wave_clicked: bool = false
 var _deliver_clicked: bool = false
 var _wall_clicked: bool = false
+var _weapon_chosen: int = -1
+var _slot_cycled: int = -1
 
 
 # ── Gathering device events ───────────────────────────────────────────────────
@@ -155,8 +217,6 @@ func note_event(event: InputEvent) -> void:
 		if not button.pressed:
 			return
 		match button.button_index:
-			BUTTON_PLACE:
-				_place_clicked = true
 			BUTTON_ROTATE:
 				_unsent_rotate_steps += 1
 			MOUSE_BUTTON_WHEEL_UP:
@@ -178,6 +238,12 @@ func note_event(event: InputEvent) -> void:
 				_deliver_clicked = true
 			elif key.keycode == KEY_WALL:
 				_wall_clicked = true
+			elif key.keycode == KEY_PLACE:
+				_place_clicked = true
+			elif key.keycode >= KEY_WEAPON_FIRST and key.keycode < KEY_WEAPON_FIRST + WEAPON_KEY_COUNT:
+				_weapon_chosen = key.keycode - KEY_WEAPON_FIRST
+			elif key.keycode >= KEY_SLOT_FIRST and key.keycode < KEY_SLOT_FIRST + SLOT_KEY_COUNT:
+				_slot_cycled = key.keycode - KEY_SLOT_FIRST
 
 
 ## Reads the devices for one tick and drains the buffer, so nothing is spent twice.
@@ -198,6 +264,9 @@ func sample_devices() -> DeviceSample:
 	sample.survey_held = Input.is_key_pressed(KEY_SURVEY)
 	sample.sprint_held = Input.is_key_pressed(KEY_SPRINT)
 	sample.repair_held = Input.is_key_pressed(KEY_REPAIR)
+	sample.revive_held = Input.is_key_pressed(KEY_REVIVE)
+	# Polled rather than gathered from events, because it is a held state and not a click.
+	sample.fire_held = Input.is_mouse_button_pressed(BUTTON_FIRE)
 
 	sample.mouse_motion = _unsent_mouse_motion
 	sample.rotate_steps = _unsent_rotate_steps
@@ -208,6 +277,8 @@ func sample_devices() -> DeviceSample:
 	sample.call_wave_clicked = _call_wave_clicked
 	sample.deliver_clicked = _deliver_clicked
 	sample.wall_clicked = _wall_clicked
+	sample.weapon_chosen = _weapon_chosen
+	sample.slot_cycled = _slot_cycled
 
 	_unsent_mouse_motion = Vector2.ZERO
 	_unsent_rotate_steps = 0
@@ -218,6 +289,8 @@ func sample_devices() -> DeviceSample:
 	_call_wave_clicked = false
 	_deliver_clicked = false
 	_wall_clicked = false
+	_weapon_chosen = -1
+	_slot_cycled = -1
 
 	return sample
 
@@ -293,7 +366,37 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# Sent whatever the Simulation would make of it, exactly as a misaimed build intent is —
 	# the HUD reads `query_repair_refusal` so a player knows before they hold it.
 	if sample.repair_held:
-		actions.append(InputAction.repair(player_id, BuildGun.aimed_tile(sim, player_id)))
+		# The *tool* aim, not the Build Gun's: a wrench is held against a Machine's body,
+		# and aiming it down the ground plane means looking at your own feet to mend
+		# something at eye level. See `BuildGun.aimed_tool_tile`.
+		actions.append(InputAction.repair(player_id, BuildGun.aimed_tool_tile(sim, player_id)))
+
+	# Gear comes before the trigger, so a player who swaps and shoots in one tick shoots
+	# what they swapped to — the same rule that puts `select_machine` before `build_machine`.
+	if sample.weapon_chosen != -1:
+		var weapon: int = sim.query_definitions().weapon_gear_index(sample.weapon_chosen)
+		if weapon != -1:
+			actions.append(InputAction.equip_weapon(player_id, weapon))
+
+	if sample.slot_cycled != -1:
+		var next_component: int = _next_component(sim, player_id, sample.slot_cycled)
+		if next_component != -2:
+			actions.append(
+				InputAction.fit_component(player_id, sample.slot_cycled, next_component)
+			)
+
+	# Sent every tick the trigger is down and never on the edge, because the Simulation
+	# consumes and clears the intent each tick: "still holding it" is the thing it needs to
+	# know, and the weapon's own interval is what decides how often that becomes a shot.
+	# Sent whatever the Simulation would make of it, exactly as a misaimed build intent is —
+	# the HUD reads `query_fire_refusal`, so a player reads `DRY` rather than guessing.
+	if sample.fire_held:
+		actions.append(InputAction.fire(player_id))
+
+	if sample.revive_held:
+		var downed: int = _nearest_downed(sim, player_id)
+		if downed != -1:
+			actions.append(InputAction.revive(player_id, downed))
 
 	# Sent whatever the Simulation would make of it, exactly as a misaimed build intent is.
 	# Whether the lever moves is the Simulation's decision and not this layer's; the HUD
@@ -323,6 +426,66 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	actions.append(InputAction.sprint(player_id, sample.sprint_held))
 
 	return actions
+
+
+## The Gear index of the next component to fit into a slot, -1 to empty it, or **-2** when
+## there is nothing to cycle through at all and no intent is worth sending.
+##
+## Cycles through the components that fit the slot *and that the Run has unlocked*, in Gear
+## index order, with "nothing fitted" as one more position in the ring — so the ring is
+## fit, fit, fit, empty, fit, and a player can always get back to a bare frame.
+##
+## Holds no state: where the cycle is now comes out of `query_player_component` and what is
+## in it comes out of the definition set. That is the rule the Machine wheel obeys too, and
+## it is what keeps this a translator rather than a second copy of the Run.
+func _next_component(sim: Simulation, player_id: int, slot_index: int) -> int:
+	var definitions: Definitions = sim.query_definitions()
+	var slot_id: String = definitions.gear_slot_id(slot_index)
+	if slot_id.is_empty():
+		return -2
+
+	# The ring, in Gear index order, with -1 (nothing fitted) last.
+	var ring: PackedInt64Array = PackedInt64Array()
+	for index: int in range(definitions.gear_count()):
+		var definition: GearDefinition = definitions.gear_at(index)
+		if definition.slot_id() != slot_id:
+			continue
+		if not sim.query_gear_is_unlocked(index):
+			continue
+		ring.append(index)
+	if ring.is_empty():
+		return -2
+	ring.append(-1)
+
+	var fitted: String = sim.query_player_component(player_id, slot_index)
+	var at: int = ring.find(definitions.gear_index(fitted)) if not fitted.is_empty() else ring.size() - 1
+	if at == -1:
+		at = ring.size() - 1
+	return ring[(at + 1) % ring.size()]
+
+
+## The nearest Downed teammate to a player, or -1. Walked in player id order so a tie goes
+## to the lowest id, which is the order the Simulation would pick too.
+##
+## The *choice* of who to pick up is made here because a revive intent names a player and
+## something has to name one; whether that player can actually be reached is the
+## Simulation's decision, and the HUD reads `query_revive_refusal` to say so.
+func _nearest_downed(sim: Simulation, player_id: int) -> int:
+	var here: FixedVec2 = sim.query_player_position(player_id)
+	var best: int = -1
+	var best_gap: int = 0
+	for other: int in range(sim.query_player_count()):
+		if other == player_id or not sim.query_player_is_downed(other):
+			continue
+		var there: FixedVec2 = sim.query_player_position(other)
+		var gap_x: int = there.x - here.x
+		var gap_z: int = there.z - here.z
+		var squared: int = gap_x * gap_x + gap_z * gap_z
+		if best != -1 and squared >= best_gap:
+			continue
+		best = other
+		best_gap = squared
+	return best
 
 
 ## The Machine `steps` along from the one on the Build Gun, wrapping at both ends, or -1

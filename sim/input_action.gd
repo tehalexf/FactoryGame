@@ -167,6 +167,63 @@ enum Kind {
 	## a thing, and an index into the Simulation's arrays is not something anything outside it
 	## may hold. Any tile of a Machine's footprint will do, and a Wall occupies one tile.
 	REPAIR = 14,
+	## Pull the trigger on whatever the player is holding. args = [].
+	##
+	## **No aim travels, and that is the strongest version of the rule rather than an
+	## omission.** The float-to-fixed boundary exists because a mouse reports pixels and a
+	## camera ray is float arithmetic — but a player's yaw and pitch are already
+	## authoritative fixed-point Simulation state (#6), put there by `LOOK`, which is
+	## itself the quantised intent. So where a shot goes is something the Simulation
+	## already knows exactly; a tile or a direction carried here would be a *second*
+	## opinion about the aim, derived from a float, and the first thing to disagree in
+	## co-op. Combat resolution reads `_player_yaw` and `_player_pitch` and nothing else.
+	##
+	## **Held, and sent every tick it is held**, like `REPAIR` and `MOVE`: a weapon with an
+	## interval between shots fires as often as that interval allows for as long as the
+	## trigger is down, so automatic fire is the absence of letting go rather than a second
+	## intent. The Simulation consumes and clears it every tick.
+	##
+	## One intent for all three weapons, because there is one frame. Whether this swings a
+	## Pneumatic Wrench at what is in front of the player or sends a round down the line of
+	## aim is `content/gear.csv`'s `attack` column and nothing here — which is what makes a
+	## fourth weapon a row.
+	FIRE = 15,
+	## Put a weapon frame in the player's hands. args = [Gear definition index].
+	##
+	## An index into the definition set's sorted Gear ids, for the reason `SELECT_MACHINE`
+	## carries one: an intent on the wire is integers. The Simulation resolves it to an id
+	## at the moment it equips and holds the id afterwards, so a hot-reload that resorts the
+	## table cannot change what is in a player's hands.
+	##
+	## An index naming a component rather than a frame, or a piece of Gear no Delivery has
+	## unlocked, is refused as a silent no-op and the previous weapon stands.
+	EQUIP_WEAPON = 16,
+	## Fit a component to the weapon frame. args = [slot index, Gear definition index].
+	##
+	## **Both travel**, which is what makes the intent self-contained and what makes
+	## *clearing* a slot expressible: a Gear index of -1 empties the named slot. The slot is
+	## also derivable from the component's own row, and the Simulation refuses a pairing
+	## where the two disagree rather than quietly preferring one — a recorded script has to
+	## describe what was fitted and where without being replayed to find out.
+	##
+	## The slot index is into the definition set's interned slots, which are exactly the
+	## `kind` values `content/gear.csv` names other than `weapon`. So a fourth slot is a row
+	## and this intent does not change.
+	FIT_COMPONENT = 17,
+	## Hold a revive on a Downed teammate. args = [the player being revived].
+	##
+	## **Held, and sent every tick it is held**, exactly like `REPAIR`, and it is the same
+	## trade in a different currency: what it costs is a player standing still, in the open,
+	## during a Wave, doing nothing else. A rescuer who stops sending it stops reviving and
+	## banks nothing, for the reason a wrench banks nothing.
+	##
+	## A player id rather than a position, because a player is not a tile — the Simulation
+	## already knows where everybody is, and an intent carrying a position would be a second
+	## opinion about it.
+	##
+	## Meaningless on a solo Run and refused there, because **solo play has no Downed state**
+	## (GLOSSARY.md): there is nobody to revive you, so a player at zero health dies.
+	REVIVE = 18,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -368,6 +425,50 @@ static func repair(acting_player: int, tile: Vector3i) -> InputAction:
 ## The tile a `REPAIR` action is aimed at.
 func repair_tile() -> Vector3i:
 	return Vector3i(_arg(0), _arg(1), _arg(2))
+
+
+## Pulls the trigger on whatever the player is holding. Sent every tick it is held; not
+## sending it is how a player stops firing. Carries no aim — see `Kind.FIRE`.
+static func fire(acting_player: int) -> InputAction:
+	return InputAction.new(Kind.FIRE, acting_player)
+
+
+## Puts a weapon frame in a player's hands, by index into the definition set's sorted Gear
+## ids. An index naming no Gear, naming a component, or naming Gear no Delivery has
+## unlocked is refused and the previous weapon stands.
+static func equip_weapon(acting_player: int, gear_index: int) -> InputAction:
+	return InputAction.new(Kind.EQUIP_WEAPON, acting_player, PackedInt64Array([gear_index]))
+
+
+## Fits a component into one of the weapon frame's slots, or — with `gear_index` of -1 —
+## empties that slot.
+static func fit_component(
+	acting_player: int, slot_index: int, gear_index: int
+) -> InputAction:
+	return InputAction.new(
+		Kind.FIT_COMPONENT, acting_player, PackedInt64Array([slot_index, gear_index])
+	)
+
+
+## The Gear definition index an `EQUIP_WEAPON` or `FIT_COMPONENT` action names. -1 on a
+## `FIT_COMPONENT` empties the slot.
+func gear_index() -> int:
+	return _arg(0) if kind == Kind.EQUIP_WEAPON else _arg(1)
+
+
+## The slot a `FIT_COMPONENT` action names.
+func gear_slot_index() -> int:
+	return _arg(0)
+
+
+## Holds a revive on a Downed teammate. Sent every tick it is held.
+static func revive(acting_player: int, downed_player: int) -> InputAction:
+	return InputAction.new(Kind.REVIVE, acting_player, PackedInt64Array([downed_player]))
+
+
+## The player a `REVIVE` action is being held on.
+func revive_target() -> int:
+	return _arg(0)
 
 
 ## The Machine definition index a `SELECT_MACHINE` action names.

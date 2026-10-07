@@ -47,6 +47,43 @@ static func aimed_tile(sim: Simulation, player_id: int) -> Vector3i:
 	)
 
 
+## How high up a Machine's body a hand tool is aimed at, in metres. Half a storey: a
+## Smelter is three tiles across and stands about that tall, so this is roughly the middle
+## of the thing a player is looking at when they walk up to it.
+const TOOL_PLANE_METRES: float = 2.0
+
+
+## The tile a player's hand tool — the Pneumatic Wrench — is aimed at.
+##
+## Not the same aim as the Build Gun's, and the difference is the plane. A hologram snaps
+## to the floor, so `aimed_tile` crosses the ground; a wrench is held against a Machine's
+## *body*, and a player standing at a Smelter is looking several metres up. Aiming a
+## wrench down the ground plane means looking at your own feet to repair something at eye
+## level, which reads as the tool being broken.
+##
+## Reach is the Build Gun's rather than the wrench's, deliberately: this is where the
+## player is *pointing*, and whether that is close enough to mend is the Simulation's
+## decision (`Refusal.OUT_OF_REACH`, from `wrench.reach_metres`). One authority for the
+## rule, and an aim that can point past it so the HUD has something to refuse.
+static func aimed_tool_tile(sim: Simulation, player_id: int) -> Vector3i:
+	var ground: FixedVec2 = sim.query_player_camera_ground_metres(player_id)
+	var camera: Vector3 = Vector3(
+		Fixed.to_float(ground.x),
+		Fixed.to_float(sim.query_player_camera_height_metres(player_id)),
+		Fixed.to_float(ground.z)
+	)
+	var forward: Vector3 = InputQuantiser.forward_vector(
+		sim.query_player_yaw_turns(player_id), sim.query_player_camera_pitch_turns(player_id)
+	)
+	return InputQuantiser.aimed_tile_at_height(
+		camera,
+		forward,
+		TOOL_PLANE_METRES,
+		REACH_METRES,
+		Fixed.to_float(sim.query_tile_size_metres())
+	)
+
+
 ## What to show a player when a placement is refused.
 ##
 ## The wording lives on this side of the boundary and the *rule* lives in the Simulation,
@@ -75,5 +112,23 @@ static func refusal_text(refusal: int) -> String:
 			return "too far to reach — the wrench is melee"
 		Simulation.Refusal.RUN_IS_OVER:
 			return "the Run is over"
+		Simulation.Refusal.PLAYER_IS_DOWN:
+			return "you are down"
+		Simulation.Refusal.NO_WEAPON:
+			return "nothing in your hands"
+		Simulation.Refusal.OUT_OF_AMMUNITION:
+			return "DRY — no Ammunition"
+		Simulation.Refusal.WEAPON_NOT_READY:
+			return ""
+		Simulation.Refusal.NO_SUCH_GEAR:
+			return "no such Gear"
+		Simulation.Refusal.GEAR_IS_LOCKED:
+			return "Gear not unlocked — deliver to the Nest"
+		Simulation.Refusal.WRONG_SLOT:
+			return "that does not fit there"
+		Simulation.Refusal.NOTHING_TO_REVIVE:
+			return "nobody to pick up"
+		Simulation.Refusal.NO_TEAMMATE:
+			return "nobody else is here"
 		_:
 			return "cannot build there"

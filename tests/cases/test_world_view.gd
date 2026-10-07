@@ -459,11 +459,13 @@ func _threatened_sim() -> Simulation:
 		_soon(tuning).replace(SHIPPED_STOCK, STOCKED),
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -664,11 +666,13 @@ func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
 		_soon(tuning).replace("health = 6000", "health = 10").replace(SHIPPED_STOCK, STOCKED),
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -765,11 +769,13 @@ func _sim_with_an_undrawn_machine() -> Simulation:
 		),
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 	return Simulation.new(1, 1, definitions)
 
@@ -1118,6 +1124,16 @@ func test_the_hud_says_a_locked_machine_is_locked_rather_than_unbuildable() -> v
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
 
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
+
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 """
@@ -1136,11 +1152,13 @@ func _unlocked_sim(world_seed: int) -> Simulation:
 		),
 		FileAccess.get_file_as_string("res://content/waves.csv"),
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	return Simulation.new(world_seed, 1, definitions)
@@ -1244,3 +1262,64 @@ func test_the_hud_names_a_damaged_machine_and_counts_damaged_walls() -> void:
 	assert_true(view.hud_text().contains("walls 1 — 0 damaged"), view.hud_text())
 	assert_false(view.hud_text().contains("DAMAGED"), "nothing has been chewed")
 	view.free()
+
+
+# ── The weapon in frame ───────────────────────────────────────────────────────
+# A placeholder, and deliberately so — see the note above `WEAPON_BODY_DIRECTORY` in
+# `game/world_view.gd`. What is worth asserting is that every number it moves by comes out
+# of the Simulation, because that is the property the purchased arms will inherit when
+# somebody wires them in: the model follows the Run, never the other way round.
+
+func test_the_weapon_is_in_frame_and_follows_the_run() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+
+	view.sync(sim)
+	assert_true(view.weapon_is_visible(), "a Run opens holding `player.starting_weapon`")
+	var standing: Vector3 = view.weapon_offset()
+
+	# Walking sways it, and the sway is read off `query_player_velocity` rather than off a
+	# clock — so a player standing still has a steady weapon.
+	for tick: int in range(30):
+		sim.step([InputAction.move(0, Fixed.ONE, 0)])
+	view.sync(sim)
+	assert_ne(view.weapon_offset(), standing, "walking moves it")
+
+	# And it comes back to rest when they stop, because the velocity does.
+	_run(sim, 60)
+	view.sync(sim)
+	assert_eq(view.weapon_offset(), standing, "and standing still brings it back to rest")
+
+	view.free()
+
+
+func test_the_weapon_drops_out_of_frame_while_the_player_is_down() -> void:
+	# A weapon still in frame while bleeding out reads as a bug rather than as a state.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.weapon_is_visible())
+	assert_true(sim.query_player_is_alive(0), "and the player is on their feet to start with")
+	view.free()
+
+
+func test_the_weapon_does_not_grow_the_scene_tree_as_the_run_goes_on() -> void:
+	# One node for the view model and two meshes under it, built once on the first sync.
+	# Everything after that is a transform.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var before: int = _descendants(view)
+	for tick: int in range(120):
+		sim.step([InputAction.fire(0)])
+		view.sync(sim)
+	assert_eq(_descendants(view), before, "a hundred and twenty swings add not one node")
+	view.free()
+
+
+## How many nodes hang off a node, all the way down.
+func _descendants(node: Node) -> int:
+	var total: int = 0
+	for child: Node in node.get_children():
+		total += 1 + _descendants(child)
+	return total
