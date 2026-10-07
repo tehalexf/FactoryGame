@@ -20,6 +20,10 @@ var _passed: int = 0
 var _failed: int = 0
 var _failure_log: PackedStringArray = PackedStringArray()
 
+## Watches the engine's own log for the GDScript runtime errors that abort a test
+## method halfway. See tests/engine_log.gd for why that is the only way to see one.
+var _engine_log: TestEngineLog = TestEngineLog.new()
+
 
 func _initialize() -> void:
 	var filter: String = _read_filter()
@@ -31,6 +35,22 @@ func _initialize() -> void:
 		return
 
 	print("Running test cases from %s" % CASES_DIR)
+
+	# Doubles as the liveness probe for the runtime-error guard: the line has to
+	# come back out of the log, or the guard is blind and the suite is not green.
+	var announcement: String = "Engine log: %s" % _engine_log.path()
+	if not _engine_log.verify_live(announcement):
+		printerr(
+			"The engine log %s is not being written, so a test method aborted by a "
+			% _engine_log.path()
+			+ "GDScript runtime error could not be detected. Set "
+			+ "debug/file_logging/enable_file_logging=true in project.godot."
+		)
+		_fail_hard("the runtime-error guard cannot read the engine log")
+		_report()
+		quit(1)
+		return
+
 	if filter != "":
 		print('Filter: "%s"' % filter)
 	print("")
@@ -104,18 +124,26 @@ func _run_case(path: String, filter: String) -> void:
 func _run_method(script: GDScript, case_name: String, method_name: String, label: String) -> void:
 	var test_case: TestCase = script.new()
 	test_case.current_test = method_name
+	test_case.engine_log = _engine_log
+
+	# Everything the engine logs from here until the method is done belongs to this
+	# method and nothing earlier.
+	_engine_log.reset()
 
 	test_case.before_each()
 	if not test_case.aborted:
 		test_case.call(method_name)
 	test_case.after_each()
 
-	# A method that asserted nothing is not a passing method. GDScript aborts a
-	# function outright on a runtime error — a call to a method that does not
-	# exist, an index out of range — with nothing a test can catch, so without
-	# this a half-executed method would be reported green.
+	# A GDScript runtime error aborts the method where it happens and nothing
+	# else: the assertions that already passed stay counted, the rest of the
+	# method never runs, and nothing is raised. Only the engine's own report
+	# distinguishes a method that finished from one that was cut off, so read it.
+	test_case.note_runtime_errors(_engine_log.drain())
+
+	# A method that asserted nothing is not a passing method either.
 	if test_case.assertions == 0 and test_case.failures.is_empty():
-		test_case.fail("the test method asserted nothing; it was empty or aborted early")
+		test_case.fail("the test method asserted nothing; it was empty")
 
 	if test_case.failures.is_empty():
 		_passed += 1
