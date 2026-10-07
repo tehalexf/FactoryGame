@@ -415,7 +415,9 @@ Per ADR 0001, and this is the decision the whole Enemy scale target rests on.
 Idiomatic engine agents cap out around 150-250 before frame times collapse; instanced
 array entries reach thousands. Milestone 1 ships twenty Crawlers **on the final
 architecture** so that the Chaff tier switching on later is more array entries rather
-than a rewrite.
+than a rewrite. #11 added the Breaker and the claim held: a second kind is a constant in
+`sim/enemy_kind.gd`, four tuning keys, a row in `content/waves.csv` and two `match` arms —
+no second array, no second loop, and no node.
 
 - An Enemy is an index into parallel `PackedInt64Array`s — serial, kind, position in
   fixed-point metres, health, spawn tick, bite cooldown. There is no Enemy class, no
@@ -437,7 +439,7 @@ than a rewrite.
 - An Enemy does not act on the tick it came through its Breach, for the reason a
   Machine does not run on the tick it was built.
 
-### One shared flowfield, not a path per agent
+### Shared flowfields, not a path per agent
 
 DESIGN.md calls this not a close call: rebuilding one field is O(map) once and is then
 amortised across every Enemy alive, where per-agent A* is O(agents × path) every time
@@ -447,6 +449,17 @@ anything moves — and every Enemy converges on the same destination.
   exact tile count to the Nest, both as flat arrays indexed by tile. One breadth-first
   sweep outward from the **whole Nest footprint**, four-connected, so no heuristic is
   involved and an Enemy heading for the Nest's near edge is not routed to its anchor.
+- **There are two fields, not one**, since #11: `_machine_flow_*` is the same sweep seeded on
+  every Machine's footprint instead, and it is what a Breaker steers by. Two destinations,
+  two fields, one `_sweep` and one `_mark_obstructions` pass shared between them — because a
+  field is the right structure for the second destination for exactly the reason it was right
+  for the first. "Walk at the nearest Machine" is O(Breakers x Machines) every tick and a path
+  to re-find every time one falls; a second O(map) sweep is paid only when the obstructions
+  move. The seeds are themselves obstructions, so the sweep starts *on* them at distance 0 and
+  only the expansion checks for a block, which is how a tile beside a Machine comes to point at
+  it while nothing routes through it. An empty Factory leaves that field empty and
+  `_enemy_direction` falls the Breaker back onto the Nest's, which is why a Breaker with
+  nothing to break is still an Enemy at the gate.
 - **Derived, so it is rebuilt rather than hashed**, exactly like `_belt_update_order`.
   It is a pure function of the Map and the obstructions standing on it, both of which
   are hashed. Rebuilt when a Machine is built or demolished or a reload could have
@@ -455,7 +468,8 @@ anything moves — and every Enemy converges on the same destination.
 - **`_mark_obstructions` is the single definition of what obstructs**, and
   `query_tile_obstructs_enemies` reads what it painted rather than asking the question
   a second way. Machines obstruct; Belts and Nodes do not — a Crawler crawls over a
-  conveyor. **Walls join that function in the ticket that adds them**, as one more loop.
+  conveyor. **Walls joined it in #11, as one more loop** and nothing else, which is what that
+  promise was worth.
 - It paints by walking the **Machines**, not by asking each of the 16641 tiles what is
   standing on it. That is O(Machines) against O(tiles × Machines), and it is the
   difference between a 2.5 ms rebuild and a 55 ms one — a three-frame hitch every time
@@ -464,10 +478,12 @@ anything moves — and every Enemy converges on the same destination.
   `FIELD_STEPS` mirrors `WorldGrid.DIRECTION_STEPS` so the recorded direction still
   means what `direction_step` says it means, and `test_flowfield` walks a 60x60 region
   of the field a tile at a time to prove the two orders agree.
-- An Enemy on a tile the field cannot route — inside a Machine a player dropped on top
-  of it, or in a pocket sealed off from the Nest — walks straight at the Nest instead.
-  Without that, pinning a Crawler under a Machine would be a cheese rather than a
-  defence.
+- An Enemy on a tile the field cannot route **because it is standing inside an
+  obstruction** — a Machine a player dropped on top of it — walks straight at the Nest
+  instead. Without that, pinning a Crawler under a Machine would be a cheese rather than a
+  defence. An Enemy on *open* ground with no route is a different case and gets a different
+  answer: it chews what is in contact (see Mortality below), because a beeline there would
+  send a swarm drifting through solid Walls.
 - Measured: 0.10 ms a tick at 20 Enemies and 0.84 ms at 200, against a 16.67 ms frame.
 
 ### Open: the Nest's footprint has two authorities
@@ -503,6 +519,20 @@ before it; a Turret is what joins them, and DESIGN.md's whole thesis rests on it
   progress and spends no round. That is one more clause in `_machine_would_work`, the single
   predicate behind what the grid bills, what advances and what fires. Deliberately *not*
   starvation: it has its Ammunition, it has no target.
+- **A Repair Pylon is the same role with the other column filled in.** `content/machines.csv`
+  gained a `repair` column in #11, and the rule the loader enforces is that a Turret carries
+  **exactly one of `damage` and `repair`** — its output is damage or it is repair, never both
+  and never neither. `MachineDefinition.heals()` is the predicate, `_mend` is what happens
+  instead of `_fire`, and `_turret_has_work` is the one clause `_machine_would_work` consults
+  for both, so a Pylon over a whole Factory is idle and off the grid by the same rule that
+  keeps an MG Turret with nothing in reach off it. Two things make a Pylon's target selection
+  different from a Turret's, and both follow from what it is aimed at: it holds **no target at
+  all**, because a Machine is an *index* and indices shift the moment anything is destroyed
+  where an Enemy serial never does — so `_mend_target` is a pure read, re-decided every tick,
+  which is also the right behaviour because there is no reason to finish mending the thing you
+  started on rather than the thing nearest death. And it mends **the most damaged thing in
+  reach**, measured in hit points missing rather than as a fraction of health, because a
+  fraction is a division and a division needs a rounding rule.
 - **`range_tiles` and `damage` are columns in `content/machines.csv`**, not tuning, because
   that is what makes a **Cannon Turret a row**: it differs from the MG in those two numbers
   and its Recipe, and neither is named anywhere in `sim/`. `tests/cases/test_turrets.gd`
@@ -585,6 +615,131 @@ and now producing is also what summons the thing you are defending against. But 
 crossover Wave number above is a figure from the old schedule, and `fire_mg`,
 `make_ammunition`, `range_tiles` and the `[heat]` section want tuning against each other by
 somebody playing it. Neither ticket claims that was done.
+
+## Mortality: what can be taken from you
+
+The ticket that makes a Factory's layout a **defensive** decision rather than a logistics one.
+Before it a Crawler walked past a Smelter; after it, where the Smelter stands decides whether
+it survives the Wave. Three integer arrays carry the whole of it — `_machine_health`,
+`_wall_health` and `_player_repair_credit` — in whole hit points with no fixed point anywhere,
+which is what makes damage and repair replay identically.
+
+### A destroyed Machine is gone, and nothing comes back
+
+The one decision here worth arguing, and the asymmetry the whole mechanic rests on.
+`_refund_machine` hands back a build cost, both buffers and the Items riding a Belt.
+`_destroy_machine` hands back **nothing**, and removes the Machine rather than leaving a wreck.
+
+- **A demolition is a player taking their own Factory apart; a destruction is the Enemy taking
+  it.** If destruction paid out, a Machine about to fall would be better watched — or
+  demolished for the refund — than rescued, and the repair mechanic this ticket is about would
+  be strictly worse than doing nothing.
+- **There is no player to pay.** A Machine ten tiles from anybody falls with nobody standing
+  there, and "the nearest player" is not a rule a lockstep Simulation should want: it would
+  make a refund depend on where four people happened to be.
+- **The Items in it were real throughput.** A Smelter holding eight plates when it falls is a
+  loss a player can feel and attribute, which is exactly what Heat asks of a mechanic.
+
+Removal rather than rubble, for the same reason: a hole in a Factory's wall is a *hole*. The
+Belt chain through it breaks because the Machine its run pointed at is not there, the
+obstruction is gone so the next field rebuild routes Enemies straight through the gap, and
+`test_machine_mortality` asserts both. **You repair the living and rebuild the dead** — repair
+cannot touch a Machine that is already gone, and the Build Gun is how one comes back.
+
+### The destruction happens mid-tick, and the fields do not
+
+A Machine destroyed part-way through the Enemy loop invalidates both flowfields — it is one
+fewer obstruction and one fewer seed. Rebuilding there would make the tick **O(Enemies x map)**,
+which is the quadratic the Chaff tier could never pay, so `_enemies` resolves both fields
+**once** for the whole tick and `_destroy_machine` only sets `_flowfield_stale`. The survivors
+finish the tick on the field they started it on and inherit the gap on the next one. A tick of
+latency on a route is invisible; a 50 ms hitch mid-Wave is not. `_tile_is_blocked` exists as the
+half of `_tile_obstructs_enemies` that does *not* force a rebuild, for exactly that reason.
+
+### What an Enemy bites, in three clauses
+
+`_enemy_contact_target` answers it, and the order is the design:
+
+1. **A Breaker takes a Machine over anything else.** That is the whole of what a Breaker is
+   (GLOSSARY.md: it preferentially attacks Machines rather than players) and it is what makes
+   mortality *felt* rather than merely true — a Crawler walking past a Smelter proves nothing
+   about whether the Smelter was ever at risk. It steers by the Factory's field too, so it is
+   hunting rather than bumping into things. **Read "rather than players" as "rather than the
+   Nest" for now**: a player has no health in the Simulation yet and nothing can damage one,
+   so Downed is the ticket where the preference acquires its third term. Nothing here will need
+   to change when it does — a player is one more clause in `_enemy_contact_target`, ranked below
+   a Machine.
+2. **Either kind bites the Nest it is standing at.** A Breaker out of Factory is still an Enemy
+   at the gate, and the Nest is still the only loss that ends the Run.
+3. **Either kind chews out of a pocket it cannot route out of**, Machines before Walls. Without
+   it, sealing a Breach behind a ring of Walls would be a cheese rather than a defence. With it,
+   sealing buys exactly as much time as the Walls have hit points — which is what a Wall is for,
+   and what `test_sealing_a_breach_buys_time_rather_than_stopping_a_wave` asserts. An Enemy
+   standing *inside* an obstruction is excluded and still beelines, which is #9's rule kept.
+
+A Crawler with a route therefore still walks past a Machine untouched. Chaff is the sense of
+threat; the Breaker is the threat. One consequence for later Enemy kinds: `_enemy_damage` is one
+number per kind whatever it is biting — the Nest, a Machine or a Wall all just have hit points —
+so adding an Enemy is four tuning keys and a `match` arm, never a table of multipliers.
+
+### A Wall is not a Machine
+
+DESIGN.md lists it alongside the Nest and the Belt, so: no row in `content/machines.csv`, no
+Recipe, no Power, no ports, no buffers. `wall.health` in `content/tuning.toml` is its hit
+points, tuning rather than a row for the reason a Belt's rating is.
+
+- **One tile per intent**, unlike a Belt's run. A Belt is a run because Items travel along it
+  and the run is the thing; a Wall is a tile because the only question it answers is whether
+  *this* tile is walkable, and because a Wall chewed through in the middle of a line has to
+  leave the rest of the line standing.
+- **A Wall costs nothing to build, and there is deliberately no tuning key for a cost.** A
+  build cost names an Item, the Items that exist are exactly the ones the Recipes mention, and
+  `machines.csv` is where a cost sits *next to* that check. Naming one in tuning would couple
+  the tuning file to the Recipe table from the other side of the content directory, and it
+  broke every test that supplies its own Recipes when it was tried. The ticket that gives Belts
+  a cost should give Walls one at the same time, in whatever table ends up owning both.
+- `WorldView` draws them through **one MultiMesh**, with per-instance colour for health,
+  because a Wall is the cheapest thing a player builds and a late-game maze is hundreds of
+  them. `test_world_view` asserts the scene tree does not grow by a node for thirty of them.
+
+### Repairing: a wrench costs attention, a Pylon costs material
+
+The two halves of one trade, and they are deliberately priced in different currencies.
+
+- **`InputAction.Kind.REPAIR` is held, not an edge**, and carries a tile. `_repair` consumes
+  and clears the intent every tick, so a player who stops sending it stops repairing and the
+  per-tick arrays are zero at every point a hash is taken — the same arrangement the walking
+  throttle has. Hand repair spends **no materials at all**: what it costs is a player standing
+  next to the Machine, in the open, during a Wave, doing nothing else. That is what makes melee
+  useful rather than a last resort (DESIGN.md: the Pneumatic Wrench is the melee weapon and it
+  is also what repairs). Nothing gates it on a Wave in either direction, exactly as nothing
+  gates building.
+- **The rate is an integer credit against `TICKS_PER_SECOND`**, carried in
+  `_player_repair_credit`, so over any window a Machine has gained exactly
+  `floor(ticks * points_per_second / TICKS_PER_SECOND)` — one floor applied to the total, never
+  one per tick. #7's lesson, applied again. Credit does not survive letting go or walking out of
+  reach, the same rule Power credit and Heat credit obey.
+- **Reach is compared squared**, like a Turret's, because `Fixed.sqrt` floors and a player
+  exactly on the boundary must not be in or out by a rounding rule.
+- **`query_repair_refusal` is a projection about a repair that has not happened**, the same
+  arrangement `query_build_refusal` has: the HUD says "out of reach" or "already whole" while
+  the player is still walking over, and a refusal leaves the hash alone. `Refusal.OUT_OF_REACH`
+  and `Refusal.NOT_DAMAGED` are the two new reasons.
+- **A Repair Pylon is a Turret** — see the Turrets section above for the `repair` column, the
+  exactly-one-of rule, and why it holds no target.
+
+### Where the mortality balance stands, and what nobody has played
+
+Shipped numbers, not a measured Run: `enemy.breaker_damage` is 60 a second against a Smelter's
+500, so a Smelter under one Breaker has nine seconds to live. `wrench.repair_points_per_second`
+is 60, so **one player with a wrench exactly holds one Breaker off** — `test_machine_mortality` asserts it, and it is a coincidence of two tuning values
+rather than a designed identity. A Repair Pylon pulses 40 a second and spends a plate doing it,
+so it loses to a Breaker on its own and beats a Crawler comfortably. **Nobody has played this.**
+The joint pass #10 and #12 are both waiting for should take `breaker_*`, `wall.health`,
+`wrench.repair_points_per_second` and the Pylon's `repair` column together, because every one of
+them is priced against the others. `content/waves.csv` holds the Breaker tier behind 500 Heat,
+which means the first few Waves of a Run are unchanged and the Breaker arrives once a Factory is
+worth hunting — that threshold is the single number most likely to be wrong.
 
 ## Heat, the Wave schedule, the Telegraph and the lever
 
@@ -809,6 +964,9 @@ demolishing returns it **in full**, along with whatever the Machine was holding 
 Items riding a demolished Belt. Nothing is destroyed, so demolish-and-rebuild is not a way
 to make Items disappear, and iterating on a layout costs only the ticks it takes (issue #1,
 user story 7).
+
+**Destruction is the exact opposite and that asymmetry is the point** — see Mortality below.
+A Machine an Enemy chewed down returns nothing at all.
 
 Where the stock comes from is `player.starting_stock`: an explicit `item:count` bill rather
 than the count-of-everything scaffold it replaced. It is granted once at construction, so

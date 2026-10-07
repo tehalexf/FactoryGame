@@ -34,3 +34,4 @@
 #
 id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
 chaff_crawlers,crawler,0,6,150,40
+shock_breakers,breaker,500,1,900,8

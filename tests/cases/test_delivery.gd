@@ -41,10 +41,10 @@ func _distant_nest_layout() -> MapLayout:
 	return layout
 
 
-const MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,0,0,400,1,0,0,mine_iron_ore,iron_plate:2
-miner_mk2,Miner Mk2,miner,2,2,0,0,500,2,0,0,mine_iron_ore,iron_plate:4
-press_mk1,Press Mk1,crafter,2,2,0,0,500,0,0,0,press_iron_frame,iron_plate:2
+const MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,0,0,400,1,0,0,0,mine_iron_ore,iron_plate:2
+miner_mk2,Miner Mk2,miner,2,2,0,0,500,2,0,0,0,mine_iron_ore,iron_plate:4
+press_mk1,Press Mk1,crafter,2,2,0,0,500,0,0,0,0,press_iron_frame,iron_plate:2
 """
 
 const RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -89,6 +89,11 @@ baseline_supply_kw = 300
 [nest]
 health = 6000
 delivery_reach_metres = 5
+[wall]
+health = 240
+[wrench]
+repair_points_per_second = 60
+reach_metres = 4
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -112,6 +117,10 @@ crawler_health = 30
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
+breaker_health = 240
+breaker_speed_metres_per_second = 2
+breaker_damage = 60
+breaker_attack_interval_seconds = 1
 """
 
 

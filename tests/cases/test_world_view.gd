@@ -753,7 +753,7 @@ func test_a_machine_body_stands_on_the_ground_rather_than_half_buried() -> void:
 func _sim_with_an_undrawn_machine() -> Simulation:
 	var machines: String = (
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text()
-		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,smelt_iron_plate,\n"
+		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,10,0,100,0,0,0,0,smelt_iron_plate,\n"
 	)
 	var definitions: Definitions = Definitions.parse(
 		machines,
@@ -1182,4 +1182,65 @@ func test_the_hud_says_how_close_a_deep_mine_is_to_opening_a_breach() -> void:
 		view.hud_text().contains("digging"),
 		"and a Miner on the ore a Run opens on is not digging anything up it should not"
 	)
+	view.free()
+
+
+# ── Walls ─────────────────────────────────────────────────────────────────────
+
+func test_the_view_draws_every_wall_through_one_multimesh() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var empty: int = view.get_child_count()
+	assert_eq(view.wall_instance_count(), 0, "nothing walled off yet")
+
+	# Thirty Walls, which is a modest length of one, through the one MultiMesh they share.
+	for step: int in range(30):
+		sim.step([InputAction.build_wall(0, Vector3i(20, 0, 20 + step))])
+	view.sync(sim)
+	assert_eq(view.wall_instance_count(), 30, "the premise of the assertion below")
+	assert_eq(
+		view.get_child_count(),
+		empty,
+		"and not one node for any of them — the MultiMesh they share was already there, so"
+		+ " the scene tree does not grow by so much as one node for a hundred Walls"
+	)
+	view.free()
+
+
+func test_a_wall_is_drawn_on_its_own_tile() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var tile: Vector3i = Vector3i(8, 0, -4)
+	sim.step([InputAction.build_wall(0, tile)])
+	view.sync(sim)
+
+	var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+	var at: Vector3 = view.wall_instance_position(0)
+	assert_true(absf(at.x - Fixed.to_float(centre.x)) < 0.01, "on the tile's own centre")
+	assert_true(absf(at.z - Fixed.to_float(centre.z)) < 0.01)
+	assert_true(at.y > 0.0, "and standing on the ground rather than sunk into it")
+	view.free()
+
+
+func test_a_demolished_wall_stops_being_drawn() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var tile: Vector3i = Vector3i(8, 0, -4)
+	sim.step([InputAction.build_wall(0, tile)])
+	view.sync(sim)
+	assert_eq(view.wall_instance_count(), 1)
+	sim.step([InputAction.demolish(0, tile)])
+	view.sync(sim)
+	assert_eq(view.wall_instance_count(), 0, "the buffer is rebuilt from the queries, not diffed")
+	view.free()
+
+
+func test_the_hud_names_a_damaged_machine_and_counts_damaged_walls() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([InputAction.build_wall(0, Vector3i(8, 0, -4))])
+	view.sync(sim)
+	assert_true(view.hud_text().contains("walls 1 — 0 damaged"), view.hud_text())
+	assert_false(view.hud_text().contains("DAMAGED"), "nothing has been chewed")
 	view.free()

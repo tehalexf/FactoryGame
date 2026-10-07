@@ -35,8 +35,10 @@ enum Role {
 	## Not a separate combat subsystem. The same Recipe, inventory, Belt and Power rules
 	## apply, and a Recipe that produces no Item is exactly the trick `GENERATOR` already
 	## plays in the other direction. All three Turret classes DESIGN.md names — MG,
-	## Cannon, Repair Pylon — are this one Role, differing in `range_tiles`, `damage` and
-	## their Recipe, which are a row in a table and not a second simulation.
+	## Cannon, Repair Pylon — are this one Role, differing in `range_tiles`, `damage`,
+	## `repair` and their Recipe, which are a row in a table and not a second simulation.
+	## A Repair Pylon is that same trick a third time: its output is repair, which is not
+	## an Item either.
 	TURRET = 3,
 }
 
@@ -83,6 +85,16 @@ var range_tiles: int = 0
 ## Whole points, like a Crawler's health and a Crawler's bite: damage is counted in them
 ## and never scaled, so there is no rounding rule anywhere in combat.
 var damage: int = 0
+
+## What one pulse puts back onto a damaged Machine or Wall, in whole hit points. 0 for
+## anything that is not a Repair Pylon.
+##
+## The same column `damage` is, in the same units, because a Repair Pylon is a Turret
+## whose output is repair rather than damage (GLOSSARY.md) and not a second kind of
+## Machine. A Turret carries exactly one of the two: its product is damage or it is
+## repair, never both and never neither, which is what `heals()` answers and what
+## `Definitions` refuses a row for.
+var repair: int = 0
 
 ## What this Machine costs to build, as parallel arrays of Item id and count, sorted
 ## by id so the order is a property of the content rather than of how the row was
@@ -149,6 +161,17 @@ func is_turret() -> bool:
 	return role == Role.TURRET
 
 
+## Whether this Machine's shot mends rather than hurts — a Repair Pylon.
+##
+## A predicate on the row rather than a fifth Role, because GLOSSARY.md calls a Repair
+## Pylon a Turret-class Machine and `Definitions` already guarantees a Turret carries
+## exactly one of `damage` and `repair`. Everything else about it — the Recipe it spends,
+## the input buffer it fills from a Belt, the Power it draws, the reach it measures from
+## its footprint centre — is a Turret's, unchanged.
+func heals() -> bool:
+	return is_turret() and repair > 0
+
+
 ## Whether this Machine's Recipe is forbidden an output, because what the Machine
 ## produces is not an Item. True of a generator, whose product is Power, and of a Turret,
 ## whose product is damage. One predicate rather than two tests at every call site, so
@@ -172,6 +195,7 @@ func feed_into(hasher: StateHasher) -> void:
 	hasher.feed_int(max_depth)
 	hasher.feed_int(range_tiles)
 	hasher.feed_int(damage)
+	hasher.feed_int(repair)
 	hasher.feed_text(recipe_id)
 	hasher.feed_int(build_cost_items.size())
 	for index: int in range(build_cost_items.size()):

@@ -94,6 +94,45 @@ items_per_tile = 4
 # line is obvious rather than absorbed.
 input_buffer_crafts = 2
 
+[wall]
+
+# The Wall: not a Machine (DESIGN.md lists it alongside the Nest and the Belt), so it
+# has no row in machines.csv, no Recipe and no Power. It is one tile of ground that
+# obstructs Enemies and can be chewed through, and it is the cheapest way to decide
+# where a Wave walks.
+
+# A Wall's hit points. Lower than any Machine on purpose: a Wall is what you would
+# rather lose, which is the whole reason to put one in front of a Smelter.
+#
+# A Wall costs nothing to build, and there is no key here for a cost. That is the Belt's
+# arrangement and it is deliberate: a build cost names an Item, the Items that exist are
+# exactly the ones the Recipes mention, and `machines.csv` is where a cost sits *next to*
+# that check. A cost named over here would couple tuning to the Recipe table from the
+# other side of the content directory. The ticket that gives Belts a cost should give
+# Walls one at the same time, in whatever table ends up owning both.
+health = 240
+
+[wrench]
+
+# The Pneumatic Wrench: melee, and also what repairs (DESIGN.md). Repairing by hand is
+# the thing that makes melee useful rather than a last resort, and it is deliberately
+# free of materials — what it costs is a player standing in the open, next to the
+# Machine, during a Wave. The Repair Pylon is the other half of the trade: it costs
+# material and no attention.
+
+# How many hit points a held wrench puts back per second.
+#
+# Carried as an integer credit against the tick rate rather than as a fixed-point
+# fraction of a point per tick, exactly as Heat's decay and the Power duty cycle are: over
+# any window a Machine has gained exactly floor(ticks * points_per_second / 60), one floor
+# applied to the total and never one per tick. 60 means a point a tick, so the shipped
+# Smelter takes a little over eight seconds to bring back from nothing.
+repair_points_per_second = 60
+
+# How far a player may reach to repair, in metres. Melee range: two tiles, so a player
+# has to come and stand at the Machine rather than mend it from behind the Turret line.
+reach_metres = 4
+
 [survey]
 
 # Survey View: the raised, downward-looking camera a player holds a key for while
@@ -258,6 +297,29 @@ crawler_damage = 10
 
 # How long between one Crawler's bites, in seconds.
 crawler_attack_interval_seconds = 1
+
+# The Breaker: a full-fidelity Enemy that preferentially attacks Machines rather than
+# players (GLOSSARY.md), and the reason Machine mortality is *felt* rather than merely
+# true. It walks a field seeded on the Factory instead of on the Nest, so it goes for
+# what you built and only falls back on the Nest once there is nothing left to break.
+
+# A Breaker's hit points. Eight times a Crawler's, so it takes sixteen MG rounds — four
+# seconds of one fed MG Turret, which is long enough that one Turret cannot hold a lane
+# against a Breaker and the Crawlers behind it at the same time.
+breaker_health = 240
+
+# How fast a Breaker moves, in metres per second. Slower than a Crawler: a player can
+# outrun it to the Machine it is chewing, which is what makes hand repair a decision
+# rather than a formality.
+breaker_speed_metres_per_second = 2
+
+# How much damage one Breaker bite does to whatever it is chewing. 60 against the
+# shipped Smelter's 500 means nine bites, so a Smelter under one Breaker has nine
+# seconds to live — long enough to notice, short enough to have to choose.
+breaker_damage = 60
+
+# How long between one Breaker's bites, in seconds.
+breaker_attack_interval_seconds = 1
 
 [depth]
 

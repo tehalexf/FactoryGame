@@ -9,8 +9,9 @@
 #   inputs          Items consumed per craft, as `item:count`, several separated
 #                   by `;`. Empty for a Miner's Recipe — a Node is its input.
 #   outputs         Items produced per craft, same form. Empty only for the Recipe of
-#                   a Machine whose product is not an Item: a generator makes Power
-#                   and a Turret makes damage. Which of these two columns a Recipe must
+#                   a Machine whose product is not an Item: a generator makes Power,
+#                   an MG Turret makes damage and a Repair Pylon makes repair. Which
+#                   of these two columns a Recipe must
 #                   fill therefore depends on the role of the Machine that runs it,
 #                   and machines.csv is where the pairing is checked.
 #   seconds         How long one craft takes, in seconds of game time. Written in
@@ -25,6 +26,7 @@ id,display_name,inputs,outputs,seconds
 burn_coal,Burn Coal,coal:1,,2
 fire_mg,Fire MG,ammunition:1,,0.25
 make_ammunition,Make Ammunition,iron_plate:1,ammunition:2,3
+mend_machinery,Mend Machinery,iron_plate:1,,1
 mine_coal,Mine Coal,,coal:1,1.5
 mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 mine_iron_ore_deep,Mine Deep Iron Ore,,iron_ore:3,1.5

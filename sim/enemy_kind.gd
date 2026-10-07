@@ -17,10 +17,16 @@ extends RefCounted
 ## Milestone 1 ships.
 const CRAWLER: int = 0
 
+## A full-fidelity Enemy that preferentially attacks Machines rather than players
+## (GLOSSARY.md) — the reason Machine mortality is felt rather than merely true. It
+## differs from a Crawler in what it walks towards and what it bites, not in its data
+## layout: a Breaker is an entry in the same arrays.
+const BREAKER: int = 1
+
 ## Every kind's name, **indexed by the kind's own integer**. The order is therefore the
 ## kind numbering and not a list that happens to be sorted; `index_of` is the only way
 ## round that is read, and it is the inverse by construction.
-const KIND_NAMES: Array = ["crawler"]
+const KIND_NAMES: Array = ["crawler", "breaker"]
 
 
 ## The kind a name means, or -1 for a name no kind answers to. -1 rather than a

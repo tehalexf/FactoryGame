@@ -33,6 +33,21 @@ const KEY_SPRINT: Key = KEY_SHIFT
 const KEY_DEMOLISH: Key = KEY_X
 const KEY_BELT: Key = KEY_B
 
+## One tile of Wall on the aimed tile. An edge, like the Belt key: one press is one Wall.
+##
+## A key rather than a slot on the Build Gun's Machine list, for the reason the Belt key is
+## one: a Wall has no row in `content/machines.csv` and is not a Machine (DESIGN.md lists it
+## alongside the Nest and the Belt), so it cannot sit in a list of Machine definition indices.
+const KEY_WALL: Key = KEY_V
+
+## The Pneumatic Wrench, held on whatever the Build Gun is aimed at.
+##
+## **Held rather than an edge**, unlike every other key here: a repair is restoration over
+## time, and the Simulation wants to know "still on it" each tick. Letting go is itself the
+## act of stopping, which is why the intent is only sent while the key is down — the
+## Simulation clears it every tick and a player who walks away stops mending.
+const KEY_REPAIR: Key = KEY_R
+
 ## The lever that calls the next Wave early (GLOSSARY.md, DESIGN.md).
 ##
 ## A key for now, and a diegetic lever on the Nest when the art pass gets there — DESIGN.md
@@ -104,6 +119,9 @@ class DeviceSample extends RefCounted:
 	var belt_clicked: bool = false
 	var call_wave_clicked: bool = false
 	var deliver_clicked: bool = false
+	var wall_clicked: bool = false
+	## Held, not an edge: a wrench mends for as long as it is on the Machine.
+	var repair_held: bool = false
 	## Signed quarter turns of hologram rotation asked for this tick.
 	var rotate_steps: int = 0
 	## Signed steps through the Machine list, from the mouse wheel.
@@ -120,6 +138,7 @@ var _demolish_clicked: bool = false
 var _belt_clicked: bool = false
 var _call_wave_clicked: bool = false
 var _deliver_clicked: bool = false
+var _wall_clicked: bool = false
 
 
 # ── Gathering device events ───────────────────────────────────────────────────
@@ -157,6 +176,8 @@ func note_event(event: InputEvent) -> void:
 				_call_wave_clicked = true
 			elif key.keycode == KEY_DELIVER:
 				_deliver_clicked = true
+			elif key.keycode == KEY_WALL:
+				_wall_clicked = true
 
 
 ## Reads the devices for one tick and drains the buffer, so nothing is spent twice.
@@ -176,6 +197,7 @@ func sample_devices() -> DeviceSample:
 		sample.strafe -= 1.0
 	sample.survey_held = Input.is_key_pressed(KEY_SURVEY)
 	sample.sprint_held = Input.is_key_pressed(KEY_SPRINT)
+	sample.repair_held = Input.is_key_pressed(KEY_REPAIR)
 
 	sample.mouse_motion = _unsent_mouse_motion
 	sample.rotate_steps = _unsent_rotate_steps
@@ -185,6 +207,7 @@ func sample_devices() -> DeviceSample:
 	sample.belt_clicked = _belt_clicked
 	sample.call_wave_clicked = _call_wave_clicked
 	sample.deliver_clicked = _deliver_clicked
+	sample.wall_clicked = _wall_clicked
 
 	_unsent_mouse_motion = Vector2.ZERO
 	_unsent_rotate_steps = 0
@@ -194,6 +217,7 @@ func sample_devices() -> DeviceSample:
 	_belt_clicked = false
 	_call_wave_clicked = false
 	_deliver_clicked = false
+	_wall_clicked = false
 
 	return sample
 
@@ -258,8 +282,18 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			InputAction.build_belt(player_id, entry, entry + step * (BELT_RUN_TILES - 1))
 		)
 
+	if sample.wall_clicked:
+		actions.append(InputAction.build_wall(player_id, BuildGun.aimed_tile(sim, player_id)))
+
 	if sample.demolish_clicked:
 		actions.append(InputAction.demolish(player_id, BuildGun.aimed_tile(sim, player_id)))
+
+	# Sent every tick the key is down and never on the edge, because the Simulation consumes
+	# and clears the intent each tick: "still holding it" is the thing it needs to know.
+	# Sent whatever the Simulation would make of it, exactly as a misaimed build intent is —
+	# the HUD reads `query_repair_refusal` so a player knows before they hold it.
+	if sample.repair_held:
+		actions.append(InputAction.repair(player_id, BuildGun.aimed_tile(sim, player_id)))
 
 	# Sent whatever the Simulation would make of it, exactly as a misaimed build intent is.
 	# Whether the lever moves is the Simulation's decision and not this layer's; the HUD
