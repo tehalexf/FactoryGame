@@ -1590,18 +1590,49 @@ func _place_camera(sim: Simulation) -> void:
 		add_child(_camera)
 
 	var ground: FixedVec2 = sim.query_player_camera_ground_metres(VIEWED_PLAYER)
-	_camera.position = Vector3(
-		Fixed.to_float(ground.x),
-		Fixed.to_float(sim.query_player_camera_height_metres(VIEWED_PLAYER)),
-		Fixed.to_float(ground.z)
+	var yaw: float = Fixed.to_float(sim.query_player_yaw_turns(VIEWED_PLAYER)) * TAU
+
+	# **The camera's response to its own weight (#29), and it is laid on top of the aim
+	# rather than folded into it.** `query_player_camera_height_metres` and
+	# `query_player_camera_pitch_turns` are where a round leaves from and where the Build
+	# Gun's hologram snaps to; the bob, the landing dip and the lean are cosmetic, so they
+	# are their own queries and they are added here. A bob folded into the aim would mean a
+	# footfall moved where a shot went.
+	#
+	# All of it still comes out of the Simulation, so none of it is a second opinion and all
+	# of it replays — and every size is hot-reloadable tuning, which is the point: nobody
+	# can pick these numbers without playing.
+	var bob_up: float = Fixed.to_float(
+		sim.query_player_view_bob_vertical_metres(VIEWED_PLAYER)
+	)
+	var bob_side: float = Fixed.to_float(
+		sim.query_player_view_bob_lateral_metres(VIEWED_PLAYER)
+	)
+	var dip: float = Fixed.to_float(sim.query_player_view_dip_metres(VIEWED_PLAYER))
+	# The lateral bob is in the player's own frame, so it goes along their right vector.
+	var right: Vector3 = Vector3(cos(yaw), 0.0, -sin(yaw))
+
+	_camera.position = (
+		Vector3(
+			Fixed.to_float(ground.x),
+			Fixed.to_float(sim.query_player_camera_height_metres(VIEWED_PLAYER)),
+			Fixed.to_float(ground.z)
+		)
+		+ Vector3(0.0, bob_up - dip, 0.0)
+		+ right * bob_side
 	)
 	# Turns, not radians: the Simulation holds the angle in turns because radians need
 	# PI and PI is a float. One multiplication by TAU is the whole conversion.
 	_camera.rotation = Vector3(
-		Fixed.to_float(sim.query_player_camera_pitch_turns(VIEWED_PLAYER)) * TAU,
-		Fixed.to_float(sim.query_player_yaw_turns(VIEWED_PLAYER)) * TAU,
-		0.0
+		(
+			Fixed.to_float(sim.query_player_camera_pitch_turns(VIEWED_PLAYER))
+			+ Fixed.to_float(sim.query_player_view_lean_pitch_turns(VIEWED_PLAYER))
+		) * TAU,
+		yaw,
+		# A bank to the player's right is a negative roll about Godot's forward axis.
+		-Fixed.to_float(sim.query_player_view_roll_turns(VIEWED_PLAYER)) * TAU
 	)
+	_camera.fov = Fixed.to_float(sim.query_player_field_of_view_degrees(VIEWED_PLAYER))
 
 
 # ── The weapon in frame ───────────────────────────────────────────────────────
@@ -1649,10 +1680,24 @@ const WEAPON_SWAY_LIMIT_METRES: float = 0.06
 const WEAPON_RECOIL_METRES: float = 0.09
 const WEAPON_RECOIL_TICKS: int = 8
 
+## How far the held object drops out of frame at the midpoint of a holster swap, in metres,
+## and how far the Build Gun sits from the camera.
+##
+## **The holster is the one thing #29 added to this file's model layer, and it is
+## deliberately the simplest thing that is replaceable.** The duration is Simulation tuning
+## (`player.holster_seconds`) and the *shape* is one query — `query_player_holster_blend`
+## says how far out of frame, `query_player_held_is_build_gun` says which object — so a
+## later pass that swaps these boxes for the purchased arms and their real `Draw` and
+## `PutAway` takes drives the clips off the same two numbers and deletes nothing here but
+## the meshes.
+const HELD_SWAP_DROP_METRES: float = 0.45
+const BUILD_GUN_OFFSET: Vector3 = Vector3(0.20, -0.18, -0.40)
+
 var _weapon_view: Node3D = null
 var _weapon_body: MeshInstance3D = null
 var _weapon_barrel: MeshInstance3D = null
 var _weapon_loaded_id: String = ""
+var _build_gun_view: Node3D = null
 
 
 ## Puts the weapon in frame, where the Simulation says it should be.
@@ -1675,9 +1720,21 @@ func _sync_weapon(sim: Simulation) -> void:
 		_weapon_barrel.material_override = _unshaded(Color(0.14, 0.14, 0.15))
 		_weapon_view.add_child(_weapon_barrel)
 
+	# **What is in the hands, and which of the two is drawn.** The mode flips on the tick
+	# the key is pressed, because nothing is gated by a swap; the *model* in frame is still
+	# the old one until the swap passes its midpoint, which is what makes a holster read as
+	# putting one thing away and drawing another. Both of those facts are queries.
+	var holding_build_gun: bool = sim.query_player_held_is_build_gun(VIEWED_PLAYER)
+	var swap: float = Fixed.to_float(sim.query_player_holster_blend(VIEWED_PLAYER))
+
 	var weapon: String = sim.query_player_weapon(VIEWED_PLAYER)
-	_weapon_view.visible = not weapon.is_empty() and sim.query_player_is_alive(VIEWED_PLAYER)
+	_weapon_view.visible = (
+		not holding_build_gun
+		and not weapon.is_empty()
+		and sim.query_player_is_alive(VIEWED_PLAYER)
+	)
 	_load_weapon_body(weapon)
+	_sync_build_gun(sim, holding_build_gun, swap)
 
 	# A melee weapon is short and a rifle is long, read off the weapon's own reach rather
 	# than off a table here — so a fourth weapon looks different without this file changing.
@@ -1710,9 +1767,79 @@ func _sync_weapon(sim: Simulation) -> void:
 
 	_weapon_view.position = Vector3(
 		WEAPON_OFFSET.x + sway,
-		WEAPON_OFFSET.y - sway - stowed,
+		WEAPON_OFFSET.y - sway - stowed - swap * HELD_SWAP_DROP_METRES,
 		WEAPON_OFFSET.z + recoil
 	)
+
+
+## Puts the Build Gun in frame, where the Simulation says it should be.
+##
+## **A placeholder, and plainly so**: a boxy body with a flared nozzle and a thin emissive
+## rail, parented to the camera exactly as the weapon is. What makes it worth having is not
+## the geometry — it is that the *seam* is here. Which object is in hand and how far through
+## a swap it is are two queries, so a later pass replaces these meshes and drives real
+## `Draw` and `PutAway` clips off the same two numbers.
+##
+## Drawn with the same holster drop the weapon uses, from the same blend, so the two objects
+## cross over at the midpoint of a swap instead of one popping in.
+func _sync_build_gun(sim: Simulation, in_hand: bool, swap: float) -> void:
+	if _build_gun_view == null:
+		_build_gun_view = Node3D.new()
+		_camera.add_child(_build_gun_view)
+
+		var body: MeshInstance3D = MeshInstance3D.new()
+		body.mesh = BoxMesh.new()
+		(body.mesh as BoxMesh).size = Vector3(0.09, 0.13, 0.30)
+		body.material_override = _unshaded(Color(0.30, 0.26, 0.17))
+		_build_gun_view.add_child(body)
+
+		# The emitter: wider than the body and short, so the silhouette reads as a tool
+		# rather than as a gun at a glance. That distinction is the whole point of a
+		# holster — a player has to know what is in their hands without reading a label.
+		var nozzle: MeshInstance3D = MeshInstance3D.new()
+		nozzle.mesh = BoxMesh.new()
+		(nozzle.mesh as BoxMesh).size = Vector3(0.15, 0.15, 0.10)
+		nozzle.position = Vector3(0.0, 0.0, -0.20)
+		nozzle.material_override = _unshaded(Color(0.21, 0.19, 0.13))
+		_build_gun_view.add_child(nozzle)
+
+		var rail: MeshInstance3D = MeshInstance3D.new()
+		rail.mesh = BoxMesh.new()
+		(rail.mesh as BoxMesh).size = Vector3(0.02, 0.02, 0.26)
+		rail.position = Vector3(0.0, 0.08, -0.04)
+		# The hologram's own colour, so the thing in frame and the thing on the ground are
+		# visibly one tool.
+		rail.material_override = _unshaded(Color(0.35, 0.80, 1.00))
+		_build_gun_view.add_child(rail)
+
+	_build_gun_view.visible = in_hand and sim.query_player_is_alive(VIEWED_PLAYER)
+
+	# The same sway the weapon has, off the same query, so neither object is steadier than
+	# the player carrying it.
+	var velocity: FixedVec2 = sim.query_player_velocity(VIEWED_PLAYER)
+	var speed: float = Vector2(Fixed.to_float(velocity.x), Fixed.to_float(velocity.z)).length()
+	var sway: float = minf(speed * WEAPON_SWAY_PER_SPEED, WEAPON_SWAY_LIMIT_METRES)
+
+	var stowed: float = WEAPON_STOWED_METRES * Fixed.to_float(
+		sim.query_player_survey_blend(VIEWED_PLAYER)
+	)
+	_build_gun_view.position = Vector3(
+		BUILD_GUN_OFFSET.x + sway,
+		BUILD_GUN_OFFSET.y - sway - stowed - swap * HELD_SWAP_DROP_METRES,
+		BUILD_GUN_OFFSET.z
+	)
+
+
+## Whether the Build Gun is the object in frame. For the smoke test.
+func build_gun_is_visible() -> bool:
+	return _build_gun_view != null and _build_gun_view.visible
+
+
+## Where the Build Gun sits relative to the camera, in metres. For the smoke test.
+func build_gun_offset() -> Vector3:
+	if _build_gun_view == null:
+		return Vector3.ZERO
+	return _build_gun_view.position
 
 
 ## Loads a converted first-person weapon mesh if there is one, and leaves the placeholder
@@ -1815,6 +1942,17 @@ func _crosshair() -> Control:
 ## player reads and the round that leaves the barrel one fact.
 func _gear_lines(sim: Simulation) -> PackedStringArray:
 	var lines: PackedStringArray = PackedStringArray()
+
+	# What is in the hands, and what the left button therefore does. **The object in frame
+	# is supposed to be the answer to this** — that is the whole reason build mode is a
+	# holster rather than a flag in the corner — so the line is deliberately about the
+	# *button* rather than about the mode: a player who has just pressed B wants to know
+	# what their next click will do.
+	lines.append(
+		"BUILD GUN — left click places  [B] weapon"
+		if sim.query_player_is_in_build_mode(VIEWED_PLAYER)
+		else "WEAPON — left click fires  [B] build gun"
+	)
 
 	# What is left of the player, first and in capitals when it matters. A Downed player
 	# reads one line and it counts down, because the only useful thing to know while

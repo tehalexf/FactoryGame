@@ -1308,8 +1308,13 @@ func test_the_weapon_is_in_frame_and_follows_the_run() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 
+	# A Run opens with the Build Gun out, so the weapon has to be asked for — and the swap
+	# has to finish, because the model in frame is still the old one until the holster
+	# passes its midpoint. `player.holster_seconds` is 0.2, which is twelve ticks.
+	sim.step([InputAction.set_build_mode(0, false)])
+	_run(sim, 12)
 	view.sync(sim)
-	assert_true(view.weapon_is_visible(), "a Run opens holding `player.starting_weapon`")
+	assert_true(view.weapon_is_visible(), "the weapon is drawn once the holster is done")
 	var standing: Vector3 = view.weapon_offset()
 
 	# Walking sways it, and the sway is read off `query_player_velocity` rather than off a
@@ -1331,9 +1336,44 @@ func test_the_weapon_drops_out_of_frame_while_the_player_is_down() -> void:
 	# A weapon still in frame while bleeding out reads as a bug rather than as a state.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
+	sim.step([InputAction.set_build_mode(0, false)])
+	_run(sim, 12)
 	view.sync(sim)
 	assert_true(view.weapon_is_visible())
 	assert_true(sim.query_player_is_alive(0), "and the player is on their feet to start with")
+	view.free()
+
+
+func test_the_build_gun_and_the_weapon_swap_places_rather_than_popping() -> void:
+	# The holster, which is what makes left mouse able to place *and* fire: one object goes
+	# down, the other comes up, and the crossover is the midpoint of the swap. Both facts
+	# come out of the Simulation — `query_player_held_is_build_gun` and
+	# `query_player_holster_blend` — so a later pass that puts real `Draw` and `PutAway`
+	# clips here drives them off the same two numbers.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+
+	view.sync(sim)
+	assert_true(view.build_gun_is_visible(), "a Run opens with the Build Gun in hand")
+	assert_false(view.weapon_is_visible(), "and the weapon holstered")
+	var at_rest: Vector3 = view.build_gun_offset()
+
+	# Mid-swap, the Build Gun is the thing on its way *down*, so it is still the object in
+	# frame and it is further out of it than it was at rest.
+	sim.step([InputAction.set_build_mode(0, false)])
+	_run(sim, 4)
+	view.sync(sim)
+	assert_true(view.build_gun_is_visible(), "still the thing going away")
+	assert_true(
+		view.build_gun_offset().y < at_rest.y,
+		"and on its way out of frame: %f against %f" % [view.build_gun_offset().y, at_rest.y]
+	)
+
+	# Past the midpoint, they have changed over.
+	_run(sim, 12)
+	view.sync(sim)
+	assert_false(view.build_gun_is_visible(), "put away")
+	assert_true(view.weapon_is_visible(), "and the weapon drawn")
 	view.free()
 
 
@@ -1345,7 +1385,11 @@ func test_the_weapon_does_not_grow_the_scene_tree_as_the_run_goes_on() -> void:
 	view.sync(sim)
 	var before: int = _descendants(view)
 	for tick: int in range(120):
-		sim.step([InputAction.fire(0)])
+		# Swapping hands every other tick too, which is the thing most likely to build a
+		# node per swap if somebody ever writes it that way.
+		sim.step([
+			InputAction.fire(0), InputAction.set_build_mode(0, tick % 2 == 0)
+		])
 		view.sync(sim)
 	assert_eq(_descendants(view), before, "a hundred and twenty swings add not one node")
 	view.free()

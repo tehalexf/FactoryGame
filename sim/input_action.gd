@@ -245,6 +245,39 @@ enum Kind {
 	## Meaningless on a solo Run and refused there, because **solo play has no Downed state**
 	## (GLOSSARY.md): there is nobody to revive you, so a player at zero health dies.
 	REVIVE = 19,
+	## Leave the ground. args = [1 while the key is held, 0 once released].
+	##
+	## **Held and sent every tick it is held**, like `MOVE` and `FIRE`, and consumed and
+	## cleared every tick — so the absence of this intent is how a player lets go of the
+	## key, and an idle tick in a recorded script is a tick with the key up. That matters
+	## here more than it does for a throttle: `player.jump_repeats_while_held` is false by
+	## default, so what re-arms a jump *is* the absence of the intent.
+	##
+	## No height and no impulse travels. How high a jump clears and how hard gravity brings
+	## it back are tuning the Simulation owns — the arrangement `MOVE` has, where the intent
+	## is a throttle and the speed belongs to the Simulation — so a client cannot jump higher
+	## by sending a bigger number, and jump height is a value somebody tuning the game can
+	## change mid-Run.
+	JUMP = 20,
+	## Put the Build Gun or a weapon in the player's hands. args = [1 for the Build Gun,
+	## 0 for the weapon].
+	##
+	## **The resulting mode travels, not a flip.** A recorded script therefore describes
+	## what the player ended up holding without having to be replayed from the beginning to
+	## find out, and two intents arriving in one tick cannot cancel each other out. The
+	## controller reads the mode it is in out of `query_player_is_in_build_mode` and sends
+	## the opposite, which is the same arrangement the Machine wheel and the Gear slot ring
+	## have: the controller translates, it does not remember.
+	##
+	## **This is not a mode in the gating sense, and nothing in the Simulation consults it.**
+	## Building is never gated (GLOSSARY.md, DESIGN.md) and neither is firing: what the flag
+	## decides is which intent the *controller* produces from a left click and which object
+	## the renderer draws in the player's hands. It is Simulation state because what somebody
+	## is holding is a fact about them worth drawing, worth saving and worth replaying — and
+	## because in co-op it is worth seeing — not because anything asks it for permission.
+	## Switching is instant, unlimited, and works mid-Wave; `player.holster_seconds` delays
+	## only the animation.
+	SET_BUILD_MODE = 21,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -316,6 +349,20 @@ static func survey_view(acting_player: int, held: bool) -> InputAction:
 ## load, or does not hash to the digest claimed here.
 static func sprint(acting_player: int, held: bool) -> InputAction:
 	return InputAction.new(Kind.SPRINT, acting_player, PackedInt64Array([1 if held else 0]))
+
+
+## Holds or releases the jump key for a player. Sent every tick the key is held; the
+## absence of it is the release, exactly as the absence of a `MOVE` is standing still.
+static func jump(acting_player: int, held: bool) -> InputAction:
+	return InputAction.new(Kind.JUMP, acting_player, PackedInt64Array([1 if held else 0]))
+
+
+## Puts the Build Gun (`true`) or the weapon (`false`) in a player's hands. The resulting
+## mode travels rather than a flip, so the intent describes the swap completely.
+static func set_build_mode(acting_player: int, build: bool) -> InputAction:
+	return InputAction.new(
+		Kind.SET_BUILD_MODE, acting_player, PackedInt64Array([1 if build else 0])
+	)
 
 
 ## Replaces the Simulation's content definitions with `definitions`.
@@ -540,6 +587,16 @@ func survey_is_held() -> bool:
 
 ## Whether a `SPRINT` action is holding the sprint on or letting it go.
 func sprint_is_held() -> bool:
+	return args.size() > 0 and args[0] != 0
+
+
+## Whether a `JUMP` action is holding the key down or letting it up.
+func jump_is_held() -> bool:
+	return args.size() > 0 and args[0] != 0
+
+
+## Whether a `SET_BUILD_MODE` action asks for the Build Gun or for the weapon.
+func build_mode_is_wanted() -> bool:
 	return args.size() > 0 and args[0] != 0
 
 

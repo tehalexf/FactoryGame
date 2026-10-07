@@ -15,6 +15,10 @@ extends TestCase
 ## floors to 26214 — fixed point is exact, not infinitely precise.
 const ACCELERATION_PER_TICK: int = 26214
 
+## And 9 m/s² ÷ 60 ticks is 0.15 m/s, which is 9830.4 and floors to 9830. **A separate
+## figure, and a smaller one** — see `test_a_player_stops_more_slowly_than_they_start`.
+const DECELERATION_PER_TICK: int = 9830
+
 ## 4 m/s in fixed-point metres.
 const WALK_SPEED: int = 262144
 
@@ -28,6 +32,28 @@ const LOOK_TUNING: String = """[player]
 walk_speed_metres_per_second = 4
 sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
+walk_deceleration_metres_per_second_squared = 9
+air_acceleration_metres_per_second_squared = 6
+air_deceleration_metres_per_second_squared = 1.5
+jump_height_metres = 1.1
+gravity_metres_per_second_squared = 22
+jump_repeats_while_held = false
+land_settle_seconds = 0.18
+land_settle_acceleration_percent = 45
+sprint_ramp_seconds = 0.45
+sprint_is_toggle = true
+bob_vertical_metres = 0.012
+bob_lateral_metres = 0.008
+bob_stride_metres = 1.6
+bob_sprint_multiplier = 1.6
+land_dip_metres = 0.035
+land_dip_seconds = 0.22
+land_dip_reference_speed_metres_per_second = 7
+lean_roll_degrees_per_metre_per_second = 0.12
+lean_pitch_degrees_per_metre_per_second = 0.06
+field_of_view_degrees = 75
+sprint_field_of_view_add_degrees = 6
+holster_seconds = 0.2
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
 health = 150
@@ -274,18 +300,51 @@ func test_a_player_never_walks_faster_than_the_tuned_speed() -> void:
 
 
 func test_releasing_the_keys_slows_a_player_down_rather_than_stopping_them_dead() -> void:
+	# **Starting and stopping do not share a figure**, which is #29's central change:
+	# `player.walk_deceleration_metres_per_second_squared` is 9 against the acceleration's
+	# 24, because a body leans into a start and slides into a stop. 9 m/s² ÷ 60 ticks is
+	# 0.15 m/s a tick; 0.15 × 65536 is 9830.4, which floors to 9830.
 	var sim: Simulation = Simulation.new()
 	_step_many(sim, [InputAction.move(0, Fixed.ONE, 0)], 30)
 
 	sim.step([])
 	assert_eq(
 		sim.query_player_velocity(0).z,
-		-WALK_SPEED + ACCELERATION_PER_TICK,
-		"one tick of letting go sheds one tick of acceleration"
+		-WALK_SPEED + DECELERATION_PER_TICK,
+		"one tick of letting go sheds one tick of deceleration, not one of acceleration"
 	)
 
-	_step_many(sim, [], 20)
+	# 4 m/s at 0.15 m/s a tick is 27 ticks of slide, against the 10 it would have been at
+	# the acceleration figure. That difference is the whole of what a player feels.
+	_step_many(sim, [], 15)
+	assert_true(
+		sim.query_player_velocity(0).z < 0, "still sliding after a quarter of a second"
+	)
+	_step_many(sim, [], 15)
 	assert_eq(sim.query_player_velocity(0).z, 0, "and then the player is standing still")
+
+
+func test_a_player_stops_more_slowly_than_they_start() -> void:
+	# The asymmetry itself, asserted without reference to either figure: the ticks a player
+	# takes to come to rest from walking pace against the ticks they took to reach it.
+	# One figure for both is the commonest cause of a first-person game feeling weightless,
+	# so this is the assertion that fails if somebody ever collapses them back together.
+	var sim: Simulation = Simulation.new()
+	var walking: Array = [InputAction.move(0, Fixed.ONE, 0)]
+	var to_speed: int = 0
+	while to_speed < 600 and sim.query_player_velocity(0).z != -WALK_SPEED:
+		sim.step(walking)
+		to_speed += 1
+
+	var to_rest: int = 0
+	while to_rest < 600 and sim.query_player_velocity(0).z != 0:
+		sim.step([])
+		to_rest += 1
+
+	assert_true(
+		to_rest > to_speed,
+		"took %d ticks to reach walking pace and %d to stop" % [to_speed, to_rest]
+	)
 
 
 func test_a_standing_player_does_not_drift() -> void:

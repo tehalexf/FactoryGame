@@ -125,6 +125,65 @@ func _session() -> Array:
 	handing_over.deliver_clicked = true
 	ticks.append(handing_over)
 
+	# ── Weight (#29) ──
+	#
+	# Hit the sprint key once, which at the shipped setting latches it on, and run. A
+	# latched sprint is the controller's own reading of a device, so the fixture is where
+	# that reading earns its keep: what was recorded is the resulting intent, so the replay
+	# reproduces the gait without reproducing the keypress.
+	var sprint_on: PlayerController.DeviceSample = _sample()
+	sprint_on.sprint_clicked = true
+	sprint_on.sprint_held = true
+	sprint_on.forward = 1.0
+	ticks.append(sprint_on)
+	for tick: int in range(40):
+		var running: PlayerController.DeviceSample = _sample()
+		running.forward = 1.0
+		ticks.append(running)
+
+	# Jump while running, hold the key across the apex, and let go. Then wait out the
+	# landing, which has a settle and a camera dip hanging off it.
+	for tick: int in range(12):
+		var leaping: PlayerController.DeviceSample = _sample()
+		leaping.forward = 1.0
+		leaping.jump_held = true
+		ticks.append(leaping)
+	for tick: int in range(40):
+		var falling: PlayerController.DeviceSample = _sample()
+		falling.forward = 1.0
+		ticks.append(falling)
+
+	# Press jump again, held, through a landing — which must not bounce, and must replay
+	# not bouncing.
+	for tick: int in range(90):
+		var bouncing: PlayerController.DeviceSample = _sample()
+		bouncing.jump_held = true
+		ticks.append(bouncing)
+
+	# Stop sprinting, holster the Build Gun and pull the trigger with the weapon out. The
+	# same button that placed a Machine forty ticks ago now fires, which is the whole of
+	# what the mode switch is for — and a mode switch has to replay or every click after it
+	# means something different.
+	var sprint_off: PlayerController.DeviceSample = _sample()
+	sprint_off.sprint_clicked = true
+	ticks.append(sprint_off)
+
+	var holstering: PlayerController.DeviceSample = _sample()
+	holstering.build_mode_clicked = true
+	ticks.append(holstering)
+	for tick: int in range(30):
+		var shooting: PlayerController.DeviceSample = _sample()
+		shooting.fire_held = true
+		shooting.place_clicked = true
+		ticks.append(shooting)
+
+	# And back, with the same two readings of the same button, which must place again.
+	var drawing: PlayerController.DeviceSample = _sample()
+	drawing.build_mode_clicked = true
+	drawing.fire_held = true
+	drawing.place_clicked = true
+	ticks.append(drawing)
+
 	for tick: int in range(120):
 		ticks.append(_sample())
 
@@ -176,6 +235,18 @@ func test_the_recorded_session_really_walked_looked_surveyed_and_built() -> void
 	assert_true(sim.query_belt_count() >= 1, "including a Belt")
 	assert_ne(sim.query_player_position(0).x, 0, "and walked off the spot")
 	assert_ne(sim.query_player_yaw_turns(0), 0, "and looked around while doing it")
+	# #29's half of the session. The jump is the one thing in here that is not observable at
+	# the end of it — a jump that happened is a player standing back on the ground — so what
+	# is asserted is the landing it left behind, which is hashed state.
+	assert_true(sim.query_player_is_grounded(0), "the jumps landed")
+	assert_true(
+		sim.query_player_last_shot_tick(0) >= 0,
+		"and the trigger really fired once the weapon was drawn"
+	)
+	assert_true(
+		sim.query_player_is_in_build_mode(0), "and the Build Gun came back out at the end"
+	)
+	assert_false(sim.query_player_is_sprinting(0), "with the latched sprint turned off again")
 	# The session spends a build cost and collects a called Wave's bounty, so what it proves
 	# is that materials *moved* — the two are asserted apart in `test_build_gun` and
 	# `test_heat`, and pinning the arithmetic of both here would only duplicate them.

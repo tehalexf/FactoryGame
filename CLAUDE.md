@@ -949,15 +949,135 @@ Simulation as an Input Action. The controller holds no authoritative state.
   is tuning the Simulation owns, exactly as it owns the walking speed, so a client cannot
   turn faster by sending a bigger number.
 - **Walking has acceleration**, so a person has weight. Velocity is state and is hashed.
+  See "Weight" below for what #29 made of that, which is most of it.
 - **Survey View is held, not toggled**, and its transition is counted in ticks *inside*
   the Simulation, eased on the way out with `Fixed.smoothstep_fixed`. That is a decision
   about feel rather than about determinism: its height, duration and tilt are
   hot-reloadable tuning, and the only way to find out whether a lift feels good is to try
   several. **It is not a mode** — nothing consults it to decide whether an intent is
   allowed, and a player can walk and build while surveying.
-- **Building is never gated.** There is no build mode, no flag, and no check anywhere in
-  the Simulation that asks whether building is currently permitted (GLOSSARY.md: the Build
-  Gun is available at all times, including mid-Wave).
+- **Building is never gated.** There is **no check anywhere in the Simulation that asks
+  whether building is currently permitted** (GLOSSARY.md: the Build Gun is available at all
+  times, including mid-Wave). #29 added a `_player_build_mode` flag and did not weaken that
+  sentence by one word — see "Build mode is a hand, not a gate" below, and note that no
+  refusal, no build path and no `_fight` reads it.
+
+### Weight: jumping, the four accelerations and the camera's response
+
+#29's half of the player, and it came out of a play session rather than a spec. The
+complaint, in the player's own words, was that movement felt like *"Minecraft creative
+mode"* where it wanted to feel like survival mode, with Satisfactory as the reference —
+and that there was no jump at all.
+
+**The deliverable is the tunability as much as the motion.** Twenty-two keys went into
+`[player]` and every one of them is expected to be wrong, because nobody can pick a feel
+number without playing. Read the section comments in `content/tuning.toml` before changing
+any of them; they say what raising each one does.
+
+- **Jumping is Simulation state.** `_player_y` and `_player_velocity_y` in fixed-point
+  metres, hashed, replaying. `player.jump_height_metres` is what is tuned and the impulse
+  is *derived* from it with one `Fixed.sqrt` — a tuner thinks in how high they clear, and
+  it means raising gravity makes a jump heavier rather than quietly making it too short to
+  clear a Belt. **`JUMP` is held**, like `MOVE` and `FIRE`, and the *absence* of the intent
+  is what re-arms it: `player.jump_repeats_while_held` is false, so holding the key through
+  a landing does not bounce, and `_player_jump_armed` is the hashed fact that makes a jump
+  a press.
+- **There is no collision against anything but the ground**, and that is the honest limit
+  of what shipped. A player jumping beside a Smelter passes through where its roof would
+  be. Building is still flat (DESIGN.md), so this is a height above layer 0 and nothing
+  else; standing on your own Factory is a different ticket from making movement feel like
+  weight.
+- **There are four accelerations, not one, and that is the central change.** Ground start
+  (24 m/s²), ground stop (9), air start (6), air stop (1.5) — plus a fifth case, the
+  landing settle, which takes `land_settle_acceleration_percent` of the ground figures away
+  for `land_settle_seconds`. **A single figure for starting and stopping is the commonest
+  cause of a first-person game feeling weightless**, because a body leans into a start and
+  *slides* into a stop, and an instantaneous halt on key release is the loudest
+  creative-mode tell there is. `_horizontal_acceleration` is the one function that decides
+  which applies, from two facts: on the ground or not, asking to move or not.
+- **The air-control decision is "nearer stiff", written as two small numbers rather than as
+  a fraction.** Full air control feels floaty and arcade; none at all makes a jump
+  unaimable. At 6 against the ground's 24 a jump commits you to roughly the trajectory you
+  left on and gives you a quarter of the authority to argue with it, and the air
+  deceleration of 1.5 means letting go in mid-air barely slows you — momentum is what a
+  jump is made of. Set `air_acceleration_metres_per_second_squared = 0` for a ballistic
+  jump.
+- **Sprint is a gait, not a multiplier.** `_player_sprint_ticks` is one ramp, counted in
+  ticks exactly as the Survey View lift is, and it drives the speed, the field of view and
+  the bob *together* — which is what makes starting to run read as a change of gear.
+- **Sprint is a toggle or a hold, and that choice is `game/player_controller.gd`'s.** The
+  Simulation keeps knowing only whether a player *is* sprinting, which is the fact the
+  movement code needs; `player.sprint_is_toggle` is read by the controller, which in toggle
+  mode flips its own latch on the key's rising edge and sends the result. A replay
+  reproduces either reading identically because what crossed the boundary is the intent and
+  not the keypress. The latch is the same category of thing as the mouse buffer — a reading
+  on its way in — and it is **cleared whenever the Simulation says the player is not on
+  their feet**, so you respawn walking and the latch cannot drift from the flag.
+  `sprint_is_toggle` is the one key in `tuning.toml` that is a *control preference* rather
+  than a balance number; it is there because the project has no settings menu, and it is
+  the key that moves out of content alongside `look_sensitivity_turns_per_1000_pixels` when
+  one arrives.
+- **The camera's response is in the Simulation and out of the aim**, which is the one
+  genuinely arguable decision here and it went the way Survey View's transition already
+  went. `_player_step_phase` is hashed state driven by **distance travelled rather than by a
+  clock**, so a slow walk bobs slowly and a standing player does not bob at all; the
+  landing dip hangs off `_player_landing_tick` and is scaled by the impact speed, so
+  stepping off a kerb barely registers; the lean needs no state at all, because the
+  sideways component of a velocity that is already hashed is exactly the quantity a body
+  leans against. All five come out as their own `query_player_view_*` /
+  `query_player_field_of_view_degrees` projections that **only the renderer reads** — folding
+  a bob into `query_player_camera_height_metres` would mean a footfall moved where a round
+  went and which tile the Build Gun was hovering. Contrast the recoil kick, which *is* in
+  that query precisely because it does move the aim.
+- **The jump is in the aim and the bob is not**, and that is the same split from the other
+  side: how high a player is standing is a fact about the world, so `_player_y` is in
+  `query_player_camera_height_metres` *and* in `_shot_target`'s eye height. A jumping player
+  really is shooting down at the swarm.
+- **The shipped camera values are deliberately barely perceptible**, on the player's own
+  instruction — "only tiny minor bob please". 1.2 cm of vertical bob, 3.5 cm of landing dip,
+  half a degree of roll at a walk: the kind of thing you notice when it is switched off
+  rather than when it is on. Every one of them takes **0 as off**, which `Definitions`
+  allows by name, because this is the easiest thing in the game to overdo into motion
+  sickness and somebody prone to it is entitled to turn the lot off.
+
+### Build mode is a hand, not a gate
+
+`B` holsters the Build Gun and draws the weapon, or the other way round. **Left click
+places in build mode and fires in combat mode**, which is what #15's note said the real
+answer was — it put the trigger on left mouse and shoved placing onto `E`, which its own
+author called ugly. `E` is gone and `B`'s old job, laying a Belt, moved to `C`, where it
+is only read with the Build Gun out, because routing a Belt is a build act.
+
+**It is not a mode in the gating sense, and the criterion is written as the absence of
+code.** Grep `_player_build_mode` and the only callers are its three queries. Not one
+refusal consults it, `_apply_build_machine` has never heard of it, and neither has
+`_fight` — so a player holding a rifle builds exactly as well as one holding the Build Gun,
+and `test_movement_weight` asserts that directly so nobody adds a flag. What the mode
+decides is **which Input Action `game/player_controller.gd` produces from one button** and
+which object `WorldView` draws in the player's hands. Switching is instant, unlimited, and
+works mid-Wave, mid-burst and in Survey View.
+
+- **It is Simulation state anyway**, for three reasons that have nothing to do with
+  permission: what somebody is holding is a fact about them in the same way their wallet
+  is, a recorded replay has to reproduce a swap or every click after it means something
+  different, and in co-op what the other three are holding is worth drawing.
+- **`SET_BUILD_MODE` carries the resulting mode, not a flip.** A recorded script therefore
+  describes what the player ended up holding without being replayed to find out, and two
+  intents in one tick cannot cancel out. The controller reads the mode out of
+  `query_player_is_in_build_mode` and sends the opposite — the arrangement the Machine wheel
+  and the Gear slot ring already have.
+- **Asking for the mode you are already in is a no-op whose hash does not move**, so
+  leaning on the key does not restart the animation sixty times a second.
+- **The mode flips on the tick the key is pressed and the model lags.**
+  `player.holster_seconds` delays only the animation; `query_player_holster_blend` says how
+  far out of frame the held object is and `query_player_held_is_build_gun` says which object
+  it is, crossing over at the swap's midpoint. Those two queries are the seam a real
+  first-person pass plugs `Draw` and `PutAway` into — see "The held object", below.
+- **The primary button is read both ways every tick.** `sample_devices` cannot know which
+  mode anybody is in, so it samples the *edge* (one click is one Machine) and the *held
+  state* (a trigger is not a click) and `actions_for_tick` picks. A player who presses `B`
+  and clicks in the same tick gets the act of the mode they are swapping *to*, which is the
+  rule that already makes a scroll-and-click place what the player scrolled to.
 
 ### Refusals are a query, not state
 
@@ -1227,12 +1347,12 @@ Run you are standing in.
 
 ### Where the controls went, and the one that had to move
 
-- **Left mouse is the trigger**, held. Placing a Machine moved to `KEY_PLACE` (E), which is
-  not a happy binding and not a permanent one: the real answer is a hand — a holster that
-  puts either the Build Gun or a weapon in front of the player — and DESIGN.md already says
-  Gear assembly and Recipe selection belong in a *menu*. Until that ticket, a key, because
-  the alternative was making the two acts fight over one button and the first thing a player
-  would discover is that shooting builds a Smelter.
+- **Left mouse places with the Build Gun out and fires with the weapon out.** #15 put the
+  trigger here and moved placing to `E`, called that binding unhappy and temporary, and said
+  the real answer was a hand — a holster that puts either the Build Gun or a weapon in front
+  of the player. #29 built it: `B` is the holster, `E` is gone, and the Belt moved from `B`
+  to `C`. See "Build mode is a hand, not a gate" in the player section.
+- `KEY_JUMP` is **Space**, held.
 - `KEY_1`–`KEY_3` are the weapon frames, in the sorted order the table interns them, so a
   fourth weapon becomes the fourth key without `player_controller.gd` changing. `KEY_4`
   onwards are the slots, each cycling the components that fit it with "nothing fitted" as
@@ -1240,13 +1360,21 @@ Run you are standing in.
   `query_player_component` and what is in it comes out of the definition set.
 - `KEY_REVIVE` (T) is held, like the wrench, and does nothing on a solo Run.
 
-### The weapon in frame, and the honest limit of what shipped
+### The held object, and the honest limit of what shipped
 
-`WorldView._sync_weapon` draws a **placeholder**: one box for a frame and one for a barrel,
-parented to the camera, swaying with the player's own velocity and kicking when a shot
-lands. Every number it moves by is read out of the Simulation, so nothing there is a second
-opinion and all of it replays — and the barrel's length comes off the weapon's own reach, so
-a fourth weapon looks different without the renderer changing.
+`WorldView._sync_weapon` and `_sync_build_gun` draw **placeholders**: boxes for a frame and
+a barrel, and a boxier body with a flared nozzle and an emissive rail in the hologram's own
+colour for the Build Gun — flared and short on purpose, so the silhouette reads as a tool
+rather than a gun at a glance, which is the whole point of a holster. Every number either
+moves by is read out of the Simulation, so nothing there is a second opinion and all of it
+replays — and the barrel's length comes off the weapon's own reach, so a fourth weapon looks
+different without the renderer changing.
+
+**The seam is the part worth having.** Which object is in frame and how far through a swap
+it is are two queries — `query_player_held_is_build_gun` and `query_player_holster_blend` —
+and the duration is Simulation tuning (`player.holster_seconds`). So the pass that replaces
+these boxes with the purchased arms drives their real `Draw` and `PutAway` takes off exactly
+those two numbers and deletes nothing here but the meshes.
 
 What it is **not** is the purchased first-person arms and their named takes. The packs are
 there and `docs/LICENSED_ASSETS.md` records exactly what each FBX holds and the frame ranges

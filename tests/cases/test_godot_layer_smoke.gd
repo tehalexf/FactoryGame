@@ -397,3 +397,202 @@ func test_saving_and_resuming_are_not_input_actions() -> void:
 		"saving and resuming are two different keys"
 	)
 	main.free()
+
+
+# ── Build mode: one button, two acts ──────────────────────────────────────────
+# The routing #29 asked for. **This is the only place in the project that knows which of
+# the two a left click means**, which is the point: the Simulation has no opinion, and the
+# only thing build mode decides is which intent leaves this file.
+
+## Which kinds a controller produced from one sample, for asserting against.
+func _kinds(actions: Array) -> Array:
+	var kinds: Array = []
+	for action: InputAction in actions:
+		kinds.append(action.kind)
+	return kinds
+
+
+func test_a_left_click_places_in_build_mode() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var sample: PlayerController.DeviceSample = _sample()
+	# Both readings of the one button, which is what a real click produces: the polling
+	# cannot know which mode anybody is in, so it samples the edge and the held state and
+	# `actions_for_tick` decides.
+	sample.place_clicked = true
+	sample.fire_held = true
+
+	assert_true(sim.query_player_is_in_build_mode(0), "a Run opens with the Build Gun out")
+	var kinds: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
+	assert_true(kinds.has(InputAction.Kind.BUILD_MACHINE), "the click placed")
+	assert_false(kinds.has(InputAction.Kind.FIRE), "and did not also fire")
+
+
+func test_a_left_click_fires_in_combat_mode() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	sim.step([InputAction.set_build_mode(0, false)])
+
+	var sample: PlayerController.DeviceSample = _sample()
+	sample.place_clicked = true
+	sample.fire_held = true
+
+	var kinds: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
+	assert_true(kinds.has(InputAction.Kind.FIRE), "the trigger pulled")
+	assert_false(kinds.has(InputAction.Kind.BUILD_MACHINE), "and nothing was built")
+
+
+func test_the_holster_key_toggles_and_routes_the_same_tick() -> void:
+	# The swap is an edge, and the rest of the tick routes by the mode the player *will* be
+	# in — the same rule that makes a scroll-and-click place what the player scrolled to.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var sample: PlayerController.DeviceSample = _sample()
+	sample.build_mode_clicked = true
+	sample.place_clicked = true
+	sample.fire_held = true
+
+	var actions: Array = controller.actions_for_tick(sim, 0, sample)
+	var kinds: Array = _kinds(actions)
+	assert_true(kinds.has(InputAction.Kind.SET_BUILD_MODE), "the holster swapped")
+	assert_true(
+		kinds.has(InputAction.Kind.FIRE),
+		"and the click in the same tick fired, because the weapon is what came up"
+	)
+	assert_false(kinds.has(InputAction.Kind.BUILD_MACHINE))
+
+	sim.step(actions)
+	assert_false(sim.query_player_is_in_build_mode(0), "and the Simulation agrees")
+
+
+func test_belt_laying_lives_in_build_mode() -> void:
+	# `B` used to lay a Belt and is now the holster; the Belt moved to `KEY_BELT`, and it
+	# is only read with the Build Gun out, because routing a Belt is a build act.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var sample: PlayerController.DeviceSample = _sample()
+	sample.belt_clicked = true
+
+	assert_true(
+		_kinds(controller.actions_for_tick(sim, 0, sample)).has(InputAction.Kind.BUILD_BELT),
+		"with the Build Gun out, the key lays a Belt"
+	)
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_false(
+		_kinds(controller.actions_for_tick(sim, 0, sample)).has(InputAction.Kind.BUILD_BELT),
+		"with the weapon out, it does not"
+	)
+	assert_true(
+		PlayerController.KEY_BELT != PlayerController.KEY_BUILD_MODE,
+		"and the two keys are no longer the same key"
+	)
+
+
+func test_the_jump_key_becomes_a_jump_intent_and_leaves_the_ground() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var sample: PlayerController.DeviceSample = _sample()
+	sample.jump_held = true
+
+	sim.step(controller.actions_for_tick(sim, 0, sample))
+	assert_true(sim.query_player_height_metres(0) > 0, "off the ground")
+	assert_false(sim.query_player_is_grounded(0))
+
+
+# ── Sprint: a toggle or a hold, and the setting is content ────────────────────
+
+func test_sprint_is_a_toggle_at_the_shipped_setting() -> void:
+	# `player.sprint_is_toggle` ships true: one press starts running, another stops. The
+	# interpretation lives here because it is an interpretation of a device; what crosses
+	# the boundary is still "this player is sprinting", so a replay reproduces either
+	# reading identically.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	assert_true(
+		sim.query_definitions().player_sprint_is_toggle, "the shipped setting is a toggle"
+	)
+
+	var pressed: PlayerController.DeviceSample = _sample()
+	pressed.sprint_clicked = true
+	pressed.sprint_held = true
+	sim.step(controller.actions_for_tick(sim, 0, pressed))
+	assert_true(sim.query_player_is_sprinting(0), "one press starts it")
+
+	# The key comes up. A hold would stop here; a toggle does not.
+	var released: PlayerController.DeviceSample = _sample()
+	sim.step(controller.actions_for_tick(sim, 0, released))
+	assert_true(sim.query_player_is_sprinting(0), "and letting go does not stop it")
+
+	sim.step(controller.actions_for_tick(sim, 0, pressed))
+	assert_false(sim.query_player_is_sprinting(0), "a second press stops it")
+
+
+func test_a_latched_sprint_is_dropped_for_a_player_who_is_not_on_their_feet() -> void:
+	# **A latched sprint does not survive dying** — you come back at the Nest walking,
+	# because respawning already at a run is a control the player did not give. The latch
+	# is cleared off `query_player_is_alive` every tick rather than on an event, which is
+	# what stops it drifting out of step with the Simulation: the Simulation stays the
+	# authority on what is true and the latch is only a reading on its way in.
+	#
+	# Asserted against a player id the Simulation does not report as alive, because nothing
+	# in this suite kills a player cheaply — `test_gear.gd` needs a Crawler and a Wave
+	# schedule to do it, which is not what a smoke case is for. What is being held here is
+	# the branch and its direction.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var pressed: PlayerController.DeviceSample = _sample()
+	pressed.sprint_clicked = true
+	sim.step(controller.actions_for_tick(sim, 0, pressed))
+	assert_true(sim.query_player_is_sprinting(0), "running")
+
+	assert_false(sim.query_player_is_alive(1), "player 1 is not on this Run's feet")
+	var still_pressed: Array = controller.actions_for_tick(sim, 1, pressed)
+	var sprint_intent: bool = true
+	for action: InputAction in still_pressed:
+		if action.kind == InputAction.Kind.SPRINT:
+			sprint_intent = action.sprint_is_held()
+	assert_false(sprint_intent, "so the latch is dropped rather than re-asserted")
+
+	# And it is the controller's own latch that went, not the Simulation's flag: player 0
+	# is still running until they say otherwise.
+	assert_true(sim.query_player_is_sprinting(0), "nothing reached into the Simulation")
+
+
+func test_sprint_is_a_hold_when_the_tuning_says_so() -> void:
+	var sim: Simulation = _sim_with_tuning("sprint_is_toggle", "false")
+	var controller: PlayerController = PlayerController.new()
+
+	var held: PlayerController.DeviceSample = _sample()
+	held.sprint_clicked = true
+	held.sprint_held = true
+	sim.step(controller.actions_for_tick(sim, 0, held))
+	assert_true(sim.query_player_is_sprinting(0), "down is sprinting")
+
+	var released: PlayerController.DeviceSample = _sample()
+	sim.step(controller.actions_for_tick(sim, 0, released))
+	assert_false(sim.query_player_is_sprinting(0), "and up is not")
+
+
+## A Simulation on the shipped content with one `[player]` tuning key changed.
+func _sim_with_tuning(key: String, value: String) -> Simulation:
+	var tuning: String = FileAccess.get_file_as_string("res://content/tuning.toml")
+	var replaced: PackedStringArray = PackedStringArray()
+	var found: bool = false
+	for line: String in tuning.split("\n"):
+		if line.begins_with("%s = " % key):
+			replaced.append("%s = %s" % [key, value])
+			found = true
+		else:
+			replaced.append(line)
+	assert_true(found, "content/tuning.toml should carry a key called %s" % key)
+	var definitions: Definitions = Definitions.parse(
+		FileAccess.get_file_as_string("res://content/machines.csv"),
+		FileAccess.get_file_as_string("res://content/recipes.csv"),
+		"\n".join(replaced),
+		FileAccess.get_file_as_string("res://content/waves.csv"),
+		FileAccess.get_file_as_string("res://content/deliveries.csv"),
+		FileAccess.get_file_as_string("res://content/gear.csv")
+	)
+	assert_true(definitions.errors.is_empty(), definitions.describe_errors())
+	return Simulation.new(1, 1, definitions)
