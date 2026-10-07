@@ -10,6 +10,10 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
+tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
+tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
+tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|ground). Needs Xvfb.
+tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -111,10 +115,118 @@ opposite the sun so the far side of a boiler still reads. The palette was tuned 
 renders; those numbers are the second half of that tuning, and they are not
 interchangeable.
 
+### The ground, the yard and the light
+
+The Machines were good and everything around them was not: a flat plane with a
+grid texture on it, nothing else in the world, and a horizon where the Map
+stopped. Three things changed, and the only way any of them was judged was by
+rendering, reading the image, changing something and rendering again —
+`tools/visual/shot.sh` exists for that and found three real defects nothing else
+would have.
+
+**The ground is `game/ground.gdshader`.** #20's generated maps — poured concrete,
+rust, soot — sampled in **world space** so density is a number in metres, blended
+over two octaves of value noise so the yard is worn in some places and not in
+others. The 2 m grid is **drawn rather than textured**, from the world position,
+with `fwidth` fixing the line width in *pixels*: one crisp line at any distance
+and any resolution, no mip chain turning the far half into noise, fading out past
+where a player could read it. It is then multiplied by the wear, which is the one
+change that stops it reading as graph paper — paint on a worn patch is faint and
+paint under soot is gone, where a line of uniform strength everywhere is an
+overlay rather than a marking. The grid is painted **only inside the buildable
+Map**; the plane itself runs 192 m further in every direction as an unpaved,
+unmarked apron, so the world no longer ends at a cliff of sky.
+
+**The yard is `game/set_dressing.gd`**, and it is the purchased props finally
+being used. It is decoration and it can never become anything else: the layout is
+a pure function of `query_seed()` and the grid's size, nothing is told to the
+Simulation, nothing carries a collider, and asking for it does not move the hash.
+Three things it is careful about:
+
+- **It gets out of the player's way.** The whole Map is buildable, so a prop that
+  stayed where a Smelter went would be a prop standing inside a Smelter. Every
+  placement inside the Map sits on a tile and loses its prop when the Simulation
+  reports that tile built on, which reads usefully as clearing ground to build.
+  The occupancy is walked **from the Factory** into a tile set, not asked per prop
+  — `_mark_obstructions`' lesson, re-learned by measuring: the per-prop version
+  cost 39 ms on the frame after a build, which is a two-frame hitch every time a
+  player puts something down.
+- **It is anchored on the Nest, the Nodes and the Breaches**, not spread over the
+  Map. Two hundred props over a 129-tile square is one prop every eighty tiles —
+  statistically a yard and visibly an empty plain, because a player spends a Run
+  inside a thirty-metre circle around their own Factory.
+- **The props are loaded at runtime from outside the repository and are usually
+  absent**, exactly as the viewmodels are, and a clone without them walks the same
+  layout drawing self-authored stand-ins out of the committed Machine materials.
+  See [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 8.
+
+**The light** kept #25's shape — ambient and reflections off the sky, filmic
+tonemap, SSAO, depth fog — and changed four things. The sun dropped from 41 to 23
+degrees, which is what makes the hour *stated* rather than merely not
+contradicted: a 3 m Machine lays seven metres of shadow. The single shadow
+cascade became four over 110 m instead of one over 160, weighted at the camera,
+which is what buys the half-metre detail that seats a prop on the ground —
+together with an SSAO radius down from 0.9 m to 0.38 m, because a metre-wide
+darkening around a crate is not contact and a centimetre-wide one is. Glow, at a
+high threshold, so the lamps in the yard read as lit rather than as bright texels.
+And a saturation and contrast pass after the tonemap, because the palette is
+mostly dark neutrals under a bright ochre sky and what came out the far end was
+grey with a cast over it.
+
+**One thing that pass caught, worth remembering: a colour picked against a white
+background is a colour picked against the wrong thing.** The Walls and the
+Machine placeholder box were at 0.30 and 0.35 albedo, where the palette runs 0.055
+to 0.14, and they rendered as the brightest objects in frame. The Walls now wear
+the palette's own `WeldedSteel` with the health colour as a per-instance
+*multiplier* on it, which fixes the brightness and gives the cheapest built thing
+in the game a surface at the same time.
+
 The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
 float-based.
+
+## Sound
+
+**No diegetic control ships silent.** DESIGN.md is explicit about why — IRON
+NEST's most-praised quality is its sound design and its most-cited criticism is
+that its loop reduces to data entry, and the line between satisfying friction and
+tedium is whether the machine answers you. A lever that clunks is a reward; a
+silent lever is a chore. Audio is load-bearing here, not polish.
+
+Two files, and the same shape the renderer has:
+
+- `game/audio_director.gd` decides **what** makes a noise, by diffing query
+  results against what they said last frame — because a sound is a *change* and a
+  query reports a *condition*. It holds no authoritative state, exactly as
+  `WorldView` holds none; its snapshot is the same category of thing as
+  `TickPump`'s leftover frame time. `cues_for_frame`, `ambience_db` and
+  `sustained_cues` need no audio device, so the whole sound design is asserted
+  headless in `tests/cases/test_game_audio.gd`; `sync` is the only part that
+  touches a player node.
+- `game/sound_bank.gd` decides **which file**, and owns the mix. Two sources: the
+  hero takes cut from the Sonniss bundle into a gitignored directory outside the
+  shipping tree, and the 203 committed CC0 Kenney sounds. **Every cue names both**,
+  so a clone without the bundle gets a Kenney lever rather than a silent one.
+
+Three rules, each with a test:
+
+- **Listening changes nothing.** The director reads queries and writes nothing, so
+  the same Input Action script leaves the same state hash whether anything was
+  listening or not. Sound is presentation; it never reaches the Simulation.
+- **Nothing is chosen at random and nothing is timed by a clock.** Variation is
+  `tick % count`; the cooldowns that stop a Machine under attack buzzing are
+  counted in ticks. Two Runs down the same script sound the same, which is the
+  audio half of the rule `WeaponViewmodel` keeps for animation.
+- **A cue resolves or it is a load error.** Cue names are constants, the catalogue
+  is data, and the asset suite fails if `convert_audio.sh` cuts a cue the game
+  never plays.
+
+The recordings are long source material rather than game SFX, so
+`tools/assets/convert_audio.sh` is the recipe — which recording becomes which cue
+and why — over `tools/assets/wav_to_cue.py`, which measures the in-point rather
+than remembering it. See [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md)
+section 8.
 
 ## The Simulation façade is the only seam
 
