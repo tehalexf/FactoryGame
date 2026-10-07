@@ -69,12 +69,20 @@
 # `artillery_barrage` with the third — the heaviest thing in the game, behind the
 # deepest mine, which is the chain talking a player into being hunted.
 #
-# Where the balance stands, and nobody has played it: a Barrage Charge is 150 points
-# against a Crawler's 30 and a Breaker's 240, so one Charge clears Chaff out of a six
-# tile radius and two Charges kill a Breaker. The Silo's Recipe is 20 seconds of a plate
-# and twenty rounds — deliberately expensive in the very Item a Turret and a player both
-# spend, so artillery competes with the magazine rather than being free once the line is
-# up. That competition is the number most likely to be wrong.
+# Where the balance stands: a Barrage Charge is 150 points against a Crawler's 30 and a
+# Breaker's 240, so one Charge clears Chaff out of a six tile radius and two Charges kill
+# a Breaker. The Silo's Recipe is 20 seconds of a plate and twenty rounds — deliberately
+# expensive in the very Item a Turret and a player both spend, so artillery competes with
+# the magazine rather than being free once the line is up. That competition is still the
+# number most likely to be wrong.
+#
+# #26 could not measure it, and the reason is a finding rather than an omission: a Silo
+# draws 400 kW, the documented opening Factory draws 660 of the 900 one Boiler and the
+# Nest's baseline plant supply, and the shipped Map has one coal Node — so a Milestone 1
+# Run cannot power a Silo and the Ammo Press that feeds it at the same time. The Power
+# grid refuses the Silo before the magazine has to argue with it. The nearest available
+# proxy is `rifle_picket` in `tests/balance_scenarios.gd`, which spends the same rounds
+# out of the same Press at 75 a minute and costs its Run 2m47s; a Silo asks for 60.
 #
 id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
 artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
