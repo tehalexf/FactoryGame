@@ -315,12 +315,23 @@ func test_a_demolished_machine_takes_its_contribution_with_it() -> void:
 	assert_eq(sim.query_heat_per_minute(), 0, "it is just no longer being loud")
 
 
-## How many Enemies the Wave now arriving will have sent through each Breach in total. The
-## first one is already out by the end of the arrival tick, so `query_wave_spawns_remaining`
-## on its own understates the Wave by exactly that one.
-func _wave_size(sim: Simulation) -> int:
-	return sim.query_wave_spawns_remaining() + sim.query_enemy_count() / maxi(
-		sim.query_breach_count(), 1
+## How many **Crawlers** the Wave now arriving will have sent through each Breach in total.
+## The first one is already out by the end of the arrival tick, so
+## `query_wave_spawns_remaining_of_kind` on its own understates the Wave by exactly that one.
+##
+## One tier rather than the whole Wave, because every assertion below is about what Heat
+## does to the Chaff row: counting every kind would make these tests fail the day a second
+## tier joins `content/waves.csv`, which is exactly the additive change the table exists to
+## allow. #11 added the Breaker row and proved the point.
+func _crawlers_in_the_wave(sim: Simulation) -> int:
+	var already_out: int = 0
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_CRAWLER:
+			already_out += 1
+	@warning_ignore("integer_division")
+	var per_breach: int = already_out / maxi(sim.query_breach_count(), 1)
+	return (
+		sim.query_wave_spawns_remaining_of_kind(Simulation.ENEMY_KIND_CRAWLER) + per_breach
 	)
 
 
@@ -578,7 +589,7 @@ func test_a_hotter_factory_is_sent_a_bigger_wave() -> void:
 	_step(cold, cold.query_telegraph_ticks() - 1)
 	assert_eq(cold.query_wave_number(), 1)
 	# content/waves.csv opens at 6 a Breach and buys one more every 150 Heat.
-	assert_eq(_wave_size(cold), 6, "a cold Factory's Wave")
+	assert_eq(_crawlers_in_the_wave(cold), 6, "a cold Factory's Wave")
 
 	var hot: Simulation = _threat_sim()
 	_build_miner(hot, 0)
@@ -587,7 +598,7 @@ func test_a_hotter_factory_is_sent_a_bigger_wave() -> void:
 	hot.step([InputAction.call_wave_early(0)])
 	_step(hot, hot.query_telegraph_ticks() - 1)
 	assert_eq(hot.query_wave_number(), 1)
-	assert_eq(_wave_size(hot), 6 + 13, "2000 Heat at 150 Heat an Enemy")
+	assert_eq(_crawlers_in_the_wave(hot), 6 + 13, "2000 Heat at 150 Heat an Enemy")
 
 
 func test_a_waves_size_is_capped_by_the_table_rather_than_growing_for_ever() -> void:
@@ -601,7 +612,7 @@ func test_a_waves_size_is_capped_by_the_table_rather_than_growing_for_ever() -> 
 	sim.step([InputAction.call_wave_early(0)])
 	_step(sim, sim.query_telegraph_ticks() - 1)
 	assert_eq(sim.query_wave_number(), 1)
-	assert_eq(_wave_size(sim), 40, "max_per_breach, from the table")
+	assert_eq(_crawlers_in_the_wave(sim), 40, "max_per_breach, from the table")
 
 
 func test_a_new_tier_in_the_wave_table_needs_no_code() -> void:
@@ -615,7 +626,7 @@ func test_a_new_tier_in_the_wave_table_needs_no_code() -> void:
 	var cold: Simulation = _threat_sim([], two_tiers)
 	cold.step([InputAction.call_wave_early(0)])
 	_step(cold, cold.query_telegraph_ticks() - 1)
-	assert_eq(_wave_size(cold), 2, "only the first tier has been reached")
+	assert_eq(_crawlers_in_the_wave(cold), 2, "only the first tier has been reached")
 
 	var hot: Simulation = _threat_sim([], two_tiers)
 	_build_miner(hot, 0)
@@ -624,7 +635,7 @@ func test_a_new_tier_in_the_wave_table_needs_no_code() -> void:
 	hot.step([InputAction.call_wave_early(0)])
 	_step(hot, hot.query_telegraph_ticks() - 1)
 	assert_eq(
-		_wave_size(hot),
+		_crawlers_in_the_wave(hot),
 		7,
 		"both tiers — a hot Factory gets the Chaff it always got *and* the new horde"
 	)
@@ -639,7 +650,8 @@ func test_a_wave_is_composed_once_rather_than_re_deciding_itself_while_it_spawns
 	sim.step([InputAction.call_wave_early(0)])
 	_step(sim, sim.query_telegraph_ticks() - 1)
 	var owed: int = sim.query_wave_spawns_remaining()
-	assert_eq(owed, 18, "19 summoned, one already out of the Breach")
+	# 19 Crawlers and 2 Breakers at 2000 Heat, per content/waves.csv.
+	assert_eq(owed, 20, "21 summoned, one already out of the Breach")
 
 	sim.step([InputAction.demolish(0, sim.query_node_tile(0))])
 	assert_eq(sim.query_heat(), 2000, "the Heat it already made stands")
@@ -887,4 +899,4 @@ func test_rebalancing_the_wave_table_mid_run_changes_the_next_wave() -> void:
 	sim.step([InputAction.call_wave_early(0)])
 	_step(sim, sim.query_telegraph_ticks() - 1)
 	assert_eq(sim.query_wave_number(), 1)
-	assert_eq(_wave_size(sim), 11, "the reloaded table decided the Wave")
+	assert_eq(_crawlers_in_the_wave(sim), 11, "the reloaded table decided the Wave")

@@ -11,10 +11,10 @@
 extends TestCase
 
 const MACHINES: String = """\
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,iron_plate:8
-press_mk1,Press Mk1,crafter,2,3,180,0,500,0,0,0,press_iron_frame,iron_plate:12;iron_ore:4
-free_mk1,Scaffold,crafter,1,1,10,0,50,0,0,0,press_iron_frame,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,iron_plate:8
+press_mk1,Press Mk1,crafter,2,3,180,0,500,0,0,0,0,press_iron_frame,iron_plate:12;iron_ore:4
+free_mk1,Scaffold,crafter,1,1,10,0,50,0,0,0,0,press_iron_frame,
 """
 
 const RECIPES: String = """\
@@ -67,6 +67,15 @@ crawler_health = 30
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
+breaker_health = 240
+breaker_speed_metres_per_second = 2
+breaker_damage = 60
+breaker_attack_interval_seconds = 1
+[wall]
+health = 240
+[wrench]
+repair_points_per_second = 60
+reach_metres = 4
 """
 
 
@@ -537,3 +546,60 @@ func test_demolishing_then_rebuilding_renumbers_nothing_a_player_can_see() -> vo
 	assert_eq(sim.query_machine_tile(0), Vector3i(0, 0, 0), "the first Miner is still first")
 	assert_eq(sim.query_machine_tile(1), Vector3i(8, 0, 0), "and the third has moved up")
 	assert_eq(sim.query_machine_at_tile(Vector3i(5, 0, 1)), -1, "the middle one is really gone")
+
+
+# ── The Wall key and the wrench key ───────────────────────────────────────────
+
+func test_the_wall_key_lays_one_tile_of_wall_on_the_aimed_tile() -> void:
+	# A key rather than a slot on the Build Gun's Machine list, because a Wall has no row in
+	# `content/machines.csv` — it is not a Machine (DESIGN.md).
+	var sim: Simulation = _sim()
+	var controller: PlayerController = PlayerController.new()
+	var sample: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	sample.wall_clicked = true
+
+	var actions: Array = controller.actions_for_tick(sim, 0, sample)
+	var wall: InputAction = _only_of_kind(actions, InputAction.Kind.BUILD_WALL)
+	if not assert_not_null(wall, "one press is one Wall"):
+		return
+	assert_eq(wall.wall_tile(), BuildGun.aimed_tile(sim, 0), "on the tile the gun is aimed at")
+
+	sim.step(actions)
+	assert_eq(sim.query_wall_count(), 1)
+
+
+func test_the_wrench_key_is_held_rather_than_an_edge() -> void:
+	# A repair is restoration over time, so the intent is sent every tick the key is down and
+	# the Simulation consumes it each tick. An edge would mend for one tick and stop.
+	var sim: Simulation = _sim()
+	var controller: PlayerController = PlayerController.new()
+	var sample: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+
+	assert_null(
+		_only_of_kind(controller.actions_for_tick(sim, 0, sample), InputAction.Kind.REPAIR),
+		"nothing is sent while the key is up"
+	)
+
+	sample.repair_held = true
+	var first: InputAction = _only_of_kind(
+		controller.actions_for_tick(sim, 0, sample), InputAction.Kind.REPAIR
+	)
+	if not assert_not_null(first, "held, so it is sent"):
+		return
+	assert_eq(first.repair_tile(), BuildGun.aimed_tile(sim, 0))
+	assert_not_null(
+		_only_of_kind(controller.actions_for_tick(sim, 0, sample), InputAction.Kind.REPAIR),
+		"and sent again on the next tick it is still down, without a fresh press"
+	)
+
+
+## The one action of a kind in a list, or null. Fails if there are two: an intent sent twice
+## in one tick is an intent applied twice.
+func _only_of_kind(actions: Array, kind: int) -> InputAction:
+	var found: InputAction = null
+	for action: InputAction in actions:
+		if action.kind == kind:
+			if found != null:
+				fail("two %d actions in one tick" % kind)
+			found = action
+	return found

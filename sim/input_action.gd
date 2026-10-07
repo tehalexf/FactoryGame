@@ -127,6 +127,31 @@ enum Kind {
 	## other three see land. Pulled while a Wave is already coming it is refused as a silent
 	## no-op; `Simulation.query_call_wave_early_refusal` is what says why, beforehand.
 	CALL_WAVE_EARLY = 11,
+	## Build one tile of Wall. args = [tile x, tile y, tile z].
+	##
+	## One tile rather than a run, unlike `BUILD_BELT`. A Belt is a run because Items travel
+	## along it and the run is the thing a player drags out; a Wall is a tile because the only
+	## question it answers is whether *this* tile is walkable, and because a Wall chewed
+	## through in the middle of a line has to leave the rest of the line standing.
+	##
+	## No definition index travels, for the reason none travels with a Belt: a Wall has no row
+	## in `content/machines.csv`. It is not a Machine (DESIGN.md lists it alongside the Nest
+	## and the Belt), it runs no Recipe, and its one tier's hit points live in
+	## `content/tuning.toml`.
+	BUILD_WALL = 12,
+	## Hold the Pneumatic Wrench on whatever is standing on a tile, mending it.
+	## args = [tile x, tile y, tile z].
+	##
+	## **Held, and sent every tick it is held**, like `SURVEY_VIEW` and `MOVE`: a repair is
+	## restoration over time, so what the Simulation needs to know each tick is "still on it,
+	## still that tile". An intent that latched would mend a Factory the player had walked away
+	## from, and the whole point of hand repair is that it costs a player's presence and
+	## attention mid-Wave rather than materials.
+	##
+	## A tile rather than an index, exactly as `DEMOLISH` carries one: a player aims a tool at
+	## a thing, and an index into the Simulation's arrays is not something anything outside it
+	## may hold. Any tile of a Machine's footprint will do, and a Wall occupies one tile.
+	REPAIR = 13,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -296,6 +321,32 @@ func build_rotation() -> int:
 
 ## The tile a `DEMOLISH` action is aimed at.
 func demolish_tile() -> Vector3i:
+	return Vector3i(_arg(0), _arg(1), _arg(2))
+
+
+## Builds one tile of Wall. No definition index, because a Wall has no row in
+## `content/machines.csv` — it is not a Machine (DESIGN.md).
+static func build_wall(acting_player: int, tile: Vector3i) -> InputAction:
+	return InputAction.new(
+		Kind.BUILD_WALL, acting_player, PackedInt64Array([tile.x, tile.y, tile.z])
+	)
+
+
+## The tile a `BUILD_WALL` action would stand a Wall on.
+func wall_tile() -> Vector3i:
+	return Vector3i(_arg(0), _arg(1), _arg(2))
+
+
+## Holds the Pneumatic Wrench on whatever is standing on a tile. Sent every tick it is held;
+## not sending it is how a player stops repairing.
+static func repair(acting_player: int, tile: Vector3i) -> InputAction:
+	return InputAction.new(
+		Kind.REPAIR, acting_player, PackedInt64Array([tile.x, tile.y, tile.z])
+	)
+
+
+## The tile a `REPAIR` action is aimed at.
+func repair_tile() -> Vector3i:
 	return Vector3i(_arg(0), _arg(1), _arg(2))
 
 

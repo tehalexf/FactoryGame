@@ -88,6 +88,11 @@ const DERIVED_PROPERTIES: Array = [
 	"_flow_distance",
 	"_flow_blocked",
 	"_flowfield_stale",
+	# The Breakers' field, derived under exactly the same flag and from exactly the same
+	# inputs as the Crawlers' — one entry per tile of the Map again, and absent from `hash()`
+	# again, which is what leaves the round-trip check with its teeth.
+	"_machine_flow_direction",
+	"_machine_flow_distance",
 ]
 
 const KEY_FORMAT: String = "format"

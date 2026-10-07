@@ -20,15 +20,15 @@
 #                             All three generator classes (Steam, Electric, Exotic)
 #                             are this one role; they differ in fuel chain and
 #                             failure mode, which are rows rather than code.
-#                   turret  — consumes Belt-fed Ammunition and its output is
-#                             DAMAGE rather than an Item. Its Recipe is the round
-#                             it fires and the time between shots, and must have
-#                             no outputs, because damage is not an Item. A Turret
-#                             holding no Ammunition does not fire: defence costs
-#                             continuous production, never a one-time build
-#                             (docs/DESIGN.md, the keystone loop). All three
+#                   turret  — consumes a Belt-fed round and its output is DAMAGE
+#                             or REPAIR rather than an Item. Its Recipe is the
+#                             round it spends and the time between shots, and must
+#                             have no outputs, because neither damage nor repair is
+#                             an Item. A Turret holding nothing does not fire:
+#                             defence costs continuous production, never a one-time
+#                             build (docs/DESIGN.md, the keystone loop). All three
 #                             Turret classes — MG, Cannon, Repair Pylon — are this
-#                             one role, differing in range_tiles, damage and
+#                             one role, differing in range_tiles, damage, repair and
 #                             Recipe, which are a row rather than code.
 #   footprint_x     Tiles occupied, on the 2 m grid. DESIGN.md caps Machines at
 #   footprint_z     4x4; Belts are 1x1.
@@ -38,7 +38,11 @@
 #   power_supply_kw What this Machine adds to the one Power grid while it is burning
 #                   its fuel. Must be 0 for anything that is not a generator: a
 #                   Machine either feeds the grid or draws from it.
-#   health          Machines are mortal. Hit points before destruction.
+#   health          Machines are mortal (GLOSSARY.md). Hit points before
+#                   destruction, and what a wrench or a Repair Pylon mends back
+#                   towards. A destroyed Machine is gone: its build cost and
+#                   everything in both its buffers are lost with it, unlike a
+#                   demolished one, which hands all of it back.
 #   max_depth       Deepest Node tier this Machine can reach, and the whole of a
 #                   Miner's tier. A Miner over ore below this does not extract and
 #                   reads as starved, exactly like one on bare rock, so a deeper
@@ -50,6 +54,12 @@
 #                   footprint. Must be 0 for anything that is not a Turret.
 #   damage          What one shot takes off an Enemy, in whole hit points. Must be
 #                   0 for anything that is not a Turret.
+#   repair          What one pulse puts back onto a damaged Machine or Wall, in
+#                   whole hit points — a Repair Pylon's output, in the same place
+#                   and the same units an MG Turret's damage sits in. Must be 0 for
+#                   anything that is not a Turret, and a Turret must carry exactly
+#                   one of `damage` and `repair`: its output is damage or it is
+#                   repair, never both and never neither.
 #   recipe_id       The Recipe in recipes.csv this Machine runs. Must exist.
 #   build_cost      What it costs to build, as `item:count`, several separated by
 #                   `;` — the same form a Recipe's inputs use. Every Item named must
@@ -58,12 +68,13 @@
 #                   Demolishing returns this in full, so a layout stays cheap to
 #                   iterate on (issue #1, user story 7).
 #
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
-ammo_press_mk1,Ammo Press Mk1,crafter,2,3,150,0,450,0,0,0,make_ammunition,iron_plate:14
-coal_miner_mk1,Coal Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_coal,iron_plate:8
-mg_turret_mk1,MG Turret Mk1,turret,2,2,90,0,350,0,8,15,fire_mg,iron_plate:20
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,iron_plate:8
-miner_mk2,Miner Mk2,miner,2,2,200,0,460,2,0,0,mine_iron_ore_deep,iron_plate:24
-miner_mk3,Miner Mk3,miner,2,2,320,0,520,3,0,0,mine_iron_ore_deep,iron_plate:48
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,smelt_iron_plate,iron_plate:12
-steam_boiler_mk1,Steam Boiler Mk1,generator,3,2,0,600,450,0,0,0,burn_coal,iron_plate:16
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
+ammo_press_mk1,Ammo Press Mk1,crafter,2,3,150,0,450,0,0,0,0,make_ammunition,iron_plate:14
+coal_miner_mk1,Coal Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_coal,iron_plate:8
+mg_turret_mk1,MG Turret Mk1,turret,2,2,90,0,350,0,8,15,0,fire_mg,iron_plate:20
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,iron_plate:8
+miner_mk2,Miner Mk2,miner,2,2,200,0,460,2,0,0,0,mine_iron_ore_deep,iron_plate:24
+miner_mk3,Miner Mk3,miner,2,2,320,0,520,3,0,0,0,mine_iron_ore_deep,iron_plate:48
+repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,mend_machinery,iron_plate:18
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,iron_plate:12
+steam_boiler_mk1,Steam Boiler Mk1,generator,3,2,0,600,450,0,0,0,0,burn_coal,iron_plate:16

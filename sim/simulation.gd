@@ -65,12 +65,19 @@ const FIELD_TILES: int = FIELD_WIDTH_TILES * FIELD_WIDTH_TILES
 ## `test_flowfield` asserts the two orders agree by following the field a tile at a time.
 const FIELD_STEPS: Array = [1, FIELD_WIDTH_TILES, -1, -FIELD_WIDTH_TILES]
 
-## The one Enemy kind Milestone 1 ships. An **alias** of `EnemyKind.CRAWLER` rather than a
-## second copy of the number: `content/waves.csv` names kinds in words, `EnemyKind` is
+## Chaff: the Enemy kind that swarms the Nest. An **alias** of `EnemyKind.CRAWLER` rather than
+## a second copy of the number: `content/waves.csv` names kinds in words, `EnemyKind` is
 ## where a name and its integer meet, and a second authority here would be the one that
-## drifted. Held as an integer in `_enemy_kind` so the
-## Breaker and the Siege Hulk join the same arrays rather than getting their own.
+## drifted. Held as an integer in `_enemy_kind`, which is how the Breaker below joined the same
+## arrays rather than getting its own — and how the Siege Hulk will.
 const ENEMY_KIND_CRAWLER: int = EnemyKind.CRAWLER
+
+## The Enemy kind that hunts the Factory rather than the Nest. An **alias** of
+## `EnemyKind.BREAKER` for the same reason `ENEMY_KIND_CRAWLER` is one of its constant: the
+## Wave table names kinds in words and a second authority here would be the one that
+## drifted. A Breaker is an entry in the same Enemy arrays as a Crawler; what differs is
+## which field it steers by and what it bites.
+const ENEMY_KIND_BREAKER: int = EnemyKind.BREAKER
 
 ## How far past `depth.breach_offset_tiles` the search for somewhere to put a new Breach will
 ## widen if every tile on the ring is already taken. Four, which is far more slack than the
@@ -81,6 +88,25 @@ const RING_SEARCH_WIDENING: int = 4
 ## Degrees in one whole turn. Angles are turns everywhere inside the Simulation; the
 ## tuning file is allowed degrees because that is how a human reasons about a tilt.
 const DEGREES_PER_TURN: int = 360
+
+## What an Enemy or a Repair Pylon has found to act on, as the `x` of a `(what, which)` pair.
+##
+## Three kinds of thing in the Factory have hit points — the Nest, a Machine and a Wall — and
+## they live in three different index spaces, so "what is in front of me" cannot be one
+## integer. A `Vector2i` rather than two returns or a packed integer: it is typed, it costs no
+## allocation, and `BITE_NOTHING` is unambiguous where a plain -1 would collide with the
+## perfectly ordinary Machine index 0.
+const BITE_NOTHING: int = 0
+const BITE_NEST: int = 1
+const BITE_MACHINE: int = 2
+const BITE_WALL: int = 3
+
+## What a Repair Pylon has found to mend, in the same shape and the same index spaces, less
+## the Nest — mending the Nest would un-end a Run, and `_run_over_tick` exists so that nothing
+## can (see `_damage_the_nest`).
+const MEND_NOTHING: int = BITE_NOTHING
+const MEND_MACHINE: int = BITE_MACHINE
+const MEND_WALL: int = BITE_WALL
 
 
 ## Why a Build Gun intent would be refused.
@@ -119,6 +145,13 @@ enum Refusal {
 	RUN_IS_OVER = 9,
 	## The intent names a player this Run does not have.
 	NO_SUCH_PLAYER = 10,
+	## The wrench was held on something whole. Nothing to mend is not a failure, but a HUD
+	## that said nothing would leave a player holding a key at a Machine that was already
+	## fine.
+	NOT_DAMAGED = 11,
+	## The wrench was held on something further away than `wrench.reach_metres`. Repairing is
+	## melee: a player has to come and stand at the Machine.
+	OUT_OF_REACH = 12,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -177,6 +210,36 @@ var _player_velocity_z: PackedInt64Array = PackedInt64Array()
 ## throttle nobody is holding any more.
 var _player_intent_forward: PackedInt64Array = PackedInt64Array()
 var _player_intent_strafe: PackedInt64Array = PackedInt64Array()
+
+## Whether each player is holding the Pneumatic Wrench on something this tick, and which
+## tile they are holding it on.
+##
+## **Per tick and deliberately not hashed**, exactly like the walking throttle above and for
+## the same reason: `_repair` consumes both and clears both before the tick ends, so they are
+## zero at every point a hash is taken, and a player who stops sending the intent stops
+## repairing. Repairing is a *held* act — the acceptance criterion is that a Machine is
+## restored over time — so an intent that latched would mend a Factory a player had walked
+## away from.
+var _player_repair_held: PackedInt64Array = PackedInt64Array()
+var _player_repair_tile_x: PackedInt64Array = PackedInt64Array()
+var _player_repair_tile_y: PackedInt64Array = PackedInt64Array()
+var _player_repair_tile_z: PackedInt64Array = PackedInt64Array()
+
+## Each player's unspent fraction of a hit point of hand repair, as an integer credit
+## against `TICKS_PER_SECOND`.
+##
+## Authoritative state, and the reason repair replays identically. `wrench.repair_points_per_second`
+## is not a whole number of points per tick, so the remainder is carried here exactly as the
+## Power grid carries kilowatt-ticks and Heat carries its decay: every tick of a held wrench
+## banks `points_per_second` of credit and every whole `TICKS_PER_SECOND` of credit spends one
+## hit point. Over any window a Machine has gained exactly
+## `floor(ticks * points_per_second / TICKS_PER_SECOND)` — **one floor applied to the total,
+## never one per tick.** There is no fixed point in the mechanism at all, so there is nothing
+## for it to lose over a forty-hour Run.
+##
+## Credit does not survive letting go, the same rule Power credit and Heat credit obey: a
+## player cannot tap the key for an hour and then spend the bank in one tick.
+var _player_repair_credit: PackedInt64Array = PackedInt64Array()
 
 ## Whether each player is holding Survey View down this tick, and how many ticks of
 ## the transition they have accumulated.
@@ -443,6 +506,51 @@ var _flow_distance: PackedInt64Array = PackedInt64Array()
 var _flow_blocked: PackedByteArray = PackedByteArray()
 var _flowfield_stale: bool = true
 
+## The second shared field: the same sweep, seeded on **every Machine's footprint** rather
+## than on the Nest. What a Breaker steers by.
+##
+## A field rather than a target per Breaker, for exactly the reason the Nest's is one: a
+## second breadth-first sweep is O(map) once and is then amortised across every Breaker
+## alive, where "walk towards the nearest Machine" is a scan of the Factory per Enemy per
+## tick and a path that has to be re-found every time a Machine falls. Two sweeps over 16641
+## tiles is twice 2.5 ms on the ticks that rebuild and nothing at all on the ticks that do
+## not — against O(Breakers x Machines) every single tick for the alternative.
+##
+## The seeds are the Machine tiles themselves, which are also obstructions, so the sweep
+## starts *on* them at distance 0 and expands outward into free ground. A tile adjacent to a
+## Machine therefore points at it, and nothing routes *through* a Machine, which is the same
+## arrangement the Nest's field has.
+##
+## A Factory with no Machines leaves this empty — every tile -1 — and a Breaker with nothing
+## to break falls back to the Nest's field. That is the right behaviour rather than a
+## degenerate one: the Breaker's whole preference is Machines *over* the Nest, not instead
+## of it.
+##
+## Derived, so it is rebuilt rather than hashed, under the same `_flowfield_stale` flag and
+## in the same pass: both fields are a pure function of the Map and the obstructions on it,
+## and anything that invalidates one invalidates the other.
+var _machine_flow_direction: PackedInt64Array = PackedInt64Array()
+var _machine_flow_distance: PackedInt64Array = PackedInt64Array()
+
+## The Walls standing in the Factory, in the order they were built, and what is left of
+## each.
+##
+## **A Wall is not a Machine.** DESIGN.md lists it alongside the Nest and the Belt, outside
+## the eight Machines: no row in `content/machines.csv`, no Recipe, no Power, no ports and no
+## buffers. It is one tile of ground that obstructs Enemies and can be chewed through, and
+## that is the whole of it — which is what makes it the cheapest thing in the game to put in
+## front of something expensive.
+##
+## One tile each rather than a run, unlike a Belt. A Belt is a run because Items travel along
+## it and the run is the thing; a Wall is a tile because the only question a Wall answers is
+## whether *this* tile is walkable, and because a Wall destroyed in the middle of a run has
+## to leave the rest of the run standing. `wall.health` in `content/tuning.toml` is its hit
+## points, tuning rather than a row for the same reason a Belt's rating is.
+var _wall_tile_x: PackedInt64Array = PackedInt64Array()
+var _wall_tile_y: PackedInt64Array = PackedInt64Array()
+var _wall_tile_z: PackedInt64Array = PackedInt64Array()
+var _wall_health: PackedInt64Array = PackedInt64Array()
+
 ## The Machines standing in the Factory, in the order they were built. Parallel
 ## arrays rather than objects, so a tick walks integers in index order.
 ##
@@ -464,6 +572,29 @@ var _machine_rotation: PackedInt64Array = PackedInt64Array()
 ## the instant it appeared would make a Machine's first output land a tick early.
 ## Also what a later ticket needs to show a Machine's age.
 var _machine_built_tick: PackedInt64Array = PackedInt64Array()
+
+## What is left of each Machine, in whole hit points.
+##
+## **This is the array that makes a Factory something that can be taken from you**, and
+## therefore the array that turns its layout from a logistics decision into a defensive one
+## (GLOSSARY.md: a Machine is mortal). Whole points, like a Crawler's health and a Turret's
+## `damage` column: damage and repair are counted in them and never scaled, so there is no
+## rounding rule anywhere in combat and nothing to drift over a forty-hour Run.
+##
+## A Machine is built at the `health` its row declares and destroyed the moment this
+## reaches zero. There is no wreck and no rubble: `_destroy_machine` takes it off the Map
+## the way a demolition does, so a hole in a Factory's wall is a *hole*, the Belt chain
+## through it is broken because the Machine it ran into is not there, and the flowfield
+## routes Enemies straight through the gap on the next rebuild. **What does not happen is a
+## refund**: a destroyed Machine's build cost and both its buffers are lost with it, where a
+## demolished one hands all three back. Demolition is a player taking their own Factory
+## apart and nothing is destroyed by it; destruction is the Enemy taking it, and a loss that
+## paid out in materials would make a Machine about to fall something you would rather let
+## fall than rescue.
+##
+## So **you repair the living and rebuild the dead**. `_repair` and `_mend` both clamp to
+## the row's `health`, and neither can touch a Machine that is already gone.
+var _machine_health: PackedInt64Array = PackedInt64Array()
 
 ## Ticks accumulated towards the current craft, per Machine. Ticks rather than a
 ## fixed-point fraction: a craft takes a whole number of ticks, so counting them is
@@ -673,6 +804,16 @@ func _init(
 	_player_intent_strafe.resize(players)
 	_player_intent_forward.fill(0)
 	_player_intent_strafe.fill(0)
+	_player_repair_held.resize(players)
+	_player_repair_tile_x.resize(players)
+	_player_repair_tile_y.resize(players)
+	_player_repair_tile_z.resize(players)
+	_player_repair_credit.resize(players)
+	_player_repair_held.fill(0)
+	_player_repair_tile_x.fill(0)
+	_player_repair_tile_y.fill(0)
+	_player_repair_tile_z.fill(0)
+	_player_repair_credit.fill(0)
 	_player_survey_held.resize(players)
 	_player_sprint_held.resize(players)
 	_player_survey_ticks.resize(players)
@@ -722,6 +863,9 @@ func step(actions: Array) -> void:
 
 	_walk()
 	_survey()
+	# Before the Factory runs, so a Machine a player brought back this tick is a Machine
+	# that works this tick. Hand repair is a player act and belongs beside the other two.
+	_repair()
 	_transport()
 	_aim()
 	_power()
@@ -764,6 +908,10 @@ func _apply(action: InputAction) -> void:
 			_apply_demolish(action)
 		InputAction.Kind.CALL_WAVE_EARLY:
 			_apply_call_wave_early(action)
+		InputAction.Kind.BUILD_WALL:
+			_apply_build_wall(action)
+		InputAction.Kind.REPAIR:
+			_apply_repair(action)
 
 
 ## Records the throttle a player asked for this tick. Applying it is `_walk`'s job,
@@ -1362,7 +1510,11 @@ func _machine_would_work(index: int, definition: MachineDefinition) -> bool:
 	# not advance its Recipe and does not spend a round. A Turret is therefore idle between
 	# Waves for the same reason a Smelter with an empty Belt is: there is nothing for it to
 	# do. Deliberately *not* starvation — it has its Ammunition, it has no target.
-	if definition.is_turret() and _turret_target_index(index, definition) == -1:
+	#
+	# A Repair Pylon obeys the identical rule against a different question: a Factory with
+	# nothing damaged in reach is a Pylon with nothing to do, so it draws no Power and spends
+	# no repair material sitting over a Factory that is whole. One clause, two outputs.
+	if definition.is_turret() and not _turret_has_work(index, definition):
 		return false
 	return _machine_has_its_inputs(index, definition)
 
@@ -1491,7 +1643,10 @@ func _craft() -> void:
 			# the line above, which is what makes a Turret that fired a Turret with one
 			# fewer round and a Turret that did not fire a Turret still holding it.
 			if definition.is_turret():
-				_fire(index, definition)
+				if definition.heals():
+					_mend(index, definition)
+				else:
+					_fire(index, definition)
 			if not _holds_a_whole_recipe(index, recipe):
 				break
 
@@ -1629,9 +1784,29 @@ func _aim() -> void:
 		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
 		if definition == null or not definition.is_turret():
 			continue
+		# A Repair Pylon holds no target and acquires nothing. `_mend_target` is a pure
+		# function of the Factory's health, re-decided every tick, so there is no serial to
+		# keep — and nothing it could hold: an Enemy serial is issued once and never reused,
+		# but a Machine is an *index*, and indices shift the moment anything is destroyed.
+		# A Pylon that stored one would mend the wrong Machine on the next casualty. Holding
+		# nothing is the only safe answer, and it is also the right one: there is no reason to
+		# finish mending the thing you started on rather than the thing nearest death.
+		if definition.heals():
+			continue
 		if _turret_target_index(index, definition) != -1:
 			continue
 		_turret_target_serial[index] = _acquire_target(index, definition)
+
+
+## Whether a Turret has anything to act on this tick, whichever its output is.
+##
+## The one predicate behind what the grid bills, what advances a Recipe and what a completed
+## craft does, for both Turret classes — so an MG Turret with no Enemy in reach and a Repair
+## Pylon over a whole Factory are idle by the same rule rather than by two.
+func _turret_has_work(index: int, definition: MachineDefinition) -> bool:
+	if definition.heals():
+		return _mend_target(index, definition).x != MEND_NOTHING
+	return _turret_target_index(index, definition) != -1
 
 
 ## The Enemy a Turret is currently shooting at, as an *index*, or -1 when it is shooting at
@@ -1759,6 +1934,88 @@ func _fire(index: int, definition: MachineDefinition) -> void:
 	_enemy_health[target] = maxi(_enemy_health[target] - definition.damage, 0)
 	if _enemy_health[target] == 0:
 		_remove_enemy(target)
+
+
+## The most damaged thing in a Repair Pylon's reach, as a `(what, which)` pair, or
+## `MEND_NOTHING`.
+##
+## **A pure read, re-decided every tick**, which is what `_machine_would_work` needs it to be:
+## a query that moved a Pylon's target would move the state hash by being asked a question.
+## And unlike an MG Turret's target there is nothing to hold on to — a Machine is an index and
+## indices shift under a destruction, where an Enemy serial is issued once and never reused.
+##
+## "Most damaged" is the largest number of hit points *missing*, kept on a **strict**
+## improvement and walked in index order — Machines first, then Walls — so a tie goes to the
+## lowest Machine index on every client. Missing points rather than a fraction of health,
+## because a fraction is a division and a division needs a rounding rule; absolute points is
+## exact integer arithmetic and reads correctly anyway, since a Pylon should pour its material
+## where the most of it is needed.
+##
+## Reach is measured from the Pylon's footprint centre to the target's, squared on both sides,
+## exactly as an MG Turret measures its own — so turning a Pylon does not move the circle it
+## covers, and a Machine exactly on the boundary is in or out by exact arithmetic rather than
+## by a rounding rule.
+##
+## A Run that has ended mends nothing, for the reason a Turret that has nothing to shoot at
+## fires nothing: the game is over, and a Factory still consuming material after the fact
+## would keep drawing Power on a Map nobody is playing.
+func _mend_target(index: int, definition: MachineDefinition) -> Vector2i:
+	if query_run_is_over():
+		return Vector2i(MEND_NOTHING, -1)
+
+	var centre: FixedVec2 = _machine_centre_metres(index)
+	var within: int = _squared_reach(definition)
+	var best: Vector2i = Vector2i(MEND_NOTHING, -1)
+	var best_missing: int = 0
+
+	for machine: int in range(query_machine_count()):
+		var missing: int = _machine_missing_health(machine)
+		if missing <= 0 or missing <= best_missing:
+			continue
+		if _squared_metres_gap(centre, _machine_centre_metres(machine)) > within:
+			continue
+		best_missing = missing
+		best = Vector2i(MEND_MACHINE, machine)
+
+	for wall: int in range(query_wall_count()):
+		var wall_missing: int = _wall_missing_health(wall)
+		if wall_missing <= 0 or wall_missing <= best_missing:
+			continue
+		var at: FixedVec2 = WorldGrid.tile_centre_metres(query_wall_tile(wall))
+		if _squared_metres_gap(centre, at) > within:
+			continue
+		best_missing = wall_missing
+		best = Vector2i(MEND_WALL, wall)
+
+	return best
+
+
+## One pulse of repair: what a Repair Pylon does instead of depositing an output.
+##
+## Called from `_craft` on the tick a craft completes, after the repair material has been
+## consumed — so a Pylon that mended has spent a plate and one that did not has not. The
+## Recipe decides the rate and the material; `machines.csv` decides how much comes back.
+## Exactly the arrangement `_fire` has, which is the point: GLOSSARY.md calls a Repair Pylon a
+## Turret-class Machine whose output is repair rather than damage, and this is that sentence
+## as code.
+func _mend(index: int, definition: MachineDefinition) -> void:
+	var target: Vector2i = _mend_target(index, definition)
+	if target.x == MEND_NOTHING:
+		return
+	_turret_last_shot_tick[index] = _tick
+	if target.x == MEND_MACHINE:
+		_mend_machine(target.y, definition.repair)
+		return
+	_mend_wall(target.y, definition.repair)
+
+
+## How far apart two points are, squared, in the same squared fixed-point metres
+## `_squared_reach` returns. Deliberately not passed through `Fixed.mul`, which would shift the
+## scale back down and floor on the way.
+func _squared_metres_gap(from: FixedVec2, to: FixedVec2) -> int:
+	var gap_x: int = to.x - from.x
+	var gap_z: int = to.z - from.z
+	return gap_x * gap_x + gap_z * gap_z
 
 
 ## Takes an Enemy off the Map, preserving the order of the survivors — which is the invariant
@@ -1941,6 +2198,8 @@ func _apply_build_machine(action: InputAction) -> void:
 	_machine_tile_y.append(tile.y)
 	_machine_tile_z.append(tile.z)
 	_machine_built_tick.append(_tick)
+	# Whole, out of the row. A Machine arrives sound and the Wave is what changes that.
+	_machine_health.append(definition.health)
 	_machine_progress_ticks.append(0)
 	_machine_heat_units.append(0)
 	_machine_buffer_items.append(PackedStringArray())
@@ -2014,7 +2273,7 @@ func _footprint_is_occupied(origin: Vector3i, size_x: int, size_z: int) -> bool:
 	for offset_x: int in range(size_x):
 		for offset_z: int in range(size_z):
 			var tile: Vector3i = Vector3i(origin.x + offset_x, origin.y, origin.z + offset_z)
-			if query_belt_at_tile(tile) != -1:
+			if query_belt_at_tile(tile) != -1 or query_wall_at_tile(tile) != -1:
 				return true
 	return false
 
@@ -2047,13 +2306,25 @@ func _apply_demolish(action: InputAction) -> void:
 	if belt != -1:
 		_refund_belt(action.player_id, belt)
 		_remove_belt(belt)
+		return
+
+	# A Wall has no build cost to hand back, for the reason a Belt has none: it has no row in
+	# `content/machines.csv`. Taking one down is still free in the sense that matters — a
+	# player who mis-walled a lane loses only the ticks.
+	var wall: int = query_wall_at_tile(tile)
+	if wall != -1:
+		_remove_wall(wall)
 
 
 ## Why demolishing at a tile would be refused, or `Refusal.NONE`.
 func _demolish_refusal(player_id: int, tile: Vector3i) -> int:
 	if not _is_player(player_id):
 		return Refusal.NOTHING_THERE
-	if query_machine_at_tile(tile) != -1 or query_belt_at_tile(tile) != -1:
+	if (
+		query_machine_at_tile(tile) != -1
+		or query_belt_at_tile(tile) != -1
+		or query_wall_at_tile(tile) != -1
+	):
 		return Refusal.NONE
 	return Refusal.NOTHING_THERE
 
@@ -2098,6 +2369,7 @@ func _remove_machine(index: int) -> void:
 	_machine_tile_y.remove_at(index)
 	_machine_tile_z.remove_at(index)
 	_machine_built_tick.remove_at(index)
+	_machine_health.remove_at(index)
 	_machine_progress_ticks.remove_at(index)
 	_machine_heat_units.remove_at(index)
 	_machine_buffer_items.remove_at(index)
@@ -2120,6 +2392,260 @@ func _remove_belt(index: int) -> void:
 	_belt_item_ids.remove_at(index)
 	_belt_item_offsets.remove_at(index)
 	_belt_update_order_stale = true
+
+
+# ── Mortality: damage, destruction, Walls and repair ──────────────────────────
+# The section that makes a Factory's layout a defensive decision. Everything here moves one
+# of two integer arrays — `_machine_health` and `_wall_health` — in whole hit points, with no
+# fixed point anywhere, which is what makes damage and repair replay identically.
+#
+# The asymmetry worth knowing before reading on: **destruction is a loss and demolition is
+# not.** `_refund_machine` hands back a build cost and both buffers; `_destroy_machine` hands
+# back nothing at all.
+
+## Takes hit points off a Machine, and destroys it if that was the last of them.
+##
+## The destruction happens here and now rather than at the end of the tick, the same rule
+## `_fire` obeys for a killed Enemy: a Machine reduced to nothing must not be bitten twice by
+## two Enemies in the same tick, and nothing that runs later in the tick should find it still
+## standing.
+func _damage_machine(index: int, points: int) -> void:
+	if points <= 0 or not _is_machine(index):
+		return
+	_machine_health[index] = maxi(_machine_health[index] - points, 0)
+	if _machine_health[index] == 0:
+		_destroy_machine(index)
+
+
+## Takes a destroyed Machine off the Map, **returning nothing to anybody**.
+##
+## That is the one decision in this section worth arguing, and it is deliberate. A demolition
+## hands back the build cost, both buffers and every Item riding a Belt, because demolition is
+## a player taking their own Factory apart and iterating on a layout has to stay cheap (issue
+## #1, user story 7). Destruction is the Enemy taking it, and the whole point of mortality is
+## that the Factory is something that can be *lost*. Three consequences, all of them wanted:
+##
+## * A Machine about to fall is worth rescuing. If destruction paid out, a player would stand
+##   and watch — or demolish it themselves for the refund — rather than wrench it back up,
+##   and the repair mechanic this ticket is about would be strictly worse than doing nothing.
+## * There is no player to pay. A Machine ten tiles from anybody falls to a Breaker with
+##   nobody standing there, and "the nearest player" is not a rule a lockstep Simulation
+##   should want: it would make the refund depend on where four people happened to be.
+## * The Items in it were real throughput. A Smelter holding eight plates when it falls is a
+##   loss a player can feel and attribute, which is exactly what Heat asks of a mechanic.
+##
+## Removal rather than a wreck, for the same reason: a hole in a Factory's wall is a *hole*.
+## The Belt chain through it breaks because the Machine its run pointed at is not there, the
+## obstruction is gone so the next field rebuild routes Enemies straight through the gap, and
+## a player who wants it back builds it again. **You repair the living and rebuild the dead.**
+func _destroy_machine(index: int) -> void:
+	_remove_machine(index)
+
+
+## Takes hit points off a Wall, and removes it if that was the last of them. No refund, for
+## the reasons above.
+func _damage_wall(index: int, points: int) -> void:
+	if points <= 0 or not _is_wall(index):
+		return
+	_wall_health[index] = maxi(_wall_health[index] - points, 0)
+	if _wall_health[index] == 0:
+		_remove_wall(index)
+
+
+## Removes a Wall from every parallel array. The obstruction set changed, so the fields both
+## Enemy kinds steer by no longer describe the Map.
+func _remove_wall(index: int) -> void:
+	_wall_tile_x.remove_at(index)
+	_wall_tile_y.remove_at(index)
+	_wall_tile_z.remove_at(index)
+	_wall_health.remove_at(index)
+	_flowfield_stale = true
+
+
+## The most hit points a Machine can hold: the `health` its row declares, and what repair
+## clamps to. Read off the definition rather than stored, so a balance change applied by
+## hot-reload lands on the Factory that is already standing.
+func _machine_max_health(index: int) -> int:
+	if not _is_machine(index):
+		return 0
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	return 0 if definition == null else definition.health
+
+
+## How many hit points a Machine is short of whole. 0 for one that is sound, and never
+## negative — a hot-reload that *lowered* a row's health leaves a Machine over its own
+## ceiling rather than destroying it, which is a balance change and not an attack.
+func _machine_missing_health(index: int) -> int:
+	return maxi(_machine_max_health(index) - _machine_health[index], 0)
+
+
+## How many hit points a Wall is short of whole.
+func _wall_missing_health(index: int) -> int:
+	if not _is_wall(index):
+		return 0
+	return maxi(_definitions.wall_health - _wall_health[index], 0)
+
+
+## Puts hit points back onto a Machine, never past the `health` its row declares.
+func _mend_machine(index: int, points: int) -> void:
+	if points <= 0 or not _is_machine(index):
+		return
+	_machine_health[index] = mini(_machine_health[index] + points, _machine_max_health(index))
+
+
+## Puts hit points back onto a Wall, never past `wall.health`.
+func _mend_wall(index: int, points: int) -> void:
+	if points <= 0 or not _is_wall(index):
+		return
+	_wall_health[index] = mini(_wall_health[index] + points, _definitions.wall_health)
+
+
+# ── Building a Wall ───────────────────────────────────────────────────────────
+
+## Stands one tile of Wall, or refuses to.
+##
+## A Wall is not a Machine (DESIGN.md lists it alongside the Nest and the Belt), so this
+## carries no definition index, spends no build cost and runs no Recipe. One tile per intent
+## rather than a run, because the only question a Wall answers is whether *this* tile is
+## walkable and because a Wall chewed through in the middle of a line has to leave the rest
+## of the line standing.
+##
+## Refused as a silent no-op whose hash does not move, the same rule a misaimed build obeys.
+func _apply_build_wall(action: InputAction) -> void:
+	var tile: Vector3i = action.wall_tile()
+	if _build_wall_refusal(action.player_id, tile) != Refusal.NONE:
+		return
+
+	_wall_tile_x.append(tile.x)
+	_wall_tile_y.append(tile.y)
+	_wall_tile_z.append(tile.z)
+	_wall_health.append(_definitions.wall_health)
+	# A new obstruction, so neither field describes the Map any more. Rebuilt on the next
+	# tick that has an Enemy to move, never here: a player walling off a Breach places a
+	# dozen of these in a second and a sweep is O(map).
+	_flowfield_stale = true
+
+
+## Why standing a Wall on a tile would be refused, or `Refusal.NONE`. The single authority on
+## whether a Wall is legal there: `_apply_build_wall` obeys it and `query_build_wall_refusal`
+## reports it, so what the hologram says and what the Simulation does are one rule.
+func _build_wall_refusal(player_id: int, tile: Vector3i) -> int:
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+	if not WorldGrid.is_buildable(tile):
+		return Refusal.OFF_THE_MAP
+	if (
+		_nest_covers(tile)
+		or query_machine_at_tile(tile) != -1
+		or query_belt_at_tile(tile) != -1
+		or query_wall_at_tile(tile) != -1
+	):
+		return Refusal.OCCUPIED
+	return Refusal.NONE
+
+
+# ── Repairing by hand ─────────────────────────────────────────────────────────
+
+## Records that a player is holding the Pneumatic Wrench on a tile this tick. Doing anything
+## about it is `_repair`'s job, one tick at a time, so that two intents arriving in one tick
+## cannot mend at twice the tuned rate.
+func _apply_repair(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	var tile: Vector3i = action.repair_tile()
+	_player_repair_held[action.player_id] = 1
+	_player_repair_tile_x[action.player_id] = tile.x
+	_player_repair_tile_y[action.player_id] = tile.y
+	_player_repair_tile_z[action.player_id] = tile.z
+
+
+## Mends whatever each player is holding the wrench on, by one tick's worth.
+##
+## **This is what makes melee useful rather than a last resort** (DESIGN.md: the Pneumatic
+## Wrench is the melee weapon and it is also what repairs). It costs no materials at all —
+## what it costs is a player standing next to the Machine, in the open, during a Wave, doing
+## nothing else. The Repair Pylon is the other half of that trade: material instead of
+## attention. Nothing gates it on a Wave in either direction, exactly as nothing gates
+## building: there is no mode anywhere in this project.
+##
+## A tick's worth is `wrench.repair_points_per_second` of integer credit against
+## `TICKS_PER_SECOND`, with the remainder carried in `_player_repair_credit` — the same duty
+## cycle Power and Heat use, so over any window a Machine has gained exactly
+## `floor(ticks * points_per_second / TICKS_PER_SECOND)`: one floor applied to the total,
+## never one per tick.
+##
+## The intent is consumed whatever comes of it, so a player who stops sending `REPAIR` stops
+## repairing, and so the per-tick arrays are zero at every point a hash is taken. A refused
+## hold banks nothing: credit does not survive a player walking out of reach any more than it
+## survives letting go.
+func _repair() -> void:
+	for player_id: int in range(query_player_count()):
+		var held: bool = _player_repair_held[player_id] != 0
+		var tile: Vector3i = Vector3i(
+			_player_repair_tile_x[player_id],
+			_player_repair_tile_y[player_id],
+			_player_repair_tile_z[player_id]
+		)
+		_player_repair_held[player_id] = 0
+		_player_repair_tile_x[player_id] = 0
+		_player_repair_tile_y[player_id] = 0
+		_player_repair_tile_z[player_id] = 0
+
+		if not held or _repair_refusal(player_id, tile) != Refusal.NONE:
+			_player_repair_credit[player_id] = 0
+			continue
+
+		_player_repair_credit[player_id] += _definitions.wrench_repair_points_per_second
+		@warning_ignore("integer_division")
+		var points: int = _player_repair_credit[player_id] / TICKS_PER_SECOND
+		if points <= 0:
+			continue
+		_player_repair_credit[player_id] -= points * TICKS_PER_SECOND
+
+		var machine: int = query_machine_at_tile(tile)
+		if machine != -1:
+			_mend_machine(machine, points)
+			continue
+		_mend_wall(query_wall_at_tile(tile), points)
+
+
+## Why a held wrench would mend nothing, or `Refusal.NONE`.
+##
+## A pure projection about a repair that has not happened, the same arrangement
+## `query_build_refusal` has and for the same reason: the HUD can say "out of reach" or
+## "already whole" while the player is still walking, and a refusal leaves the hash alone.
+func _repair_refusal(player_id: int, tile: Vector3i) -> int:
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+
+	var machine: int = query_machine_at_tile(tile)
+	var wall: int = query_wall_at_tile(tile)
+	if machine == -1 and wall == -1:
+		return Refusal.NOTHING_THERE
+	if not _within_wrench_reach(player_id, tile):
+		return Refusal.OUT_OF_REACH
+	var missing: int = (
+		_machine_missing_health(machine) if machine != -1 else _wall_missing_health(wall)
+	)
+	if missing <= 0:
+		return Refusal.NOT_DAMAGED
+	return Refusal.NONE
+
+
+## Whether a player is close enough to a tile to put a wrench on it.
+##
+## Compared squared, for the reason a Turret's reach is: `Fixed.sqrt` floors, which would put
+## a player exactly on the boundary in or out of reach depending on a rounding rule, where
+## multiplying both sides is exact integer arithmetic. The products stay far inside 64 bits —
+## the reach is a few metres.
+func _within_wrench_reach(player_id: int, tile: Vector3i) -> bool:
+	var centre: FixedVec2 = WorldGrid.tile_centre_metres(tile)
+	var gap_x: int = centre.x - _player_x[player_id]
+	var gap_z: int = centre.z - _player_z[player_id]
+	var reach: int = _definitions.wrench_reach_metres
+	return gap_x * gap_x + gap_z * gap_z <= reach * reach
 
 
 # ── What a player is carrying ────────────────────────────────────────────
@@ -2194,6 +2720,8 @@ func _apply_build_belt(action: InputAction) -> void:
 		if not WorldGrid.is_buildable(tile):
 			return
 		if query_belt_at_tile(tile) != -1 or query_machine_at_tile(tile) != -1:
+			return
+		if query_wall_at_tile(tile) != -1:
 			return
 		if _nest_covers(tile):
 			return
@@ -2693,8 +3221,53 @@ func _enemy_health_for(kind: int) -> int:
 	match kind:
 		EnemyKind.CRAWLER:
 			return _definitions.crawler_health
+		EnemyKind.BREAKER:
+			return _definitions.breaker_health
 		_:
 			return 0
+
+
+## How far an Enemy of a kind walks in one tick, in fixed-point metres. One division per
+## kind per tick and nothing accumulated, so there is nothing here to drift.
+func _enemy_step_metres(kind: int) -> int:
+	return Fixed.div(_enemy_speed(kind), Fixed.from_int(TICKS_PER_SECOND))
+
+
+## How fast an Enemy of a kind moves, in fixed-point metres per second.
+func _enemy_speed(kind: int) -> int:
+	match kind:
+		EnemyKind.CRAWLER:
+			return _definitions.crawler_speed
+		EnemyKind.BREAKER:
+			return _definitions.breaker_speed
+		_:
+			return 0
+
+
+## What one bite from an Enemy of a kind takes off whatever it is chewing, in whole hit
+## points. The same number whether the target is the Nest, a Machine or a Wall: an Enemy has
+## one bite and the thing it bites has hit points, which is what keeps combat free of a table
+## of multipliers.
+func _enemy_damage(kind: int) -> int:
+	match kind:
+		EnemyKind.CRAWLER:
+			return _definitions.crawler_damage
+		EnemyKind.BREAKER:
+			return _definitions.breaker_damage
+		_:
+			return 0
+
+
+## How many whole ticks between one bite from an Enemy of a kind and the next. At least one:
+## a bite that took no time would do unbounded damage.
+func _enemy_attack_interval_ticks(kind: int) -> int:
+	match kind:
+		EnemyKind.CRAWLER:
+			return maxi(_seconds_to_ticks(_definitions.crawler_attack_interval_seconds), 1)
+		EnemyKind.BREAKER:
+			return maxi(_seconds_to_ticks(_definitions.breaker_attack_interval_seconds), 1)
+		_:
+			return 1
 
 
 ## Moves every Enemy one tick along the shared flowfield, and lets the ones in contact
@@ -2709,13 +3282,16 @@ func _enemies() -> void:
 	if query_run_is_over() or query_enemy_count() == 0:
 		return
 
-	var field: PackedInt64Array = _flowfield()
-	var step_metres: int = Fixed.div(
-		_definitions.crawler_speed, Fixed.from_int(TICKS_PER_SECOND)
-	)
-	var bite_ticks: int = maxi(
-		_seconds_to_ticks(_definitions.crawler_attack_interval_seconds), 1
-	)
+	# **Both fields, resolved once for the whole tick.** An Enemy that chews a Machine to
+	# nothing part-way through this loop invalidates both of them — a destroyed Machine is
+	# one fewer obstruction and one fewer seed — and rebuilding there would make the tick
+	# O(Enemies x map), which is the quadratic the Chaff tier could never pay. So
+	# `_destroy_machine` sets `_flowfield_stale` and nothing rebuilds until the next tick
+	# that needs a field: the survivors finish this tick on the field they started it on and
+	# inherit the new gap on the next. One tick of latency on a route is invisible; a 50 ms
+	# hitch in the middle of a Wave is not.
+	var nest_field: PackedInt64Array = _flowfield()
+	var factory_field: PackedInt64Array = _machine_flowfield()
 
 	for index: int in range(query_enemy_count()):
 		# An Enemy does not act on the tick it came through its Breach, for the reason a
@@ -2723,16 +3299,118 @@ func _enemies() -> void:
 		# crediting it a whole tick of walking would put its first step a tick early.
 		if _enemy_spawn_tick[index] == _tick:
 			continue
-		if _enemy_is_in_contact(index):
-			if _enemy_attack_cooldown[index] > 0:
-				_enemy_attack_cooldown[index] -= 1
-				continue
-			_damage_the_nest(_definitions.crawler_damage)
-			# One short of the interval, because this tick is the first of the wait. A bite
-			# every `enemy.crawler_attack_interval_seconds` exactly, with nothing rounding.
-			_enemy_attack_cooldown[index] = bite_ticks - 1
+		var kind: int = _enemy_kind[index]
+		# A Breaker steers by the Factory and a Crawler by the Nest. Falling back on the
+		# other way round is `_enemy_direction`'s job, so the field an Enemy *moves* by and
+		# the field it decides whether it is cornered by are the same field.
+		var field: PackedInt64Array = (
+			factory_field if kind == EnemyKind.BREAKER else nest_field
+		)
+		if _enemy_bites(index, kind, field, nest_field):
 			continue
-		_advance_enemy(index, field, step_metres)
+		_advance_enemy(index, field, nest_field, _enemy_step_metres(kind))
+
+
+## Lets one Enemy bite whatever it is in contact with, and reports whether this tick was
+## spent attacking rather than walking.
+##
+## Returns true while a bite is on cooldown as well as on the tick it lands: an Enemy chewing
+## something stays put between bites rather than shuffling forward and back.
+func _enemy_bites(
+	index: int, kind: int, field: PackedInt64Array, fallback: PackedInt64Array
+) -> bool:
+	var target: Vector2i = _enemy_contact_target(index, kind, field, fallback)
+	if target.x == BITE_NOTHING:
+		return false
+	if _enemy_attack_cooldown[index] > 0:
+		_enemy_attack_cooldown[index] -= 1
+		return true
+
+	var points: int = _enemy_damage(kind)
+	match target.x:
+		BITE_NEST:
+			_damage_the_nest(points)
+		BITE_MACHINE:
+			_damage_machine(target.y, points)
+		BITE_WALL:
+			_damage_wall(target.y, points)
+	# One short of the interval, because this tick is the first of the wait. A bite every
+	# `attack_interval_seconds` exactly, with nothing rounding.
+	_enemy_attack_cooldown[index] = maxi(_enemy_attack_interval_ticks(kind) - 1, 0)
+	return true
+
+
+## What an Enemy would bite this tick, as a `(what, which)` pair, or `BITE_NOTHING`.
+##
+## Three clauses, in this order, and the order *is* the design:
+##
+## 1. **A Breaker takes a Machine over anything else.** That is the whole of what a Breaker
+##    is (GLOSSARY.md: it preferentially attacks Machines rather than players) and it is what
+##    makes Machine mortality *felt* rather than merely true — a Crawler walking past a
+##    Smelter proves nothing about whether the Smelter was ever at risk.
+## 2. **Either kind bites the Nest it is standing at.** A Breaker that has run out of Factory
+##    is still an Enemy at the gate, and the Nest is still the only thing whose loss ends the
+##    Run.
+## 3. **Either kind chews its way out of a pocket it cannot route out of.** Without this,
+##    sealing a Breach behind a ring of Walls would be a cheese rather than a defence: no
+##    route means `_enemy_direction` falls back on walking straight at the Nest, and a swarm
+##    would drift through solid Walls. With it, sealing buys exactly as much time as the
+##    Walls have hit points, which is what a Wall is for. Machines before Walls, so a Crawler
+##    boxed in by its own captor's Factory eats the Factory.
+##
+## A Crawler with a route therefore still walks past a Machine untouched, which is the
+## Chaff's job: Chaff is the sense of threat and the Breaker is the threat (DESIGN.md).
+func _enemy_contact_target(
+	index: int, kind: int, field: PackedInt64Array, fallback: PackedInt64Array
+) -> Vector2i:
+	if not _is_enemy(index):
+		return Vector2i(BITE_NOTHING, -1)
+	var tile: Vector3i = WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+
+	if kind == EnemyKind.BREAKER:
+		var machine: int = _machine_in_contact(tile)
+		if machine != -1:
+			return Vector2i(BITE_MACHINE, machine)
+
+	if _nest_in_contact(tile):
+		return Vector2i(BITE_NEST, -1)
+
+	if _enemy_direction(tile, field, fallback) != -1:
+		return Vector2i(BITE_NOTHING, -1)
+	# An Enemy *inside* an obstruction walks out of it rather than chewing it, which is #9's
+	# rule and still the right one: a player who drops a Machine on top of a Crawler has not
+	# built a prison, and `_towards_the_nest` is what makes that true. The chewing clause is
+	# for an Enemy standing on open ground with nowhere left to walk — a sealed pocket — which
+	# is the case where a beeline would send a swarm drifting through solid Walls.
+	if _tile_is_blocked(tile):
+		return Vector2i(BITE_NOTHING, -1)
+	return _structure_in_contact(tile)
+
+
+## The Machine whose footprint covers the tile an Enemy is standing on or one sharing an edge
+## with it, or -1. Walked in Machine index order, which is construction order and the same on
+## every client.
+func _machine_in_contact(tile: Vector3i) -> int:
+	for step: int in range(WorldGrid.DIRECTION_COUNT + 1):
+		var at: Vector3i = tile if step == 0 else tile + WorldGrid.direction_step(step - 1)
+		var machine: int = query_machine_at_tile(at)
+		if machine != -1:
+			return machine
+	return -1
+
+
+## The Machine or Wall in contact with a tile, Machines first. For the cornered case only:
+## what an Enemy chews when it has nowhere left to walk.
+func _structure_in_contact(tile: Vector3i) -> Vector2i:
+	var machine: int = _machine_in_contact(tile)
+	if machine != -1:
+		return Vector2i(BITE_MACHINE, machine)
+	for step: int in range(WorldGrid.DIRECTION_COUNT + 1):
+		var at: Vector3i = tile if step == 0 else tile + WorldGrid.direction_step(step - 1)
+		var wall: int = query_wall_at_tile(at)
+		if wall != -1:
+			return Vector2i(BITE_WALL, wall)
+	return Vector2i(BITE_NOTHING, -1)
 
 
 ## One Enemy, one tick, along the field.
@@ -2748,10 +3426,13 @@ func _enemies() -> void:
 ## walking straight at the Nest on whichever axis it is further out on. Without that a
 ## Crawler could be parked for ever by dropping a Machine on it, which is a cheese rather
 ## than a defence.
-func _advance_enemy(index: int, field: PackedInt64Array, step_metres: int) -> void:
+func _advance_enemy(
+	index: int, field: PackedInt64Array, fallback: PackedInt64Array, step_metres: int
+) -> void:
+	if step_metres <= 0:
+		return
 	var tile: Vector3i = WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
-	var cell: int = _field_index(tile)
-	var direction: int = -1 if cell == -1 else field[cell]
+	var direction: int = _enemy_direction(tile, field, fallback)
 
 	var step: Vector3i = Vector3i.ZERO
 	if direction == -1:
@@ -2799,16 +3480,33 @@ func _gap_to_span(value: int, low: int, high: int) -> int:
 	return 0
 
 
-## Whether an Enemy is close enough to the Nest to bite it: standing on a tile the Nest's
-## footprint covers, or on one sharing an edge with it.
+## The way out of a tile for an Enemy steering by `field`, falling back on `fallback`, or -1
+## when neither field can route it anywhere.
 ##
-## Tiles rather than a fixed-point radius, because the Nest is a footprint on a grid
-## rather than a point, and a tile answer cannot disagree with the flowfield about which
-## tiles count as at the Nest.
-func _enemy_is_in_contact(index: int) -> bool:
-	if not _is_enemy(index):
-		return false
-	var tile: Vector3i = WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+## The fallback is what sends a Breaker whose Factory has been flattened — or whose quarry is
+## walled off from it — at the Nest instead, and it is a no-op for a Crawler, whose two fields
+## are the same field. Consulted by both `_advance_enemy` and `_enemy_contact_target`, so
+## "which way am I going" and "am I cornered" are one answer rather than two that could
+## disagree about whether a Wall should be chewed.
+func _enemy_direction(
+	tile: Vector3i, field: PackedInt64Array, fallback: PackedInt64Array
+) -> int:
+	var cell: int = _field_index(tile)
+	if cell == -1:
+		return -1
+	var direction: int = field[cell] if cell < field.size() else -1
+	if direction != -1:
+		return direction
+	return fallback[cell] if cell < fallback.size() else -1
+
+
+## Whether a tile is close enough to the Nest to bite it: the Nest's footprint covers it, or
+## covers one sharing an edge with it.
+##
+## Tiles rather than a fixed-point radius, because the Nest is a footprint on a grid rather
+## than a point, and a tile answer cannot disagree with the flowfield about which tiles count
+## as at the Nest.
+func _nest_in_contact(tile: Vector3i) -> bool:
 	if _nest_covers(tile):
 		return true
 	for direction: int in range(WorldGrid.DIRECTION_COUNT):
@@ -2856,43 +3554,79 @@ func _flowfield() -> PackedInt64Array:
 	return _flow_direction
 
 
-## Rebuilds the shared field: one breadth-first sweep outward from the Nest.
+## The field a Breaker steers by: the same sweep seeded on every Machine's footprint rather
+## than on the Nest. Empty — every tile -1 — when the Factory has no Machines, which is what
+## sends a Breaker with nothing to break at the Nest instead.
+func _machine_flowfield() -> PackedInt64Array:
+	if _flowfield_stale or _machine_flow_direction.size() != FIELD_TILES:
+		_rebuild_flowfield()
+	return _machine_flow_direction
+
+
+## Rebuilds **both** shared fields: one breadth-first sweep outward from the Nest, and one
+## outward from every Machine standing in the Factory.
 ##
-## O(map) once, amortised across every Enemy alive — which is the whole argument for a
-## field over per-agent A*, and it only gets stronger as the Chaff tier arrives. Breadth
-## first over four-connected tiles, so the distance it records is the exact number of
-## tiles a walk to the Nest takes and no heuristic is involved.
+## Two sweeps rather than one because there are two destinations a Wave can want — a Crawler
+## swarms the Nest and a Breaker hunts the Factory (GLOSSARY.md) — and because a field is the
+## right structure for both for the same reason it was the right structure for one. O(map)
+## per destination once, amortised across every Enemy alive, against O(Enemies x Machines)
+## every tick for "walk at the nearest Machine" and a path to re-find every time one falls.
+## One pass over the obstructions serves both, so the marking is not paid twice.
 ##
-## The direction stored on a tile is the way *back* towards whichever tile reached it
-## first. Neighbours are pushed in `WorldGrid.DIRECTION_STEPS` index order out of a FIFO
-## queue, so which tile gets there first is fixed by the grid's own direction order rather
-## than by anything that happened during the Run: two clients build the identical field,
-## down to which way a tile equidistant from two routes points.
-##
-## Obstructions are skipped rather than entered, which is what makes a wall a wall: the
-## sweep flows around it, the tiles behind it get a longer distance or none at all, and
-## every Enemy on the Map inherits the new route on the tick the field is rebuilt.
+## Both are rebuilt together under one `_flowfield_stale` flag: they are pure functions of
+## the Map and the obstructions standing on it, and nothing can invalidate one without
+## invalidating the other — a Machine built or destroyed is simultaneously a new obstruction
+## and a new seed.
 func _rebuild_flowfield() -> void:
-	_flow_direction.resize(FIELD_TILES)
-	_flow_direction.fill(-1)
-	_flow_distance.resize(FIELD_TILES)
-	_flow_distance.fill(-1)
 	_mark_obstructions()
 
-	# Seeded on the whole Nest footprint, because the destination is a 4x4 building and
-	# not a point: an Enemy heading for its near edge must not be routed to its anchor.
+	var to_the_nest: Array = _sweep(_nest_seed_cells())
+	_flow_direction = to_the_nest[0]
+	_flow_distance = to_the_nest[1]
+
+	var to_the_factory: Array = _sweep(_machine_seed_cells())
+	_machine_flow_direction = to_the_factory[0]
+	_machine_flow_distance = to_the_factory[1]
+
+	_flowfield_stale = false
+
+
+## One breadth-first sweep outward from a set of seed cells, returning `[direction, distance]`.
+##
+## Breadth first over four-connected tiles, so the distance it records is the exact number of
+## tiles a walk to the nearest seed takes and no heuristic is involved. The direction stored
+## on a tile is the way *back* towards whichever tile reached it first, and neighbours are
+## pushed in `WorldGrid.DIRECTION_STEPS` index order out of a FIFO queue, so which tile gets
+## there first is fixed by the grid's own direction order rather than by anything that
+## happened during the Run: two clients build the identical field, down to which way a tile
+## equidistant from two routes points.
+##
+## Obstructions are skipped rather than entered, which is what makes a Wall a Wall: the sweep
+## flows around it, the tiles behind it get a longer distance or none at all, and every Enemy
+## on the Map inherits the new route on the tick the field is rebuilt.
+##
+## A seed may itself be an obstruction — every Machine tile is one — so the sweep starts *on*
+## the seeds at distance 0 and only the expansion checks for a block. That is how a tile
+## beside a Machine comes to point at it while nothing routes through it, and it is the same
+## arrangement the Nest has always had.
+##
+## Returns the two arrays rather than writing into members because a `PackedInt64Array`
+## argument is a value in GDScript: a sweep that took one to fill would fill a copy.
+func _sweep(seeds: PackedInt64Array) -> Array:
+	var direction_out: PackedInt64Array = PackedInt64Array()
+	direction_out.resize(FIELD_TILES)
+	direction_out.fill(-1)
+	var distance: PackedInt64Array = PackedInt64Array()
+	distance.resize(FIELD_TILES)
+	distance.fill(-1)
+
 	var queue: PackedInt64Array = PackedInt64Array()
-	var size: Vector2i = query_nest_footprint()
-	var anchor: Vector3i = query_nest_tile()
-	for offset_x: int in range(size.x):
-		for offset_z: int in range(size.y):
-			var seed_cell: int = _field_index(
-				Vector3i(anchor.x + offset_x, anchor.y, anchor.z + offset_z)
-			)
-			if seed_cell == -1:
-				continue
-			_flow_distance[seed_cell] = 0
-			queue.append(seed_cell)
+	for position: int in range(seeds.size()):
+		var seed_cell: int = seeds[position]
+		if seed_cell == -1 or distance[seed_cell] != -1:
+			continue
+		distance[seed_cell] = 0
+		queue.append(seed_cell)
 
 	var head: int = 0
 	while head < queue.size():
@@ -2900,7 +3634,7 @@ func _rebuild_flowfield() -> void:
 		head += 1
 		@warning_ignore("integer_division")
 		var row: int = cell / FIELD_WIDTH_TILES
-		var reached_in: int = _flow_distance[cell] + 1
+		var reached_in: int = distance[cell] + 1
 		for direction: int in range(WorldGrid.DIRECTION_COUNT):
 			var offset: int = FIELD_STEPS[direction]
 			var neighbour: int = cell + offset
@@ -2910,27 +3644,68 @@ func _rebuild_flowfield() -> void:
 			@warning_ignore("integer_division")
 			if absi(offset) == 1 and neighbour / FIELD_WIDTH_TILES != row:
 				continue
-			if _flow_distance[neighbour] != -1 or _flow_blocked[neighbour] != 0:
+			if distance[neighbour] != -1 or _flow_blocked[neighbour] != 0:
 				continue
-			_flow_distance[neighbour] = reached_in
+			distance[neighbour] = reached_in
 			# The neighbour's way out is back the way this step came.
-			_flow_direction[neighbour] = WorldGrid.wrap_rotation(direction + 2)
+			direction_out[neighbour] = WorldGrid.wrap_rotation(direction + 2)
 			queue.append(neighbour)
 
-	_flowfield_stale = false
+	return [direction_out, distance]
+
+
+## Every cell of the Nest's footprint, which is what the Crawlers' field is seeded on.
+##
+## The whole footprint because the destination is a 4x4 building and not a point: an Enemy
+## heading for its near edge must not be routed to its anchor.
+func _nest_seed_cells() -> PackedInt64Array:
+	var cells: PackedInt64Array = PackedInt64Array()
+	var size: Vector2i = query_nest_footprint()
+	var anchor: Vector3i = query_nest_tile()
+	for offset_x: int in range(size.x):
+		for offset_z: int in range(size.y):
+			cells.append(
+				_field_index(Vector3i(anchor.x + offset_x, anchor.y, anchor.z + offset_z))
+			)
+	return cells
+
+
+## Every cell every Machine's footprint covers, which is what the Breakers' field is seeded
+## on. Walked in Machine index order — construction order, and therefore the same on every
+## client — though the order cannot reach the field anyway: a seed is a seed at distance 0.
+func _machine_seed_cells() -> PackedInt64Array:
+	var cells: PackedInt64Array = PackedInt64Array()
+	for index: int in range(query_machine_count()):
+		var size: Vector2i = _machine_size(index)
+		if size == Vector2i.ZERO:
+			continue
+		var origin: Vector3i = query_machine_tile(index)
+		for offset_x: int in range(size.x):
+			for offset_z: int in range(size.y):
+				cells.append(
+					_field_index(Vector3i(origin.x + offset_x, origin.y, origin.z + offset_z))
+				)
+	return cells
 
 
 ## Paints every tile an Enemy cannot walk through.
 ##
 ## Machines obstruct: a Factory is a maze, and that is what makes laying one out a
-## defensive decision rather than decoration. Belts do not — a Crawler crawls over a
-## conveyor — and neither do Nodes, which are ground. **Walls join this function in the
-## ticket that adds them**, as one more loop and nothing else; it is the single definition
-## of the obstruction set, which is why `query_tile_obstructs_enemies` reads what it paints
-## rather than asking the question a second way.
+## defensive decision rather than decoration. **Walls obstruct too** — that is the whole
+## reason to build one — and they are one more loop here and nothing else, because this is
+## the single definition of the obstruction set and `query_tile_obstructs_enemies` reads what
+## it paints rather than asking the question a second way. Belts do not obstruct — a Crawler
+## crawls over a conveyor — and neither do Nodes, which are ground.
+##
+## Both loops walk the *structures* and paint their tiles rather than asking each of the
+## 16641 tiles what is standing on it: that is O(Machines + Walls) against
+## O(tiles x (Machines + Walls)), and at this Map's size the second is a visible hitch every
+## time a player places something.
 ##
 ## The Nest itself is deliberately not painted: it is the destination, seeded at distance
-## zero, so a sweep that treated it as solid would have nowhere to start.
+## zero, so a sweep that treated it as solid would have nowhere to start. A Machine *is*
+## painted and is seeded as well, which is what lets the Breakers' field point at the
+## Factory without routing through it.
 func _mark_obstructions() -> void:
 	_flow_blocked.resize(FIELD_TILES)
 	_flow_blocked.fill(0)
@@ -2947,15 +3722,30 @@ func _mark_obstructions() -> void:
 				if cell != -1:
 					_flow_blocked[cell] = 1
 
+	# One more loop, and that is the whole of what a Wall adds to pathing.
+	for index: int in range(query_wall_count()):
+		var wall_cell: int = _field_index(query_wall_tile(index))
+		if wall_cell != -1:
+			_flow_blocked[wall_cell] = 1
+
 
 ## Whether a tile stops an Enemy walking through it — what `_mark_obstructions` painted,
 ## read back for one tile. A tile the field does not cover obstructs nothing: it is not
 ## ground an Enemy could be walking on in the first place.
 func _tile_obstructs_enemies(tile: Vector3i) -> bool:
-	var cell: int = _field_index(tile)
-	if cell == -1:
-		return false
 	_flowfield()
+	return _tile_is_blocked(tile)
+
+
+## What `_mark_obstructions` painted on one tile, **without forcing a rebuild**. The inner
+## half of `_tile_obstructs_enemies`, separated because the Enemy tick must not rebuild a
+## field part-way through its own loop: it holds a snapshot of both fields for the whole tick
+## (see `_enemies`), and a question asked mid-loop that rebuilt them would make the tick
+## quadratic in the number of Enemies.
+func _tile_is_blocked(tile: Vector3i) -> bool:
+	var cell: int = _field_index(tile)
+	if cell == -1 or cell >= _flow_blocked.size():
+		return false
 	return _flow_blocked[cell] != 0
 
 
@@ -3085,6 +3875,9 @@ func hash() -> int:
 	hasher.feed_ints(_machine_built_tick)
 	hasher.feed_ints(_machine_heat_units)
 	hasher.feed_ints(_machine_progress_ticks)
+	# What is left of every Machine. The array that decides whether a Factory still exists,
+	# so a divergence in it is a divergence about what the Factory *is*.
+	hasher.feed_ints(_machine_health)
 	# What every Turret is shooting at, and when it last fired. The serial rather than an
 	# index, which is the whole point of holding one: a hash over indices would agree between
 	# two clients that are aimed at different Crawlers.
@@ -3115,6 +3908,19 @@ func hash() -> int:
 	hasher.feed_int(_power_demand_kw)
 	hasher.feed_int(_power_credit_kw_ticks)
 	hasher.feed_int(1 if _power_tick_granted else 0)
+	# The Walls, and what is left of each. Where they stand shapes the fields every Enemy
+	# steers by — which are derived and therefore not hashed — so this is the hashed cause
+	# behind an unhashed effect, exactly as the Machine arrays are.
+	hasher.feed_ints(_wall_tile_x)
+	hasher.feed_ints(_wall_tile_y)
+	hasher.feed_ints(_wall_tile_z)
+	hasher.feed_ints(_wall_health)
+	# Each player's unspent fraction of a hit point of hand repair. Authoritative state for
+	# the reason the Power grid's credit is: it is what makes a rate exact rather than
+	# approximately right, and a divergence in it is a divergence in how fast a Factory comes
+	# back. The *held* half of the wrench intent is deliberately absent, for the reason the
+	# walking throttle is: `_repair` consumes and clears it, so it is zero here every time.
+	hasher.feed_ints(_player_repair_credit)
 	# The Belts, and every Item riding one. Items are derived state — recomputed
 	# identically on every client and never replicated (ADR 0002) — and that is exactly
 	# why they have to be hashed: the guarantee that they are identical everywhere is
@@ -3942,10 +4748,22 @@ func query_enemy_spawn_tick(index: int) -> int:
 	return _enemy_spawn_tick[index]
 
 
-## Whether an Enemy is in contact with the Nest, and therefore biting it rather than
-## walking. What the renderer reads to show a Crawler chewing.
+## Whether an Enemy is biting something rather than walking — the Nest, a Machine or a Wall.
+## What the renderer reads to show a Crawler chewing.
+##
+## Asks `_enemy_contact_target`, which is the same function the tick asks, so what is drawn
+## chewing is exactly what is being chewed. Not restricted to the Nest any more: a Breaker
+## stopped at a Smelter is as much "attacking" as one stopped at the Nest, and a renderer that
+## only knew about the Nest would draw a Breaker walking on the spot.
 func query_enemy_is_attacking(index: int) -> bool:
-	return _enemy_is_in_contact(index)
+	if not _is_enemy(index):
+		return false
+	var kind: int = _enemy_kind[index]
+	var nest_field: PackedInt64Array = _flowfield()
+	var field: PackedInt64Array = (
+		_machine_flowfield() if kind == EnemyKind.BREAKER else nest_field
+	)
+	return _enemy_contact_target(index, kind, field, nest_field).x != BITE_NOTHING
 
 
 ## The way out of a tile towards the Nest, as a `WorldGrid` direction, or -1 where there is
@@ -4043,6 +4861,88 @@ func query_machine_is_throttled(index: int) -> bool:
 	if not _machine_would_work(index, definition):
 		return false
 	return query_power_is_in_deficit()
+
+
+## What is left of a Machine, in whole hit points, or 0 for an index naming none.
+##
+## Hashed state rather than a projection: a damaged Machine and a whole one are different
+## states, and a save restores the Factory in the condition the Wave left it in.
+func query_machine_health(index: int) -> int:
+	if not _is_machine(index):
+		return 0
+	return _machine_health[index]
+
+
+## The most hit points a Machine can hold — the `health` its row declares. What a wrench and a
+## Repair Pylon mend towards, and the denominator of the gauge over a damaged Machine.
+func query_machine_max_health(index: int) -> int:
+	return _machine_max_health(index)
+
+
+## Whether a Machine's output is repair rather than damage: a Repair Pylon.
+##
+## For the renderer and the HUD, which draw a Pylon's gauge in repair material rather than in
+## rounds. The Simulation reads `MachineDefinition.heals()` directly.
+func query_machine_is_repair_pylon(index: int) -> bool:
+	if not _is_machine(index):
+		return false
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	return definition != null and definition.heals()
+
+
+## How many Walls are standing.
+func query_wall_count() -> int:
+	return _wall_health.size()
+
+
+## Which tile a Wall stands on.
+func query_wall_tile(index: int) -> Vector3i:
+	if not _is_wall(index):
+		return Vector3i.ZERO
+	return Vector3i(_wall_tile_x[index], _wall_tile_y[index], _wall_tile_z[index])
+
+
+## The Wall standing on a tile, or -1. Walked in build order, which is cheap at this
+## milestone's scale and the same on every client.
+func query_wall_at_tile(tile: Vector3i) -> int:
+	for index: int in range(query_wall_count()):
+		if (
+			_wall_tile_x[index] == tile.x
+			and _wall_tile_y[index] == tile.y
+			and _wall_tile_z[index] == tile.z
+		):
+			return index
+	return -1
+
+
+## What is left of a Wall, in whole hit points.
+func query_wall_health(index: int) -> int:
+	if not _is_wall(index):
+		return 0
+	return _wall_health[index]
+
+
+## The hit points a Wall is built with, from `wall.health`. One number for every Wall, because
+## there is one tier of Wall — a Wall has no row in `content/machines.csv` to differ in.
+func query_wall_max_health() -> int:
+	return _definitions.wall_health
+
+
+## Why standing a Wall on a tile would be refused, or `Refusal.NONE`. A pure projection about
+## a Wall that has not been built, so the hologram shows the reason before the click.
+func query_build_wall_refusal(player_id: int, tile: Vector3i) -> int:
+	return _build_wall_refusal(player_id, tile)
+
+
+## Why holding the Pneumatic Wrench on a tile would mend nothing, or `Refusal.NONE`. A pure
+## projection, so a HUD can say "out of reach" while the player is still walking over.
+func query_repair_refusal(player_id: int, tile: Vector3i) -> int:
+	return _repair_refusal(player_id, tile)
+
+
+## How far a player can reach to repair, in fixed-point metres, from `wrench.reach_metres`.
+func query_wrench_reach_metres() -> int:
+	return _definitions.wrench_reach_metres
 
 
 ## How many Belts are laid.
@@ -4223,6 +5123,11 @@ func _belt_covers(index: int, tile: Vector3i) -> bool:
 
 func _is_enemy(index: int) -> bool:
 	return index >= 0 and index < _enemy_serial.size()
+
+
+## Whether an index names a Wall standing in the Factory.
+func _is_wall(index: int) -> bool:
+	return index >= 0 and index < _wall_health.size()
 
 
 func _is_belt(index: int) -> bool:

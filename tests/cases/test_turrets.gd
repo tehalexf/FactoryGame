@@ -53,9 +53,9 @@ func _read(path: String) -> String:
 ## assertion is a test nobody runs. Every Turret number is the real file's; nothing about
 ## the Turret is special-cased for the test. Power is left out of it (nothing draws) so a
 ## brownout cannot be mistaken for an empty magazine.
-const AMMO_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
-ammo_source_mk1,Ammunition Seam,miner,2,2,0,0,400,1,0,0,dig_ammunition,
-mg_turret_mk1,MG Turret Mk1,turret,2,2,0,0,350,0,8,15,fire_mg,
+const AMMO_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
+ammo_source_mk1,Ammunition Seam,miner,2,2,0,0,400,1,0,0,0,dig_ammunition,
+mg_turret_mk1,MG Turret Mk1,turret,2,2,0,0,350,0,8,15,0,fire_mg,
 """
 
 const AMMO_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -506,7 +506,7 @@ func test_an_undefended_nest_loses_the_wave_the_same_factory_holds() -> void:
 func _cannon_content() -> Definitions:
 	var machines: String = (
 		_read("res://content/machines.csv")
-		+ "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,160,0,500,0,14,80,fire_cannon,iron_plate:30\n"
+		+ "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,160,0,500,0,14,80,0,fire_cannon,iron_plate:30\n"
 	)
 	var recipes: String = (
 		_read("res://content/recipes.csv") + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n"
@@ -541,7 +541,7 @@ func test_a_cannon_turret_fires_further_and_harder_with_no_code_that_knows_about
 	var tuning: String = _read("res://content/tuning.toml")
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
 	var content: Definitions = Definitions.parse(
-		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,0,0,500,0,14,80,fire_cannon,\n",
+		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,0,0,500,0,14,80,0,fire_cannon,\n",
 		AMMO_RECIPES + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n",
 		tuning,
 		ONE_CRAWLER,

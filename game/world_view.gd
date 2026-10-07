@@ -39,6 +39,19 @@ const NODE_HEIGHT_METRES: float = 0.4
 ## Items riding it are what the eye follows.
 const BELT_HEIGHT_METRES: float = 0.3
 
+## How tall a Wall stands, in metres. Above a player's 1.8 m eye height, so a line of them
+## reads as something you cannot see over and therefore as something that shapes a route.
+const WALL_HEIGHT_METRES: float = 2.4
+
+## How much of a tile a Wall fills. A shade under the full 2 m so neighbouring Walls read as
+## separate blocks rather than as one extruded slab.
+const WALL_WIDTH_FRACTION: float = 0.92
+
+## A Wall at full health, and one chewed to nothing. The fill between them is how far gone it
+## is, because a Wall's health is the one thing a player needs to read off it at a distance.
+const WALL_WHOLE: Color = Color(0.30, 0.31, 0.32)
+const WALL_RUINED: Color = Color(0.52, 0.22, 0.17)
+
 ## How high the deck of a generated tile of Belt is, in metres, which is where an Item
 ## rides. Declared by the `belt_straight` ports in `content/machine_ports.csv`, which the
 ## asset suite holds the mesh to; this is presentation only — where an Item *is* is the
@@ -143,6 +156,12 @@ var _node_meshes: Array[MeshInstance3D] = []
 ## A Belt run reaches hundreds of tiles and a tile of trestle is a dozen surfaces, so this
 ## is one MultiMesh for every Belt on the Map rather than a node each — the same decision
 ## the Items riding on top of it are drawn with, for the same reason.
+var _wall_meshes: MultiMeshInstance3D = null
+
+## The instance transforms handed to the Wall MultiMesh, in the same flat twelve-floats
+## layout the Belt buffer uses.
+var _wall_transforms: PackedFloat32Array = PackedFloat32Array()
+
 var _belt_meshes: MultiMeshInstance3D = null
 
 ## The instance transforms handed to the Belt MultiMesh, in the flat twelve-floats layout
@@ -264,6 +283,7 @@ func sync(sim: Simulation) -> void:
 	_sync_turret_gauges(sim)
 	_sync_enemies(sim)
 	_sync_belts(sim)
+	_sync_walls(sim)
 	_sync_items(sim)
 	_sync_hologram(sim)
 	_sync_hud(sim)
@@ -273,6 +293,19 @@ func sync(sim: Simulation) -> void:
 ## How many placeholders are on screen — Nodes plus Machines.
 func placeholder_count() -> int:
 	return _node_meshes.size() + _machine_meshes.size()
+
+
+## How many Walls are on screen. Instances of one mesh, so this is a count of transforms:
+## there is one node for every Wall on the Map, for the reason there is one for every Belt
+## tile. A ring of Walls around a Breach is forty of them and a late-game maze is hundreds.
+func wall_instance_count() -> int:
+	@warning_ignore("integer_division")
+	return _wall_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where a Wall instance is standing, in metres. For the smoke test.
+func wall_instance_position(instance: int) -> Vector3:
+	return _instance_position(_wall_transforms, instance)
 
 
 ## How many tiles of Belt are on screen. Instances of one mesh, so this is a count of
@@ -982,6 +1015,67 @@ func _sync_belts(sim: Simulation) -> void:
 		_belt_meshes.multimesh.buffer = _belt_transforms
 
 
+## Every Wall on the Map, as one block a tile.
+##
+## **One MultiMesh and never a node each**, the decision a Belt tile already made and for the
+## same arithmetic: a Wall is the cheapest thing in the game to build, so a player who has
+## decided where a Wave walks has built hundreds of them, and a node apiece would put the
+## count a Factory's own Machines were spared straight back on the scene tree.
+##
+## Drawn at full size whatever its health. A Wall is either standing or it is gone — there is
+## no rubble (see `Simulation._destroy_machine`) — so shrinking a damaged one would say
+## something false about what an Enemy has to chew through. The damage shows in the colour
+## instead, which is readable from the thirty metres a player triages a Wave from.
+func _sync_walls(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _wall_meshes == null:
+		_wall_meshes = MultiMeshInstance3D.new()
+		var instanced: MultiMesh = MultiMesh.new()
+		instanced.transform_format = MultiMesh.TRANSFORM_3D
+		# Per-instance colour, because the whole point of drawing Walls is reading which one
+		# is being chewed. A MultiMesh carries that without a node or a material each.
+		instanced.use_colors = true
+		var block: BoxMesh = BoxMesh.new()
+		block.size = Vector3(
+			tile_size * WALL_WIDTH_FRACTION, WALL_HEIGHT_METRES, tile_size * WALL_WIDTH_FRACTION
+		)
+		instanced.mesh = block
+		var skin: StandardMaterial3D = StandardMaterial3D.new()
+		skin.vertex_color_use_as_albedo = true
+		skin.roughness = 0.85
+		_wall_meshes.material_override = skin
+		_wall_meshes.multimesh = instanced
+		add_child(_wall_meshes)
+
+	var walls: int = sim.query_wall_count()
+	_wall_transforms.resize(walls * FLOATS_PER_INSTANCE)
+	_wall_meshes.multimesh.instance_count = walls
+
+	var whole: int = maxi(sim.query_wall_max_health(), 1)
+	for index: int in range(walls):
+		var tile: Vector3i = sim.query_wall_tile(index)
+		var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+		# Modelled about its own centre, so it is lifted onto its feet like the Belt slab.
+		_write_instance(
+			_wall_transforms,
+			index,
+			Vector3(
+				Fixed.to_float(centre.x),
+				Fixed.to_float(sim.query_layer_height_metres(tile.y)) + WALL_HEIGHT_METRES * 0.5,
+				Fixed.to_float(centre.z)
+			),
+			0.0
+		)
+		_wall_meshes.multimesh.set_instance_color(
+			index,
+			WALL_RUINED.lerp(
+				WALL_WHOLE, clampf(float(sim.query_wall_health(index)) / float(whole), 0.0, 1.0)
+			)
+		)
+	if walls > 0:
+		_wall_meshes.multimesh.buffer = _wall_transforms
+
+
 ## Every Item on every Belt, at the position the Simulation says it is at.
 ##
 ## No interpolation, no smoothing, no remembered previous frame: the Simulation moves an
@@ -1122,6 +1216,13 @@ func _sync_hud(sim: Simulation) -> void:
 			state = "starved"
 		elif sim.query_machine_is_throttled(index):
 			state = "throttled"
+		# Damage outranks both, because it is the only one of the three that ends with the
+		# Machine gone. A starved Smelter is a logistics problem and a chewed one is a
+		# countdown, so a player triaging a Wave has to be able to tell them apart at a
+		# glance — and the fix is a different tool, not a different Belt.
+		var hurt: bool = sim.query_machine_health(index) < sim.query_machine_max_health(index)
+		if hurt:
+			state = "DAMAGED"
 		# A Turret is always named, however healthy it looks: "running" and out of
 		# Ammunition are the same word for a Turret, and a dry one costs the Run.
 		# A Miner running up a Breach is always named too, for exactly the reason a Turret is:
@@ -1129,6 +1230,7 @@ func _sync_hud(sim: Simulation) -> void:
 		# yet, and a consequence nobody watched themselves cause reads as bad luck.
 		if (
 			state == "running"
+			and not hurt
 			and not sim.query_machine_is_turret(index)
 			and not _is_digging_up_a_breach(sim, index)
 			and not is_hot.has(index)
@@ -1166,8 +1268,22 @@ func _sync_hud(sim: Simulation) -> void:
 			]
 		if sim.query_machine_is_turret(index):
 			var held: int = sim.query_turret_ammunition(index)
-			line += " — ammo %d/%d" % [held, sim.query_turret_ammunition_capacity(index)]
-			line += " — DRY" if held == 0 else " — %d shots" % sim.query_turret_shots_remaining(index)
+			var what: String = (
+				"plate" if sim.query_machine_is_repair_pylon(index) else "ammo"
+			)
+			line += " — %s %d/%d" % [what, held, sim.query_turret_ammunition_capacity(index)]
+			if sim.query_machine_is_repair_pylon(index):
+				line += " — DRY" if held == 0 else " — mending"
+			else:
+				line += (
+					" — DRY" if held == 0
+					else " — %d shots" % sim.query_turret_shots_remaining(index)
+				)
+		if hurt:
+			line += (
+				" — health %d/%d"
+				% [sim.query_machine_health(index), sim.query_machine_max_health(index)]
+			)
 		lines.append(line)
 
 	var unlisted: int = sim.query_machine_count() - healthy - listed
@@ -1184,6 +1300,15 @@ func _sync_hud(sim: Simulation) -> void:
 		lines.append(
 			"belts %d — %d stalled" % [sim.query_belt_count(), stalled]
 		)
+
+	# Walls, as one line and never one each: they are the most numerous thing a player builds
+	# and the only question worth a HUD line is how many are being chewed through.
+	var breached: int = 0
+	for index: int in range(sim.query_wall_count()):
+		if sim.query_wall_health(index) < sim.query_wall_max_health():
+			breached += 1
+	if sim.query_wall_count() > 0:
+		lines.append("walls %d — %d damaged" % [sim.query_wall_count(), breached])
 
 	_hud.text = "\n".join(lines)
 

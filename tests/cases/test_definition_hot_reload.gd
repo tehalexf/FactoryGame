@@ -44,8 +44,8 @@ const STEP_AT_SLOW: int = -274
 const STEP_AT_FAST: int = -410
 
 const MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
 """
 
 const RECIPES: String = """
@@ -98,6 +98,15 @@ crawler_health = 30
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
+breaker_health = 240
+breaker_speed_metres_per_second = 2
+breaker_damage = 60
+breaker_attack_interval_seconds = 1
+[wall]
+health = 240
+[wrench]
+repair_points_per_second = 60
+reach_metres = 4
 """
 
 

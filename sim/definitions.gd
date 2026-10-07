@@ -55,6 +55,7 @@ const MACHINE_COLUMNS: Array = [
 	"max_depth",
 	"range_tiles",
 	"damage",
+	"repair",
 	"recipe_id",
 	"build_cost",
 ]
@@ -87,6 +88,9 @@ const TUNING_SURVEY_PITCH_DEGREES: String = "survey.pitch_degrees"
 const TUNING_BELT_ITEMS_PER_SECOND: String = "belt.items_per_second"
 const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
 const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
+const TUNING_WALL_HEALTH: String = "wall.health"
+const TUNING_WRENCH_REPAIR_POINTS_PER_SECOND: String = "wrench.repair_points_per_second"
+const TUNING_WRENCH_REACH_METRES: String = "wrench.reach_metres"
 const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
 const TUNING_NEST_HEALTH: String = "nest.health"
 const TUNING_WAVE_TELEGRAPH_SECONDS: String = "wave.telegraph_seconds"
@@ -108,6 +112,12 @@ const TUNING_CRAWLER_SPEED: String = "enemy.crawler_speed_metres_per_second"
 const TUNING_CRAWLER_DAMAGE: String = "enemy.crawler_damage"
 const TUNING_CRAWLER_ATTACK_INTERVAL_SECONDS: String = (
 	"enemy.crawler_attack_interval_seconds"
+)
+const TUNING_BREAKER_HEALTH: String = "enemy.breaker_health"
+const TUNING_BREAKER_SPEED: String = "enemy.breaker_speed_metres_per_second"
+const TUNING_BREAKER_DAMAGE: String = "enemy.breaker_damage"
+const TUNING_BREAKER_ATTACK_INTERVAL_SECONDS: String = (
+	"enemy.breaker_attack_interval_seconds"
 )
 
 ## Every problem that makes this set unusable, each naming the file and the row.
@@ -217,6 +227,30 @@ var crawler_damage: int = 0
 
 ## How long between one Crawler's bites, in fixed-point seconds.
 var crawler_attack_interval_seconds: int = 0
+
+## A Breaker's hit points.
+var breaker_health: int = 0
+
+## How fast a Breaker moves, in fixed-point metres per second.
+var breaker_speed: int = 0
+
+## How much damage one Breaker bite does to whatever it is chewing, in whole hit points.
+var breaker_damage: int = 0
+
+## How long between one Breaker's bites, in fixed-point seconds.
+var breaker_attack_interval_seconds: int = 0
+
+## A Wall's hit points. A Wall is not a Machine (DESIGN.md), so this is tuning rather
+## than a row in `machines.csv`, exactly as a Belt's rating is.
+var wall_health: int = 0
+
+## How many hit points a held Pneumatic Wrench puts back per second, as a whole number.
+## Spent as an integer credit against the tick rate rather than as a fixed-point fraction
+## of a point per tick, so nothing drifts over a long Run.
+var wrench_repair_points_per_second: int = 0
+
+## How far a player may reach to repair, in fixed-point metres.
+var wrench_reach_metres: int = 0
 
 ## A Belt's rated throughput, in fixed-point Items per second. The Simulation turns
 ## this into a whole number of ticks per Item, which is what makes the rate exact.
@@ -499,6 +533,13 @@ func digest() -> int:
 	hasher.feed_int(crawler_speed)
 	hasher.feed_int(crawler_damage)
 	hasher.feed_int(crawler_attack_interval_seconds)
+	hasher.feed_int(breaker_health)
+	hasher.feed_int(breaker_speed)
+	hasher.feed_int(breaker_damage)
+	hasher.feed_int(breaker_attack_interval_seconds)
+	hasher.feed_int(wall_health)
+	hasher.feed_int(wrench_repair_points_per_second)
+	hasher.feed_int(wrench_reach_metres)
 
 	# Errors are part of the verdict, not of the content, but a set that failed to
 	# load must never share a digest with one that loaded empty.
@@ -646,6 +687,7 @@ func _read_machines(table: CsvTable) -> void:
 		definition.max_depth = table.require_int(row, "max_depth")
 		definition.range_tiles = table.require_int(row, "range_tiles")
 		definition.damage = table.require_int(row, "damage")
+		definition.repair = table.require_int(row, "repair")
 		definition.recipe_id = table.require_id(row, "recipe_id")
 		_read_build_cost(table, row, definition)
 
@@ -710,8 +752,28 @@ func _check_machine_values(
 			table.report_row(
 				row, "range_tiles: a Turret that reaches nowhere can never fire"
 			)
-		if definition.damage < 1:
-			table.report_row(row, "damage: a Turret that does no damage is not a Turret")
+		# A Turret's output is damage or it is repair, **exactly one of the two**. That is
+		# the one rule that makes a Repair Pylon a row rather than a fifth Role: it is a
+		# Turret in every other respect (GLOSSARY.md), so the only thing the table has to
+		# settle is which of the two columns its shot lands in. Neither filled in is a
+		# Turret that does nothing at all; both filled in is a Turret with two outputs,
+		# and `_fire` would have to pick one.
+		if definition.damage < 1 and definition.repair < 1:
+			table.report_row(
+				row,
+				(
+					"damage/repair: a Turret's output is damage or repair, so exactly one of"
+					+ " these must be set — a Turret that does neither is not a Turret"
+				)
+			)
+		if definition.damage >= 1 and definition.repair >= 1:
+			table.report_row(
+				row,
+				(
+					"damage/repair: a Turret's output is damage or repair, never both — a"
+					+ " Repair Pylon leaves damage at 0 and an MG Turret leaves repair at 0"
+				)
+			)
 	elif role != -1:
 		if definition.range_tiles != 0:
 			table.report_row(
@@ -719,6 +781,8 @@ func _check_machine_values(
 			)
 		if definition.damage != 0:
 			table.report_row(row, "damage: only a Turret deals damage, so this must be 0")
+		if definition.repair != 0:
+			table.report_row(row, "repair: only a Repair Pylon repairs, so this must be 0")
 
 	# A Machine either feeds the one Power grid or draws from it. Allowing both would
 	# make a generator's own throttle depend on its own output, and the grid stops being
@@ -935,6 +999,17 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	crawler_attack_interval_seconds = tuning.require_fixed(
 		TUNING_CRAWLER_ATTACK_INTERVAL_SECONDS
 	)
+	breaker_health = tuning.require_int(TUNING_BREAKER_HEALTH)
+	breaker_speed = tuning.require_fixed(TUNING_BREAKER_SPEED)
+	breaker_damage = tuning.require_int(TUNING_BREAKER_DAMAGE)
+	breaker_attack_interval_seconds = tuning.require_fixed(
+		TUNING_BREAKER_ATTACK_INTERVAL_SECONDS
+	)
+	wall_health = tuning.require_int(TUNING_WALL_HEALTH)
+	wrench_repair_points_per_second = tuning.require_int(
+		TUNING_WRENCH_REPAIR_POINTS_PER_SECOND
+	)
+	wrench_reach_metres = tuning.require_fixed(TUNING_WRENCH_REACH_METRES)
 
 	# A rate or a capacity of zero is not a slow Belt, it is a Belt that cannot work.
 	# Refused by name rather than accepted and puzzled over later.
@@ -1100,6 +1175,36 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				TUNING_CRAWLER_ATTACK_INTERVAL_SECONDS,
 				"a bite that takes no time does unbounded damage"
 			)
+		if breaker_health <= 0:
+			_report_tuning(tuning, TUNING_BREAKER_HEALTH, "an Enemy has to be able to take a hit")
+		if breaker_speed <= 0:
+			_report_tuning(
+				tuning, TUNING_BREAKER_SPEED, "a Breaker that cannot move never reaches a Machine"
+			)
+		if breaker_damage <= 0:
+			_report_tuning(tuning, TUNING_BREAKER_DAMAGE, "an Enemy that does no damage is scenery")
+		if breaker_attack_interval_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_BREAKER_ATTACK_INTERVAL_SECONDS,
+				"a bite that takes no time does unbounded damage"
+			)
+		if wall_health <= 0:
+			_report_tuning(
+				tuning, TUNING_WALL_HEALTH, "a Wall that starts destroyed cannot be built"
+			)
+		if wrench_repair_points_per_second <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_WRENCH_REPAIR_POINTS_PER_SECOND,
+				"a wrench that mends nothing is not a repair tool"
+			)
+		if wrench_reach_metres <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_WRENCH_REACH_METRES,
+				"a wrench a player cannot reach anything with mends nothing"
+			)
 
 	# Checked after every read, so this names exactly the keys nothing asked for.
 	for key: String in tuning.unread_keys():
@@ -1182,6 +1287,13 @@ func _discard_content() -> void:
 	crawler_speed = 0
 	crawler_damage = 0
 	crawler_attack_interval_seconds = 0
+	breaker_health = 0
+	breaker_speed = 0
+	breaker_damage = 0
+	breaker_attack_interval_seconds = 0
+	wall_health = 0
+	wrench_repair_points_per_second = 0
+	wrench_reach_metres = 0
 
 
 static func _read_file(path: String) -> String:

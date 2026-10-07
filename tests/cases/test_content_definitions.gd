@@ -22,9 +22,9 @@ const RECIPES: String = "res://content/recipes.csv"
 const TUNING: String = "res://content/tuning.toml"
 
 const GOOD_MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,smelt_iron_plate,
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
 """
 
 const GOOD_RECIPES: String = """
@@ -77,6 +77,15 @@ crawler_health = 30
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
+breaker_health = 240
+breaker_speed_metres_per_second = 2
+breaker_damage = 60
+breaker_attack_interval_seconds = 1
+[wall]
+health = 240
+[wrench]
+repair_points_per_second = 60
+reach_metres = 4
 """
 
 const GOOD_TUNING: String = """
@@ -436,7 +445,7 @@ func test_a_nest_that_hides_nothing_is_a_legal_balance_decision() -> void:
 # ── Malformed definitions name the file and the row ───────────────────────────
 
 func test_a_duplicate_machine_id_names_the_row() -> void:
-	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,120,0,400,1,0,0,mine_iron_ore,\n"
+	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,\n"
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.has_errors())
 	var text: String = definitions.describe_errors()
@@ -547,8 +556,8 @@ func test_a_broken_table_yields_no_definitions_at_all() -> void:
 func test_every_error_in_a_row_is_reported_not_just_the_first() -> void:
 	# So that fixing a definition file is one pass, not a guessing game.
 	var machines: String = GOOD_MACHINES.replace(
-		"miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,",
-		"miner_mk1,Miner Mk1,digger,2,2,lots,0,400,1,0,0,mine_irn_ore,"
+		"miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,",
+		"miner_mk1,Miner Mk1,digger,2,2,lots,0,400,1,0,0,0,mine_irn_ore,"
 	)
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.errors.size() >= 3, definitions.describe_errors())
@@ -563,9 +572,9 @@ func test_the_same_files_produce_the_same_digest() -> void:
 func test_the_digest_does_not_depend_on_the_order_of_the_rows() -> void:
 	# The property the Simulation's starting hash rests on.
 	var reordered_machines: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,smelt_iron_plate,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,
 """
 	var reordered_recipes: String = """
 id,display_name,inputs,outputs,seconds
@@ -621,7 +630,7 @@ func test_a_machine_and_recipe_added_only_in_the_files_appear_in_the_definitions
 	# The acceptance criterion, asserted the only way it can be: content this
 	# repository has never heard of, named nowhere but in the text below.
 	var machines: String = (
-		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,90,0,350,0,0,0,press_iron_gear,iron_plate:5\n"
+		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,90,0,350,0,0,0,0,press_iron_gear,iron_plate:5\n"
 	)
 	var recipes: String = (
 		GOOD_RECIPES + "press_iron_gear,Press Iron Gear,iron_plate:3,iron_gear:1,0.75\n"
@@ -639,3 +648,91 @@ func test_a_machine_and_recipe_added_only_in_the_files_appear_in_the_definitions
 	assert_eq(recipe.duration_seconds, 49152, "0.75 * 65536")
 	assert_eq(definitions.item_id(recipe.output_item(0)), "iron_gear")
 	assert_eq(definitions.item_ids(), PackedStringArray(["iron_gear", "iron_ore", "iron_plate"]))
+
+
+# ── A Turret's output is damage or repair, never both and never neither ───────
+# The rule that makes a Repair Pylon a row rather than a fifth Role (GLOSSARY.md calls it a
+# Turret-class Machine). Checked here rather than through the façade because an error message
+# naming a file and a row is not something `step`, `hash` or a query can report.
+
+const PYLON_ROW: String = (
+	"repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,mend_machinery,\n"
+)
+
+const MEND_ROW: String = "mend_machinery,Mend Machinery,iron_plate:1,,1\n"
+
+
+func test_a_repair_pylon_is_a_turret_row_with_repair_instead_of_damage() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES + PYLON_ROW, GOOD_RECIPES + MEND_ROW, GOOD_TUNING
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	var pylon: MachineDefinition = definitions.machine("repair_pylon_mk1")
+	if not assert_not_null(pylon, "three rows and nothing else"):
+		return
+	assert_true(pylon.is_turret(), "it is a Turret in every respect but its output")
+	assert_true(pylon.heals())
+	assert_eq(pylon.repair, 40)
+	assert_eq(pylon.damage, 0)
+	assert_true(
+		pylon.produces_no_items(),
+		"repair is not an Item either, so its Recipe has no outputs — the same predicate a"
+		+ " generator and an MG Turret answer to"
+	)
+
+
+func test_a_turret_that_neither_damages_nor_repairs_is_refused() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES + PYLON_ROW.replace(",6,0,40,", ",6,0,0,"),
+		GOOD_RECIPES + MEND_ROW,
+		GOOD_TUNING
+	)
+	assert_true(definitions.has_errors(), "a Turret with no output at all does nothing")
+	assert_true(
+		definitions.describe_errors().contains("damage/repair"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_turret_that_both_damages_and_repairs_is_refused() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES + PYLON_ROW.replace(",6,0,40,", ",6,15,40,"),
+		GOOD_RECIPES + MEND_ROW,
+		GOOD_TUNING
+	)
+	assert_true(definitions.has_errors(), "one shot cannot both hurt and mend")
+	assert_true(
+		definitions.describe_errors().contains("never both"), definitions.describe_errors()
+	)
+
+
+func test_only_a_turret_may_carry_a_repair_value() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES.replace(
+			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,",
+			"smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,40,"
+		),
+		GOOD_RECIPES,
+		GOOD_TUNING
+	)
+	assert_true(definitions.has_errors(), "a number sitting in a column nothing reads lies")
+	assert_true(
+		definitions.describe_errors().contains("only a Repair Pylon repairs"),
+		definitions.describe_errors()
+	)
+
+
+func test_the_wave_table_knows_the_breaker_by_name() -> void:
+	# Adding an Enemy to the Waves is a row, and `sim/enemy_kind.gd` is the one place a name
+	# and its integer meet.
+	assert_eq(EnemyKind.index_of("breaker"), EnemyKind.BREAKER)
+	assert_eq(EnemyKind.name_of(EnemyKind.BREAKER), "breaker")
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "shock_breakers,breaker,0,2,0,2\n"
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_eq(definitions.wave_entry_at(0).enemy_kind, EnemyKind.BREAKER)
