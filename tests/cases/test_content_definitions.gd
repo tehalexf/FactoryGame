@@ -22,9 +22,9 @@ const RECIPES: String = "res://content/recipes.csv"
 const TUNING: String = "res://content/tuning.toml"
 
 const GOOD_MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,smelt_iron_plate,
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,smelt_iron_plate,
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,
 """
 
 const GOOD_RECIPES: String = """
@@ -430,7 +430,7 @@ func test_a_nest_that_hides_nothing_is_a_legal_balance_decision() -> void:
 # ── Malformed definitions name the file and the row ───────────────────────────
 
 func test_a_duplicate_machine_id_names_the_row() -> void:
-	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,120,0,400,1,mine_iron_ore,\n"
+	var machines: String = GOOD_MACHINES + "miner_mk1,Miner Again,miner,2,2,120,0,400,1,0,0,mine_iron_ore,\n"
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.has_errors())
 	var text: String = definitions.describe_errors()
@@ -541,8 +541,8 @@ func test_a_broken_table_yields_no_definitions_at_all() -> void:
 func test_every_error_in_a_row_is_reported_not_just_the_first() -> void:
 	# So that fixing a definition file is one pass, not a guessing game.
 	var machines: String = GOOD_MACHINES.replace(
-		"miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,",
-		"miner_mk1,Miner Mk1,digger,2,2,lots,0,400,1,mine_irn_ore,"
+		"miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,",
+		"miner_mk1,Miner Mk1,digger,2,2,lots,0,400,1,0,0,mine_irn_ore,"
 	)
 	var definitions: Definitions = _parse(machines, GOOD_RECIPES, GOOD_TUNING)
 	assert_true(definitions.errors.size() >= 3, definitions.describe_errors())
@@ -557,9 +557,9 @@ func test_the_same_files_produce_the_same_digest() -> void:
 func test_the_digest_does_not_depend_on_the_order_of_the_rows() -> void:
 	# The property the Simulation's starting hash rests on.
 	var reordered_machines: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,smelt_iron_plate,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,smelt_iron_plate,
 """
 	var reordered_recipes: String = """
 id,display_name,inputs,outputs,seconds
@@ -615,7 +615,7 @@ func test_a_machine_and_recipe_added_only_in_the_files_appear_in_the_definitions
 	# The acceptance criterion, asserted the only way it can be: content this
 	# repository has never heard of, named nowhere but in the text below.
 	var machines: String = (
-		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,90,0,350,0,press_iron_gear,iron_plate:5\n"
+		GOOD_MACHINES + "press_mk1,Press Mk1,crafter,2,3,90,0,350,0,0,0,press_iron_gear,iron_plate:5\n"
 	)
 	var recipes: String = (
 		GOOD_RECIPES + "press_iron_gear,Press Iron Gear,iron_plate:3,iron_gear:1,0.75\n"

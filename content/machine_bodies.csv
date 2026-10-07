@@ -19,11 +19,11 @@
 # A blank footprint for a Machine that machines.csv does not declare is an
 # error, so a row can never resolve to no footprint at all.
 #
-# miner_mk1, smelter_mk1 and steam_boiler_mk1 are already there: machines.csv
-# declares them, so their footprints are blank here and there is exactly one
-# authority. The rest follow as their Recipes arrive.
+# miner_mk1, coal_miner_mk1, smelter_mk1, steam_boiler_mk1 and ammo_press_mk1 are
+# all declared by machines.csv, so their footprints are blank here and there is
+# exactly one authority for each. The rest follow as their Recipes arrive.
 #
-# Known gap: machines.csv also declares coal_miner_mk1, which has no body here and
+# Known gap: machines.csv also declares mg_turret_mk1, which has no body here and
 # so no generated mesh yet. The Simulation and the placeholder renderer are happy
 # without one; the art pass is what closes it.
 #
@@ -41,13 +41,14 @@
 #                 For a Belt it is the deck height, which must equal the Belt
 #                 port height in machine_ports.csv.
 machine_id,body,footprint_x,footprint_z,body_height_mm
-miner_mk1,miner,,,2100
-smelter_mk1,smelter,,,3300
+miner_mk1,miner,,,1800
+coal_miner_mk1,coal_miner,,,2000
+smelter_mk1,smelter,,,1500
 press_mk1,press,2,3,2400
-assembler_mk1,assembler,3,3,2600
+assembler_mk1,assembler,3,3,2200
 steam_boiler_mk1,boiler,,,2200
-generator_mk1,generator,2,2,2400
-ammo_press_mk1,ammo_press,2,3,2400
-silo_mk1,silo,4,4,3000
-nest,nest,4,4,2800
+generator_mk1,generator,2,2,2200
+ammo_press_mk1,ammo_press,,,2000
+silo_mk1,silo,4,4,2200
+nest,nest,4,4,4200
 belt_straight,belt,1,1,900

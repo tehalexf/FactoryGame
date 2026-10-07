@@ -125,9 +125,10 @@ baseline_supply_kw = 300
 # mistake a player can survive.
 #
 # 6000 against a Crawler's 10 damage a second means six Crawlers chewing unopposed
-# take a hundred seconds. With no Turret built, Waves accumulate and the Nest falls
-# somewhere around the third one — which is the intended outcome until defence
-# exists, not a balance oversight.
+# take a hundred seconds. Measured: with no Turret built, the first Wave alone finishes
+# the Nest about 200 seconds into a Run — it arrives at 90 s, walks the 19 tiles from
+# the Breach in 12 s, and chews from there. One fed MG Turret turns that into a Run
+# that is still going twenty minutes later, which is the whole of this game's thesis.
 health = 6000
 
 [wave]
@@ -223,9 +224,10 @@ per_second_sooner = 20
 
 # The Crawler: Chaff, the weakest Enemy, which swarms toward the Nest (GLOSSARY.md).
 
-# A Crawler's hit points. One hit from anything, by design — Chaff is the *sense* of
-# threat rather than the threat (DESIGN.md), and nothing shoots back until a Turret
-# exists.
+# A Crawler's hit points. Low by design — Chaff is the *sense* of threat rather than
+# the threat (DESIGN.md), and what kills a Crawler is a two-round burst from an MG
+# Turret (damage 15 in machines.csv) or a single Cannon shell. The number that decides
+# whether a Wave gets through is therefore the Ammunition behind the Turret, not this.
 crawler_health = 30
 
 # How fast a Crawler moves, in metres per second. Faster than a walking player at

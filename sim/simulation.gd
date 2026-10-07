@@ -520,6 +520,34 @@ var _power_credit_kw_ticks: int = 0
 ## answer for the whole Factory, because there is one grid.
 var _power_tick_granted: bool = true
 
+## Which Enemy each Turret is shooting at, **as a serial**, and -1 for one that is not
+## shooting at anything. Indexed by Machine, like every other per-Machine array, and 0 for
+## a Machine that is not a Turret — there is no second array and no Turret table, because a
+## Turret is a Machine (GLOSSARY.md) and giving it its own index space is how a Turret stops
+## being one.
+##
+## **A serial rather than an index, and this is the single most likely determinism bug in
+## the whole feature.** Enemy indices shift the moment an Enemy dies: `_remove_enemy` closes
+## the gap, so index 4 is a different Crawler after index 2 is killed. A Turret holding an
+## index would silently switch targets on another Turret's kill, and two clients whose kills
+## landed in a different order — which they may, because a kill is a tick of arithmetic and
+## not a message — would diverge. A serial is issued once and never reused, so it either
+## names the Crawler it was aimed at or names nothing.
+##
+## Acquisition walks the Enemies in index order, which is ascending serial by construction,
+## and keeps the strictly nearest — so a tie between two equidistant Crawlers goes to the
+## earlier spawn on every client, rather than to whichever the iteration happened to reach
+## first.
+var _turret_target_serial: PackedInt64Array = PackedInt64Array()
+
+## The tick each Turret last fired on, and -1 for one that never has.
+##
+## State rather than derived, because it is not recoverable from anything else: a shot takes
+## no time and leaves nothing behind but a dead Crawler, and whether a Turret just fired is
+## what a muzzle flash and a tracer are drawn from. It is also how a test asserts "it did
+## not fire" without having to infer that from an Enemy that would have survived anyway.
+var _turret_last_shot_tick: PackedInt64Array = PackedInt64Array()
+
 ## What each Machine is holding *for* its Recipe, as the same sorted id/count pair as
 ## the output buffer. A Belt fills this; crafting empties it. Its capacity is what
 ## back-pressure pushes against: when it is full the Belt feeding it cannot hand over,
@@ -636,6 +664,7 @@ func step(actions: Array) -> void:
 	_walk()
 	_survey()
 	_transport()
+	_aim()
 	_power()
 	_extract()
 	_craft()
@@ -1240,6 +1269,12 @@ func _machine_would_work(index: int, definition: MachineDefinition) -> bool:
 		return false
 	if _definitions.recipe_at(definition.recipe_index) == null:
 		return false
+	# A Turret with nothing in reach does not work, which means it does not draw Power, does
+	# not advance its Recipe and does not spend a round. A Turret is therefore idle between
+	# Waves for the same reason a Smelter with an empty Belt is: there is nothing for it to
+	# do. Deliberately *not* starvation — it has its Ammunition, it has no target.
+	if definition.is_turret() and _turret_target_index(index, definition) == -1:
+		return false
 	return _machine_has_its_inputs(index, definition)
 
 
@@ -1345,6 +1380,12 @@ func _craft() -> void:
 			_consume_inputs(index, recipe)
 			_deposit_outputs(index, recipe)
 			_note_a_craft(index, definition)
+			# A Turret's Recipe has no outputs to deposit, so this is the whole of what a
+			# completed craft does for one: the shot is the output. The round was consumed
+			# the line above, which is what makes a Turret that fired a Turret with one
+			# fewer round and a Turret that did not fire a Turret still holding it.
+			if definition.is_turret():
+				_fire(index, definition)
 			if not _holds_a_whole_recipe(index, recipe):
 				break
 
@@ -1453,6 +1494,207 @@ func _take_from_output(index: int, item_id: String, quantity: int) -> void:
 		counts.remove_at(slot)
 	_machine_buffer_items[index] = items
 	_machine_buffer_counts[index] = counts
+
+
+# ── Turrets: aiming, and firing ───────────────────────────────────────────────
+# The keystone loop, and deliberately the smallest amount of code that could implement it.
+# There is no combat subsystem here: a Turret is a Machine whose Recipe consumes Ammunition
+# and produces no Item, `_craft` advances it exactly as it advances a Smelter, and the only
+# thing this section adds is *what happens instead of depositing an output* — a shot.
+#
+# Which is why a Cannon Turret is a row in `content/machines.csv` and nothing else. Its
+# reach, its hit and its round are `range_tiles`, `damage` and its Recipe; none of the three
+# is named anywhere in this file.
+
+## Points every Turret at something, once a tick, before the grid is read.
+##
+## Before the grid on purpose: a Turret with nothing to shoot at would not work this tick, so
+## it must not be on the Power grid this tick either — the same rule that keeps a starved
+## Smelter off it. `_machine_would_work` asks this section the question and `_read_the_grid`
+## asks `_machine_would_work`, so what the grid charges for, what advances, and what fires
+## are one answer and not three.
+##
+## A Turret that already holds a live target in reach keeps it. That is what makes a Turret
+## finish what it started rather than re-deciding every tick and drifting between two
+## Crawlers a metre apart, and it is why the target is held as a serial: the index it sits at
+## changes under it every time anything dies.
+func _aim() -> void:
+	for index: int in range(query_machine_count()):
+		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+		if definition == null or not definition.is_turret():
+			continue
+		if _turret_target_index(index, definition) != -1:
+			continue
+		_turret_target_serial[index] = _acquire_target(index, definition)
+
+
+## The Enemy a Turret is currently shooting at, as an *index*, or -1 when it is shooting at
+## nothing: it holds no serial, the Enemy that serial named is dead, or that Enemy has walked
+## out of reach.
+##
+## A pure read, which it has to be: `_machine_would_work` consults it and
+## `query_machine_is_throttled` consults that, and a query that re-aimed a Turret would move
+## the state hash by being asked a question.
+##
+## A Run that has ended points every Turret at nothing, for the reason Waves and Enemies
+## stop: the game is over, and a Factory still firing into a frozen swarm would keep drawing
+## Power and burning Ammunition after the fact.
+func _turret_target_index(index: int, definition: MachineDefinition) -> int:
+	if query_run_is_over():
+		return -1
+	var serial: int = _turret_target_serial[index]
+	if serial < 0:
+		return -1
+	var found: int = _enemy_of_serial(serial)
+	if found == -1 or _enemy_health[found] <= 0:
+		return -1
+	if not _within_reach(index, definition, found):
+		return -1
+	return found
+
+
+## The serial of the nearest Enemy within a Turret's reach, or -1 when there is none.
+##
+## Walked in Enemy index order, which is ascending spawn serial by construction, and kept on
+## a **strict** improvement — so two Crawlers exactly as far away hand the shot to the one
+## that spawned first, on every client, rather than to whichever the loop reached first under
+## some other ordering. That is the whole of what makes target selection replay identically.
+func _acquire_target(index: int, definition: MachineDefinition) -> int:
+	var centre: FixedVec2 = _machine_centre_metres(index)
+	var within: int = _squared_reach(definition)
+	var best: int = -1
+	var best_gap: int = 0
+	for enemy: int in range(query_enemy_count()):
+		if _enemy_health[enemy] <= 0:
+			continue
+		var gap: int = _squared_gap(centre, enemy)
+		if gap > within:
+			continue
+		if best == -1 or gap < best_gap:
+			best = enemy
+			best_gap = gap
+	if best == -1:
+		return -1
+	return _enemy_serial[best]
+
+
+## Whether an Enemy is inside a Turret's reach.
+func _within_reach(index: int, definition: MachineDefinition, enemy: int) -> bool:
+	return _squared_gap(_machine_centre_metres(index), enemy) <= _squared_reach(definition)
+
+
+## A Turret's reach *squared*, in squared fixed-point metres.
+##
+## Squared, and compared against a squared distance, because the alternative is a square
+## root — and `Fixed.sqrt` floors, which would make a Crawler exactly on the boundary
+## in reach or out of it depending on a rounding rule. Multiplying both sides instead is
+## exact integer arithmetic with no rounding anywhere, which is what a range check inside a
+## lockstep Simulation has to be. The products stay far inside 64 bits: the Map is 129 tiles
+## across, so the largest distance squared is about 1.4e14 against a 9.2e18 ceiling.
+func _squared_reach(definition: MachineDefinition) -> int:
+	var reach: int = Fixed.from_int(definition.range_tiles * WorldGrid.TILE_SIZE_METRES)
+	return reach * reach
+
+
+## How far an Enemy is from a point, squared, in the same squared fixed-point metres
+## `_squared_reach` returns. Deliberately not passed through `Fixed.mul`, which would shift
+## the scale back down and floor on the way: nothing compares this against a plain distance,
+## so the larger scale costs nothing and keeps the comparison exact.
+func _squared_gap(from: FixedVec2, enemy: int) -> int:
+	var gap_x: int = _enemy_x[enemy] - from.x
+	var gap_z: int = _enemy_z[enemy] - from.z
+	return gap_x * gap_x + gap_z * gap_z
+
+
+## The middle of a Machine's footprint, in fixed-point metres on the horizontal plane.
+##
+## A Turret measures its reach from here rather than from its anchor tile, so turning a 2x3
+## Turret a quarter does not move the circle it covers. Exact: a tile centre is a whole
+## number of metres, so the average of two of them lands on a half-metre at worst and fixed
+## point holds that precisely.
+func _machine_centre_metres(index: int) -> FixedVec2:
+	var size: Vector2i = _machine_size(index)
+	var anchor: Vector3i = query_machine_tile(index)
+	var near: FixedVec2 = WorldGrid.tile_centre_metres(anchor)
+	var far: FixedVec2 = WorldGrid.tile_centre_metres(
+		Vector3i(anchor.x + maxi(size.x - 1, 0), anchor.y, anchor.z + maxi(size.y - 1, 0))
+	)
+	var two: int = Fixed.from_int(2)
+	return FixedVec2.new(Fixed.div(near.x + far.x, two), Fixed.div(near.z + far.z, two))
+
+
+## The Enemy carrying a serial, or -1 when it is dead or never existed.
+##
+## A binary search rather than a scan, and it is exact rather than approximately right:
+## `_enemy_serial` is strictly ascending with index by construction (spawns append, removals
+## preserve order), which is the same invariant every loop over Enemies depends on.
+func _enemy_of_serial(serial: int) -> int:
+	var at: int = _enemy_serial.bsearch(serial)
+	if at < 0 or at >= _enemy_serial.size() or _enemy_serial[at] != serial:
+		return -1
+	return at
+
+
+## One shot: what a Turret does instead of depositing an output.
+##
+## Called from `_craft` on the tick a craft completes, after its Ammunition has been consumed
+## — so a Turret that fired has spent a round, and a Turret that did not has not. The Recipe
+## decides the rate and the rounds per shot; `machines.csv` decides the hit.
+##
+## An Enemy reduced to nothing is removed here and now rather than at the end of the tick.
+## That is what stops a second Turret later in the same loop from spending a round on a
+## corpse: the serial it is holding no longer resolves, so `_machine_would_work` reports it
+## idle and it keeps its Ammunition for the next tick.
+func _fire(index: int, definition: MachineDefinition) -> void:
+	var target: int = _turret_target_index(index, definition)
+	if target == -1:
+		return
+	_turret_last_shot_tick[index] = _tick
+	_enemy_health[target] = maxi(_enemy_health[target] - definition.damage, 0)
+	if _enemy_health[target] == 0:
+		_remove_enemy(target)
+
+
+## Takes an Enemy off the Map, preserving the order of the survivors — which is the invariant
+## that keeps Enemy index order equal to ascending spawn serial, and therefore keeps every
+## loop over Enemies the same on every client.
+func _remove_enemy(index: int) -> void:
+	var serial: int = _enemy_serial[index]
+	_enemy_serial.remove_at(index)
+	_enemy_kind.remove_at(index)
+	_enemy_x.remove_at(index)
+	_enemy_z.remove_at(index)
+	_enemy_health.remove_at(index)
+	_enemy_spawn_tick.remove_at(index)
+	_enemy_attack_cooldown.remove_at(index)
+	_forget_target(serial)
+
+
+## Clears a dead Enemy's serial off every Turret holding it, so that
+## `query_turret_target_serial` either names something alive or names nothing. A stale serial
+## would be just as deterministic — it resolves to -1 and the Turret re-aims next tick — but
+## it would make the state hash carry the ghost of a Crawler, and a saved Run would restore
+## one.
+func _forget_target(serial: int) -> void:
+	for index: int in range(query_machine_count()):
+		if _turret_target_serial[index] == serial:
+			_turret_target_serial[index] = -1
+
+
+## How many Items a Turret is holding for its Recipe: its magazine, in rounds.
+func _turret_ammunition(index: int) -> int:
+	if not _is_turret(index):
+		return 0
+	return query_machine_input_total(index)
+
+
+## Whether a Machine is a Turret. False for an unknown index and for one whose definition a
+## hot-reload took away.
+func _is_turret(index: int) -> bool:
+	if not _is_machine(index):
+		return false
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	return definition != null and definition.is_turret()
 
 
 # ── Machine input ports ───────────────────────────────────────────────────────
@@ -1599,6 +1841,11 @@ func _apply_build_machine(action: InputAction) -> void:
 	_machine_buffer_counts.append(PackedInt64Array())
 	_machine_input_items.append(PackedStringArray())
 	_machine_input_counts.append(PackedInt64Array())
+	# Every Machine gets an entry, Turret or not, so the per-Machine arrays stay parallel and
+	# an index means the same thing in all of them. -1 is "shooting at nothing", which is also
+	# what a Smelter is doing.
+	_turret_target_serial.append(-1)
+	_turret_last_shot_tick.append(-1)
 	# A new footprint is a new obstruction, so the Enemies' shared field no longer
 	# describes the Map. Rebuilt on the next tick that has an Enemy to move, never here:
 	# a player laying out a Factory places a Machine a second and the field is O(map).
@@ -1751,6 +1998,8 @@ func _remove_machine(index: int) -> void:
 	_machine_buffer_counts.remove_at(index)
 	_machine_input_items.remove_at(index)
 	_machine_input_counts.remove_at(index)
+	_turret_target_serial.remove_at(index)
+	_turret_last_shot_tick.remove_at(index)
 	_flowfield_stale = true
 
 
@@ -2562,6 +2811,11 @@ func hash() -> int:
 	hasher.feed_ints(_machine_built_tick)
 	hasher.feed_ints(_machine_heat_units)
 	hasher.feed_ints(_machine_progress_ticks)
+	# What every Turret is shooting at, and when it last fired. The serial rather than an
+	# index, which is the whole point of holding one: a hash over indices would agree between
+	# two clients that are aimed at different Crawlers.
+	hasher.feed_ints(_turret_target_serial)
+	hasher.feed_ints(_turret_last_shot_tick)
 	for index: int in range(query_machine_count()):
 		hasher.feed_text(_machine_id[index])
 		var items: PackedStringArray = _machine_buffer_items[index]
@@ -2995,6 +3249,91 @@ func query_node_under_machine(index: int) -> int:
 	return _node_under_machine(index, definition)
 
 
+# ── Turrets ───────────────────────────────────────────────────────────────────
+# A Turret is read through the Machine queries like anything else — `query_machine_id`,
+# `query_machine_input`, `query_machine_is_starved`. What is here is only what a Turret has
+# that a Smelter does not: a reach, a target and a magazine.
+
+## Whether a Machine is a Turret: a Machine whose output is damage rather than an Item.
+func query_machine_is_turret(index: int) -> bool:
+	return _is_turret(index)
+
+
+## How far a Turret reaches, in fixed-point metres from the centre of its footprint. 0 for
+## anything that is not a Turret.
+func query_turret_range_metres(index: int) -> int:
+	if not _is_turret(index):
+		return 0
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	return Fixed.from_int(definition.range_tiles * WorldGrid.TILE_SIZE_METRES)
+
+
+## The **serial** of the Enemy a Turret is shooting at, or -1 when it is shooting at nothing.
+##
+## A serial and never an index, because that is what the Simulation itself holds: an index
+## shifts the moment anything dies, so a renderer drawing a tracer from one would point at a
+## different Crawler on the frame after a kill. Resolve it with `query_enemy_index_of_serial`.
+func query_turret_target_serial(index: int) -> int:
+	if not _is_turret(index):
+		return -1
+	return _turret_target_serial[index]
+
+
+## The tick a Turret last fired on, or -1 for one that never has. What a muzzle flash and a
+## tracer are drawn from, and how a test asserts that a Turret did *not* fire.
+func query_turret_last_shot_tick(index: int) -> int:
+	if not _is_turret(index):
+		return -1
+	return _turret_last_shot_tick[index]
+
+
+## How many rounds a Turret is holding: the Items in its input buffer, which for a Turret is
+## its magazine. 0 means it does not fire.
+func query_turret_ammunition(index: int) -> int:
+	return _turret_ammunition(index)
+
+
+## How many rounds a Turret will hold before its input port refuses more — the top of the
+## gauge a player reads from across the Factory.
+func query_turret_ammunition_capacity(index: int) -> int:
+	if not _is_turret(index):
+		return 0
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
+	if recipe == null:
+		return 0
+	var capacity: int = 0
+	for slot: int in range(recipe.input_count()):
+		capacity += _input_capacity(index, _definitions.item_id(recipe.input_item(slot)))
+	return capacity
+
+
+## How many more times a Turret can fire on what it is holding.
+##
+## Not the same number as `query_turret_ammunition` whenever a Recipe eats more than one
+## round a shot — which is exactly what a Cannon Turret's does — so the two are separate
+## queries rather than one that is right for the MG and wrong for everything else.
+func query_turret_shots_remaining(index: int) -> int:
+	if not _is_turret(index):
+		return 0
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
+	if recipe == null or recipe.input_count() == 0:
+		return 0
+	var shots: int = -1
+	for slot: int in range(recipe.input_count()):
+		var needed: int = recipe.input_quantity(slot)
+		if needed <= 0:
+			continue
+		@warning_ignore("integer_division")
+		var possible: int = (
+			query_machine_input(index, _definitions.item_id(recipe.input_item(slot))) / needed
+		)
+		if shots == -1 or possible < shots:
+			shots = possible
+	return maxi(shots, 0)
+
+
 # ── The Nest, the Breaches, the Waves and the Enemies ─────────────────────────
 
 ## The tile the Nest's footprint is anchored at.
@@ -3255,6 +3594,15 @@ func query_enemy_serial(index: int) -> int:
 	if not _is_enemy(index):
 		return -1
 	return _enemy_serial[index]
+
+
+## The Enemy carrying a serial, or -1 when it is dead or never existed.
+##
+## The inverse of `query_enemy_serial`, and what the renderer needs to turn a Turret's target
+## back into something it can draw a tracer at. Exact rather than approximate: serials ascend
+## strictly with index, so this is a binary search and not a guess.
+func query_enemy_index_of_serial(serial: int) -> int:
+	return _enemy_of_serial(serial)
 
 
 ## The tick an Enemy came through its Breach.

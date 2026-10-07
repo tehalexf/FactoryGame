@@ -12,8 +12,8 @@ const SMELTER: int = 1
 
 ## Content that differs from `content/`, so its digest differs. Used to prove a Run
 ## refuses to resume onto definitions it was not saved under.
-const ALTERED_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,
+const ALTERED_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,mine_iron_ore,
 """
 
 const ALTERED_RECIPES: String = """id,display_name,inputs,outputs,seconds

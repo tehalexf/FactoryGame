@@ -42,6 +42,14 @@ a Recipe. Mortal: it can be damaged and destroyed by Enemies, and repaired.
 Ammunition as a Recipe input. Not a separate combat subsystem — the same
 Recipe, inventory, and Belt rules apply.
 
+**Ammunition** — The Item a Turret consumes to fire. An ordinary Item in every
+respect: made by an Ammo Press from a Recipe, carried on Belts, buffered in an
+input port. It is what makes defence a running production cost rather than a
+one-time build, and a Turret holding none does not fire.
+
+**Ammo Press** — The Machine that makes Ammunition. An ordinary crafter; it is
+the Turret's place in the Recipe graph, not a special case.
+
 **Repair Pylon** — A Turret-class Machine whose output is repair rather than
 damage. Consumes repair material to mend nearby Machines, making Machine
 mortality something the players can engineer against rather than only endure.

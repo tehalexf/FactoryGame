@@ -1,0 +1,13 @@
+[gd_resource type="StandardMaterial3D" load_steps=2 format=3]
+
+[ext_resource type="Texture2D" uid="uid://02l4n70xlgx8" path="res://assets/generated/textures/rust_pitted_steel.png" id="1_albedo"]
+
+[resource]
+resource_name = "OxideRed"
+albedo_color = Color(0.58, 0.36, 0.26, 1)
+albedo_texture = ExtResource("1_albedo")
+texture_filter = 5
+uv1_scale = Vector3(0.909091, 0.909091, 0.909091)
+metallic = 0
+metallic_specular = 0.5
+roughness = 0.7

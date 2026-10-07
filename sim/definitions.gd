@@ -53,6 +53,8 @@ const MACHINE_COLUMNS: Array = [
 	"power_supply_kw",
 	"health",
 	"max_depth",
+	"range_tiles",
+	"damage",
 	"recipe_id",
 	"build_cost",
 ]
@@ -612,6 +614,8 @@ func _read_machines(table: CsvTable) -> void:
 		definition.power_supply_kw = table.require_int(row, "power_supply_kw")
 		definition.health = table.require_int(row, "health")
 		definition.max_depth = table.require_int(row, "max_depth")
+		definition.range_tiles = table.require_int(row, "range_tiles")
+		definition.damage = table.require_int(row, "damage")
 		definition.recipe_id = table.require_id(row, "recipe_id")
 		_read_build_cost(table, row, definition)
 
@@ -666,6 +670,25 @@ func _check_machine_values(
 			table.report_row(
 				row, "max_depth: only a Miner reaches a Depth, so this must be 0"
 			)
+
+	# A Turret's reach and its hit are per-Machine numbers rather than tuning, because
+	# that is what makes a Cannon Turret a row: it differs from an MG Turret in exactly
+	# these two columns and its Recipe. Everything that is not a Turret must leave both
+	# at zero, so a stray number cannot sit in the table looking meaningful.
+	if role == MachineDefinition.Role.TURRET:
+		if definition.range_tiles < 1:
+			table.report_row(
+				row, "range_tiles: a Turret that reaches nowhere can never fire"
+			)
+		if definition.damage < 1:
+			table.report_row(row, "damage: a Turret that does no damage is not a Turret")
+	elif role != -1:
+		if definition.range_tiles != 0:
+			table.report_row(
+				row, "range_tiles: only a Turret has a reach, so this must be 0"
+			)
+		if definition.damage != 0:
+			table.report_row(row, "damage: only a Turret deals damage, so this must be 0")
 
 	# A Machine either feeds the one Power grid or draws from it. Allowing both would
 	# make a generator's own throttle depend on its own output, and the grid stops being
@@ -739,15 +762,21 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 		# What a Recipe must *produce* depends on the Role that runs it, which is why it
 		# is checked here rather than against the Recipe table on its own. Power is not an
 		# Item and never will be — there is no fluid and no steam on a Belt (DESIGN.md) —
-		# so a generator's Recipe is a fuel and a burn time and has no output at all.
-		if definition.is_generator():
+		# so a generator's Recipe is a fuel and a burn time and has no output at all. A
+		# Turret's Recipe is the same trick in the other direction: its product is damage.
+		if definition.produces_no_items():
 			if used.output_count() > 0:
 				table.report_row(
 					definition.source_row,
 					(
-						'"%s" is a generator, so its Recipe "%s" must have no outputs — what it'
-						+ " produces is Power, which is not an Item"
-					) % [definition.id, used.id]
+						'"%s" is a %s, so its Recipe "%s" must have no outputs — what it produces'
+						+ " is %s, which is not an Item"
+					) % [
+						definition.id,
+						MachineDefinition.role_name(definition.role),
+						used.id,
+						"Power" if definition.is_generator() else "damage",
+					]
 				)
 		elif used.output_count() == 0:
 			table.report_row(

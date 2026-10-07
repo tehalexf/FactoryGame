@@ -61,6 +61,14 @@ facts have one authority each, and the asset suite fails if a mesh and the
 Simulation disagree — see [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md)
 section 6.
 
+A Machine's **silhouette is a gameplay requirement, not polish**: the core skill
+in a factory game is reading your own production line at a glance.
+`tools/assets/machine_silhouette.py` measures how far apart every pair of
+outlines is and the asset suite fails if any two converge, so changing a recipe
+cannot quietly turn two Machines back into the same dark box. The committed
+contact sheets in `docs/images/` are the same claim in a picture; rebuild them
+with `tools/assets/render_machines.sh`.
+
 The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
@@ -247,18 +255,15 @@ arrays, never as an object per Item.
 - **Open: `content/machine_ports.csv` is still not the Simulation's authority.** #19 added
   that file and the mesh markers that match it, declaring an exact edge and tile for each
   port. The Simulation accepts a Belt against *any* footprint edge tile, which is looser.
-  It still cannot adopt the file: the table describes ten Machine bodies and
-  `content/machines.csv` now defines four, and `coal_miner_mk1` has no row in it at all,
-  so loading it under its own documented rule ("machine_id must name a row in
-  machines.csv") would still fail the whole content load. The ticket that brings the
-  remaining Machines into `machines.csv` should make `Definitions` read the ports table
-  and tighten `_load_from_port` and `_hand_off` to the declared edge, tile and direction —
-  one declaration, not two.
-- **Open: `coal_miner_mk1` has no generated mesh.** #7 added it to `machines.csv` because
-  a Steam Boiler burns coal and nothing else mines any, and left
-  `content/machine_bodies.csv` alone: a row there means a `.glb` to generate and commit,
-  and the placeholder renderer draws every Machine as a box regardless. The art pass adds
-  the body, the ports and the mesh.
+  It still cannot adopt the file: the table describes eleven Machine bodies and
+  `content/machines.csv` defines six — #10 added the Ammo Press and the MG Turret, leaving
+  `press_mk1`, `assembler_mk1`, `generator_mk1` and `silo_mk1` undeclared — so loading it
+  under its own documented rule ("machine_id must name a row in machines.csv") would still
+  fail the whole content load. The Turret also has no row *there*, so the Belt that feeds
+  it docks against any footprint edge for now. The ticket that brings the remaining
+  Machines into `machines.csv` should make
+  `Definitions` read the ports table and tighten `_load_from_port` and `_hand_off` to the
+  declared edge, tile and direction — one declaration, not two.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
@@ -438,6 +443,114 @@ both say 4x4, and the asset suite's cross-check only covers rows that
 `content/machines.csv` declares — which the Nest never will, because it is not a
 Machine. The art pass should teach the mesh generator to read the footprint from the
 Simulation's constant, the way it reads a Machine's from `machines.csv`.
+
+## Turrets, and the keystone loop
+
+The ticket where the game acquires a point. Production and threat existed separately
+before it; a Turret is what joins them, and DESIGN.md's whole thesis rests on it —
+**production is combat power, mechanically rather than thematically.**
+
+- **A Turret is a Machine whose output is damage rather than an Item**, and that is the
+  entire design. `role=turret` in `content/machines.csv`, a Recipe whose input is
+  Ammunition and whose outputs are empty, and `_craft` advances it exactly as it advances
+  a Smelter. The only thing the Simulation adds is *what happens instead of depositing an
+  output*: `_fire`. **The Steam Boiler is the precedent** — `role=generator` is a crafter
+  whose Recipe has no outputs because Power is not an Item, and a Turret is the same trick
+  in the other direction because damage is not either. `produces_no_items()` is the one
+  predicate both roles share, so the next role whose product is not an Item joins the rule
+  rather than forgetting it.
+- **There is no combat subsystem, and there is no Turret table.** The target serial and the
+  last-shot tick are two more per-Machine arrays indexed exactly like `_machine_progress_ticks`.
+  Giving a Turret its own index space is how a Turret stops being a Machine.
+- **A Turret with no Ammunition does not fire.** Defence therefore costs *continuous*
+  production and there is no build-once-and-walk-away. An empty magazine reads as
+  `query_machine_is_starved`, because that is what it is.
+- **A Turret with nothing in reach does not work**, so it is not on the Power grid, banks no
+  progress and spends no round. That is one more clause in `_machine_would_work`, the single
+  predicate behind what the grid bills, what advances and what fires. Deliberately *not*
+  starvation: it has its Ammunition, it has no target.
+- **`range_tiles` and `damage` are columns in `content/machines.csv`**, not tuning, because
+  that is what makes a **Cannon Turret a row**: it differs from the MG in those two numbers
+  and its Recipe, and neither is named anywhere in `sim/`. `tests/cases/test_turrets.gd`
+  adds one to the shipped files and asserts it reaches further, hits harder and spends two
+  rounds a shot, with no code change at all.
+- **A reach is compared squared.** `Fixed.sqrt` floors, which would put a Crawler exactly on
+  the boundary in or out of reach depending on a rounding rule; multiplying both sides
+  instead is exact integer arithmetic. The products stay far inside 64 bits — the Map is 129
+  tiles across, so the largest squared distance is about 1.4e14 against a 9.2e18 ceiling.
+- **A Turret measures from its footprint centre**, so turning a 2x3 Turret does not move the
+  circle it covers.
+
+### Target selection, and the one determinism bug this ticket could have shipped
+
+**A Turret holds a serial, never an index.** Enemy indices shift the moment anything dies —
+`_remove_enemy` closes the gap — so a Turret holding an index would silently switch targets
+on another Turret's kill, and two clients whose kills landed in a different order would
+diverge. A serial is issued once and never reused (#9), so it either names the Crawler it
+was aimed at or names nothing. `_enemy_of_serial` resolves it with a **binary search**, which
+is exact rather than approximate because `_enemy_serial` is strictly ascending with index.
+
+Four rules make the rest of it reproducible:
+
+1. **`_aim` is the only thing that acquires**, once a tick, before the grid is read.
+   `_turret_target_index` is a pure read, because `_machine_would_work` consults it and
+   `query_machine_is_throttled` consults that — a query that re-aimed a Turret would move
+   the state hash by being asked a question.
+2. **Acquisition walks Enemies in index order and keeps a strict improvement.** Index order
+   is ascending spawn serial by construction, so two Crawlers exactly as far away hand the
+   shot to the earlier spawn, on every client.
+3. **A Turret keeps a live target in reach**, rather than re-deciding every tick and drifting
+   between two Crawlers a metre apart.
+4. **A kill removes its Enemy immediately**, inside the same `_craft` loop, and clears that
+   serial off every Turret holding it. So a second Turret later in the loop finds its serial
+   unresolvable, reports itself idle, and keeps its round for the next tick rather than
+   spending it on a corpse — and `query_turret_target_serial` either names something alive or
+   names nothing, which is what stops a save restoring the ghost of a Crawler.
+
+### Readable at a distance
+
+An acceptance criterion of its own, and the reason is triage: mid-Wave a player is looking at
+the whole Factory from thirty metres and needs to know which Turret is about to stop. So
+`WorldView` hangs a **gauge in the world over every Turret** — a dark backing bar at full
+width and a coloured fill scaled to the fraction held, green above half and amber below.
+Two meshes rather than one because an empty magazine must not be indistinguishable from a
+Turret with no gauge: the **backing goes red when the magazine is empty**, so absence of a bar
+means there is no Turret there. The bars are unshaded, because a gauge a directional light can
+darken is a gauge a player misreads at the worst moment. The HUD says `ammo n/m` and `DRY`
+alongside, for the post-mortem rather than the fight.
+
+### Where the balance stands, and what it is waiting for
+
+Measured on the starter Map, shipped content, seed 7. **No Turret:** the first Wave alone takes
+the Nest at tick 12,132 — 3 minutes 22 seconds, zero Crawlers killed. **One MG Turret behind
+one production chain** (a Miner, a Smelter, an Ammo Press, a coal Miner and a Boiler to pay for
+them, joined by six Belts — `_competent_factory` in `tests/cases/test_turrets.gd` builds exactly
+this): the Nest falls at tick 130,293, **36 minutes in, on Wave 18, after killing 670 Crawlers**.
+Eleven times the Run, and still lost.
+
+**It loses because it runs dry, which is the point.** At the end it had spent 105 seconds with
+an empty magazine and the whole Factory was holding 16 rounds. The arithmetic: the Turret fires
+four rounds a second and a Crawler takes two of them, so it kills at exactly the two a second
+the single Breach releases — while one Ammo Press makes two rounds every three seconds. Each
+Wave therefore spends a stockpile the preceding gap built, and since a Wave's count grows by
+four and the gap does not, somewhere around Wave 16 the cumulative demand overtakes the
+cumulative supply. **The way to survive Wave 20 is a second Ammo Press and the Smelter and
+Miner behind it** — production is the defence, in the most literal arithmetic available.
+
+One thing a later ticket should know: **a Machine's output buffer is uncapped**, so a Belt
+that fills up banks the surplus in the Ammo Press indefinitely. The stockpile a player
+builds between Waves is real and unbounded, and it is what carries the early Waves.
+
+**Open: the two systems have not had a joint balance pass.** #10's arithmetic above was
+worked against #9's scaffolded schedule, which grew a Wave's count but never its arrival
+rate — so the pressure was Wave *length* against a fixed production rate. #12 replaced that
+with a schedule where Heat shortens the gap as well as lengthening the Wave, and where the
+Ammo Press and the Smelter behind it are themselves what raise the Heat. The qualitative
+claim is unchanged and is the better version of itself — production is still the defence,
+and now producing is also what summons the thing you are defending against. But the
+crossover Wave number above is a figure from the old schedule, and `fire_mg`,
+`make_ammunition`, `range_tiles` and the `[heat]` section want tuning against each other by
+somebody playing it. Neither ticket claims that was done.
 
 ## Heat, the Wave schedule, the Telegraph and the lever
 
