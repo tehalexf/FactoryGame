@@ -2,6 +2,11 @@
 # Purchased and license-restricted assets prohibit redistribution. This repo
 # is public. Anything under here is pulled in locally; see docs/ASSETS.md.
 /assets_licensed/
+# ...except Godot's marker telling the engine not to scan it. It must be in git:
+# without it a fresh clone points the importer at gigabytes of third-party Unity
+# projects and WAV libraries. It is empty, and the licence guard allows it only
+# while it stays empty.
+!/assets_licensed/.gdignore
 
 # Godot
 .godot/

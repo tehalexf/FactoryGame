@@ -10,6 +10,7 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
+var animations_that_moved := 0
 
 
 func _init() -> void:
@@ -23,6 +24,13 @@ func _init() -> void:
 	# How many animations this asset is expected to carry. A base rig legitimately
 	# ships none; an animated character shipping none is a conversion failure.
 	var min_animations := int(args[2]) if args.size() > 2 else 1
+	# Core bones the source rig genuinely does not author, comma-separated. See
+	# verify_in_godot.sh: an exception is spelled out at the call site rather than
+	# quietly dropped from the core list for every asset.
+	var allow_missing: Array[String] = []
+	if args.size() > 3 and not String(args[3]).strip_edges().is_empty():
+		for bone in String(args[3]).split(","):
+			allow_missing.append(bone.strip_edges())
 
 	print("=== verifying %s ===" % path)
 	var scene := ResourceLoader.load(path) as PackedScene
@@ -43,7 +51,7 @@ func _init() -> void:
 			"the skeleton has exactly one root bone (found %d: %s)" % [
 				roots.size(), bone_names_of(skeleton, roots)])
 		print("    bones (%d): %s" % [skeleton.get_bone_count(), all_bone_names(skeleton)])
-		report_humanoid_coverage(skeleton)
+		report_humanoid_coverage(skeleton, allow_missing)
 
 	var player := find_node(model, "AnimationPlayer") as AnimationPlayer
 	if min_animations > 0:
@@ -56,6 +64,11 @@ func _init() -> void:
 				min_animations, names.size(), ", ".join(names)])
 		for anim_name in names:
 			verify_animation_moves_bones(player, skeleton, anim_name)
+		if names.size() > 0:
+			# A pose clip is allowed to hold still, but a file in which *nothing*
+			# moves is a conversion that lost its keyframes.
+			check(animations_that_moved > 0,
+				"at least one animation in the file moves the skeleton")
 
 	if expected_height > 0.0:
 		var height := visual_height(model)
@@ -105,7 +118,7 @@ func bone_names_of(skeleton: Skeleton3D, indices: PackedInt32Array) -> String:
 	return ", ".join(names)
 
 
-func report_humanoid_coverage(skeleton: Skeleton3D) -> void:
+func report_humanoid_coverage(skeleton: Skeleton3D, allow_missing: Array[String]) -> void:
 	## How much of the shared humanoid skeleton this rig covers. Reported rather
 	## than asserted: sparse rigs (a 13-bone monster) legitimately cover a subset,
 	## and the point is that the names they do have are the shared ones.
@@ -129,9 +142,16 @@ func report_humanoid_coverage(skeleton: Skeleton3D) -> void:
 		"LeftUpperArm", "LeftLowerArm", "RightUpperArm", "RightLowerArm",
 		"LeftUpperLeg", "LeftLowerLeg", "RightUpperLeg", "RightLowerLeg"]
 	var missing: Array[String] = []
+	var absent_by_design: Array[String] = []
 	for bone in core:
-		if not matched.has(bone):
+		if matched.has(bone):
+			continue
+		if allow_missing.has(bone):
+			absent_by_design.append(bone)
+		else:
 			missing.append(bone)
+	if not absent_by_design.is_empty():
+		print("    core bones this rig does not author: %s" % ", ".join(absent_by_design))
 	check(missing.is_empty(),
 		"the rig carries the core shared-skeleton bones (missing: %s)" % [
 			", ".join(missing) if not missing.is_empty() else "none"])
@@ -158,15 +178,34 @@ func verify_animation_moves_bones(player: AnimationPlayer, skeleton: Skeleton3D,
 		anim_name: String) -> void:
 	var animation := player.get_animation(anim_name)
 	var length := animation.length
+	if is_pose_clip(animation):
+		# Packs ship single-keyframe clips on purpose: T-Pose for rig inspection,
+		# and the "_Pose" settled poses a death animation ends on. Asserting that
+		# such a clip moves bones would be asserting it is not what it is. The
+		# whole-file check above still catches keyframes lost in conversion.
+		print("    %s (%.2fs) is a single-keyframe pose clip, not motion" % [
+			anim_name, length])
+		return
 	player.play(anim_name)
 	player.seek(0.0, true)
 	var before := pose_snapshot(skeleton)
 	player.advance(maxf(length * 0.5, 0.05))
 	var after := pose_snapshot(skeleton)
 	var movement := pose_difference(before, after)
+	if movement > 0.0001:
+		animations_that_moved += 1
 	check(movement > 0.0001,
 		"animation %s (%.2fs) moves the skeleton when played (max bone delta %.5f)" % [
 			anim_name, length, movement])
+
+
+func is_pose_clip(animation: Animation) -> bool:
+	## A clip with at most one keyframe on every track holds a pose rather than
+	## playing motion.
+	for track in animation.get_track_count():
+		if animation.track_get_key_count(track) > 1:
+			return false
+	return true
 
 
 func pose_difference(before: PackedFloat32Array, after: PackedFloat32Array) -> float:
