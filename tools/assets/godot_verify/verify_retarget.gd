@@ -35,13 +35,22 @@ func _init() -> void:
 		return
 
 	var donor_player := find_node(donor, "AnimationPlayer") as AnimationPlayer
-	var recipient_player := find_node(recipient, "AnimationPlayer") as AnimationPlayer
 	var recipient_skeleton := find_node(recipient, "Skeleton3D") as Skeleton3D
-	check(donor_player != null and recipient_player != null and recipient_skeleton != null,
-		"both characters import with an AnimationPlayer and the recipient has a Skeleton3D")
-	if donor_player == null or recipient_player == null or recipient_skeleton == null:
+	check(donor_player != null and recipient_skeleton != null,
+		"the donor imports with an AnimationPlayer and the recipient has a Skeleton3D")
+	if donor_player == null or recipient_skeleton == null:
 		finish()
 		return
+
+	# The recipient needs an AnimationPlayer to host the borrowed clip, but it does
+	# not need to have shipped one: a pack that keeps its animation in a separate
+	# .glb (docs/ASSET_PIPELINE.md section 4) imports its characters with none at
+	# all. Adding one here is what game code does too.
+	var recipient_player := find_node(recipient, "AnimationPlayer") as AnimationPlayer
+	if recipient_player == null:
+		print("    the recipient ships no AnimationPlayer; adding one, as the game would")
+		recipient_player = AnimationPlayer.new()
+		recipient.add_child(recipient_player)
 
 	check(donor_player.has_animation(animation_name),
 		"the donor carries %s (has: %s)" % [
