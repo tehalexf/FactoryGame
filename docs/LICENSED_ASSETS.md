@@ -394,14 +394,77 @@ collection, and the tracklist points at the paid versions.
 
 These are long, high-bit-depth source recordings for sound design, not
 drop-in game SFX: single files run to hundreds of megabytes. Expect to cut,
-pitch, layer and resample in a DAW and ship the result, not to load a bundle
-file at runtime.
+pitch, layer and resample and ship the result, not to load a bundle file at
+runtime.
 
 Directly relevant to a Dieselpunk factory, by way of example: factory hall
 ambiences with alarms and machines, crane onboard rides with squeaks and motors,
 industrial machine libraries, colossal impacts, UI and interface element sets,
 melee weapons, creature vocalisations, crowd walla, radio chatter. Search the
 tree by name — the file names are descriptive and long.
+
+**One thing the bundle does not contain, and it is worth recording so nobody
+hunts for it twice: firearms.** There is no gunshot library in GDC 2026. The
+weapons' fire is therefore built by layering — a trailer boom for the pressure, a
+metal impact for the mechanism, a debris wash for the tail — which is how a gun
+is built anyway, but it means there is no single file to go and find.
+
+#### Wired in: which recording is which cue, and why that one
+
+`tools/assets/convert_audio.sh` is the recipe and **the only record of the
+mapping**, since none of the files it reads are in git. It writes 37 cues to
+`assets_licensed/generated/audio/*.ogg` — about 1.7 MB in total — which is
+**gitignored and must stay that way**: a cut from a non-redistributable recording
+is a derivative of it and is exactly as forbidden as the WAV.
+
+Two choices recur across the whole set and are the reason the picks look odd
+written down:
+
+* **Real mechanisms, not synthesised ones.** The setting is Dieselpunk
+  (GLOSSARY.md) — 1920s-40s industry — and a 1930s object recorded closely sounds
+  like that era in a way a designed UI click never does. So the Silo's shell
+  selector is an **antique telephone's rotary dial** (a wound spring, a detent and
+  a return — a thing with stops, which is exactly what the Simulation models), its
+  charge counter is a **mechanical counting machine**, and the call-Wave-early
+  lever is a **barber's chair foot pump**, which is the heaviest pneumatic throw in
+  the bundle.
+* **Transposed down rather than time-stretched.** `--semitones` resamples, so a
+  cue drops in pitch *and* slows down together. A Boiler is not a motorcycle at a
+  lower pitch; it is a bigger thing turning more slowly, and resampling gives both
+  at once. That is what turns a Kawasaki's engine start into a boiler catching, a
+  barber's foot pump into a lever, and a church bell into the Nest.
+
+The five diegetic controls `docs/DESIGN.md` names, in its order:
+
+| Control | Recording | Why that one |
+|---|---|---|
+| Silo dial — shell selector | `344 Audio - Antique Telephone` / rotary dial | A thing with stops and a return |
+| Silo dial — charge counter | `Epic Stock Media - HD Lock And Mechanism` / counting machine | The one recording in the bundle that *is* a number being wound on. 0.3 s long in total, so the cue is the whole of it |
+| Silo commit | `… HD Lock And Mechanism` / deep latch thunk, down a fourth, **layered** with `Federico Soler - Effective Trailer Booms` | The one act a player cannot take back, so it is two cues played together: the latch for the mechanism, the boom for the mass a 0.38 s latch has not got |
+| Painting | `InMotionAudio - Arc` / arc power-up, then its buzz as a **loop** | A channel has a beginning and a held layer. It ends on `Cinematic Sound Design - Colossal Impacts` when it lands and on `The Noisery - Rich Glitch` when it does not — the most expensive sound in the game, deliberately ugly |
+| Boiler startup | `SoundBits - Motorcycles - Kawasaki` / engine start, down a fifth | Slower, lower, much larger |
+| Boiler pressure relief | `344 Audio - Air Designed` / clean blast, down a third | A vent opening under pressure |
+| Delivery intake | `Victor Ermakov - Industrial Ambiences` / crane onboard ride | What the Nest does with a Delivery is haul it in. Progression is physical, and this is the sound of it being physical |
+| Delivery tier complete | `Ivo Vicic - Church Bells`, down a minor third | The Nest announcing to the whole Map that something new is possible |
+| Call-Wave-early lever | `344 Audio - Barbershop` / chair foot pump, down a major sixth | A pneumatic lever thrown by a whole leg |
+
+And the rest, by what it is for:
+
+| Cue group | Recordings |
+|---|---|
+| Telegraph klaxon | `Federico Soler - Effective Trailer Alarms` (quarter notes), as a **loop** that runs for exactly as long as the Telegraph does |
+| Wave arriving, Breach opening | `Jake Fielding - Cinematic Horn Braams`; `Epic Stock Media - Halloween Game` heavy smash, down a fourth |
+| Weapon fire (three layers), reload, impact | `Effective Trailer Booms` + `Epic Stock Media - HD Game Materials` metal hit + `Colossal Impacts` debris wash; `HD Lock And Mechanism` spring clatter; `The Noisery - Moaning Metal` geophone thud |
+| Melee — the Pneumatic Wrench | `David Dumais Audio - Melee Weapons Pack 2`, swing and metallic body hit |
+| Factory ambience, two beds | `Epic Stock Media - Strange Game Ambient Loops 3` machinery roomtone (the quiet one) and `Victor Ermakov - Industrial Ambiences` busy factory hall (the loud one), crossfaded by how much Factory is **working** |
+| Machines built, damaged, destroyed; Turret fire | `344 Audio - Extreme Winds` large metal box on a geophone; `Moaning Metal` low scrape; `Epic Stock Media - Anime Game` blast; `344 Audio - Haunting Ambiences Vol 3` metal bangs |
+| The Nest taking a hit | `Moaning Metal` bowed screech with a long reverb — the structure itself complaining |
+| Enemies, the player | `SoundBits - Vox Bestiae` insectoid attack and ethereal pain; `Epic Stock Media - AAA Game Character Police Officer` gasp; `Humanoid Creatures Vol 4` death vocal |
+
+Four of the recipe's cues had to have their durations cut to the length of the
+source — the counting machine (0.3 s), the light switch (0.26 s), the officer's
+gasp (0.46 s) and the latch (0.38 s). The script refuses by name and length
+rather than silently truncating, which is how those four were found.
 
 ### `heyheythere/` — Low Poly Industrial Facility
 
