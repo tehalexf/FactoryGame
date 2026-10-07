@@ -56,7 +56,7 @@ walk_acceleration_metres_per_second_squared = 24
 # player at walking pace takes a little under half a second and about 90 cm to stop.
 # Raise it towards 24 for a crisper stop; drop it to 4 for something that has to be
 # steered rather than driven.
-walk_deceleration_metres_per_second_squared = 9
+walk_deceleration_metres_per_second_squared = 26
 
 # The same two numbers while a player is off the ground, in metres per second squared.
 #
@@ -146,7 +146,7 @@ sprint_is_toggle = true
 # a camera wobbling rather than a person walking, you have gone too far.
 bob_vertical_metres = 0.012
 bob_lateral_metres = 0.008
-bob_stride_metres = 1.6
+bob_stride_metres = 3.2
 
 # How much of all that a full sprint adds. 1.6 means a sprint bobs a little over half
 # again as much as a walk — the third of the three things that make a sprint read as a
