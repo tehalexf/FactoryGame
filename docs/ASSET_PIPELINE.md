@@ -546,7 +546,7 @@ are imported normally and loaded with `load`.
 `tools/assets/tests/test_wav_to_cue.py` covers the analysis and the filter
 building against synthesised signals, so none of it needs the bundle to be tested.
 
-## 9. Adding an asset
+## 10. Adding an asset
 
 1. Check the licence. CC0 / permissive / self-authored → `assets/`. Anything
    else → `assets_licensed/`, which never enters git.
