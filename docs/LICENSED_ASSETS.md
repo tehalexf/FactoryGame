@@ -173,34 +173,62 @@ worry.**
 No splitting work was performed, because none is needed. The frame ranges above
 are recorded so the finding does not have to be re-derived.
 
-### Still not wired in, and exactly what wiring them in needs
+### Wired in: which pack is which weapon, and what the conversion has to fix
 
-Issue #15 shipped the Gear mechanism and a **placeholder** view model —
-`WorldView._sync_weapon`, two boxes parented to the camera, swaying and kicking off
-Simulation state. None of the arms above are loaded, and the reason is the pipeline rather
-than the research:
+`tools/assets/convert_weapons.sh` is the recipe and **the only record of the
+mapping**, since none of the files it reads are in git:
 
-* **Godot cannot import an FBX at runtime.** `.fbx` is an editor-time import, and
-  `assets_licensed/.gdignore` deliberately keeps the importer out of this directory
-  anyway — see "Why Godot does not scan this directory" above.
-* **Nothing here may be committed**, so the converted mesh cannot land in `assets/`
-  either. It has to be a build artefact outside the shipping tree.
+| Gear frame | Source | Why |
+|---|---|---|
+| `bolt_rifle` | `Weapon pack/L96_animation.fbx` | The only one with a `Chamber` take, which is what a bolt-action wants between shots — and the Bolt Rifle's 0.8 s interval is the only one with room to play it |
+| `drum_autocannon` | `Weapon pack/Akm_animation.fbx` | The pack's automatic weapon, and it ships two shot takes |
+| `pneumatic_wrench` | `rgsdev/.../Arms_Combat_Knife.fbx` | The only rigged arms in the collection that swing rather than shoot |
 
-So the work is: a Blender step that imports one `Weapon pack/*_animation.fbx`, keeps the
-named takes and drops `default`, picks one of the three arm meshes, downscales the textures
-(the Deagle's normals alone are 180 MB), and writes a `.glb` per weapon into a gitignored
-directory; then a runtime `GLTFDocument.append_from_file` of the result and an
-`AnimationPlayer` driven by `query_player_last_shot_tick`,
-`query_player_fire_cooldown_ticks` and `query_player_velocity`.
+Run it with `bash tools/assets/convert_weapons.sh`; it writes
+`assets_licensed/generated/gear/<weapon id>.glb`, which is **gitignored and must
+stay that way** — a converted GLB is a derivative of a non-redistributable asset
+and is exactly as forbidden as the FBX. `game/weapon_viewmodel.gd` loads it at
+runtime and draws placeholder boxes when it is absent, which on most clones it
+is.
 
-The seam already exists and is tested: `WorldView.WEAPON_BODY_DIRECTORY` is
-`res://assets_licensed/generated/gear/`, and a `<weapon id>.glb` there is loaded if present
-and **silently skipped if not**, so the repository stays buildable and testable for anyone
-without these files. Which weapon maps to which pack is a choice for that ticket; the
-obvious reading of `content/gear.csv` against the table above is `L96_animation.fbx` for the
-Bolt Rifle (it has the `Chamber` take a bolt-action wants), `Akm_animation.fbx` for the Drum
-Autocannon, and RgsDev's `Arms_Combat_Knife.fbx` for the Pneumatic Wrench — the only rigged
-arms in the collection that swing rather than shoot.
+Four things about these files bite, and all four are now handled by
+`tools/assets/fbx_to_viewmodel.py` rather than by anyone's shell history. They
+are written up with the flags that answer them in
+[ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 7; what belongs *here*, because it
+is a fact about the packs, is what they are:
+
+* **A take is a group of actions, not one action.** The hands are animated as
+  bones on the 41-bone armature, and the weapon's own magazine, bolt, trigger and
+  safety are animated as **objects** (`mag_bn`, `bolt_bn`, `trg_bn`, `rls_bn`,
+  `sfti_bn`, or `Mag`/`Bolt`/`Striker`/`Bold_Handle` on the L96). One take
+  therefore imports as a dozen separate actions, each named
+  `<object>|<take>|BaseLayer` — 3ds Max's three-part naming, where the last part
+  is the authoring animation layer rather than the take.
+* **The weapon body arrives loose.** `L96_mesh` and `AK_mesh` have no parent and
+  no usable animation: the vendor skinned them to the weapon part helpers rather
+  than to the character rig, and an FBX skin cluster over plain helpers is not
+  something Blender's importer can reconstruct. Imported as-is, the hands animate
+  and the rifle sits on the floor at the world origin. They have to be parented
+  to `Main_Bone` / `ak_main_bn` in the bind pose.
+* **`Camera001` gives the framing, but only its position.** An FBX camera's own
+  axes are a convention Blender's importer does not normalise, and using its
+  orientation puts the weapon across the view. Its *position* is unambiguous —
+  1.72 m up — and the scene around it is in Blender's world convention with the
+  arms reaching along -Y, so the model needs a half turn and nothing else.
+* **The textures do not resolve, and for the AKM there are none to resolve.** The
+  FBX carries the authoring machine's paths (`C:/.../AppData/.../3dsMax/...`,
+  `l96a1/textures/T_S96_ALB.tga.png`) while the zip ships
+  `L96_textures/L96_ALB.png` — different names, so matching by file name finds
+  nothing — and the AKM FBX references no images at all. Every surface therefore
+  arrives white. The recipe repaints them from
+  `tools/assets/dieselpunk_palette.json`, which is a number rather than an asset
+  and so can be committed; a texture pass that recovers the real maps would be a
+  nicer-looking ticket of its own.
+
+The RgsDev knife is the simple case by comparison: one armature, both meshes
+skinned to it, nine takes already named `Knife_*_Anim`, and metres rather than
+centimetres. What it has not got is an authoring camera, so its framing is three
+numbers found by looking at the render.
 
 ### `shapita/` — Factory Line 86
 
