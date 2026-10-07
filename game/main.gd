@@ -18,6 +18,10 @@
 ## drawing what the queries report — including the camera, which goes where the Simulation
 ## says a player's camera is rather than anywhere this layer decides.
 ##
+## The Run is currently **unwinnable on purpose**: the Nest, the Breach and the Crawlers
+## exist and nothing shoots back, because Turrets are the next ticket. The HUD says so when
+## the Nest falls, and names the Wave the Run reached.
+##
 ## The opening Miner, Belt, Smelter, Coal Miner and Steam Boiler this file used to place
 ## are gone. They existed so
 ## that #4 and #5 had something to look at while nothing could build; now a player builds

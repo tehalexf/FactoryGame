@@ -41,6 +41,24 @@ const ITEM_SIZE_METRES: float = 0.35
 ## Which player this view is looking through. One for now; co-op makes it the local id.
 const VIEWED_PLAYER: int = 0
 
+## Where the Nest's mesh lives. Generated from the `nest` row of
+## `content/machine_bodies.csv` by `tools/assets/generate_machines.sh`, like every other
+## body, even though the Nest is not a Machine.
+const NEST_MESH: String = "res://assets/machines/nest.glb"
+
+## How tall the Nest reads when its mesh cannot be loaded — headless, or before the asset
+## pipeline has run. The placeholder is a box like a Machine's, only taller, because the
+## thing the Run is about should be the thing on the skyline.
+const NEST_HEIGHT_METRES: float = 6.0
+
+## A Breach is drawn as a dark slab flush with the ground: a hole, not a building. Flat
+## enough that the Crawlers coming out of it are what the eye catches.
+const BREACH_HEIGHT_METRES: float = 0.2
+
+## How big a Crawler is, in metres. Smaller than a 2 m tile, so a swarm packed into a
+## chokepoint still reads as a number of individuals.
+const ENEMY_SIZE_METRES: float = 0.9
+
 var _machine_meshes: Array[MeshInstance3D] = []
 var _node_meshes: Array[MeshInstance3D] = []
 var _belt_meshes: Array[MeshInstance3D] = []
@@ -53,6 +71,25 @@ var _belt_meshes: Array[MeshInstance3D] = []
 ## genre's reference implementation spends most of a late-game frame on Belts and their
 ## Items — one node per Item would be the first thing to fall over.
 var _item_meshes: MultiMeshInstance3D = null
+
+## Every Enemy on the Map, as instances of one mesh.
+##
+## **One MultiMesh, never a node per Enemy.** ADR 0001 keeps Godot a renderer, and
+## DESIGN.md's ~100-Enemy target rests on exactly this: idiomatic engine agents cap out
+## around 150-250 before frame times collapse, where instanced array entries reach
+## thousands. Milestone 1 draws twenty Crawlers through this path so that the Chaff tier
+## needs no new drawing code at all — only more array entries.
+var _enemy_meshes: MultiMeshInstance3D = null
+
+## The instance transforms handed to the Enemy MultiMesh, in the same flat twelve-floats
+## layout the Items use. Rebuilt from `query_enemy_*` every frame and uploaded in one
+## assignment; nothing ever reads a position back out of it to make a decision.
+var _enemy_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## The Nest, and a slab per Breach. One node each and not a pool, because there is one
+## Nest and the Breaches are fixed geography.
+var _nest_mesh: Node3D = null
+var _breach_meshes: Array[MeshInstance3D] = []
 
 ## The instance transforms handed to the MultiMesh, in its own flat layout: twelve floats
 ## an instance, with the position in slots 3, 7 and 11. Built from the queries every frame
@@ -107,7 +144,10 @@ func sync(sim: Simulation) -> void:
 
 	_sync_scenery(sim)
 	_sync_nodes(sim)
+	_sync_nest(sim)
+	_sync_breaches(sim)
 	_sync_machines(sim)
+	_sync_enemies(sim)
 	_sync_belts(sim)
 	_sync_items(sim)
 	_sync_hologram(sim)
@@ -123,6 +163,35 @@ func placeholder_count() -> int:
 ## How many tiles of Belt are on screen.
 func belt_placeholder_count() -> int:
 	return _belt_meshes.size()
+
+
+## Where the Nest is standing, in metres. For the smoke test.
+func nest_position() -> Vector3:
+	if _nest_mesh == null:
+		return Vector3.ZERO
+	return _nest_mesh.position
+
+
+## How many Breaches are marked on screen.
+func breach_marker_count() -> int:
+	return _breach_meshes.size()
+
+
+## How many Enemies are on screen. Instances of one mesh, so this is a count of
+## transforms rather than a count of nodes — there is one node for the whole swarm.
+func enemy_instance_count() -> int:
+	@warning_ignore("integer_division")
+	return _enemy_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where an Enemy instance is standing, in metres. For the smoke test.
+func enemy_instance_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= enemy_instance_count():
+		return Vector3.ZERO
+	var base: int = instance * FLOATS_PER_INSTANCE
+	return Vector3(
+		_enemy_transforms[base + 3], _enemy_transforms[base + 7], _enemy_transforms[base + 11]
+	)
 
 
 ## How many Items are on screen.
@@ -203,6 +272,122 @@ func _sync_machines(sim: Simulation) -> void:
 			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + MACHINE_HEIGHT_METRES * 0.5,
 			(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
 		)
+
+
+## The Nest: one mesh, standing on the middle of its footprint.
+##
+## Built once, because the Nest does not move. Its real mesh is loaded when the asset
+## pipeline has produced one and a placeholder box stands in otherwise, so the Simulation
+## and the tests do not depend on an import having run.
+func _sync_nest(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	var footprint: Vector2i = sim.query_nest_footprint()
+
+	if _nest_mesh == null:
+		_nest_mesh = _nest_body(footprint, tile_size)
+		add_child(_nest_mesh)
+
+	var tile: Vector3i = sim.query_nest_tile()
+	var near: FixedVec2 = sim.query_tile_centre_metres(tile)
+	var far: FixedVec2 = sim.query_tile_centre_metres(
+		Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
+	)
+	_nest_mesh.position = Vector3(
+		(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
+		Fixed.to_float(sim.query_layer_height_metres(tile.y)),
+		(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
+	)
+
+
+## The Nest's body: its generated mesh if there is one, and a tall box if there is not.
+func _nest_body(footprint: Vector2i, tile_size: float) -> Node3D:
+	if ResourceLoader.exists(NEST_MESH):
+		var scene: PackedScene = load(NEST_MESH)
+		if scene != null:
+			var body: Node3D = scene.instantiate()
+			# The mesh is modelled standing on the ground, like every generated body, so it
+			# is parented at the footprint's floor rather than at its centre.
+			return body
+
+	var placeholder: MeshInstance3D = MeshInstance3D.new()
+	var box: BoxMesh = BoxMesh.new()
+	box.size = Vector3(
+		float(footprint.x) * tile_size, NEST_HEIGHT_METRES, float(footprint.y) * tile_size
+	)
+	placeholder.mesh = box
+	placeholder.position = Vector3(0.0, NEST_HEIGHT_METRES * 0.5, 0.0)
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = Color(0.46, 0.40, 0.30)
+	placeholder.material_override = skin
+	var holder: Node3D = Node3D.new()
+	holder.add_child(placeholder)
+	return holder
+
+
+## A dark slab on every Breach. Fixed geography, so this is a pool that fills once — but a
+## pool rather than one node, because deep mining opens more Breaches.
+func _sync_breaches(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	_resize_pool(
+		_breach_meshes,
+		sim.query_breach_count(),
+		tile_size,
+		BREACH_HEIGHT_METRES,
+		Color(0.12, 0.08, 0.10)
+	)
+	for index: int in range(sim.query_breach_count()):
+		var tile: Vector3i = sim.query_breach_tile(index)
+		var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+		_breach_meshes[index].position = Vector3(
+			Fixed.to_float(centre.x),
+			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + BREACH_HEIGHT_METRES * 0.5,
+			Fixed.to_float(centre.z)
+		)
+
+
+## Every Enemy on the Map, at the position the Simulation says it is at.
+##
+## One MultiMesh for the whole swarm and **no node per Enemy** (ADR 0001). That is the
+## decision the ~100-Enemy target depends on, and it is made here once so that the Chaff
+## tier arriving later is more array entries rather than new drawing code.
+##
+## No interpolation and no remembered previous frame, for the reason the Items have none:
+## the Simulation moves a Crawler a fixed amount every tick and this draws it there.
+func _sync_enemies(sim: Simulation) -> void:
+	if _enemy_meshes == null:
+		_enemy_meshes = MultiMeshInstance3D.new()
+		var instanced: MultiMesh = MultiMesh.new()
+		instanced.transform_format = MultiMesh.TRANSFORM_3D
+		var box: BoxMesh = BoxMesh.new()
+		box.size = Vector3(ENEMY_SIZE_METRES, ENEMY_SIZE_METRES, ENEMY_SIZE_METRES)
+		instanced.mesh = box
+		_enemy_meshes.multimesh = instanced
+		var skin: StandardMaterial3D = StandardMaterial3D.new()
+		skin.albedo_color = Color(0.58, 0.14, 0.12)
+		_enemy_meshes.material_override = skin
+		add_child(_enemy_meshes)
+
+	var total: int = sim.query_enemy_count()
+	_enemy_transforms.resize(total * FLOATS_PER_INSTANCE)
+	for index: int in range(total):
+		var where: FixedVec2 = sim.query_enemy_position_metres(index)
+		var base: int = index * FLOATS_PER_INSTANCE
+		_enemy_transforms[base + 0] = 1.0
+		_enemy_transforms[base + 1] = 0.0
+		_enemy_transforms[base + 2] = 0.0
+		_enemy_transforms[base + 3] = Fixed.to_float(where.x)
+		_enemy_transforms[base + 4] = 0.0
+		_enemy_transforms[base + 5] = 1.0
+		_enemy_transforms[base + 6] = 0.0
+		_enemy_transforms[base + 7] = ENEMY_SIZE_METRES * 0.5
+		_enemy_transforms[base + 8] = 0.0
+		_enemy_transforms[base + 9] = 0.0
+		_enemy_transforms[base + 10] = 1.0
+		_enemy_transforms[base + 11] = Fixed.to_float(where.z)
+
+	_enemy_meshes.multimesh.instance_count = total
+	if total > 0:
+		_enemy_meshes.multimesh.buffer = _enemy_transforms
 
 
 ## One slab per tile of Belt. Flat on the ground, so the Items on top of it are what the
@@ -296,7 +481,24 @@ func _sync_hud(sim: Simulation) -> void:
 		add_child(_hud_layer)
 
 	var lines: PackedStringArray = PackedStringArray()
+	# The Run-over condition first, and in capitals, because it is the only line on the
+	# HUD that means the game has stopped — and it names the Wave reached, which is the
+	# whole of the score at this milestone.
+	if sim.query_run_is_over():
+		lines.append("THE NEST HAS FALLEN — reached wave %d" % sim.query_wave_number())
 	lines.append("tick %d" % sim.query_tick())
+	# What the Run is about, the pressure on it, and what is on the Map. Read out of the
+	# queries every frame, so none of it can be stale.
+	lines.append(
+		"nest %d/%d — wave %d — next in %ds — crawlers %d"
+		% [
+			sim.query_nest_health(),
+			sim.query_nest_max_health(),
+			sim.query_wave_number(),
+			sim.query_ticks_until_next_wave() / Simulation.TICKS_PER_SECOND,
+			sim.query_enemy_count(),
+		]
+	)
 	lines.append_array(_build_gun_lines(sim))
 
 	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and

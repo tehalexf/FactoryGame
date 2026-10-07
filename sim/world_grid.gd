@@ -76,6 +76,21 @@ static func tile_centre_metres(tile: Vector3i) -> FixedVec2:
 	)
 
 
+## The ground tile a position in fixed-point metres stands on.
+##
+## The inverse of `tile_centre_metres`, flooring like every other lossy operation, so
+## a position exactly on a tile boundary belongs to the tile it is entering rather
+## than the one it is leaving. One convention, shared by whatever needs to ask which
+## tile a moving thing is on — an Enemy reading the flowfield, and a Build Gun ray
+## once it is quantised.
+static func tile_at_metres(x: int, z: int) -> Vector3i:
+	return Vector3i(
+		Fixed.floor_div(x, tile_size_metres()),
+		GROUND_LAYER,
+		Fixed.floor_div(z, tile_size_metres())
+	)
+
+
 ## The floor height of a layer in fixed-point metres. 0 for the ground.
 static func layer_height_metres(layer: int) -> int:
 	return Fixed.from_int(layer * STOREY_HEIGHT_METRES)

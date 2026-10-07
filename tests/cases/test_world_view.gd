@@ -438,3 +438,128 @@ func test_a_factory_the_player_builds_really_carries_ore_to_the_smelter() -> voi
 	assert_true(
 		sim.query_machine_input(1, "iron_ore") > 0, "the Smelter should have been fed by now"
 	)
+
+
+# ── The Nest, the Breach and the Enemies ──────────────────────────────────────
+
+## A Run whose first Wave arrives within a second, so a test can see Crawlers.
+func _threatened_sim() -> Simulation:
+	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
+	var definitions: Definitions = Definitions.parse(
+		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
+		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
+		tuning.replace("first_wave_seconds = 90", "first_wave_seconds = 1"),
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml"
+	)
+	return Simulation.new(1, 1, definitions)
+
+
+func test_the_view_draws_the_nest_where_the_simulation_says_it_is() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	# The 4x4 footprint anchored at (-6,0,-6) spans -12 m to -4 m on both axes, so its
+	# centre is (-8 m, -8 m).
+	var placed: Vector3 = view.nest_position()
+	assert_true(is_equal_approx(placed.x, -8.0), "expected x -8.0, got %f" % placed.x)
+	assert_true(is_equal_approx(placed.z, -8.0), "expected z -8.0, got %f" % placed.z)
+	view.free()
+
+
+func test_the_view_marks_every_breach() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.breach_marker_count(), sim.query_breach_count())
+	view.free()
+
+
+func test_the_view_draws_one_instance_for_every_enemy() -> void:
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.enemy_instance_count(), 0, "a Run opens with nothing on the Map")
+
+	_run(sim, 2 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	assert_true(sim.query_enemy_count() > 0, "the premise: Crawlers are out")
+	assert_eq(view.enemy_instance_count(), sim.query_enemy_count())
+	view.free()
+
+
+func test_an_enemy_is_drawn_exactly_where_the_simulation_says_it_is() -> void:
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+
+	var where: FixedVec2 = sim.query_enemy_position_metres(0)
+	var drawn: Vector3 = view.enemy_instance_position(0)
+	assert_true(
+		is_equal_approx(drawn.x, Fixed.to_float(where.x)),
+		"expected x %f, got %f" % [Fixed.to_float(where.x), drawn.x]
+	)
+	assert_true(
+		is_equal_approx(drawn.z, Fixed.to_float(where.z)),
+		"expected z %f, got %f" % [Fixed.to_float(where.z), drawn.z]
+	)
+	view.free()
+
+
+func test_an_enemy_is_never_a_node() -> void:
+	# ADR 0001, and the whole reason the ~100-Enemy target is reachable: Enemies are
+	# instances of one mesh, so the scene tree does not grow by one node per Crawler.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var quiet: int = view.get_child_count()
+
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	assert_true(sim.query_enemy_count() >= 6, "a whole Wave is on the Map")
+	assert_eq(
+		view.get_child_count(),
+		quiet,
+		"and not one node was added for any of them"
+	)
+	view.free()
+
+
+func test_the_hud_reports_the_nest_the_wave_and_the_swarm() -> void:
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	var text: String = view.hud_text()
+	assert_true(text.contains("nest %d/" % sim.query_nest_health()), "the Nest's health: %s" % text)
+	assert_true(text.contains("wave 1"), "the Wave reached: %s" % text)
+	assert_true(text.contains("crawlers %d" % sim.query_enemy_count()), "the swarm: %s" % text)
+	view.free()
+
+
+func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
+	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
+	var definitions: Definitions = Definitions.parse(
+		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
+		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
+		(
+			tuning
+			. replace("first_wave_seconds = 90", "first_wave_seconds = 1")
+			. replace("health = 6000", "health = 10")
+		),
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml"
+	)
+	var sim: Simulation = Simulation.new(1, 1, definitions)
+	var view: WorldView = WorldView.new()
+	while not sim.query_run_is_over():
+		sim.step([])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("THE NEST HAS FALLEN — reached wave 1"),
+		"a Run that ended says so, and says how far it got: %s" % view.hud_text()
+	)
+	view.free()
