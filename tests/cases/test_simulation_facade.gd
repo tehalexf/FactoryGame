@@ -115,51 +115,67 @@ func test_a_query_result_cannot_be_used_to_mutate_state() -> void:
 
 
 # ── Input Actions ─────────────────────────────────────────────────────────────
-# A full-throttle tick covers 4 m/s ÷ 60 ticks. That is 4369.066… in fixed point,
-# which floors to 4369 — so the expected values below are deliberately the
-# quantised ones. Fixed point is exact, not infinitely precise, and a test that
-# expected 4369.066 would be testing a float.
+# Movement intent is a throttle in the player's own frame: forward, then strafe. At
+# yaw 0 forward is -z and right is +x, Godot's convention. The Simulation owns both
+# the walking speed and the acceleration, so the tests below are about the *channel*
+# — who an action applies to, what happens to a malformed one, how a tick orders
+# several — and `test_first_person.gd` is about the walking itself.
 
-const STEP_PER_TICK: int = 4369
+## One tick of acceleration at the tuned 24 m/s²: 0.4 m/s, which is 26214.4 floored.
+const ACCELERATION_PER_TICK: int = 26214
+
+## The tuned walking speed, 4 m/s, in fixed-point metres per second.
+const WALK_SPEED: int = 262144
+
+
+func _walk_for(sim: Simulation, actions: Array, ticks: int) -> void:
+	for tick: int in range(ticks):
+		sim.step(actions)
 
 
 func test_a_move_action_moves_the_player() -> void:
 	var sim: Simulation = Simulation.new()
 	sim.step([InputAction.move(0, Fixed.ONE, 0)])
-	assert_eq(sim.query_player_position(0).x, STEP_PER_TICK, "one tick of full throttle")
-	assert_eq(sim.query_player_position(0).z, 0, "no intent along z, no movement along z")
+	assert_eq(
+		sim.query_player_velocity(0).z, -ACCELERATION_PER_TICK, "one tick of full throttle"
+	)
+	assert_eq(sim.query_player_velocity(0).x, 0, "no strafe, no sideways movement")
 
 
 func test_movement_accumulates_over_ticks() -> void:
 	var sim: Simulation = Simulation.new()
-	for i: int in range(60):
-		sim.step([InputAction.move(0, Fixed.ONE, 0)])
-	assert_eq(
-		sim.query_player_position(0).x,
-		STEP_PER_TICK * 60,
-		"a second of walking, quantised per tick"
+	_walk_for(sim, [InputAction.move(0, Fixed.ONE, 0)], 60)
+	# A second of walking: a third of it spent accelerating, the rest at 4 m/s. That
+	# is less ground than a second at full speed, which is the point of acceleration.
+	assert_true(
+		sim.query_player_position(0).z < 0,
+		"a second of walking forward must have covered ground"
 	)
+	assert_eq(sim.query_player_velocity(0).z, -WALK_SPEED, "and settled at the tuned speed")
 
 
 func test_a_negative_intent_moves_the_other_way() -> void:
 	var sim: Simulation = Simulation.new()
 	sim.step([InputAction.move(0, -Fixed.ONE, 0)])
-	assert_eq(sim.query_player_position(0).x, -STEP_PER_TICK)
+	assert_eq(sim.query_player_velocity(0).z, ACCELERATION_PER_TICK, "backing away is +z")
 
 
-func test_partial_intent_moves_proportionally() -> void:
+func test_partial_intent_settles_at_a_proportional_speed() -> void:
 	var sim: Simulation = Simulation.new()
-	sim.step([InputAction.move(0, Fixed.HALF, 0)])
-	# floor(32768 * 4369 / 65536) = floor(2184.5)
-	assert_eq(sim.query_player_position(0).x, 2184, "half throttle, floored")
+	_walk_for(sim, [InputAction.move(0, Fixed.HALF, 0)], 60)
+	assert_eq(
+		sim.query_player_velocity(0).z,
+		-WALK_SPEED / 2,
+		"half a throttle is half the walking speed, not half the acceleration"
+	)
 
 
 func test_intent_beyond_full_throttle_is_clamped() -> void:
 	var sim: Simulation = Simulation.new()
-	sim.step([InputAction.move(0, Fixed.from_int(1000), 0)])
+	_walk_for(sim, [InputAction.move(0, Fixed.from_int(1000), 0)], 60)
 	assert_eq(
-		sim.query_player_position(0).x,
-		STEP_PER_TICK,
+		sim.query_player_velocity(0).z,
+		-WALK_SPEED,
 		"the Simulation owns speed; an oversized intent must not buy more of it"
 	)
 
@@ -167,9 +183,9 @@ func test_intent_beyond_full_throttle_is_clamped() -> void:
 func test_an_action_moves_only_the_player_who_sent_it() -> void:
 	var sim: Simulation = Simulation.new(0, 3)
 	sim.step([InputAction.move(1, Fixed.ONE, 0)])
-	assert_eq(sim.query_player_position(0).x, 0, "player 0 did not move")
-	assert_eq(sim.query_player_position(1).x, STEP_PER_TICK, "player 1 did")
-	assert_eq(sim.query_player_position(2).x, 0, "player 2 did not move")
+	assert_eq(sim.query_player_velocity(0).z, 0, "player 0 did not move")
+	assert_eq(sim.query_player_velocity(1).z, -ACCELERATION_PER_TICK, "player 1 did")
+	assert_eq(sim.query_player_velocity(2).z, 0, "player 2 did not move")
 
 
 func test_several_actions_in_one_tick_all_apply() -> void:
@@ -178,21 +194,22 @@ func test_several_actions_in_one_tick_all_apply() -> void:
 		InputAction.move(0, Fixed.ONE, 0),
 		InputAction.move(1, 0, Fixed.ONE),
 	])
-	assert_eq(sim.query_player_position(0).x, STEP_PER_TICK)
-	assert_eq(sim.query_player_position(1).z, STEP_PER_TICK)
+	assert_eq(sim.query_player_velocity(0).z, -ACCELERATION_PER_TICK, "player 0 walked forward")
+	assert_eq(sim.query_player_velocity(1).x, ACCELERATION_PER_TICK, "player 1 strafed right")
 
 
-func test_repeated_actions_from_one_player_in_one_tick_accumulate() -> void:
+func test_the_last_throttle_a_player_sends_in_a_tick_is_the_one_that_counts() -> void:
+	# A throttle is a level, not an impulse: two intents in one tick describe one
+	# state of the keyboard, so the later one supersedes the earlier rather than
+	# adding to it. Otherwise a stutter in the input producer would double a
+	# player's acceleration.
 	var sim: Simulation = Simulation.new()
 	sim.step([
 		InputAction.move(0, Fixed.ONE, 0),
-		InputAction.move(0, Fixed.ONE, 0),
+		InputAction.move(0, 0, Fixed.ONE),
 	])
-	assert_eq(
-		sim.query_player_position(0).x,
-		STEP_PER_TICK * 2,
-		"actions apply in order, each one fully"
-	)
+	assert_eq(sim.query_player_velocity(0).z, 0, "the forward throttle was superseded")
+	assert_eq(sim.query_player_velocity(0).x, ACCELERATION_PER_TICK, "by the strafe")
 
 
 func test_a_none_action_changes_nothing_but_the_tick() -> void:
@@ -207,13 +224,15 @@ func test_an_action_from_an_unknown_player_is_ignored() -> void:
 	var sim: Simulation = Simulation.new(0, 1)
 	sim.step([InputAction.move(99, Fixed.ONE, Fixed.ONE)])
 	assert_eq(sim.query_tick(), 1, "the tick still happens")
-	assert_eq(sim.query_player_position(0).x, 0, "nobody moved")
+	assert_eq(sim.query_player_velocity(0).z, 0, "nobody moved")
 
 
 func test_a_null_action_is_ignored() -> void:
 	var sim: Simulation = Simulation.new()
 	sim.step([null, InputAction.move(0, Fixed.ONE, 0)])
-	assert_eq(sim.query_player_position(0).x, STEP_PER_TICK, "the real action still applied")
+	assert_eq(
+		sim.query_player_velocity(0).z, -ACCELERATION_PER_TICK, "the real action still applied"
+	)
 
 
 func test_movement_changes_the_hash() -> void:
@@ -224,9 +243,9 @@ func test_movement_changes_the_hash() -> void:
 	assert_ne(moved.hash(), still.hash(), "player position is part of the hashed state")
 
 
-func test_moving_along_x_and_z_are_distinguishable_in_the_hash() -> void:
-	var along_x: Simulation = Simulation.new(5)
-	var along_z: Simulation = Simulation.new(5)
-	along_x.step([InputAction.move(0, Fixed.ONE, 0)])
-	along_z.step([InputAction.move(0, 0, Fixed.ONE)])
-	assert_ne(along_x.hash(), along_z.hash(), "the axes must not be conflated")
+func test_walking_forward_and_strafing_are_distinguishable_in_the_hash() -> void:
+	var forward: Simulation = Simulation.new(5)
+	var sideways: Simulation = Simulation.new(5)
+	forward.step([InputAction.move(0, Fixed.ONE, 0)])
+	sideways.step([InputAction.move(0, 0, Fixed.ONE)])
+	assert_ne(forward.hash(), sideways.hash(), "the axes must not be conflated")

@@ -334,6 +334,94 @@ GLOSSARY.md and DESIGN.md, and it is the whole model.
   exactly one Miner and one Smelter, so the first Machine beyond the opening line is
   the moment Power becomes the player's problem.
 
+## The player, the Build Gun and Survey View
+
+A player is 1.8 m against 2 m tiles, and every single thing they do crosses into the
+Simulation as an Input Action. The controller holds no authoritative state.
+
+- **Position, facing, velocity and the camera are Simulation state**, in fixed point.
+  `game/` asks `query_player_*` where to put the camera; it never decides. Yaw is in
+  **turns**, not radians — radians need PI and PI is a float — and `Fixed.sin_turns` /
+  `cos_turns` read a 65-sample quarter-wave table, exact at the quadrant boundaries and
+  within `Fixed.SIN_TOLERANCE` everywhere else.
+- **`MOVE` is a throttle in the player's own frame**: forward and strafe, which the
+  Simulation rotates by the yaw it is holding. There is therefore no second copy of the
+  facing angle for the controller to rotate WASD by. Intent is **per tick**; sending no
+  `MOVE` is how a player stands still, so an idle tick is a tick spent slowing down.
+- **`LOOK` carries pixels, not an angle.** The sensitivity that turns pixels into a turn
+  is tuning the Simulation owns, exactly as it owns the walking speed, so a client cannot
+  turn faster by sending a bigger number.
+- **Walking has acceleration**, so a person has weight. Velocity is state and is hashed.
+- **Survey View is held, not toggled**, and its transition is counted in ticks *inside*
+  the Simulation, eased on the way out with `Fixed.smoothstep_fixed`. That is a decision
+  about feel rather than about determinism: its height, duration and tilt are
+  hot-reloadable tuning, and the only way to find out whether a lift feels good is to try
+  several. **It is not a mode** — nothing consults it to decide whether an intent is
+  allowed, and a player can walk and build while surveying.
+- **Building is never gated.** There is no build mode, no flag, and no check anywhere in
+  the Simulation that asks whether building is currently permitted (GLOSSARY.md: the Build
+  Gun is available at all times, including mid-Wave).
+
+### Refusals are a query, not state
+
+A refused build stays a **silent no-op whose hash does not move** — a misaimed Build Gun is
+an ordinary thing for a player to do. The *reason* is therefore a pure projection:
+`query_build_refusal(player, machine, tile, rotation)` answers about a placement that has
+not happened, and the hologram asks it every frame about the tile it is hovering over. The
+reason is on screen **before** the click rather than after it, which is both better UX and
+the only version that leaves the hash alone. `_apply_build_machine` consults the same
+function, so what a player is told and what the Simulation does are one rule and not two.
+The wording lives in `game/build_gun.gd`, because a `Refusal` is a fact and a sentence
+about it is presentation.
+
+### Materials
+
+`content/machines.csv` has a `build_cost` column in the same `item:count` form a Recipe's
+inputs use; empty means free. Building spends it out of the player's own stock and
+demolishing returns it **in full**, along with whatever the Machine was holding and the
+Items riding a demolished Belt. Nothing is destroyed, so demolish-and-rebuild is not a way
+to make Items disappear, and iterating on a layout costs only the ticks it takes (issue #1,
+user story 7).
+
+Where the stock comes from is `player.starting_stock_per_item`, and the file says plainly
+that it is a scaffold: Delivery progression (milestone 5) is what will really decide it.
+It is granted once at construction, so raising the number mid-Run is not a way to conjure
+materials.
+
+### Rotation
+
+`WorldGrid.rotated_footprint` swaps a footprint's extents without moving its anchor, so a
+2x3 Machine turned a quarter covers 3x2 tiles from the same origin. One convention, shared
+by placement validation and the renderer. Rotation is per-Machine state and is hashed; a
+turned Machine covers different ground and presents its ports to different tiles.
+
+## The float-to-fixed boundary
+
+ADR 0002 says nothing converts a float back into a Simulation quantity. A first-person
+controller cannot honour that literally — a mouse reports pixels as floats and a camera ray
+is float arithmetic — so the crossing is made **exactly once**, in
+`game/input_quantiser.gd`, under three rules:
+
+1. **It lives in `game/`, never in `sim/`.** The purity lint takes no new exemption for it,
+   because it is not in the Simulation.
+2. **What crosses is an integer intent.** Mouse travel becomes a floored fixed-point count
+   of pixels; a camera ray becomes a whole tile. A replay reproduces the intent without
+   ever reproducing the float.
+3. **Flooring, clamping and NAN-guarding are explicit.** Every conversion floors toward
+   negative infinity like `Fixed`, every conversion is bounded, and NAN and INF are reduced
+   rather than cast — NAN compares false against everything, and an unguarded cast would let
+   it through as an arbitrary integer and desync a Run.
+
+It has a contract of its own in `tests/cases/test_input_quantiser.gd`, like `Fixed`, because
+its rounding is not observable through the façade. If you need to read a new float device,
+add a function there rather than converting at the call site.
+
+`game/player_controller.gd` holds the only other float on the way in: a **device buffer**
+of mouse travel and clicks gathered between frames. That is the same category of thing as
+`TickPump`'s leftover frame time — a reading on its way in, not a fact about the world —
+and it is drained once per tick. Everything a decision depends on is read back out of the
+Simulation with a query.
+
 ## Determinism rules
 
 From [ADR 0002](docs/adr/0002-deterministic-lockstep-inputs-only-networking.md).
@@ -385,6 +473,13 @@ the scenario needs content the shipped files do not have.
 
 `verify` takes an optional replacement Simulation, which is how a save/load round
 trip gets proved exact and how the harness itself is proved to have teeth.
+
+`tests/cases/test_recorded_session.gd` is the strongest fixture in the suite and the shape
+later ones should copy: it drives the **real input producer** with a sequence of device
+readings — mouse travel, held keys, clicks, a scroll wheel, Survey View held and released —
+captures what crossed tick by tick, and replays that. A fixture written as Input Actions by
+hand proves the Simulation is deterministic; one written as device readings proves the whole
+chain from a mouse to a state hash is.
 
 ## Conventions
 

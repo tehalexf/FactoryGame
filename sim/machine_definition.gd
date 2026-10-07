@@ -58,6 +58,15 @@ var health: int = 0
 ## Deepest Node tier this Machine reaches. 0 for anything that is not a Miner.
 var max_depth: int = 0
 
+## What this Machine costs to build, as parallel arrays of Item id and count, sorted
+## by id so the order is a property of the content rather than of how the row was
+## typed. Empty for a Machine that is free.
+##
+## Demolishing returns this in full. That is what makes iterating on a layout cheap,
+## which is the whole point of a Build Gun that can take things back apart.
+var build_cost_items: PackedStringArray = PackedStringArray()
+var build_cost_counts: PackedInt64Array = PackedInt64Array()
+
 ## The Recipe this Machine runs, by id and — once the set is loaded — by index.
 var recipe_id: String = ""
 var recipe_index: int = -1
@@ -77,6 +86,29 @@ static func role_name(value: Role) -> String:
 ## Parses a Role, or -1 when the text names no Role.
 static func parse_role(text: String) -> int:
 	return ROLE_NAMES.find(text)
+
+
+## Sets the build cost, sorting by Item id so two rows that list the same cost in a
+## different order are the same definition.
+func set_build_cost(names: PackedStringArray, quantities: PackedInt64Array) -> void:
+	var order: Array = []
+	for index: int in range(names.size()):
+		order.append(index)
+	order.sort_custom(func(a: int, b: int) -> bool: return names[a] < names[b])
+
+	build_cost_items = PackedStringArray()
+	build_cost_counts = PackedInt64Array()
+	for index: int in order:
+		build_cost_items.append(names[index])
+		build_cost_counts.append(quantities[index])
+
+
+## How many of an Item this Machine costs to build. 0 for an Item it does not need.
+func build_cost_of(item_id: String) -> int:
+	var at: int = build_cost_items.find(item_id)
+	if at == -1:
+		return 0
+	return build_cost_counts[at]
 
 
 func is_miner() -> bool:
@@ -101,3 +133,7 @@ func feed_into(hasher: StateHasher) -> void:
 	hasher.feed_int(health)
 	hasher.feed_int(max_depth)
 	hasher.feed_text(recipe_id)
+	hasher.feed_int(build_cost_items.size())
+	for index: int in range(build_cost_items.size()):
+		hasher.feed_text(build_cost_items[index])
+		hasher.feed_int(build_cost_counts[index])

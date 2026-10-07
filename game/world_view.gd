@@ -12,6 +12,12 @@
 ## pass; what matters now is that the box is in the place the Simulation says the
 ## Machine is, and that the count on screen is the count in the buffer.
 ##
+## The camera is part of that. It goes where `query_player_camera_*` says it goes, every
+## frame — on foot, mid-lift and in Survey View alike. There is no camera controller and
+## no tween: the lift a player feels is the Simulation easing a tick counter, which is
+## what lets its height and duration be tuned in `content/tuning.toml` while the game is
+## running.
+##
 ## Floats appear freely here. This is the outbound side of the boundary, and
 ## `Fixed.to_float` is the sanctioned crossing.
 class_name WorldView
@@ -31,6 +37,9 @@ const BELT_HEIGHT_METRES: float = 0.3
 ## along the run, so a packed Belt reads as a queue of distinct boxes with gaps rather
 ## than as one continuous bar — which is the whole point of drawing them.
 const ITEM_SIZE_METRES: float = 0.35
+
+## Which player this view is looking through. One for now; co-op makes it the local id.
+const VIEWED_PLAYER: int = 0
 
 var _machine_meshes: Array[MeshInstance3D] = []
 var _node_meshes: Array[MeshInstance3D] = []
@@ -58,9 +67,34 @@ var _item_transforms: PackedFloat32Array = PackedFloat32Array()
 ## How many floats one MultiMesh instance transform occupies in TRANSFORM_3D format.
 const FLOATS_PER_INSTANCE: int = 12
 
+## The hologram the Build Gun projects. One box, moved and recoloured every frame from
+## the aim and the refusal the Simulation reports — never from a remembered placement.
+var _hologram: MeshInstance3D = null
+
+## The scenery: a lit sky and a ground plane with the 2 m grid on it. Not a mirror of
+## anything, and the reason scale reads at all — a 1.8 m eye height against 2 m tiles
+## means nothing without a surface to see the tiles on.
+var _ground: MeshInstance3D = null
+var _sun: DirectionalLight3D = null
+var _environment: WorldEnvironment = null
+
 var _hud: Label = null
 var _hud_layer: CanvasLayer = null
 var _camera: Camera3D = null
+
+
+## Hologram colours. Green where a Machine would land, red where it would be refused —
+## and the HUD says *why* in words, because a red box only says "no".
+const HOLOGRAM_ALLOWED: Color = Color(0.35, 0.85, 0.45, 0.45)
+const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
+
+## How far the ground plane extends, in tiles from the origin. The Map's own extent, so
+## a player cannot walk off the edge of what they can see.
+const GROUND_HALF_EXTENT_TILES: int = 64
+
+## How long each arm of the crosshair is, in pixels. Small: it marks where the Build Gun
+## points without becoming a thing a player looks at instead of the Factory.
+const CROSSHAIR_ARM_PIXELS: float = 13.0
 
 
 ## Redraws everything from the Simulation's queries. Called once a frame; cheap
@@ -71,10 +105,12 @@ func sync(sim: Simulation) -> void:
 	if sim == null:
 		return
 
+	_sync_scenery(sim)
 	_sync_nodes(sim)
 	_sync_machines(sim)
 	_sync_belts(sim)
 	_sync_items(sim)
+	_sync_hologram(sim)
 	_sync_hud(sim)
 	_place_camera(sim)
 
@@ -146,21 +182,21 @@ func _sync_machines(sim: Simulation) -> void:
 		if definition == null:
 			continue
 
-		# The footprint comes from content/machines.csv, through the Simulation. The
-		# renderer does not get its own copy of those numbers — #19 generates the real
-		# meshes against the same file, and two sources would drift apart on the first
-		# balance change.
+		# The footprint comes from content/machines.csv, through the Simulation, and
+		# *turned* — `query_machine_footprint` reports the ground the Machine actually
+		# covers, so a rotated Machine is drawn over its own tiles. The renderer does not
+		# get its own copy of those numbers; #19 generates the real meshes against the
+		# same file, and two sources would drift apart on the first balance change.
+		var footprint: Vector2i = sim.query_machine_footprint(index)
 		var box: BoxMesh = _machine_meshes[index].mesh
 		box.size = Vector3(
-			float(definition.footprint_x) * tile_size,
-			MACHINE_HEIGHT_METRES,
-			float(definition.footprint_z) * tile_size
+			float(footprint.x) * tile_size, MACHINE_HEIGHT_METRES, float(footprint.y) * tile_size
 		)
 
 		var tile: Vector3i = sim.query_machine_tile(index)
 		var near: FixedVec2 = sim.query_tile_centre_metres(tile)
 		var far: FixedVec2 = sim.query_tile_centre_metres(
-			Vector3i(tile.x + definition.footprint_x - 1, tile.y, tile.z + definition.footprint_z - 1)
+			Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
 		)
 		_machine_meshes[index].position = Vector3(
 			(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
@@ -256,10 +292,12 @@ func _sync_hud(sim: Simulation) -> void:
 		_hud_layer = CanvasLayer.new()
 		_hud = Label.new()
 		_hud_layer.add_child(_hud)
+		_hud_layer.add_child(_crosshair())
 		add_child(_hud_layer)
 
 	var lines: PackedStringArray = PackedStringArray()
 	lines.append("tick %d" % sim.query_tick())
+	lines.append_array(_build_gun_lines(sim))
 
 	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and
 	# the fraction of that it is actually getting. The percentage is rounded for the
@@ -319,23 +357,247 @@ func _sync_hud(sim: Simulation) -> void:
 	_hud.text = "\n".join(lines)
 
 
-## A fixed raised view over the Factory. The first-person controller and Survey View
-## ticket replaces this; until then it exists so there is something to look through.
+## Points the camera where the Simulation says a player's camera is.
+##
+## Every frame, from `query_player_camera_*`: the ground position is the player's, the
+## height is eye level easing up to Survey View height, and the pitch is the player's own
+## easing down to the Survey View tilt. No tween and no camera state — the transition a
+## player feels is the Simulation counting ticks, which is what makes its height and
+## duration hot-reloadable tuning rather than numbers compiled into a renderer.
 func _place_camera(sim: Simulation) -> void:
-	if _camera != null:
+	if _camera == null:
+		_camera = Camera3D.new()
+		add_child(_camera)
+
+	var ground: FixedVec2 = sim.query_player_camera_ground_metres(VIEWED_PLAYER)
+	_camera.position = Vector3(
+		Fixed.to_float(ground.x),
+		Fixed.to_float(sim.query_player_camera_height_metres(VIEWED_PLAYER)),
+		Fixed.to_float(ground.z)
+	)
+	# Turns, not radians: the Simulation holds the angle in turns because radians need
+	# PI and PI is a float. One multiplication by TAU is the whole conversion.
+	_camera.rotation = Vector3(
+		Fixed.to_float(sim.query_player_camera_pitch_turns(VIEWED_PLAYER)) * TAU,
+		Fixed.to_float(sim.query_player_yaw_turns(VIEWED_PLAYER)) * TAU,
+		0.0
+	)
+
+
+## Where the camera is standing, in metres. For the smoke test, which asserts it against
+## the queries rather than against a remembered value.
+func camera_position() -> Vector3:
+	if _camera == null:
+		return Vector3.ZERO
+	return _camera.position
+
+
+## Which way the camera is pointing, in radians. For the smoke test.
+func camera_rotation() -> Vector3:
+	if _camera == null:
+		return Vector3.ZERO
+	return _camera.rotation
+
+
+## A small cross at the centre of the screen.
+##
+## Decoration in the sense that nothing reads it, and load-bearing in the sense that the
+## Build Gun aims down the middle of the view: without a mark there, a player placing a
+## Machine is guessing where the gun points.
+func _crosshair() -> Control:
+	var mark: Control = Control.new()
+	mark.set_anchors_preset(Control.PRESET_CENTER)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	for arm: Vector2 in [Vector2(CROSSHAIR_ARM_PIXELS, 1.0), Vector2(1.0, CROSSHAIR_ARM_PIXELS)]:
+		var bar: ColorRect = ColorRect.new()
+		bar.color = Color(0.95, 0.95, 0.92, 0.75)
+		bar.size = arm
+		bar.position = -arm * 0.5
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.add_child(bar)
+
+	return mark
+
+
+## What the Build Gun is holding, and why it would refuse.
+##
+## The refusal is in **words**, not only in a red box: "cannot build there" with no reason
+## is the silent failure this ticket exists to remove. The wording lives in `BuildGun`
+## because it is presentation; the rule lives in the Simulation.
+func _build_gun_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+
+	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
+	var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
+	lines.append(
+		"build gun: %s facing %d" % ["nothing" if selected.is_empty() else selected, rotation]
+	)
+
+	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
+	var refusal: int = sim.query_build_refusal(
+		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation
+	)
+	if refusal == Simulation.Refusal.NONE:
+		lines.append("aimed at %d, %d — clear" % [tile.x, tile.z])
+	else:
+		lines.append("aimed at %d, %d — %s" % [tile.x, tile.z, BuildGun.refusal_text(refusal)])
+
+	var carried: PackedStringArray = PackedStringArray()
+	for item_id: String in sim.query_player_items(VIEWED_PLAYER):
+		carried.append("%s %d" % [item_id, sim.query_player_item(VIEWED_PLAYER, item_id)])
+	lines.append("carrying: %s" % ("nothing" if carried.is_empty() else ", ".join(carried)))
+
+	if sim.query_player_is_surveying(VIEWED_PLAYER):
+		lines.append("survey view")
+
+	return lines
+
+
+## A lit sky and a ground plane with the 2 m grid marked on it, built once.
+##
+## Not decoration. A first-person controller judged on how it feels needs a surface to
+## walk on and a grid to read the 2 m tiles off, or a 1.8 m eye height is a number with
+## nothing to be 1.8 m against.
+func _sync_scenery(sim: Simulation) -> void:
+	if _ground != null:
 		return
 
-	_camera = Camera3D.new()
-	var centre: FixedVec2 = sim.query_tile_centre_metres(sim.query_node_tile(0))
-	_camera.position = Vector3(
-		Fixed.to_float(centre.x), 18.0, Fixed.to_float(centre.z) + 18.0
+	_environment = WorldEnvironment.new()
+	var world: Environment = Environment.new()
+	world.background_mode = Environment.BG_SKY
+	var sky: Sky = Sky.new()
+	var sky_material: ProceduralSkyMaterial = ProceduralSkyMaterial.new()
+	# Dieselpunk: a low, smoky, ochre sky rather than a clear blue one (DESIGN.md).
+	sky_material.sky_top_color = Color(0.22, 0.24, 0.28)
+	sky_material.sky_horizon_color = Color(0.52, 0.44, 0.33)
+	sky_material.ground_bottom_color = Color(0.14, 0.13, 0.12)
+	sky_material.ground_horizon_color = Color(0.32, 0.28, 0.23)
+	sky.sky_material = sky_material
+	world.sky = sky
+	# An explicit ambient colour rather than the sky's own, and a generous one. A single
+	# directional light leaves every face turned away from it black, and a Machine whose
+	# silhouette a player cannot read is a Machine they cannot diagnose — readability is
+	# the point of the placeholders, not realism.
+	world.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	world.ambient_light_color = Color(0.62, 0.63, 0.68)
+	world.ambient_light_energy = 0.9
+	_environment.environment = world
+	add_child(_environment)
+
+	_sun = DirectionalLight3D.new()
+	# High and off to one side, so vertical faces catch it at different angles and a box
+	# reads as a box rather than as a silhouette.
+	_sun.rotation = Vector3(-0.85, -2.3, 0.0)
+	_sun.light_energy = 1.4
+	_sun.light_color = Color(1.0, 0.94, 0.84)
+	_sun.shadow_enabled = true
+	# Not fully black. A placeholder box in shadow still has to read as a box, and a
+	# Factory half of which is unreadable at a glance defeats the point of Survey View.
+	_sun.shadow_opacity = 0.65
+	add_child(_sun)
+
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	var span: float = float(GROUND_HALF_EXTENT_TILES * 2) * tile_size
+
+	_ground = MeshInstance3D.new()
+	var plane: PlaneMesh = PlaneMesh.new()
+	plane.size = Vector2(span, span)
+	_ground.mesh = plane
+	var surface: StandardMaterial3D = StandardMaterial3D.new()
+	surface.albedo_texture = _grid_texture()
+	# Anisotropic, because the grid runs away to the horizon and nearest-neighbour
+	# filtering turns the far half of it into noise.
+	surface.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	# One texture repeat per tile, so what a player sees on the ground is the grid the
+	# Build Gun snaps to rather than an arbitrary pattern.
+	surface.uv1_scale = Vector3(span / tile_size, span / tile_size, 1.0)
+	_ground.material_override = surface
+	add_child(_ground)
+
+
+## A one-tile ground texture: a dark face with a lighter edge, so every 2 m tile boundary
+## is visible. Generated rather than committed, because a committed image would be an
+## asset with a licence and this is a few pixels of information.
+func _grid_texture() -> ImageTexture:
+	var size: int = 16
+	var image: Image = Image.create(size, size, false, Image.FORMAT_RGB8)
+	image.fill(Color(0.29, 0.27, 0.25))
+	for along: int in range(size):
+		image.set_pixel(along, 0, Color(0.38, 0.36, 0.33))
+		image.set_pixel(0, along, Color(0.38, 0.36, 0.33))
+	return ImageTexture.create_from_image(image)
+
+
+## The Build Gun's hologram: a translucent box on the tile the gun is aimed at, sized to
+## the footprint the selected Machine would occupy *turned by the rotation the player is
+## holding*, and coloured by whether the Simulation would accept it.
+##
+## Everything here is a query. The aim comes from `BuildGun`, which derives it from where
+## the Simulation says the camera is; the refusal comes from `query_build_refusal`, which
+## is the same rule a build obeys. Nothing is remembered between frames, so there is no
+## way for the hologram to promise a placement the Simulation would refuse.
+func _sync_hologram(sim: Simulation) -> void:
+	if _hologram == null:
+		_hologram = MeshInstance3D.new()
+		_hologram.mesh = BoxMesh.new()
+		var fresh: StandardMaterial3D = StandardMaterial3D.new()
+		fresh.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		fresh.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_hologram.material_override = fresh
+		add_child(_hologram)
+
+	var selected: MachineDefinition = sim.query_definitions().machine(
+		sim.query_player_selected_machine(VIEWED_PLAYER)
 	)
-	_camera.look_at_from_position(
-		_camera.position,
-		Vector3(Fixed.to_float(centre.x), 0.0, Fixed.to_float(centre.z)),
-		Vector3.UP
+	_hologram.visible = selected != null
+	if selected == null:
+		return
+
+	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
+	var footprint: Vector2i = WorldGrid.rotated_footprint(
+		selected.footprint_x, selected.footprint_z, rotation
 	)
-	add_child(_camera)
+	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+
+	var box: BoxMesh = _hologram.mesh
+	box.size = Vector3(
+		float(footprint.x) * tile_size, MACHINE_HEIGHT_METRES, float(footprint.y) * tile_size
+	)
+
+	var near: FixedVec2 = sim.query_tile_centre_metres(tile)
+	var far: FixedVec2 = sim.query_tile_centre_metres(
+		Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
+	)
+	_hologram.position = Vector3(
+		(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
+		Fixed.to_float(sim.query_layer_height_metres(tile.y)) + MACHINE_HEIGHT_METRES * 0.5,
+		(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
+	)
+
+	var refusal: int = sim.query_build_refusal(
+		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation
+	)
+	var skin: StandardMaterial3D = _hologram.material_override
+	skin.albedo_color = (
+		HOLOGRAM_ALLOWED if refusal == Simulation.Refusal.NONE else HOLOGRAM_REFUSED
+	)
+
+
+## Where the hologram is standing, in metres. For the smoke test.
+func hologram_position() -> Vector3:
+	if _hologram == null:
+		return Vector3.ZERO
+	return _hologram.position
+
+
+## Whether the hologram is showing a refusal. For the smoke test.
+func hologram_is_refused() -> bool:
+	if _hologram == null:
+		return false
+	var skin: StandardMaterial3D = _hologram.material_override
+	return skin.albedo_color.is_equal_approx(HOLOGRAM_REFUSED)
 
 
 ## Grows or shrinks a pool of placeholder boxes to `wanted`. Pooled rather than

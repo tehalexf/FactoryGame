@@ -20,6 +20,39 @@
 # still matters.
 walk_speed_metres_per_second = 4
 
+# How hard a player accelerates towards that speed, in metres per second squared.
+# This is the weight of the character: 24 reaches walking pace in a third of a
+# second, which reads as a person rather than as a cursor, and the same number
+# brings them to a stop when they let go. Lower it for something ponderous, raise it
+# for something twitchy.
+walk_acceleration_metres_per_second_squared = 24
+
+# How far a player turns per 1000 pixels of mouse travel, in turns — one turn is a
+# full revolution, so 0.4 means a 2500-pixel sweep spins all the way round. This is
+# the single most feel-critical number in the game and the whole reason it lives in a
+# file: a mouse that is a touch too slow is unpleasant in a way no test can report.
+#
+# The Simulation owns it, exactly as it owns the walking speed, so what crosses from
+# the mouse is a count of pixels and a client cannot turn faster by sending a bigger
+# number. In co-op that makes it the Host's number; when per-client preferences
+# arrive this is the key that moves out of content and into settings.
+look_sensitivity_turns_per_1000_pixels = 0.4
+
+# How high a player's eyes are off the ground, in metres. The player is 1.8 m tall
+# against 2 m tiles, so the eye sits a little below the top of a tile — which is what
+# makes a Machine read as something you stand next to rather than something you look
+# down on. Change this and the whole sense of scale changes with it.
+eye_height_metres = 1.7
+
+# How many of each Item a player starts a Run carrying.
+#
+# A scaffold, and labelled as one: Delivery progression (DESIGN.md, milestone 5) is
+# what will really decide where a player's materials come from, and this key goes away
+# when it lands. Until then it is what makes the Build Gun usable at all — building
+# spends a Machine's `build_cost` and demolishing returns it, so a Run has to open with
+# something in hand.
+starting_stock_per_item = 200
+
 [belt]
 
 # A Belt's rated throughput, in Items a second. This is the primary number: the
@@ -48,6 +81,27 @@ items_per_tile = 4
 # fills up against when a Machine cannot keep up, and small enough that a stalled
 # line is obvious rather than absorbed.
 input_buffer_crafts = 2
+
+[survey]
+
+# Survey View: the raised, downward-looking camera a player holds a key for while
+# building. It exists because a Factory is illegible from eye level (DESIGN.md), and
+# it is the highest-value item in the whole build system, so these three numbers are
+# worth more fiddling than any others in this file.
+
+# How high the camera rises to, in metres. 26 m is about thirteen tiles, which puts a
+# dozen Machines on screen at once without making any of them unreadable.
+height_metres = 26
+
+# How long the lift takes, in seconds, each way. This is pure feel: an instant snap to
+# 26 m is disorienting, a long slide is sluggish. Rounded to whole ticks, so 0.4 is the
+# 24 ticks a tuner means rather than the 23 flooring would give.
+transition_seconds = 0.4
+
+# How far down the camera tilts at the top, in degrees from level. Not the full 90:
+# a little horizon left in frame keeps the Factory's surroundings legible, which is
+# what a player raising the camera is usually trying to see.
+pitch_degrees = 68
 
 [power]
 

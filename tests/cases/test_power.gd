@@ -40,8 +40,8 @@ func test_a_factory_within_its_power_runs_at_the_rate_its_recipes_state() -> voi
 # which is the point: the throttle is a duty cycle over whole ticks, never a fraction of
 # one.
 
-const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,mine_iron_ore
+const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,mine_iron_ore,
 """
 
 const THIRD_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -50,11 +50,19 @@ mine_iron_ore,Mine Iron Ore,,iron_ore:1,0.1
 
 const THIRD_TUNING: String = """[player]
 walk_speed_metres_per_second = 4
+walk_acceleration_metres_per_second_squared = 24
+look_sensitivity_turns_per_1000_pixels = 0.4
+eye_height_metres = 1.7
+starting_stock_per_item = 200
 [belt]
 items_per_second = 4
 items_per_tile = 4
 [machine]
 input_buffer_crafts = 2
+[survey]
+height_metres = 26
+transition_seconds = 0.4
+pitch_degrees = 68
 [power]
 baseline_supply_kw = 1
 """
@@ -297,8 +305,8 @@ func test_a_cut_fuel_line_slows_the_very_miner_that_feeds_it() -> void:
 # except for one number in tuning: a 3 kW baseline against a 3 kW draw is a grid in
 # balance, and a 1 kW baseline against the same draw is a grid supplying a third.
 
-const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,mine_iron_ore
+const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,mine_iron_ore,
 """
 
 const THIN_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -312,11 +320,19 @@ func _thinning_content(baseline_kw: int) -> Definitions:
 		THIN_RECIPES,
 		"""[player]
 walk_speed_metres_per_second = 4
+walk_acceleration_metres_per_second_squared = 24
+look_sensitivity_turns_per_1000_pixels = 0.4
+eye_height_metres = 1.7
+starting_stock_per_item = 200
 [belt]
 items_per_second = 4
 items_per_tile = 4
 [machine]
 input_buffer_crafts = 2
+[survey]
+height_metres = 26
+transition_seconds = 0.4
+pitch_degrees = 68
 [power]
 baseline_supply_kw = %d
 """ % baseline_kw

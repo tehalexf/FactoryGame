@@ -51,3 +51,32 @@ func test_a_storey_is_four_metres_so_floors_can_be_switched_on_later() -> void:
 		Fixed.from_int(4),
 		"DESIGN.md reserves a 4 m storey height for vertical building"
 	)
+
+
+# ── Which way a player is facing, as a grid direction ─────────────────────────
+# A Belt runs along one of four axes, so laying one along the way a player is looking
+# means rounding a continuous angle to the nearest of four. Pure grid geometry, so it
+# lives with the grid rather than in the controller that needs it — the Turret that has
+# to face a direction will want the same answer.
+
+func test_facing_forward_is_the_negative_z_direction() -> void:
+	# Yaw 0 looks down -z, Godot's forward, which is direction 3 in the grid's order.
+	assert_eq(WorldGrid.direction_from_turns(0), 3)
+
+
+func test_each_quarter_turn_is_the_next_direction_round() -> void:
+	assert_eq(WorldGrid.direction_from_turns(Fixed.QUARTER_TURN), 2, "a quarter left is -x")
+	assert_eq(WorldGrid.direction_from_turns(2 * Fixed.QUARTER_TURN), 1, "half round is +z")
+	assert_eq(WorldGrid.direction_from_turns(3 * Fixed.QUARTER_TURN), 0, "three quarters is +x")
+
+
+func test_an_angle_between_two_directions_rounds_to_the_nearer() -> void:
+	# A fifth of a turn is 72 degrees, nearer the quarter turn's 90 than zero.
+	assert_eq(WorldGrid.direction_from_turns(Fixed.ONE / 5), 2)
+	# A tenth is 36 degrees, nearer zero.
+	assert_eq(WorldGrid.direction_from_turns(Fixed.ONE / 10), 3)
+
+
+func test_an_angle_outside_one_revolution_still_names_a_direction() -> void:
+	assert_eq(WorldGrid.direction_from_turns(5 * Fixed.TURN), 3, "five turns is no turn")
+	assert_eq(WorldGrid.direction_from_turns(-Fixed.QUARTER_TURN), 0, "and backwards wraps")

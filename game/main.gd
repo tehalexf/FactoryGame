@@ -13,10 +13,21 @@
 ## started remembering things, those things would need their own tests and their
 ## own determinism argument.
 ##
-## What it drives today: a Run on the starter Map, one opening Miner placed by an
-## ordinary build Input Action, and `WorldView` drawing placeholders and the extracted
-## count. The first-person controller, Build Gun and Survey View arrive in later
-## tickets and replace the fixed camera and the opening Miner with player intent.
+## What it drives: a Run on the starter Map with an **empty Factory**, a
+## `PlayerController` turning a mouse and four keys into Input Actions, and a `WorldView`
+## drawing what the queries report — including the camera, which goes where the Simulation
+## says a player's camera is rather than anywhere this layer decides.
+##
+## The opening Miner, Belt, Smelter, Coal Miner and Steam Boiler this file used to place
+## are gone. They existed so
+## that #4 and #5 had something to look at while nothing could build; now a player builds
+## it themselves in about ten seconds, which is the ticket. Keeping them as a starting
+## Factory was the alternative and was rejected for two reasons: a Factory the player did
+## not place teaches them nothing about the Build Gun, and it would have to be paid for
+## out of somebody's materials or be a quiet exception to the costs every other build
+## obeys. The one Power grid #7 added is unaffected: `power.baseline_supply_kw` is what
+## carries a Factory until its first generator, and that is tuning rather than a Factory
+## somebody else built.
 class_name Main
 extends Node
 
@@ -24,37 +35,14 @@ extends Node
 const WORLD_SEED: int = 1
 const PLAYER_COUNT: int = 1
 
-## The line a Run opens with: a Miner on the first Node, a Belt out of its output port,
-## and a Smelter at the far end of the Belt. Enough to watch ore travel and become
-## plates. All of it goes away when the Build Gun arrives.
-##
-## The Belt starts on the tile just past the Miner's footprint and the Smelter is anchored
-## on the tile just past the Belt's far end, because that adjacency *is* the connection —
-## Belts run straight into Machine ports and no inserter entity exists (DESIGN.md).
-const STARTING_MINER: String = "miner_mk1"
-const STARTING_SMELTER: String = "smelter_mk1"
-const STARTING_BELT_TILES: int = 4
-
-## The opening Power chain: a Coal Miner on the Map's coal, a short Belt, and the Steam
-## Boiler that burns what the Belt delivers. Here so that the one Power grid is something
-## a player can watch rather than something only a test knows about — and deleted by the
-## Build Gun ticket along with the rest of the opening line.
-const STARTING_COAL_MINER: String = "coal_miner_mk1"
-const STARTING_BOILER: String = "steam_boiler_mk1"
-const STARTING_FUEL_BELT_TILES: int = 2
+## Which player this instance is driving. One for now; co-op makes it the local id.
+const LOCAL_PLAYER: int = 0
 
 var _simulation: Simulation = null
+var _controller: PlayerController = null
 var _tick_pump: TickPump = null
 var _definition_watcher: DefinitionWatcher = null
 var _world_view: WorldView = null
-
-## Whether the opening Miner still has to be built.
-##
-## Temporary, and only here so this ticket has something to look at: the Build Gun
-## ticket is what turns placement into a player intent. Note what it is *not* — a
-## special path into the Simulation. It is an ordinary `BUILD_MACHINE` Input Action
-## on the first tick, so it records, replays and hashes like a player's own build.
-var _starting_miner_pending: bool = true
 
 ## A definition set the watcher produced that has not been handed to the Simulation
 ## yet, because definitions change on a tick like all other state and a frame does
@@ -65,6 +53,7 @@ var _pending_definitions: Definitions = null
 func _init() -> void:
 	_simulation = Simulation.new(WORLD_SEED, PLAYER_COUNT)
 	_tick_pump = TickPump.new(Simulation.TICKS_PER_SECOND)
+	_controller = PlayerController.new()
 	_definition_watcher = DefinitionWatcher.new()
 
 	if not _simulation.query_definitions_loaded():
@@ -84,6 +73,38 @@ func _ready() -> void:
 	_world_view = WorldView.new()
 	_world_view.name = "WorldView"
 	add_child(_world_view)
+
+	_capture_the_mouse()
+
+
+## Hands every device event to the controller, which adds it to the readings the next
+## tick will be built from. Mouse travel and clicks arrive between frames, so a tick has
+## to gather up whatever fell inside it; nothing here interprets an event.
+func _input(event: InputEvent) -> void:
+	# Mouse travel counts only while the pointer is captured. Otherwise moving the cursor
+	# across a windowed game — or the warp the engine performs at the moment of capture —
+	# would arrive as a violent turn the player did not ask for.
+	var is_motion: bool = event is InputEventMouseMotion
+	var captured: bool = Input.mouse_mode == Input.MOUSE_MODE_CAPTURED
+	if _controller != null and (captured or not is_motion):
+		_controller.note_event(event)
+
+	# Escape gives the pointer back, because a captured mouse with no way out is a bad
+	# way to meet a game. Not a player action and not an Input Action: it is a window
+	# management concern and the Simulation has no opinion about it.
+	if event is InputEventKey and (event as InputEventKey).pressed:
+		if (event as InputEventKey).keycode == KEY_ESCAPE:
+			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
+		_capture_the_mouse()
+
+
+## Captures the pointer so mouse travel becomes look rather than a cursor. Skipped
+## headless, where there is no window to capture it in.
+func _capture_the_mouse() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
 func _process(delta: float) -> void:
@@ -117,121 +138,28 @@ func advance_frame(delta_seconds: float) -> int:
 
 ## Translates the current device state into Input Actions for one tick.
 ##
-## Deliberately raw key polling for now: the input map, mouse look, Build Gun and
-## the rest belong to the first-person controller ticket. What matters at this
-## stage is that the only channel from a device into the Simulation is a list of
-## Input Actions.
+## The whole channel from a device into the Simulation, and it is a list of Input Actions
+## and nothing else. `PlayerController` does the translating; this orders a hot-reload
+## ahead of it and hands the rest over.
 func collect_input_actions() -> Array:
 	var actions: Array = []
 
 	# Ordered first, so the tick that reloads already runs on the new definitions.
 	# Taken rather than copied, so one saved edit produces exactly one reload.
 	if _pending_definitions != null:
-		actions.append(InputAction.reload_definitions(0, _pending_definitions))
+		actions.append(InputAction.reload_definitions(LOCAL_PLAYER, _pending_definitions))
 		_pending_definitions = null
 
-	# The opening line, on the Map's first Node. Once only — a flag rather than a
-	# check against the Simulation, because the Godot layer does not get to decide
-	# anything from state it has read back.
-	if _starting_miner_pending:
-		_starting_miner_pending = false
-		actions.append_array(_opening_line_actions())
-
-	var intent_x: int = 0
-	var intent_z: int = 0
-
-	if Input.is_key_pressed(KEY_D):
-		intent_x += Fixed.ONE
-	if Input.is_key_pressed(KEY_A):
-		intent_x -= Fixed.ONE
-	if Input.is_key_pressed(KEY_S):
-		intent_z += Fixed.ONE
-	if Input.is_key_pressed(KEY_W):
-		intent_z -= Fixed.ONE
-
-	if intent_x != 0 or intent_z != 0:
-		actions.append(InputAction.move(0, intent_x, intent_z))
-
+	actions.append_array(
+		_controller.actions_for_tick(_simulation, LOCAL_PLAYER, _controller.sample_devices())
+	)
 	return actions
 
 
-## The Input Actions that lay the opening line, in the order they have to happen in.
-##
-## Ordinary build intents, on the first tick, exactly as a player's own would be — so the
-## opening line records, replays and hashes like anything else, and this method is the
-## only thing the Build Gun ticket has to delete.
-##
-## The geometry comes out of the queries: the Miner's footprint from
-## `content/machines.csv` by way of the Simulation, the Node from the Map. Nothing here
-## has its own copy of either.
-func _opening_line_actions() -> Array:
-	var definitions: Definitions = _simulation.query_definitions()
-	var miner: int = definitions.machine_index(STARTING_MINER)
-	var smelter: int = definitions.machine_index(STARTING_SMELTER)
-	if miner == -1 or smelter == -1 or _simulation.query_node_count() == 0:
-		return []
-
-	var footprint: MachineDefinition = definitions.machine(STARTING_MINER)
-	var anchor: Vector3i = _simulation.query_node_tile(0)
-	var belt_entry: Vector3i = Vector3i(anchor.x + footprint.footprint_x, anchor.y, anchor.z)
-	var belt_exit: Vector3i = Vector3i(
-		belt_entry.x + STARTING_BELT_TILES - 1, belt_entry.y, belt_entry.z
-	)
-
-	var actions: Array = [
-		InputAction.build_machine(0, miner, anchor),
-		InputAction.build_belt(0, belt_entry, belt_exit),
-		InputAction.build_machine(0, smelter, Vector3i(belt_exit.x + 1, belt_exit.y, belt_exit.z)),
-	]
-	actions.append_array(_opening_power_actions(definitions))
-	return actions
-
-
-## The Input Actions that lay the opening Power chain, or none when the Map or the content
-## cannot support one.
-##
-## The same shape as the production line and for the same reason: a Coal Miner against the
-## ground it can mine, a Belt out of its output port, and the Boiler the Belt runs into.
-## Every number comes from the queries — the footprints from `content/machines.csv`, the
-## Node from the Map — so there is no second copy of either here.
-func _opening_power_actions(definitions: Definitions) -> Array:
-	var coal_miner: int = definitions.machine_index(STARTING_COAL_MINER)
-	var boiler: int = definitions.machine_index(STARTING_BOILER)
-	if coal_miner == -1 or boiler == -1:
-		return []
-
-	var node: int = _node_for(definitions, STARTING_COAL_MINER)
-	if node == -1:
-		return []
-
-	var footprint: MachineDefinition = definitions.machine(STARTING_COAL_MINER)
-	var anchor: Vector3i = _simulation.query_node_tile(node)
-	var belt_entry: Vector3i = Vector3i(anchor.x + footprint.footprint_x, anchor.y, anchor.z)
-	var belt_exit: Vector3i = Vector3i(
-		belt_entry.x + STARTING_FUEL_BELT_TILES - 1, belt_entry.y, belt_entry.z
-	)
-
-	return [
-		InputAction.build_machine(0, coal_miner, anchor),
-		InputAction.build_belt(0, belt_entry, belt_exit),
-		InputAction.build_machine(0, boiler, Vector3i(belt_exit.x + 1, belt_exit.y, belt_exit.z)),
-	]
-
-
-## The first Node on the Map a given Miner can actually work, or -1. Asked of the Recipe
-## rather than assumed from a Node's index, because which Resource a Miner takes is data.
-func _node_for(definitions: Definitions, machine_id: String) -> int:
-	var definition: MachineDefinition = definitions.machine(machine_id)
-	if definition == null:
-		return -1
-	var recipe: RecipeDefinition = definitions.recipe_at(definition.recipe_index)
-	if recipe == null:
-		return -1
-	for node: int in range(_simulation.query_node_count()):
-		for slot: int in range(recipe.output_count()):
-			if definitions.item_id(recipe.output_item(slot)) == _simulation.query_node_resource(node):
-				return node
-	return -1
+## The controller, so a test can feed it a device sample by hand rather than pressing
+## keys that headless will never report.
+func controller() -> PlayerController:
+	return _controller
 
 
 ## The watcher that notices a saved content file. Replaceable so a test can point it

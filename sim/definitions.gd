@@ -53,12 +53,24 @@ const MACHINE_COLUMNS: Array = [
 	"health",
 	"max_depth",
 	"recipe_id",
+	"build_cost",
 ]
 
 const RECIPE_COLUMNS: Array = ["id", "display_name", "inputs", "outputs", "seconds"]
 
 ## Tuning keys the Simulation reads. Each must be present.
 const TUNING_PLAYER_WALK_SPEED: String = "player.walk_speed_metres_per_second"
+const TUNING_PLAYER_WALK_ACCELERATION: String = (
+	"player.walk_acceleration_metres_per_second_squared"
+)
+const TUNING_PLAYER_LOOK_SENSITIVITY: String = (
+	"player.look_sensitivity_turns_per_1000_pixels"
+)
+const TUNING_PLAYER_EYE_HEIGHT: String = "player.eye_height_metres"
+const TUNING_PLAYER_STARTING_STOCK: String = "player.starting_stock_per_item"
+const TUNING_SURVEY_HEIGHT: String = "survey.height_metres"
+const TUNING_SURVEY_TRANSITION_SECONDS: String = "survey.transition_seconds"
+const TUNING_SURVEY_PITCH_DEGREES: String = "survey.pitch_degrees"
 const TUNING_BELT_ITEMS_PER_SECOND: String = "belt.items_per_second"
 const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
 const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
@@ -73,6 +85,31 @@ var warnings: PackedStringArray = PackedStringArray()
 
 ## How fast a player walks, in fixed-point metres per second.
 var player_walk_speed: int = 0
+
+## How hard a player accelerates towards the walking speed, in fixed-point metres
+## per second squared. The same figure decelerates them when they let go.
+var player_walk_acceleration: int = 0
+
+## How far a player turns per 1000 pixels of mouse travel, in fixed-point turns.
+## The Simulation applies this to the pixel count an Input Action carries, so the
+## sensitivity is authoritative rather than something a client chooses.
+var player_look_sensitivity: int = 0
+
+## How high a player's eyes are off the ground, in fixed-point metres.
+var player_eye_height: int = 0
+
+## How many of each Item a player starts a Run carrying. A scaffold until Delivery
+## progression decides where materials come from (DESIGN.md, milestone 5).
+var player_starting_stock: int = 0
+
+## How high the Survey View camera rises to, in fixed-point metres.
+var survey_height: int = 0
+
+## How long the Survey View lift takes each way, in fixed-point seconds.
+var survey_transition_seconds: int = 0
+
+## How far down the Survey View camera tilts at the top, in fixed-point degrees.
+var survey_pitch_degrees: int = 0
 
 ## A Belt's rated throughput, in fixed-point Items per second. The Simulation turns
 ## this into a whole number of ticks per Item, which is what makes the rate exact.
@@ -296,6 +333,13 @@ func digest() -> int:
 		definition.feed_into(hasher)
 
 	hasher.feed_int(player_walk_speed)
+	hasher.feed_int(player_walk_acceleration)
+	hasher.feed_int(player_look_sensitivity)
+	hasher.feed_int(player_eye_height)
+	hasher.feed_int(player_starting_stock)
+	hasher.feed_int(survey_height)
+	hasher.feed_int(survey_transition_seconds)
+	hasher.feed_int(survey_pitch_degrees)
 	hasher.feed_int(belt_items_per_second)
 	hasher.feed_int(belt_items_per_tile)
 	hasher.feed_int(machine_input_buffer_crafts)
@@ -356,45 +400,65 @@ func _read_recipes(table: CsvTable) -> void:
 func _read_item_list(
 	table: CsvTable, row: int, column: String, definition: RecipeDefinition, is_input: bool
 ) -> void:
+	var parsed: Array = _parse_item_list(table, row, column)
+	if is_input:
+		definition.set_inputs(parsed[0], parsed[1])
+	else:
+		definition.set_outputs(parsed[0], parsed[1])
+
+
+## Parses an `item:count;item:count` field into [names, quantities], reporting every
+## malformed entry against the row it came from. Shared by a Recipe's inputs and
+## outputs and by a Machine's build cost, so the three cannot drift apart on what
+## counts as well-formed.
+func _parse_item_list(table: CsvTable, row: int, column: String) -> Array:
 	var names: PackedStringArray = PackedStringArray()
 	var quantities: PackedInt64Array = PackedInt64Array()
 	var text: String = table.value(row, column).strip_edges()
 
-	if not text.is_empty():
-		for entry: String in text.split(";"):
-			var pair: PackedStringArray = entry.split(":")
-			if pair.size() != 2:
-				table.report_row(
-					row, '%s: expected "item:count", got "%s"' % [column, entry.strip_edges()]
-				)
-				continue
+	if text.is_empty():
+		return [names, quantities]
 
-			var item: String = pair[0].strip_edges()
-			var quantity_text: String = pair[1].strip_edges()
+	for entry: String in text.split(";"):
+		var pair: PackedStringArray = entry.split(":")
+		if pair.size() != 2:
+			table.report_row(
+				row, '%s: expected "item:count", got "%s"' % [column, entry.strip_edges()]
+			)
+			continue
 
-			if not CsvTable.is_identifier(item):
-				table.report_row(
-					row, '%s: "%s" is not a valid Item id' % [column, item]
-				)
-				continue
-			if not quantity_text.is_valid_int() or quantity_text.to_int() <= 0:
-				table.report_row(
-					row,
-					'%s: "%s" must be a positive whole quantity, got "%s"'
-					% [column, item, quantity_text]
-				)
-				continue
-			if names.has(item):
-				table.report_row(row, '%s: "%s" appears twice' % [column, item])
-				continue
+		var item: String = pair[0].strip_edges()
+		var quantity_text: String = pair[1].strip_edges()
 
-			names.append(item)
-			quantities.append(quantity_text.to_int())
+		if not CsvTable.is_identifier(item):
+			table.report_row(row, '%s: "%s" is not a valid Item id' % [column, item])
+			continue
+		if not quantity_text.is_valid_int() or quantity_text.to_int() <= 0:
+			table.report_row(
+				row,
+				'%s: "%s" must be a positive whole quantity, got "%s"'
+				% [column, item, quantity_text]
+			)
+			continue
+		if names.has(item):
+			table.report_row(row, '%s: "%s" appears twice' % [column, item])
+			continue
 
-	if is_input:
-		definition.set_inputs(names, quantities)
-	else:
-		definition.set_outputs(names, quantities)
+		names.append(item)
+		quantities.append(quantity_text.to_int())
+
+	return [names, quantities]
+
+
+## Reads a Machine's `build_cost` column. An empty field is a Machine that is free,
+## which is legal and deliberate — the same way an empty `inputs` is a Miner's Recipe.
+##
+## The Item ids it names are checked against the interned Item set in
+## `_check_machines_against_recipes`, because the Items do not exist until the Recipes
+## have been read.
+func _read_build_cost(table: CsvTable, row: int, definition: MachineDefinition) -> void:
+	var parsed: Array = _parse_item_list(table, row, "build_cost")
+	definition.set_build_cost(parsed[0], parsed[1])
 
 
 ## Collects every Item the Recipes mention, sorted, and hands each Recipe the
@@ -426,6 +490,7 @@ func _read_machines(table: CsvTable) -> void:
 		definition.health = table.require_int(row, "health")
 		definition.max_depth = table.require_int(row, "max_depth")
 		definition.recipe_id = table.require_id(row, "recipe_id")
+		_read_build_cost(table, row, definition)
 
 		var role: int = MachineDefinition.parse_role(table.value(row, "role"))
 		if role == -1:
@@ -506,6 +571,16 @@ func _check_machine_values(
 ## because the Machine is what declares the relationship.
 func _check_machines_against_recipes(table: CsvTable) -> void:
 	for definition: MachineDefinition in _machines:
+		for item: String in definition.build_cost_items:
+			if item_index(item) == -1:
+				table.report_row(
+					definition.source_row,
+					(
+						'build_cost: "%s" is not an Item — the Items that exist are exactly'
+						+ " the ones the Recipes mention"
+					) % item
+				)
+
 		if definition.recipe_id.is_empty():
 			continue
 
@@ -567,6 +642,13 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 
 func _read_tuning(tuning: TomlDocument) -> void:
 	player_walk_speed = tuning.require_fixed(TUNING_PLAYER_WALK_SPEED)
+	player_walk_acceleration = tuning.require_fixed(TUNING_PLAYER_WALK_ACCELERATION)
+	player_look_sensitivity = tuning.require_fixed(TUNING_PLAYER_LOOK_SENSITIVITY)
+	player_eye_height = tuning.require_fixed(TUNING_PLAYER_EYE_HEIGHT)
+	player_starting_stock = tuning.require_int(TUNING_PLAYER_STARTING_STOCK)
+	survey_height = tuning.require_fixed(TUNING_SURVEY_HEIGHT)
+	survey_transition_seconds = tuning.require_fixed(TUNING_SURVEY_TRANSITION_SECONDS)
+	survey_pitch_degrees = tuning.require_fixed(TUNING_SURVEY_PITCH_DEGREES)
 	belt_items_per_second = tuning.require_fixed(TUNING_BELT_ITEMS_PER_SECOND)
 	belt_items_per_tile = tuning.require_int(TUNING_BELT_ITEMS_PER_TILE)
 	machine_input_buffer_crafts = tuning.require_int(TUNING_MACHINE_INPUT_BUFFER_CRAFTS)
@@ -575,6 +657,38 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	# A rate or a capacity of zero is not a slow Belt, it is a Belt that cannot work.
 	# Refused by name rather than accepted and puzzled over later.
 	if not tuning.has_errors():
+		if player_walk_speed <= 0:
+			_report_tuning(tuning, TUNING_PLAYER_WALK_SPEED, "a player who cannot walk is stuck")
+		if player_walk_acceleration <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_WALK_ACCELERATION,
+				"a player who cannot accelerate never starts walking"
+			)
+		if player_look_sensitivity <= 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_LOOK_SENSITIVITY, "a player who cannot turn cannot aim"
+			)
+		if player_eye_height <= 0:
+			_report_tuning(tuning, TUNING_PLAYER_EYE_HEIGHT, "a player has to see from somewhere")
+		if player_starting_stock < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_STARTING_STOCK, "a player cannot start owing materials"
+			)
+		if survey_height <= player_eye_height:
+			_report_tuning(
+				tuning,
+				TUNING_SURVEY_HEIGHT,
+				"Survey View has to be above eye level or it surveys nothing"
+			)
+		if survey_transition_seconds < 0:
+			_report_tuning(
+				tuning, TUNING_SURVEY_TRANSITION_SECONDS, "a transition cannot take negative time"
+			)
+		if survey_pitch_degrees < 0 or survey_pitch_degrees > Fixed.from_int(90):
+			_report_tuning(
+				tuning, TUNING_SURVEY_PITCH_DEGREES, "must be 0 to 90 degrees below level"
+			)
 		if belt_items_per_second <= 0:
 			_report_tuning(tuning, TUNING_BELT_ITEMS_PER_SECOND, "must be more than nothing")
 		if belt_items_per_tile < 1:
@@ -633,6 +747,13 @@ func _discard_content() -> void:
 	_recipe_ids.clear()
 	_item_ids.clear()
 	player_walk_speed = 0
+	player_walk_acceleration = 0
+	player_look_sensitivity = 0
+	player_eye_height = 0
+	player_starting_stock = 0
+	survey_height = 0
+	survey_transition_seconds = 0
+	survey_pitch_degrees = 0
 	belt_items_per_second = 0
 	belt_items_per_tile = 0
 	machine_input_buffer_crafts = 0
