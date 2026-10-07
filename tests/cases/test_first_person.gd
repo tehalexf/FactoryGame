@@ -320,35 +320,44 @@ func test_a_player_never_walks_faster_than_the_tuned_speed() -> void:
 
 
 func test_releasing_the_keys_slows_a_player_down_rather_than_stopping_them_dead() -> void:
-	# **Starting and stopping do not share a figure**, which is #29's central change:
-	# `player.walk_deceleration_metres_per_second_squared` is 9 against the acceleration's
-	# 24, because a body leans into a start and slides into a stop. 9 m/s² ÷ 60 ticks is
-	# 0.15 m/s a tick; 0.15 × 65536 is 9830.4, which floors to 9830.
+	# Letting go sheds a tick of *deceleration*, which is its own figure and not the
+	# acceleration — that separation is #29's central change. The figure itself is tuning
+	# the player owns: it shipped at 9 m/s² as a long slide and playtesting asked for hard
+	# braking, so this reads it from the definitions rather than hard-coding either taste.
 	var sim: Simulation = Simulation.new()
+	var per_tick: int = Fixed.div(
+		sim.query_definitions().player_walk_deceleration,
+		Fixed.from_int(Simulation.TICKS_PER_SECOND)
+	)
 	_step_many(sim, [InputAction.move(0, Fixed.ONE, 0)], 30)
 
 	sim.step([])
 	assert_eq(
 		sim.query_player_velocity(0).z,
-		-WALK_SPEED + DECELERATION_PER_TICK,
+		-WALK_SPEED + per_tick,
 		"one tick of letting go sheds one tick of deceleration, not one of acceleration"
 	)
 
-	# 4 m/s at 0.15 m/s a tick is 27 ticks of slide, against the 10 it would have been at
-	# the acceleration figure. That difference is the whole of what a player feels.
-	_step_many(sim, [], 15)
-	assert_true(
-		sim.query_player_velocity(0).z < 0, "still sliding after a quarter of a second"
-	)
-	_step_many(sim, [], 15)
+	# However hard the braking, a stop takes *some* time: an instantaneous halt on key
+	# release is the loudest creative-mode tell there is, and is what this guards against.
+	assert_true(sim.query_player_velocity(0).z < 0, "not stopped dead on the first tick")
+
+	var to_rest: int = 1
+	while to_rest < 600 and sim.query_player_velocity(0).z != 0:
+		sim.step([])
+		to_rest += 1
+	assert_true(to_rest > 1, "a stop takes more than one tick, it took %d" % to_rest)
 	assert_eq(sim.query_player_velocity(0).z, 0, "and then the player is standing still")
 
-
-func test_a_player_stops_more_slowly_than_they_start() -> void:
-	# The asymmetry itself, asserted without reference to either figure: the ticks a player
-	# takes to come to rest from walking pace against the ticks they took to reach it.
-	# One figure for both is the commonest cause of a first-person game feeling weightless,
-	# so this is the assertion that fails if somebody ever collapses them back together.
+func test_starting_and_stopping_use_separate_figures() -> void:
+	# The asymmetry itself, asserted without reference to which way round it points.
+	#
+	# One figure for both is the commonest cause of a first-person game feeling
+	# weightless, and this is the assertion that fails if somebody ever collapses
+	# them back together. Which of the two is larger is a *feel* decision the
+	# tuning file owns and the player changes: it shipped as a long slide, and
+	# playtesting asked for hard braking instead. So this test pins the mechanism
+	# and says nothing about the taste.
 	var sim: Simulation = Simulation.new()
 	var walking: Array = [InputAction.move(0, Fixed.ONE, 0)]
 	var to_speed: int = 0
@@ -361,11 +370,16 @@ func test_a_player_stops_more_slowly_than_they_start() -> void:
 		sim.step([])
 		to_rest += 1
 
-	assert_true(
-		to_rest > to_speed,
-		"took %d ticks to reach walking pace and %d to stop" % [to_speed, to_rest]
+	var definitions: Definitions = sim.query_definitions()
+	var same_figure: bool = (
+		definitions.player_walk_acceleration == definitions.player_walk_deceleration
 	)
-
+	assert_false(same_figure, "starting and stopping must not share one acceleration")
+	assert_true(to_speed > 0 and to_rest > 0, "both take time: %d up, %d down" % [to_speed, to_rest])
+	# Deliberately not asserting the two tick counts differ. Both are whole ticks, so two
+	# genuinely different figures can round to the same count — 24 up and 26 down are both
+	# ten ticks from walking pace. The separation that matters is in the definitions, which
+	# is what the assertion above reads; a tick count is the wrong instrument for it.
 
 func test_a_standing_player_does_not_drift() -> void:
 	var sim: Simulation = Simulation.new()

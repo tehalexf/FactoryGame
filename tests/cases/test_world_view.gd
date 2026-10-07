@@ -1542,11 +1542,18 @@ func _settled(sim: Simulation, view: WorldView) -> bool:
 
 
 func test_the_weapon_does_not_grow_the_scene_tree_as_the_run_goes_on() -> void:
-	# One node for the view model and two meshes under it, built once on the first sync.
-	# Everything after that is a transform.
+	# Everything after a model is in hand is a transform, never a node.
+	#
+	# Models load lazily, the first time the thing they belong to is actually shown —
+	# which is what lets a clone with no purchased packs run on placeholders, and what
+	# stops a Run paying for art it never puts in frame. So the baseline is taken *after*
+	# both hands have been seen once: counting before that measures the loading, not a
+	# leak, and this test is about the leak.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
-	view.sync(sim)
+	for warm: int in range(4):
+		sim.step([InputAction.set_build_mode(0, warm % 2 == 0)])
+		view.sync(sim)
 	var before: int = _descendants(view)
 	for tick: int in range(120):
 		# Swapping hands every other tick too, which is the thing most likely to build a
