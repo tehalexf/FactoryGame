@@ -510,6 +510,12 @@ both say 4x4, and the asset suite's cross-check only covers rows that
 Machine. The art pass should teach the mesh generator to read the footprint from the
 Simulation's constant, the way it reads a Machine's from `machines.csv`.
 
+Its **height** went the other way and is worth copying: #30 needed it in the Simulation,
+so `nest.height_metres` is tuning the Simulation owns and the asset suite cross-checks the
+`nest` row's `body_height_mm` against it by name — the same treatment
+`belt.deck_height_metres` gets. Two facts about the Nest are now checked across the two
+tables and one is not.
+
 ## Turrets, and the keystone loop
 
 The ticket where the game acquires a point. Production and threat existed separately
@@ -978,8 +984,8 @@ mode"* where it wanted to feel like survival mode, with Satisfactory as the refe
 and that there was no jump at all.
 
 **The deliverable is the tunability as much as the motion.** Twenty-two keys went into
-`[player]` and every one of them is expected to be wrong, because nobody can pick a feel
-number without playing. Read the section comments in `content/tuning.toml` before changing
+`[player]` here and #30 added two more, and every one of them is expected to be wrong,
+because nobody can pick a feel number without playing. Read the section comments in `content/tuning.toml` before changing
 any of them; they say what raising each one does.
 
 - **Jumping is Simulation state.** `_player_y` and `_player_velocity_y` in fixed-point
@@ -990,11 +996,11 @@ any of them; they say what raising each one does.
   is what re-arms it: `player.jump_repeats_while_held` is false, so holding the key through
   a landing does not bounce, and `_player_jump_armed` is the hashed fact that makes a jump
   a press.
-- **There is no collision against anything but the ground**, and that is the honest limit
-  of what shipped. A player jumping beside a Smelter passes through where its roof would
-  be. Building is still flat (DESIGN.md), so this is a height above layer 0 and nothing
-  else; standing on your own Factory is a different ticket from making movement feel like
-  weight.
+- **Collision against the Factory arrived in #30**, the ticket #29 flagged when it shipped
+  with the ground as the only solid thing. `_player_y` is still a height above layer 0 and
+  nothing else, because building is still flat (DESIGN.md) — what changed is that the
+  height of the ground under a player is now whatever the Factory put there. See "Standing
+  on the Factory", below.
 - **There are four accelerations, not one, and that is the central change.** Ground start
   (24 m/s²), ground stop (9), air start (6), air stop (1.5) — plus a fifth case, the
   landing settle, which takes `land_settle_acceleration_percent` of the ground figures away
@@ -1047,6 +1053,141 @@ any of them; they say what raising each one does.
   rather than when it is on. Every one of them takes **0 as off**, which `Definitions`
   allows by name, because this is the easiest thing in the game to overdo into motion
   sickness and somebody prone to it is entitled to turn the lot off.
+
+### Standing on the Factory
+
+#30, and the ticket #29's own notes asked for. Before it a player collided with the ground
+and nothing else: you walked through a Smelter and jumped through where its roof would be,
+which made a Factory somewhere to stand *in* and never *on* — a diorama rather than a
+building site.
+
+**It is in the Simulation, in fixed point, and it could not have been Godot's physics.**
+That engine is float-based, so a player's position would depend on a solver rather than on
+the recorded inputs: two clients would part company on the first wall and every replay
+fixture in the suite would quietly become a lie. What makes writing it by hand cheap is
+that none of it is general 3D collision — everything is axis-aligned and grid-anchored, so
+it is box tests against **one height per tile**.
+
+- **`_solid_height` is a third field, not a column on the Enemies' two.** One entry per
+  ground tile in fixed-point metres, 0 for bare ground, rebuilt by walking the structures
+  under its own `_solid_height_stale` flag. An Enemy routes by flowfield and asks one
+  question of a tile — may I walk through it; a player asks a different one — how high is
+  it, because they can stand on the Machine an Enemy has to walk around. **A Belt is solid
+  to a player and transparent to a Crawler**, and that difference is the point rather than
+  an inconsistency: sharing `_flow_blocked` would have made it unexpressible and let each
+  mechanic constrain the other for no reason beyond both being about geometry.
+  `test_collision` asserts the divergence directly. Derived, so it is in
+  `RunSave.DERIVED_PROPERTIES` and absent from `hash()`, like both flowfields.
+- **Nothing overhangs, and that is what makes the whole mechanic cheap.** Every structure
+  is a solid column from the ground to its height, so there is no ceiling to bump into,
+  nothing to be trapped under, and "am I inside something" has exactly one answer: move
+  up. A storey above layer 0 is the ticket that changes that.
+- **What is solid.** Machines at the `height_metres` their row declares — the *housing*,
+  1.5 m for a Smelter up to 2.4 m for a Press, with the Silo's 7 m launch tube deliberately
+  not solid because a thin mast that stopped a player would read as a bug. Walls at
+  `wall.height_metres`. Belts at `belt.deck_height_metres`. The Nest as two quantised
+  terraces. A Node, a Breach and a Hive are deliberately **not** solid: the first two are
+  ground rather than buildings, and walling a player out of a Hive would change the sortie.
+- **`height_metres` is a column in `content/machines.csv`**, so a Machine's third dimension
+  is a row like everything else about it, and `content/machine_bodies.csv` blanks it for
+  every Machine that file declares — exactly the arrangement the footprint already had. The
+  asset suite fails on a disagreement naming both files, because a mesh 70 cm taller than
+  the declaration is a roof a player falls through. See
+  [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 6.
+
+#### The Belt decision, and why it is a hop
+
+**Belts are solid at their 0.9 m deck, and the decision is written as two inequalities**
+rather than as a special case. The deck sits *above* `player.step_up_height_metres` (0.75 m)
+and *below* `player.jump_height_metres` (1.1 m), so walking into a Belt line stops you and a
+jump puts you on top of it to walk along. Both alternatives were worse: solid and unjumpable
+makes a Factory a maze of knee-high fences, and a step-up makes a trestle something a player
+stops noticing — a Belt is a real structure on legs, and the shipped tuning already assumed
+a jump clears one (the comment on `player.gravity_metres_per_second_squared` says so in as
+many words).
+
+#### Climbing, and what the numbers add up to
+
+A player reaches `jump_height_metres + step_up_height_metres` — 1.85 m — and that one sum is
+the whole climbing system:
+
+| From the ground you reach | And from a Belt deck (+0.9 m) |
+|---|---|
+| a Belt deck (0.9), a Smelter (1.5), the Nest's terrace (1.7), a Miner (1.8) | an Ammo Press (2.0), a Boiler or a Silo fort (2.2), a Press or a Repair Pylon (2.4) |
+
+So **your own Factory is the staircase**, which is the factory-game answer and better than a
+ladder nobody built. A Wall at 2.4 m is out of reach from the ground on purpose: it is the
+one structure whose entire job is to stop something, so it has to stop a player too.
+
+The Nest is a 4x4 ziggurat and a 4x4 footprint has exactly one ring and one middle, so its
+three raked tiers of art quantise honestly to **two**: the terrace on the ring
+(`nest.terrace_height_metres`, 1.7 m — within reach, which is the whole of what makes the
+Nest climbable) and the crown in the middle (`nest.height_metres`, 4.2 m). The 2.5 m step
+from one to the other is **not** reachable on foot, and that is deliberate rather than an
+oversight: getting onto the crown wants a Belt or a Machine built against the Nest. Anything
+finer would mean a collision grid finer than the build grid, which is a bigger change than
+this mechanic is worth.
+
+#### How a tick resolves, and what it costs
+
+`_walk` brings `_solid_height` up to date once and then, per player: `_support_height` for
+the floor under them (the tallest tile they overlap whose top is within their step-up), the
+existing jump and gravity against *that* rather than against 0, then
+`_move_against_the_factory`.
+
+- **One axis at a time, x then z**, which is what makes walking into a wall at an angle
+  slide along it rather than stop dead. The order is written down because it is the only
+  thing here a player could notice, and two clients have to agree on it.
+- **A refused axis keeps the coordinate it had rather than snapping to the obstacle's
+  face.** Snapping is the usual choice and it is the wrong one here: the face is a tile
+  boundary minus a radius, which still has to be re-tested for the two-wall corner, and
+  getting it wrong puts a player *inside* a solid — the one state this must never produce.
+  Refusing costs at most one tick of travel, 12 cm at a sprint, and it cannot be wrong.
+- **Then the step up, once, after both axes.** A surface within `step_up_height_metres` of
+  their feet is a surface they end up standing on: a kerb on the ground and a mantle in the
+  air, which is one rule read twice rather than two mechanics.
+- **"On the ground" became "on a surface"**, and `_is_on_their_feet` is the one place that
+  is decided. Three things branch on it — the four accelerations, the stride and the bob —
+  and all three used to ask whether `_player_y` was zero, which on a roof is the wrong
+  question.
+- **The cost is a handful of array reads per player per tick.** A player's box is 0.8 m
+  across against a 2 m tile, so they overlap at most 2x2 tiles, and each of the three
+  questions is a loop over those four. Repainting the field is
+  O(Machines + Walls + Belt tiles) and happens only on a tick that built or lost something
+  — never on a tick that merely moved somebody. A Factory of hundreds of Machines costs a
+  walking player exactly what an empty Map does.
+
+#### Getting stuck, and the one recovery
+
+**A player's feet are never below the top of a tile they overlap.** That is the invariant,
+it is restored on the tick it is broken, and `test_collision` pins it as an invariant rather
+than as a list of cases.
+
+The only way to be inside a solid is for the solid to have arrived — a Machine or a Wall
+built on the tile somebody was standing on, which is an ordinary thing to do in co-op and an
+easy thing to do to yourself while straddling a footprint edge. Movement cannot put a player
+inside anything, because a move into something too tall is refused. So
+`_lift_out_of_anything_built_on_them` puts them **on top of it**:
+
+- **Up, never sideways.** Nothing overhangs, so the top is always free and up is the one
+  direction guaranteed to resolve, where a sideways push has to pick a direction and can be
+  refused by a second structure. And up is what reads correctly: the Machine went up
+  underneath you, so you end up on its roof, which is also where whoever built it would want
+  you.
+- **A pocket of Walls is a roof, not a tomb.** Sealed in by Walls means standing on top of
+  them, which is a way out — and a player who walls themselves into a corner still has a
+  wrench and can demolish their way out of it.
+- **Demolishing the thing you are standing on drops you**, with no special case anywhere:
+  `_is_on_their_feet` compares against the support height, so the floor going away is a fall
+  on the next tick.
+- **A respawn is the one case the recovery is not allowed to discover.** `_respawn` has
+  always put a player at the middle of the Nest's footprint, which was open ground until the
+  Nest became solid — so it now puts their feet on the crown, deliberately. That is also the
+  most interesting surface on the Map and the one thing nothing can build on and nothing can
+  take away.
+- **A Downed player collapses onto whatever is under them** rather than onto the ground: one
+  who went down on a Smelter roof stays on the roof, for the same reason a corpse does not
+  slide two metres.
 
 ### Build mode is a hand, not a gate
 

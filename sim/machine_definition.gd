@@ -69,6 +69,15 @@ var role: Role = Role.CRAFTER
 var footprint_x: int = 0
 var footprint_z: int = 0
 
+## How tall the housing stands, in fixed-point metres — the third dimension of the
+## footprint, and the only thing about a Machine's shape the Simulation has an opinion on.
+##
+## The whole footprint is solid to this height and a player stands on top of it, so this is
+## what makes a Factory somewhere to walk rather than a diorama. The *housing*, never the
+## silhouette: a Silo's launch tube goes up another eight metres and is not solid, because a
+## thin mast that stopped a player would read as a bug rather than as a building.
+var height: int = 0
+
 ## Demand on the one Power grid while running.
 var power_draw_kw: int = 0
 
@@ -216,6 +225,7 @@ func feed_into(hasher: StateHasher) -> void:
 	hasher.feed_int(role)
 	hasher.feed_int(footprint_x)
 	hasher.feed_int(footprint_z)
+	hasher.feed_int(height)
 	hasher.feed_int(power_draw_kw)
 	hasher.feed_int(power_supply_kw)
 	hasher.feed_int(health)

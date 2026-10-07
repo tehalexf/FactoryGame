@@ -93,6 +93,11 @@ const DERIVED_PROPERTIES: Array = [
 	# again, which is what leaves the round-trip check with its teeth.
 	"_machine_flow_direction",
 	"_machine_flow_distance",
+	# What a player collides with: one entry per tile of the Map a third time, derived from
+	# the structures standing on it and absent from `hash()` like the two above. A restored
+	# Run notices it is holding no field by its size rather than by a flag.
+	"_solid_height",
+	"_solid_height_stale",
 ]
 
 const KEY_FORMAT: String = "format"

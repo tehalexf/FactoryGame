@@ -28,9 +28,15 @@
 class_name WorldView
 extends Node3D
 
-## Height of a placeholder Machine box, in metres. Taller than the 1.8 m player, so
-## a Factory reads as a Factory from eye level.
-const MACHINE_HEIGHT_METRES: float = 3.0
+## How high above the ground a gauge hangs over a Machine, before
+## `AMMUNITION_GAUGE_LIFT_METRES` is added. Taller than any housing in the content, so an
+## ammunition or Charge gauge clears the roof of whatever it belongs to.
+##
+## **Not a claim about how tall a Machine is.** That is `height_metres` in
+## `content/machines.csv`, which the Simulation collides against and
+## `query_machine_height_metres` reports — a placeholder box is sized from *that*, so what a
+## player walks onto and what they can see are one number.
+const MACHINE_GAUGE_HEIGHT_METRES: float = 3.0
 
 ## A Node is drawn as a low slab, so a Miner standing on one does not hide it.
 const NODE_HEIGHT_METRES: float = 0.4
@@ -38,10 +44,6 @@ const NODE_HEIGHT_METRES: float = 0.4
 ## How high a tile of Belt stands when it has no generated body — a low slab, so the
 ## Items riding it are what the eye follows.
 const BELT_HEIGHT_METRES: float = 0.3
-
-## How tall a Wall stands, in metres. Above a player's 1.8 m eye height, so a line of them
-## reads as something you cannot see over and therefore as something that shapes a route.
-const WALL_HEIGHT_METRES: float = 2.4
 
 ## How much of a tile a Wall fills. A shade under the full 2 m so neighbouring Walls read as
 ## separate blocks rather than as one extruded slab.
@@ -732,9 +734,10 @@ func _sync_machines(sim: Simulation) -> void:
 		# unturned too and then turned by the same yaw. `rotated_footprint` is its own
 		# inverse, which is what takes the covered ground back to the declared footprint.
 		var declared: Vector2i = WorldGrid.rotated_footprint(footprint.x, footprint.y, rotation)
-		var dressing: String = _dressing_for(sim.query_machine_id(index), declared, tile_size)
+		var height: float = Fixed.to_float(sim.query_machine_height_metres(index))
+		var dressing: String = _dressing_for(sim.query_machine_id(index), declared, height)
 		if _machine_dressing[index] != dressing:
-			_dress(instance, sim.query_machine_id(index), declared, tile_size)
+			_dress(instance, sim.query_machine_id(index), declared, tile_size, height)
 			_machine_dressing[index] = dressing
 
 		instance.rotation = Vector3(0.0, _yaw_for_rotation(rotation), 0.0)
@@ -742,7 +745,7 @@ func _sync_machines(sim: Simulation) -> void:
 		# A placeholder box is modelled about its own centre rather than standing on the
 		# ground, so it is the one thing that has to be lifted onto its feet.
 		if not dressing.begins_with("res://"):
-			instance.position.y += MACHINE_HEIGHT_METRES * 0.5
+			instance.position.y += height * 0.5
 
 
 ## Grows or shrinks the Machine pool. A node per Machine and not per frame: a standing
@@ -765,16 +768,21 @@ func _resize_machine_pool(wanted: int) -> void:
 ## What a Machine of this id and footprint should be wearing: the path of its generated
 ## body, or a `box` description when there is none. Compared against what an instance is
 ## already wearing, so re-dressing happens on a change and not on a frame.
-func _dressing_for(id: String, footprint: Vector2i, _tile_size: float) -> String:
+func _dressing_for(id: String, footprint: Vector2i, height: float) -> String:
 	if _body(id) != null:
 		return BODY_DIRECTORY + id + ".glb"
-	return "box %dx%d" % [footprint.x, footprint.y]
+	# The height is part of the description because `height_metres` is hot-reloadable
+	# tuning: a Machine that got taller has to be re-dressed, and a footprint alone would
+	# not notice.
+	return "box %dx%d x %s" % [footprint.x, footprint.y, String.num(height, 3)]
 
 
 ## Puts a body on an instance, or a placeholder box sized to its footprint where there is
 ## no body. The placeholder is a plain slab-grey, deliberately unlike the generated
 ## surfaces, so "this Machine has no art yet" reads as a fact rather than as a bug.
-func _dress(instance: MeshInstance3D, id: String, footprint: Vector2i, tile_size: float) -> void:
+func _dress(
+	instance: MeshInstance3D, id: String, footprint: Vector2i, tile_size: float, height: float
+) -> void:
 	var body: Mesh = _body(id)
 	if body != null:
 		instance.mesh = body
@@ -783,7 +791,7 @@ func _dress(instance: MeshInstance3D, id: String, footprint: Vector2i, tile_size
 
 	var box: BoxMesh = BoxMesh.new()
 	box.size = Vector3(
-		float(footprint.x) * tile_size, MACHINE_HEIGHT_METRES, float(footprint.y) * tile_size
+		float(footprint.x) * tile_size, height, float(footprint.y) * tile_size
 	)
 	instance.mesh = box
 	var skin: StandardMaterial3D = StandardMaterial3D.new()
@@ -845,7 +853,7 @@ func _sync_turret_gauges(sim: Simulation) -> void:
 		var fraction: float = clampf(float(held) / float(capacity), 0.0, 1.0)
 		var above: Vector3 = (
 			_machine_centre(sim, index)
-			+ Vector3(0.0, MACHINE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0)
+			+ Vector3(0.0, MACHINE_GAUGE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0)
 		)
 
 		_hang_gauge(
@@ -897,7 +905,7 @@ func _sync_silo_gauges(sim: Simulation) -> void:
 			_silo_gauge_fills,
 			slot,
 			_machine_centre(sim, index)
-			+ Vector3(0.0, MACHINE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0),
+			+ Vector3(0.0, MACHINE_GAUGE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0),
 			clampf(float(held) / float(capacity), 0.0, 1.0),
 			CHARGE_EMPTY if held == 0 else CHARGE_BACKING,
 			CHARGE_LOADED if loaded > 0 else CHARGE_FULL,
@@ -1460,6 +1468,11 @@ func _sync_belts(sim: Simulation) -> void:
 ## instead, which is readable from the thirty metres a player triages a Wave from.
 func _sync_walls(sim: Simulation) -> void:
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	# **How tall a Wall is comes from the Simulation**, because a Wall has no generated body:
+	# the box *is* the Wall, so a constant here would be a second authority on the one thing
+	# a player can walk into. `wall.height_metres` is also hot-reloadable, which is why the
+	# size is written every sync rather than once with the mesh.
+	var wall_height: float = Fixed.to_float(sim.query_wall_height_metres())
 	if _wall_meshes == null:
 		_wall_meshes = MultiMeshInstance3D.new()
 		var instanced: MultiMesh = MultiMesh.new()
@@ -1467,17 +1480,17 @@ func _sync_walls(sim: Simulation) -> void:
 		# Per-instance colour, because the whole point of drawing Walls is reading which one
 		# is being chewed. A MultiMesh carries that without a node or a material each.
 		instanced.use_colors = true
-		var block: BoxMesh = BoxMesh.new()
-		block.size = Vector3(
-			tile_size * WALL_WIDTH_FRACTION, WALL_HEIGHT_METRES, tile_size * WALL_WIDTH_FRACTION
-		)
-		instanced.mesh = block
+		instanced.mesh = BoxMesh.new()
 		var skin: StandardMaterial3D = StandardMaterial3D.new()
 		skin.vertex_color_use_as_albedo = true
 		skin.roughness = 0.85
 		_wall_meshes.material_override = skin
 		_wall_meshes.multimesh = instanced
 		add_child(_wall_meshes)
+
+	(_wall_meshes.multimesh.mesh as BoxMesh).size = Vector3(
+		tile_size * WALL_WIDTH_FRACTION, wall_height, tile_size * WALL_WIDTH_FRACTION
+	)
 
 	var walls: int = sim.query_wall_count()
 	_wall_transforms.resize(walls * FLOATS_PER_INSTANCE)
@@ -1493,7 +1506,7 @@ func _sync_walls(sim: Simulation) -> void:
 			index,
 			Vector3(
 				Fixed.to_float(centre.x),
-				Fixed.to_float(sim.query_layer_height_metres(tile.y)) + WALL_HEIGHT_METRES * 0.5,
+				Fixed.to_float(sim.query_layer_height_metres(tile.y)) + wall_height * 0.5,
 				Fixed.to_float(centre.z)
 			),
 			0.0
@@ -2698,13 +2711,14 @@ func _sync_hologram(sim: Simulation) -> void:
 
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
 	var declared: Vector2i = Vector2i(definition.footprint_x, definition.footprint_z)
-	var dressing: String = _dressing_for(selected, declared, tile_size)
+	var height: float = Fixed.to_float(definition.height)
+	var dressing: String = _dressing_for(selected, declared, height)
 	if _hologram_dressing != dressing:
 		# `_dress` clears the material override where a body carries its own surfaces,
 		# which is exactly what a hologram must not do — so the translucent skin goes back
 		# on after.
 		var skin: StandardMaterial3D = _hologram.material_override
-		_dress(_hologram, selected, declared, tile_size)
+		_dress(_hologram, selected, declared, tile_size, height)
 		_hologram.material_override = skin
 		_hologram_dressing = dressing
 
@@ -2715,7 +2729,7 @@ func _sync_hologram(sim: Simulation) -> void:
 	_hologram.rotation = Vector3(0.0, _yaw_for_rotation(rotation), 0.0)
 	_hologram.position = _footprint_centre(sim, tile, footprint)
 	if not dressing.begins_with("res://"):
-		_hologram.position.y += MACHINE_HEIGHT_METRES * 0.5
+		_hologram.position.y += height * 0.5
 
 	var refusal: int = sim.query_build_refusal(
 		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation

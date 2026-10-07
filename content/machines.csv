@@ -41,6 +41,21 @@
 #                             nothing in reach is.
 #   footprint_x     Tiles occupied, on the 2 m grid. DESIGN.md caps Machines at
 #   footprint_z     4x4; Belts are 1x1.
+#   height_metres   How tall the Machine's housing stands, in metres. The third
+#                   dimension of the footprint: the Simulation makes the whole
+#                   footprint solid to this height, so it is what a player has to
+#                   clear to get on top and the surface they walk on once they are.
+#                   It is the HOUSING and not the silhouette — masts, stacks and
+#                   the Silo's launch tube rise above it and are not solid, because
+#                   a thin tube that stopped a player would read as a bug. A player
+#                   is 1.8 m and clears `player.jump_height_metres` plus
+#                   `player.step_up_height_metres`, so this column is what decides
+#                   whether a Machine is something you climb from the ground, from a
+#                   Belt, or not at all. It must agree with `body_height_mm` in
+#                   `content/machine_bodies.csv` where that file gives the Machine a
+#                   generated mesh, and the asset suite fails on a disagreement
+#                   naming both files — this file is the authority, so blank the
+#                   other one rather than editing this to match a mesh.
 #   power_draw_kw   Demand on the one Power grid when running. Shortfall throttles
 #                   every Machine proportionally rather than stopping any of them
 #                   (DESIGN.md). Must be 0 for a generator.
@@ -90,14 +105,14 @@
 # to reach the Depth the tier after it is gated at — so the chain pays for the tool that
 # opens its own next gate.
 #
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
-ammo_press_mk1,Ammo Press Mk1,crafter,2,3,150,0,450,0,0,0,0,0,make_ammunition,iron_plate:14
-coal_miner_mk1,Coal Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_coal,iron_plate:8
-mg_turret_mk1,MG Turret Mk1,turret,2,2,90,0,350,0,8,15,0,0,fire_mg,iron_plate:20
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,iron_plate:8
-miner_mk2,Miner Mk2,miner,2,2,200,0,460,2,0,0,0,0,mine_iron_ore_deep,iron_plate:24
-miner_mk3,Miner Mk3,miner,2,2,320,0,520,3,0,0,0,0,mine_iron_ore_deep,iron_plate:48
-repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,0,mend_machinery,iron_plate:18
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,iron_plate:12
-steam_boiler_mk1,Steam Boiler Mk1,generator,3,2,0,600,450,0,0,0,0,0,burn_coal,iron_plate:16
-silo_mk1,Silo Mk1,silo,4,4,400,0,900,0,0,0,0,8,assemble_charge,iron_plate:60
+id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+ammo_press_mk1,Ammo Press Mk1,crafter,2,3,2,150,0,450,0,0,0,0,0,make_ammunition,iron_plate:14
+coal_miner_mk1,Coal Miner Mk1,miner,2,2,2,120,0,400,1,0,0,0,0,mine_coal,iron_plate:8
+mg_turret_mk1,MG Turret Mk1,turret,2,2,2,90,0,350,0,8,15,0,0,fire_mg,iron_plate:20
+miner_mk1,Miner Mk1,miner,2,2,1.8,120,0,400,1,0,0,0,0,mine_iron_ore,iron_plate:8
+miner_mk2,Miner Mk2,miner,2,2,1.8,200,0,460,2,0,0,0,0,mine_iron_ore_deep,iron_plate:24
+miner_mk3,Miner Mk3,miner,2,2,1.8,320,0,520,3,0,0,0,0,mine_iron_ore_deep,iron_plate:48
+repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,2.4,60,0,300,0,6,0,40,0,mend_machinery,iron_plate:18
+smelter_mk1,Smelter Mk1,crafter,3,3,1.5,180,0,500,0,0,0,0,0,smelt_iron_plate,iron_plate:12
+steam_boiler_mk1,Steam Boiler Mk1,generator,3,2,2.2,0,600,450,0,0,0,0,0,burn_coal,iron_plate:16
+silo_mk1,Silo Mk1,silo,4,4,2.2,400,0,900,0,0,0,0,8,assemble_charge,iron_plate:60

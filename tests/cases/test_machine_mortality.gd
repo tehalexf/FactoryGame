@@ -534,9 +534,9 @@ func test_a_wrench_holds_a_machine_against_the_breaker_chewing_it() -> void:
 ## shipped Repair Pylon's own numbers. Nothing about the Pylon is special-cased here — its
 ## row is `content/machines.csv`'s, copied, and its reach, its pulse and its Recipe are the
 ## shipped ones. Power is left out of it so a brownout cannot be mistaken for starvation.
-const MEND_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
-plate_seam_mk1,Plate Seam,miner,2,2,0,0,400,1,0,0,0,0,dig_plate,
-repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,0,0,300,0,6,0,40,0,mend_machinery,
+const MEND_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+plate_seam_mk1,Plate Seam,miner,2,2,2,0,0,400,1,0,0,0,0,dig_plate,
+repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,2.4,0,0,300,0,6,0,40,0,mend_machinery,
 """
 
 const MEND_RECIPES: String = """id,display_name,inputs,outputs,seconds
