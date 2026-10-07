@@ -1,0 +1,837 @@
+# DEEP FOUNDRY — tuning values.
+#
+# Balance numbers that are not per-Machine or per-Recipe. Edit while the game is
+# running and the change applies when you save.
+#
+# Supported value forms are integers, decimals, "quoted strings", true and false.
+# Decimals become exact fixed-point Simulation quantities — nothing here is ever a
+# float. Anything outside that subset is refused by name and line number rather
+# than ignored, so a value you changed always either takes effect or complains.
+#
+# Every key here is read by the Simulation. A key nothing reads is reported as a
+# warning on load, because a tuning file carrying a number that does nothing is a
+# file that lies to whoever is tuning it.
+
+[player]
+
+# How fast a player walks, in metres per second. The player is 1.8 m tall and the
+# grid is 2 m, so 4 m/s crosses one tile per half-second — fast enough that
+# walking the length of a Factory is not a chore, slow enough that Belt layout
+# still matters.
+walk_speed_metres_per_second = 4
+
+# How much faster sprint is than a walk. Multiplies walk speed, so 1.8 is 7.2 m/s.
+#
+# Acceleration is not scaled — what ramps a sprint in is `sprint_ramp_seconds` below, and
+# it ramps this multiplier itself, so the speed, the field of view and the bob all arrive
+# together. That is what makes a sprint a change of gear rather than a number going up.
+sprint_speed_multiplier = 1.8
+
+# ── Weight ───────────────────────────────────────────────────────────────────
+#
+# Everything from here to `starting_stock` is the *feel* of being a body rather than
+# a camera, and **every number in it is expected to be wrong.** They were picked
+# without a play session, which is the one way they cannot be picked; the reason they
+# are all here is so that changing one and feeling the difference costs a save rather
+# than a rebuild. Raise, lower, and set to zero freely — every camera-response value
+# below treats 0 as "off".
+#
+# The complaint these answer, in the player's words: "right now it feels like
+# Minecraft creative mode, I want it to feel like Minecraft survival mode", with
+# Satisfactory as the reference.
+
+# How hard a player accelerates towards that speed, in metres per second squared.
+# **Starting only** — stopping is the next key, and that split is the single most
+# important thing in this section. 24 reaches walking pace in a third of a second,
+# which reads as a person leaning into a start. Raise it for something twitchy, lower
+# it for something ponderous.
+walk_acceleration_metres_per_second_squared = 24
+
+# How hard a player sheds speed once they stop asking for it, in metres per second
+# squared.
+#
+# **Deliberately much lower than the acceleration.** One figure for both was what made
+# movement read as a cursor: a body leans into a start and *slides* into a stop, and an
+# instantaneous halt on key release is the loudest creative-mode tell there is. At 9 a
+# player at walking pace takes a little under half a second and about 90 cm to stop.
+# Raise it towards 24 for a crisper stop; drop it to 4 for something that has to be
+# steered rather than driven.
+walk_deceleration_metres_per_second_squared = 26
+
+# The same two numbers while a player is off the ground, in metres per second squared.
+#
+# **This pair is the air-control decision**, and it is deliberately near the stiff end.
+# Full air control feels floaty and arcade — a player who can turn a jump into a
+# sidestep is not carrying any weight — and none at all feels broken, because a jump
+# you cannot steer at all is a jump you cannot aim at a Belt. At 6 against the
+# ground's 24 a jump commits you to roughly the trajectory you left on and gives you a
+# quarter of the authority to argue with it. The deceleration is lower still, so
+# letting go in mid-air barely slows you: momentum is the thing a jump is made of.
+#
+# Raise the acceleration for more forgiving platforming, drop it to 0 for a ballistic
+# jump you cannot steer at all.
+air_acceleration_metres_per_second_squared = 6
+air_deceleration_metres_per_second_squared = 1.5
+
+# How high a standing jump clears, in metres, and the gravity that brings it back down,
+# in metres per second squared.
+#
+# **The height is what is tuned and the impulse is derived from it**, which is the
+# right way round: a tuner thinks in how high they clear, and it means raising gravity
+# makes a jump *heavier* — faster up, faster down, same apex — rather than quietly
+# making it too short to get over anything. 1.1 m against a 2 m grid clears a Belt and
+# not a Machine. Real gravity is 9.8; 22 is a touch over double it, which is the
+# convention first-person games settle on because a realistic arc feels like the moon.
+#
+# Raise gravity for a snappier, more punishing jump. Raise the height to clear more.
+jump_height_metres = 1.1
+gravity_metres_per_second_squared = 22
+
+# Whether holding the jump key through a landing launches again.
+#
+# False ships: a jump is a press, and bunny-hopping down a Belt line on a held key is
+# the arcade reading of this control. Set it true if you would rather hold the key.
+jump_repeats_while_held = false
+
+# How long a landing takes to settle, in seconds, and how much of normal ground
+# acceleration a player has while it does, as a whole percentage.
+#
+# This is the difference between landing and *touching down*. A player who regained
+# full control on the first frame after a drop has not landed, they have teleported to
+# the floor. For 0.18 s after a landing acceleration is 45% of normal, so you arrive,
+# gather yourself, and go. Lengthen it or drop the percentage for something heavier;
+# set the percentage to 100 to turn it off.
+land_settle_seconds = 0.18
+land_settle_acceleration_percent = 45
+
+# How long a sprint takes to wind up, and down again, in seconds.
+#
+# **This is what makes sprint a gait rather than a multiplier.** One blend ramps the
+# speed, widens the field of view and deepens the bob together, so what a player feels
+# is a change of gear. At 0 sprint snaps on, which is what it used to do.
+sprint_ramp_seconds = 0.45
+
+# Whether the sprint key is a **toggle** (press once to run, press again to stop) or a
+# **hold** (sprint while the key is down). True ships, which is a toggle.
+#
+# This is the one key in this file that is a *control preference* rather than a balance
+# or feel number, and it is here because the project has no settings menu yet and
+# inventing a second config system for one boolean would be worse. When a controls
+# screen arrives this key and `look_sensitivity_turns_per_1000_pixels` are the two that
+# move out of content and into settings together.
+#
+# It is read by `game/player_controller.gd`, not by the Simulation: toggle-versus-hold
+# is an interpretation of a device, so what crosses the boundary is still "this player
+# is sprinting" and a replay reproduces either reading identically. A latched sprint
+# does **not** survive dying — you come back at the Nest walking.
+sprint_is_toggle = true
+
+# ── The camera's response ────────────────────────────────────────────────────
+#
+# These five groups do more for perceived weight than the physics above does, and they
+# are also the easiest thing in the game to overdo into motion sickness. **The shipped
+# values are deliberately barely perceptible** — the kind of thing you notice when it
+# is switched off rather than when it is on. Every one of them takes 0 as "off", so
+# turning the lot off is five edits and a save.
+#
+# All of it is derived from state the Simulation already hashes, so it replays exactly;
+# none of it moves where a shot or a hologram goes. See `query_player_view_*`.
+
+# How far the view rises and falls, and swings side to side, over one stride, in
+# metres — and how long a stride is, in metres.
+#
+# 1.2 cm and 0.8 cm are about a third of what a game that wants you to notice its
+# head-bob would use. The vertical component runs at twice the lateral one, because a
+# walk dips on each foot and sways once a pair. Raise both together; if it ever reads as
+# a camera wobbling rather than a person walking, you have gone too far.
+bob_vertical_metres = 0.012
+bob_lateral_metres = 0.008
+bob_stride_metres = 3.2
+
+# How much of all that a full sprint adds. 1.6 means a sprint bobs a little over half
+# again as much as a walk — the third of the three things that make a sprint read as a
+# different gait.
+bob_sprint_multiplier = 1.6
+
+# The landing dip: how far the view drops on a landing at the reference impact speed, in
+# metres, how long it takes to come back, in seconds, and the impact speed that counts
+# as a full-strength landing, in metres per second.
+#
+# Scaled by how hard you actually hit, so stepping off a kerb barely registers and a
+# long drop does. 3.5 cm over a fifth of a second is small on purpose. The reference
+# speed of 7 m/s is roughly what a 1.1 m jump lands at, so a standing jump is a
+# full-strength dip and nothing in the game yet dips harder than that.
+land_dip_metres = 0.035
+land_dip_seconds = 0.22
+land_dip_reference_speed_metres_per_second = 7
+
+# Lean under acceleration: degrees of camera roll per metre per second of sideways
+# travel, and degrees of pitch per metre per second of forward travel.
+#
+# At a 4 m/s walk this is about half a degree of roll while strafing and a quarter of a
+# degree of nose-down while running forward — far below the threshold at which anybody
+# would name it, which is exactly where it belongs. Raise the roll for something that
+# banks into its turns.
+lean_roll_degrees_per_metre_per_second = 0.12
+lean_pitch_degrees_per_metre_per_second = 0.06
+
+# The camera's field of view in degrees, and how many degrees a full sprint adds.
+#
+# 75 is the usual first-person default; a wider lens makes a 2 m grid read as smaller
+# ground. The sprint widening is the second of the three gait cues — six degrees is
+# enough to feel and not enough to notice.
+field_of_view_degrees = 75
+sprint_field_of_view_add_degrees = 6
+
+# How long swapping between the Build Gun and a weapon takes, in seconds.
+#
+# **A holster animation and nothing else.** The mode itself switches on the tick you
+# press the key, so this never delays a placement or a shot and nothing is ever gated
+# by a swap in progress — it is only how long the old thing takes to go down and the
+# new thing to come up. Set it to 0 for an instant swap.
+holster_seconds = 0.2
+
+# How far a player turns per 1000 pixels of mouse travel, in turns — one turn is a
+# full revolution, so 0.4 means a 2500-pixel sweep spins all the way round. This is
+# the single most feel-critical number in the game and the whole reason it lives in a
+# file: a mouse that is a touch too slow is unpleasant in a way no test can report.
+#
+# The Simulation owns it, exactly as it owns the walking speed, so what crosses from
+# the mouse is a count of pixels and a client cannot turn faster by sending a bigger
+# number. In co-op that makes it the Host's number; when per-client preferences
+# arrive this is the key that moves out of content and into settings.
+look_sensitivity_turns_per_1000_pixels = 0.2
+
+# How high a player's eyes are off the ground, in metres. The player is 1.8 m tall
+# against 2 m tiles, so the eye sits a little below the top of a tile — which is what
+# makes a Machine read as something you stand next to rather than something you look
+# down on. Change this and the whole sense of scale changes with it.
+eye_height_metres = 1.7
+
+# What a player starts a Run carrying, as `item:count`, several separated by `;`. The
+# same form a Recipe's inputs and a Machine's `build_cost` use. Empty opens a Run
+# empty-handed; every Item named must be one some Recipe mentions.
+#
+# **Exactly the opening line and two plates over.** The Machines a Run opens with are the
+# ones no Delivery tier names — the Miner (8), the Smelter (12), the coal Miner (8) and
+# the Steam Boiler (16) — and the Ammo Press (14) and MG Turret (20) that the first
+# Delivery unlocks: 78 plates for the whole competent Factory, against 80 here. Belts are
+# free and demolishing refunds in full, so laying the Factory out wrong costs ticks and
+# not materials (issue #1, user story 7).
+#
+# This replaces `starting_stock_per_item`, which granted 200 of every Item in the game and
+# said in its own comment that Delivery progression would decide where materials really
+# come from. It does: past this bill, what a player can build is what the Nest has
+# unlocked, and a Run's materials come out of the Factory.
+#
+# **Deliberately still plate alone, now that firing spends Ammunition out of these same
+# pockets.** A Run opens able to build its line and swing a wrench, and not able to fire a
+# shot — which is the point rather than an oversight: the whole of the keystone loop is that
+# the Factory is what arms you, and putting rounds in this line would have conjured them.
+# What fills a magazine is an Ammo Press, a Belt into the Nest and a withdrawal at the
+# counter. Whether a Run can actually keep one full that way is a balance question nobody
+# has played yet.
+starting_stock = "iron_plate:80"
+
+# A player's hit points, and what losing them costs.
+#
+# Whole points, exactly as a Machine's and the Nest's are. 150 against a Crawler's 10 a
+# bite is fifteen seconds of standing in a swarm, and against a Breaker's 60 it is three
+# bites — so Chaff is survivable inattention and a Breaker is not, which is the same
+# sentence DESIGN.md writes about Machines.
+health = 150
+
+# How long a Downed player bleeds out before dying, in seconds. The window a teammate has
+# to reach them and hold the revive down.
+#
+# **Solo play has no Downed state at all** (GLOSSARY.md) — there is nobody to revive you,
+# so a Downed state on a one-player Run would be a pause with no counterplay. On a solo
+# Run a player at zero health dies outright and this number is never consulted.
+downed_bleed_out_seconds = 20
+
+# How long a dead player waits before respawning at the Nest, in seconds.
+#
+# **This is the entire cost of dying.** Nothing is dropped, nothing is unlearnt, no
+# Delivery is undone and no Machine falls down: death costs tempo and never progress or
+# resources (GLOSSARY.md, DESIGN.md). Eight seconds is long enough that a wipe mid-Wave
+# visibly loses ground at the Factory and short enough that it is never a break.
+respawn_delay_seconds = 8
+
+# How long one teammate takes to bring a Downed player back up, in seconds. What it costs
+# the rescuer is the same thing hand repair costs: standing still, in the open, during a
+# Wave, doing nothing else.
+revive_seconds = 4
+
+# How close a teammate stands to do it, in metres.
+revive_reach_metres = 3
+
+# The Gear a Run opens holding, by id. Must name a `weapon` row in gear.csv that no
+# Delivery tier locks.
+#
+# A key here rather than a constant in sim/, for the reason `starting_stock` is one:
+# naming a piece of Gear inside the Simulation is the thing this project does not do.
+# The wrench, because it is also the repair tool — a Run opens able to mend what it built.
+starting_weapon = "pneumatic_wrench"
+
+[gear]
+
+# First-person combat: the numbers that are not per-weapon. The per-weapon ones are
+# content/gear.csv, which is where damage, range, spread, rate and Ammunition cost live.
+#
+# **Everything in this section is feel.** No test can assert that a weapon is satisfying,
+# so the mechanism is built to be tuned by playing: edit, save, and the Run you are
+# standing in applies it.
+
+# How wide and how tall an Enemy's hit volume is, in metres.
+#
+# An Enemy is a point in the Simulation — a position and a kind, never a node — so a shot
+# needs something to resolve against, and that is a capsule of this radius standing this
+# tall on the Enemy's position. 0.6 m across is roughly a Crawler's body; 1.6 m tall is
+# generous on purpose, because the alternative is a player having to pitch exactly onto a
+# low scuttling thing at thirty metres, which reads as the gun being broken rather than as
+# precision.
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+
+# How far a shot kicks the view up, in degrees, and how long the kick takes to come back
+# down, in seconds.
+#
+# **Recoil is Simulation state, not a camera animation.** It moves where the *next* shot
+# goes as well as where the camera points, because a kick only the renderer knew about
+# would be a lie about aiming — and because the pitch it moves is authoritative state
+# already.
+#
+# The recovery is **proportional to what is left**, not a flat amount per second, which
+# makes `recover_seconds` a time constant rather than a duration: each second the kick
+# sheds all but about a third of itself. That is what makes a held trigger settle at a
+# bounded bloom instead of walking off the top of the screen — a flat recovery cannot keep
+# up with a weapon firing eight times a second, and the first version of this did not.
+#
+# Together with each weapon's `seconds_per_shot` these two decide how controllable
+# automatic fire is. At 0.35 degrees a shot every 0.125 s against a 0.4 s constant, the
+# Drum Autocannon settles around a degree and a half off the point of aim — enough that a
+# long burst sprays and a tapped one does not, which is the whole trade.
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.4
+
+[belt]
+
+# A Belt's rated throughput, in Items a second. This is the primary number: the
+# Simulation turns it into a whole number of ticks per Item, so throughput is exact
+# by construction rather than something that emerges from rounding a speed. 4 Items a
+# second at 60 ticks a second is one Item every 15 ticks.
+#
+# Pick a rate that divides 60. A rate that does not is floored to whole ticks, so
+# 7 Items a second is really 60 / 8 = 7.5.
+items_per_second = 4
+
+# How many Items fit on one tile of Belt. With a 2 m tile, 4 Items a tile sit 0.5 m
+# apart, and with the rating above that means Items travel at 2 m/s — a speed and a
+# density that are both consequences of these two numbers, so neither is written
+# twice. It also sets how much a Belt swallows before back-pressure reaches the
+# Machine feeding it: a 10-tile Belt buffers 40 Items.
+items_per_tile = 4
+
+[machine]
+
+# How many crafts' worth of each input a Machine holds in its input buffer. A Recipe
+# needing 2 ore a craft therefore buffers 4 ore, and a hungrier Recipe gets a
+# proportionally bigger buffer without anyone tuning it separately.
+#
+# This is the number that makes back-pressure visible: it is the capacity a Belt
+# fills up against when a Machine cannot keep up, and small enough that a stalled
+# line is obvious rather than absorbed.
+input_buffer_crafts = 2
+
+[wall]
+
+# The Wall: not a Machine (DESIGN.md lists it alongside the Nest and the Belt), so it
+# has no row in machines.csv, no Recipe and no Power. It is one tile of ground that
+# obstructs Enemies and can be chewed through, and it is the cheapest way to decide
+# where a Wave walks.
+
+# A Wall's hit points. Lower than any Machine on purpose: a Wall is what you would
+# rather lose, which is the whole reason to put one in front of a Smelter.
+#
+# A Wall costs nothing to build, and there is no key here for a cost. That is the Belt's
+# arrangement and it is deliberate: a build cost names an Item, the Items that exist are
+# exactly the ones the Recipes mention, and `machines.csv` is where a cost sits *next to*
+# that check. A cost named over here would couple tuning to the Recipe table from the
+# other side of the content directory. The ticket that gives Belts a cost should give
+# Walls one at the same time, in whatever table ends up owning both.
+health = 240
+
+[wrench]
+
+# The Pneumatic Wrench: melee, and also what repairs (DESIGN.md). Repairing by hand is
+# the thing that makes melee useful rather than a last resort, and it is deliberately
+# free of materials — what it costs is a player standing in the open, next to the
+# Machine, during a Wave. The Repair Pylon is the other half of the trade: it costs
+# material and no attention.
+
+# How many hit points a held wrench puts back per second.
+#
+# Carried as an integer credit against the tick rate rather than as a fixed-point
+# fraction of a point per tick, exactly as Heat's decay and the Power duty cycle are: over
+# any window a Machine has gained exactly floor(ticks * points_per_second / 60), one floor
+# applied to the total and never one per tick. 60 means a point a tick, so the shipped
+# Smelter takes a little over eight seconds to bring back from nothing.
+repair_points_per_second = 60
+
+# How far a player may reach to repair, in metres. Melee range: two tiles, so a player
+# has to come and stand at the Machine rather than mend it from behind the Turret line.
+reach_metres = 4
+
+[survey]
+
+# Survey View: the raised, downward-looking camera a player holds a key for while
+# building. It exists because a Factory is illegible from eye level (DESIGN.md), and
+# it is the highest-value item in the whole build system, so these three numbers are
+# worth more fiddling than any others in this file.
+
+# How high the camera rises to, in metres. 26 m is about thirteen tiles, which puts a
+# dozen Machines on screen at once without making any of them unreadable.
+height_metres = 26
+
+# How long the lift takes, in seconds, each way. This is pure feel: an instant snap to
+# 26 m is disorienting, a long slide is sluggish. Rounded to whole ticks, so 0.4 is the
+# 24 ticks a tuner means rather than the 23 flooring would give.
+transition_seconds = 0.4
+
+# How far down the camera tilts at the top, in degrees from level. Not the full 90:
+# a little horizon left in frame keeps the Factory's surroundings legible, which is
+# what a player raising the camera is usually trying to see.
+pitch_degrees = 68
+
+[power]
+
+# The baseline supply on the one Power grid, in kilowatts, before a single generator
+# is built. The Nest arrives with its own small plant, and it has to: Machines are
+# throttled by the grid, a Steam Boiler burns Belt-delivered coal, and mining coal
+# needs a Miner — so a Factory starting on nothing but its own generators could
+# never turn the first wheel. This is exactly enough for one Miner and one Smelter
+# (120 + 180 kW) and not one watt more, so the first Machine beyond that opening
+# line is the moment Power becomes the player's problem.
+baseline_supply_kw = 300
+
+[nest]
+
+# The Nest's hit points. The Run ends when these reach zero (GLOSSARY.md) and
+# nothing else ends it, so this is the single number that decides how much of a
+# mistake a player can survive.
+#
+# 6000 against a Crawler's 10 damage a second means six Crawlers chewing unopposed
+# take a hundred seconds. Measured: with no Turret built, the first Wave alone finishes
+# the Nest about 200 seconds into a Run — it arrives at 90 s, walks the 19 tiles from
+# the Breach in 12 s, and chews from there. One fed MG Turret turns that into a Run
+# that is still going twenty minutes later, which is the whole of this game's thesis.
+health = 6000
+
+# How close a player has to stand to the Nest to hand a Delivery over, in metres from the
+# edge of its footprint. Progression is physical (GLOSSARY.md), so handing goods over is a
+# thing done at a place rather than through a menu — but a Delivery is also the one
+# interaction a player makes while a Wave is chewing on the Nest, so the reach is a couple
+# of tiles rather than a pixel-perfect spot to stand on.
+delivery_reach_metres = 5
+
+# How many of **each** Item the Nest's store will hold. A Belt running into the Nest
+# pays the open Delivery's bill first and banks the rest here, and a player standing
+# within the reach above takes it back out — which is the only way anything the Factory
+# makes gets back into a player's pockets, and therefore the only way a Run funds a
+# second Ammo Press out of its own output (issue #27).
+#
+# **Capped, and the cap is the interesting decision.** An unbounded store is simpler, and
+# it is wrong for three reasons. It is an infinite sink, so a Belt pointed at the Nest can
+# always hand off and never backs up — and back-pressure is the one way this game shows a
+# player that a line is overproducing, at exactly the place they are looking. It removes
+# any reason to stop hoarding and build the thing the materials are for. And it is a
+# number in the state hash and the save file with no bound on it at all.
+#
+# 200 against the shipped economy: the whole competent opening line costs 78 plate and the
+# second Ammo Press that #10 measured as the thing you need past Wave 16 costs 14, so a
+# full store of plate pays for either several times over. Deep enough that the cap is
+# never what stops a player progressing, shallow enough that a Factory left running at a
+# full Nest tells them so by stalling its own Belt.
+#
+# Per Item rather than one pot shared between them, so a Belt of coal cannot crowd plate
+# out of the store — that would be a cross-Item interaction nobody tuned, and one whose
+# outcome depended on which Belt happened to arrive first. One number applied to each Item
+# independently also means no Item is named here: the set of Items is whatever the Recipes
+# mention, and a key called `store_capacity_iron_plate` would be a second Item table, which
+# is the same argument `player.starting_stock` makes for being one quoted bill.
+store_capacity_per_item = 200
+
+[silo]
+
+# The Silo: the Machine that assembles Charges (GLOSSARY.md). An ordinary Machine with a
+# Recipe, fed by Belts, drawing Power and destructible — what it has instead of an output
+# buffer is a stockpile of Charges, and what it has instead of a button is a dial.
+#
+# How deep the stockpile goes is `charge_capacity` in machines.csv, because that is a
+# property of the Machine and what makes a bigger Silo a row. The Stratagems a Charge may
+# be spent on, and what each one does, are content/stratagems.csv. These two keys are the
+# parts of loading that belong to no single Silo and no single Stratagem.
+
+# How close a player stands to a Silo to work its dial, in metres from the edge of its
+# footprint.
+#
+# Loading is **diegetic** (DESIGN.md names it first in the list): a physical mechanism
+# operated at the Machine rather than a menu, which is the whole reason it is weighty. So
+# there is a place a player has to be standing, exactly as there is for handing a Delivery
+# over at the Nest. Four metres is two tiles, the same reach a wrench has — close enough
+# that loading is something done at the Silo, generous enough that a 4x4 footprint does not
+# need a pixel-perfect spot to stand on.
+load_reach_metres = 4
+
+# The most Charges one load may commit — the dial's upper stop.
+#
+# **Deliberately a separate number from a Silo's `charge_capacity`.** That column says how
+# much artillery a Factory may bank; this says how big one strike may be. Four against a
+# capacity of eight means a full Silo is two strikes rather than one, so a player who has
+# been producing has a decision to make about how to spend it rather than one big button.
+#
+# The load is **irreversible** (GLOSSARY.md): a committed dial cannot be turned back, and
+# the Charges it took are gone whether the Painting lands or not. That is the whole of what
+# makes this number interesting — four Charges in the tube is a bet placed before the fight
+# about what the fight is going to be.
+max_charges_per_load = 4
+
+[wave]
+
+# Wave scheduling. **Heat decides when and how much** (GLOSSARY.md, DESIGN.md); these
+# three numbers are the parts of a Wave that are not about Heat — the warning in front
+# of it, the rate it trickles out at, and what calling one early pays. The composition
+# itself is `content/waves.csv`, because a Wave's contents are a table rather than a
+# number, and the `[heat]` section below is what turns throughput into arrival time.
+
+# How long the Telegraph runs before a Wave arrives, in seconds.
+#
+# Load-bearing rather than decorative: no Wave may arrive until it has been telegraphed
+# for this long, including one a player called early and including one that a sudden
+# Heat spike pulled forward. The core loop must never ambush the player (DESIGN.md), so
+# this is a floor on the warning rather than a target for it. Twelve seconds is long
+# enough to walk back from a Belt and get behind the defences, short enough that the
+# klaxon is a jolt rather than an inconvenience.
+telegraph_seconds = 12
+
+# How long between one Enemy of a Wave emerging from a Breach and the next, in seconds.
+# A Wave trickles out rather than appearing as a stack of Enemies on one tile, which is
+# both legible and what makes a chokepoint work.
+spawn_interval_seconds = 0.5
+
+# What calling a Wave early pays, as a count of each Item named in
+# `player.starting_stock`, granted to the player who pulled the lever. The reward for
+# confidence, and the reason a group argues about whether they are ready: a called Wave is
+# the same Wave, arriving while the Factory is still cooler than it would have been, in
+# exchange for the materials to meet it.
+#
+# Paid in the opening bill's own Items rather than in a count of every Item in the game,
+# which is what it used to be. Two reasons. The lever buys the means to *defend*, so what
+# it pays should be build materials and not a handful of everything; and a bounty paid in
+# every Item would have conjured exactly the goods `content/deliveries.csv` asks for, so a
+# player could buy a Delivery tier off the lever without a Factory. Progression a lever can
+# buy is not progression.
+call_early_bounty_per_item = 25
+
+[heat]
+
+# Heat: the scalar that measures how much attention the Factory has drawn (GLOSSARY.md),
+# and the counter-pressure that makes scaling up a bet rather than a free gain
+# (DESIGN.md). Everything here is a whole number of **heat units**, because Heat
+# accumulates continuously across a forty-hour Run and a fixed-point quantity added up
+# every tick would shed a fraction each time and silently drift. One unit in, one unit
+# out, and the sub-unit remainder of the decay is carried as an integer — the same shape
+# the Power duty cycle uses, and for the same reason.
+
+# How much Heat one completed craft adds.
+#
+# **Completed crafts are what Heat is made of**, deliberately: a craft is the one event
+# in the Factory that is unambiguously throughput, that a player watches happen, and
+# that they caused by choosing to build the Machine that did it. Power drawn would have
+# made Heat a second reading of a gauge that already exists; a count of Machines running
+# would punish building rather than producing, and would make a starved line as hot as a
+# fed one.
+per_craft = 2
+
+# How much more Heat a craft adds per tier of Depth the Resource came from. Deeper ore
+# is louder (GLOSSARY.md), so a Depth 3 Node costs three units a craft on top of
+# `per_craft`. Only a Miner has a Depth; a crafter's Recipe adds `per_craft` flat.
+per_craft_per_depth = 1
+
+# How much Heat the Nest sheds per minute of game time, flat.
+#
+# Flat rather than proportional, and that is a determinism decision as much as a design
+# one. A proportional decay is a fixed-point ratio applied every tick — exactly the
+# shape that drifts over a long Run — and it would also give the Factory an equilibrium
+# Heat, which is the opposite of what this game is about. A flat drain means Heat
+# measures *throughput in excess of what the Nest can hide*, and that rises without
+# bound as the Factory does, which is "infinitely scaling" (GLOSSARY.md) made of
+# integers. 240 a minute is about two Miners' worth, so the opening line is free and the
+# third Machine is the first bet.
+decay_per_minute = 240
+
+# How long between Waves on a cold Factory, in seconds. Also how long the first Wave of
+# a Run is away, because a Run opens cold — one number rather than two that have to be
+# kept in a sensible relationship with each other.
+wave_interval_baseline_seconds = 150
+
+# The shortest the interval between Waves ever gets, in seconds. The ceiling on how
+# quickly Heat can hunt a Factory; past it, more Heat buys the Enemy more Enemies
+# instead of less time (see `content/waves.csv`).
+wave_interval_minimum_seconds = 40
+
+# How much Heat shaves one second off the interval between Waves. With the baseline and
+# the minimum above, 2200 Heat is where the interval bottoms out.
+#
+# This is the number that makes a hot Factory hunted *sooner* and not merely harder, and
+# it bites immediately: the countdown is derived from the Heat the Factory is carrying
+# right now, so a player who switches on a new line watches the clock jump towards them.
+per_second_sooner = 20
+
+[enemy]
+
+# The Crawler: Chaff, the weakest Enemy, which swarms toward the Nest (GLOSSARY.md).
+
+# A Crawler's hit points. Low by design — Chaff is the *sense* of threat rather than
+# the threat (DESIGN.md), and what kills a Crawler is a two-round burst from an MG
+# Turret (damage 15 in machines.csv) or a single Cannon shell. The number that decides
+# whether a Wave gets through is therefore the Ammunition behind the Turret, not this.
+crawler_health = 30
+
+# How fast a Crawler moves, in metres per second. Faster than a walking player at
+# 4 m/s would be unfair on foot; 3 m/s is a tile and a half a second, which reads as
+# scuttling without outrunning anyone.
+crawler_speed_metres_per_second = 3
+
+# How much damage one Crawler does to the Nest per bite.
+crawler_damage = 10
+
+# How long between one Crawler's bites, in seconds.
+crawler_attack_interval_seconds = 1
+
+# The Breaker: a full-fidelity Enemy that preferentially attacks Machines rather than
+# players (GLOSSARY.md), and the reason Machine mortality is *felt* rather than merely
+# true. It walks a field seeded on the Factory instead of on the Nest, so it goes for
+# what you built and only falls back on the Nest once there is nothing left to break.
+
+# A Breaker's hit points. Eight times a Crawler's, so it takes sixteen MG rounds — four
+# seconds of one fed MG Turret, which is long enough that one Turret cannot hold a lane
+# against a Breaker and the Crawlers behind it at the same time.
+breaker_health = 240
+
+# How fast a Breaker moves, in metres per second. Slower than a Crawler: a player can
+# outrun it to the Machine it is chewing, which is what makes hand repair a decision
+# rather than a formality.
+breaker_speed_metres_per_second = 2
+
+# How much damage one Breaker bite does to whatever it is chewing. 60 against the
+# shipped Smelter's 500 means nine bites, so a Smelter under one Breaker has nine
+# seconds to live — long enough to notice, short enough to have to choose.
+breaker_damage = 60
+
+# How long between one Breaker's bites, in seconds.
+breaker_attack_interval_seconds = 1
+
+# How close an Enemy has to be to a player to bite them, in metres.
+#
+# A distance rather than tile contact, unlike everything else an Enemy bites. The Nest, a
+# Machine and a Wall all stand on tiles; a player is a position in fixed-point metres, and
+# asking which tile they are standing on would make a bite land or miss depending on which
+# side of a boundary they were on — which is not something a player could ever read.
+#
+# A player ranks **below a Machine** in what an Enemy chooses to bite, which is what keeps
+# GLOSSARY.md's Breaker a Machine-hunter: a Breaker with a Smelter in reach chews the
+# Smelter even with a player standing next to it. What it is above is the Nest, so
+# standing in a doorway is a real way to buy the Nest time.
+player_bite_reach_metres = 1.6
+
+[depth]
+
+# Depth: the tier a Node sits at, and what reaching it costs. Deeper ore is richer,
+# but it needs a better Miner, it draws more Power, it raises more Heat (see
+# `heat.per_craft_per_depth` above) and it opens a new Breach near the mine — so
+# greed rearranges the Map a player has to defend rather than just moving a number.
+#
+# Which tiers a Miner can reach is `max_depth` in machines.csv, because that is a
+# property of the Machine. Everything here is about the Depth itself.
+
+# How much more Power a Miner draws per tier of Depth past the first, as a percentage
+# of its own quoted `power_draw_kw`.
+#
+# A percentage of the Machine rather than a flat surcharge, so the cost scales with the
+# Miner: a surcharge in kilowatts would be shrugged off by a big Mk3 and would choke a
+# Mk1. 60 means a Depth 3 Node costs a Miner 2.2 times what the same Miner costs on
+# Depth 1 — `power.baseline_supply_kw` is 300, so the first deep mine is immediately a
+# Boiler's worth of problem and not an afterthought.
+draw_percent_per_depth = 60
+
+# The shallowest Depth whose extraction opens Breaches. Depth 1 is the ore a Run opens
+# on, so it must not: the opening Factory is not a transgression.
+breach_tier = 2
+
+# How many completed crafts from one deep Node open a Breach near it.
+#
+# **Sustained** extraction, not a single craft, and counted per Node rather than per
+# Miner: the geography is what did it, so knocking the Miner down and rebuilding it does
+# not reset the clock, and a Breach is attributable to the mine a player chose to open.
+# One Node opens at most one Breach, ever, which is what keeps this bounded — a
+# forty-hour Run cannot ring itself with a hundred holes.
+breach_crafts = 40
+
+# How far from the mine the new Breach opens, in tiles. Chebyshev distance, so this is
+# the side of a square around the Node.
+#
+# Near enough that the Breach is unmistakably *that mine's* consequence, far enough that
+# it does not open underneath the Miner that caused it. Which tile of the ring it lands
+# on is fixed by the Map's own canonical tile order, so it is predictable — and it has to
+# be, because a Breach a player cannot plan for is not fortifiable (GLOSSARY.md).
+breach_offset_tiles = 6
+
+# How long a newly opened Breach is telegraphed before it first lets anything out, in
+# seconds.
+#
+# Load-bearing, exactly as `wave.telegraph_seconds` is: a Breach appearing silently next
+# to a player's base is the ambush the Telegraph exists to prevent. Longer than a Wave's
+# Telegraph, because the answer to a new Breach is a Turret and a Belt rather than
+# standing somewhere different.
+breach_telegraph_seconds = 45
+
+[siege_hulk]
+
+# The Siege Hulk: the boss, and the one threat the Factory cannot answer (GLOSSARY.md).
+# It walks in, stops the moment anything is inside its own shelling reach, and bombards
+# from there — and because that reach is checked at load time against every Turret's
+# `range_tiles`, "beyond Turret range" is a property the content cannot be edited out of.
+#
+# **Everything here is feel, and this is the section to fiddle with.** Whether killing a
+# Siege Hulk is fun is the most important thing this project has to learn, and no test can
+# assert it, so every number that decides how the fight goes is here and applies to the Run
+# you are standing in the moment you save the file.
+
+# A Siege Hulk's hit points.
+#
+# Priced against the rear weak point rather than against the front. The Drum Autocannon puts
+# out 12 damage eight times a second, so 1800 is about nineteen seconds of flanked, sustained
+# fire — long enough to be a fight, short enough that one magazine chain can finish it.
+# Through the frontal armour below the same weapon needs over two minutes, which is the
+# number that says "stop shooting it in the face" without a line of UI saying so.
+health = 1800
+
+# How fast a Siege Hulk walks, in metres per second. Slower than everything else on the Map:
+# a player can always get around it, which is the whole of what the weak point is for.
+speed_metres_per_second = 1
+
+# How far a Siege Hulk shells, in metres. **The one number that makes it unanswerable.**
+#
+# It is simultaneously the stand-off and the reach: the Hulk advances until something it can
+# shell is inside this radius and then holds, so where it comes to rest is this number and
+# not a second one that could disagree with it. `Definitions` refuses a set where this does
+# not exceed every Turret's reach, so a Cannon Turret that outranged it would be a content
+# error naming the row rather than a quietly solvable boss.
+#
+# 60 m against the MG Turret's 8 tiles (16 m) is a long way outside the Factory's own guns,
+# and exactly the Bolt Rifle's reach — so a player who will not leave the Nest *can* plink at
+# it through its armour, for about five minutes of perfect fire. That is deliberate: the
+# sortie is strongly incentivised rather than enforced.
+range_metres = 60
+
+# What one shell takes off whatever is standing at the impact point, in whole hit points.
+# 220 against the shipped Smelter's 500 is three shells, and against a player's 150 it is
+# one — standing in the marker kills you, which is what makes the marker worth reading.
+shell_damage = 220
+
+# How far from the impact point a shell is felt, in metres. Three tiles, so a shell that
+# lands on a Machine hurts whatever is packed against it — dense building is what a
+# bombardment punishes.
+shell_blast_radius_metres = 6
+
+# How long between one shell and the next, in seconds. The window a player has to cross open
+# ground, and the rhythm the whole fight is cut to.
+shell_interval_seconds = 6
+
+# How long a shell is in the air, in seconds.
+#
+# **Load-bearing, exactly as `wave.telegraph_seconds` is.** A shell that landed on the tick
+# it was fired would be an ambush, and the Telegraph rule in this project is a gate rather
+# than a courtesy: the impact point is marked on the ground, with a countdown, for this long
+# before anything happens there. Three seconds is long enough to walk out of six metres at
+# walking pace and not long enough to ignore.
+shell_flight_seconds = 3
+
+# What a Siege Hulk does to a player who comes within `enemy.player_bite_reach_metres` of it,
+# in whole hit points — and the reason melee against it is useful rather than suicidal.
+#
+# A stomp and a shell share one cooldown, so **a player standing at its feet is a player
+# stopping the bombardment.** That is the same trade standing in a doorway makes against a
+# Crawler, at the same price: your own skin. 45 against 150 is three stomps and a bit.
+stomp_damage = 45
+
+# How much of a hit a Siege Hulk shrugs off when it is struck from the front, as a
+# percentage.
+#
+# **This is the weak point, and it is the reason the fight has a shape.** A damage sponge is
+# a boring fight and a timer; an armoured front with an open rear is a problem with an
+# answer, and the answer is movement. A Hulk faces what it is shelling or what is standing at
+# its feet, so flanking it means going round while it is busy with the Factory — which is
+# exactly the decision this whole ticket exists to put in front of a player.
+#
+# 85 means a frontal hit does 15% of its damage, which is slow enough to be unmistakable
+# after half a magazine. Nothing anywhere tells a player this; the gun telling them is the
+# point.
+frontal_armour_percent = 85
+
+# How wide and how tall a Siege Hulk's hit volume is, in metres.
+#
+# An Enemy is a point in the Simulation, so a shot resolves against a capsule standing on it,
+# and a boss needs a bigger one than the Crawler's `gear.enemy_hit_*` — a thing this size that
+# a player could miss by a metre would read as the gun being broken.
+hit_radius_metres = 1.6
+hit_height_metres = 3.2
+
+[hive]
+
+# The Hive: an Enemy structure out on the Map that adds continuous pressure and can be
+# destroyed for permanent relief (GLOSSARY.md). Where the Hives are is geography and lives in
+# `sim/map_layout.gd`; what one costs the players is balance and lives here.
+
+# A Hive's hit points. No armour and no weak point: a Hive is a stationary target, so the
+# fight it gives is the walk there and the Ammunition it takes, not the aiming.
+health = 1200
+
+# How much of the Nest's Heat shedding one living Hive drowns out, per minute.
+#
+# **This is the whole of what a Hive costs, and the shape of it is the decision.** A Hive does
+# not send Enemies out, and that is deliberate rather than an omission: GLOSSARY.md promises
+# that Enemies enter at Breaches, which are "known in advance and fortifiable", and a Hive that
+# emitted its own would be a second entry point nobody can fortify — it would quietly take the
+# promise back. So a Hive's pressure is routed through the Breaches that already exist, by
+# making the Factory louder than it is.
+#
+# It subtracts from `heat.decay_per_minute` rather than adding to Heat, which is the half worth
+# arguing about. Adding would mean an idle Run on this Map got hunted for standing still, which
+# contradicts DESIGN.md outright — Heat is "throughput in excess of what the Nest can hide", so
+# a Factory producing nothing has nothing to hide and is owed its silence. Subtracting says the
+# Nest can hide *less* while these things are watching, which is the same sentence pointed the
+# right way: every Hive standing makes every craft count for more, so growth is what a Hive
+# taxes and sitting still is not.
+#
+# And it makes "destroying one reduces pressure permanently" a number a player already watches.
+# `query_heat_decay_per_minute` is on the HUD; killing a Hive moves it up, for ever, visibly.
+#
+# 30 against a decay of 240 means the two Hives this Map opens with leave the Nest hiding 180 a
+# minute instead of 240 — a quarter of its capacity, handed back permanently when they fall. It
+# is deliberately a tax on growth rather than a rewrite of the shipped balance: #10 measured a
+# one-Turret Run at 36 minutes against a decay of 240, and a shadow large enough to push that
+# Factory over `waves.csv`'s 500-Heat Breaker threshold on its *first* Wave would have thrown
+# that measurement away rather than added pressure to it. Tried at 100 first, which did exactly
+# that — the documented Factory lost five of its six Machines to Wave 1.
+#
+# **Nobody has played this.** It is the number on this whole ticket most likely to be wrong, and
+# it is the cheapest one to change: a Hive's pressure is one subtraction, and the gauge that
+# reports it is already on the HUD.
+heat_shadow_per_minute = 30
+
+# How wide and how tall a Hive's hit volume is, in metres. A building rather than a Crawler,
+# so a player standing in front of it cannot miss.
+hit_radius_metres = 2
+hit_height_metres = 4
