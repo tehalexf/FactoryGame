@@ -134,11 +134,12 @@ content/machines.csv    one row per Machine
 content/recipes.csv     one row per Recipe
 content/waves.csv       one row per tier of Wave composition
 content/deliveries.csv  one row per tier of Delivery progression
+content/gear.csv        one row per weapon frame and per component that fits one
 content/tuning.toml     balance numbers that are not per-Machine or per-Recipe
 ```
 
-**Adding a Machine, a Recipe, an Enemy tier to the Waves or a Delivery tier is a
-row. It is never a code change.** There is no
+**Adding a Machine, a Recipe, an Enemy tier to the Waves, a Delivery tier, a weapon or
+a Gear component is a row. It is never a code change.** There is no
 registry, no enum and no Item table — the set of Items is exactly the set the
 Recipes mention, interned in sorted order. Every column is documented in the
 header comment of the file it belongs to; read that before adding a row.
@@ -162,10 +163,17 @@ the rows from an export. These files are read with `FileAccess`, not `load()`.
 - A tuning key nothing reads is a **warning**, because a file carrying a number
   that does nothing lies to whoever is tuning it.
 
-`Definitions.load_from_directory` reads all five files and `Definitions.parse` takes all
-five sources, in that order. A missing one is an error naming the path, never an empty
-table — and `game/definition_watcher.gd` digests all five, so editing any of them
+`Definitions.load_from_directory` reads all six files and `Definitions.parse` takes all
+six sources, in that order. A missing one is an error naming the path, never an empty
+table — and `game/definition_watcher.gd` digests all six, so editing any of them
 hot-reloads.
+
+The **order they are read in** is not the order they are listed in, and it is load-bearing:
+Recipes first (the Items are interned from them), then Machines, then Gear, then the Waves,
+then the Deliveries — and **tuning last**, because `player.starting_weapon` has to name a
+weapon frame that no Delivery tier locks, which is a question only the Gear table and the
+Delivery table together can answer. Errors are still gathered in *file* order, so the report
+reads like a list of things to go and fix.
 
 `sim/csv_table.gd` and `sim/toml_document.gd` are the only parsers. Both are
 hand-rolled: Godot ships no TOML parser, and vendoring one into a public repo is
@@ -668,14 +676,17 @@ half of `_tile_obstructs_enemies` that does *not* force a rebuild, for exactly t
    (GLOSSARY.md: it preferentially attacks Machines rather than players) and it is what makes
    mortality *felt* rather than merely true — a Crawler walking past a Smelter proves nothing
    about whether the Smelter was ever at risk. It steers by the Factory's field too, so it is
-   hunting rather than bumping into things. **Read "rather than players" as "rather than the
-   Nest" for now**: a player has no health in the Simulation yet and nothing can damage one,
-   so Downed is the ticket where the preference acquires its third term. Nothing here will need
-   to change when it does — a player is one more clause in `_enemy_contact_target`, ranked below
-   a Machine.
-2. **Either kind bites the Nest it is standing at.** A Breaker out of Factory is still an Enemy
+   hunting rather than bumping into things. The sentence was read as "rather than the Nest"
+   until #15 gave a player health, and it cost exactly what this note promised: **one more
+   clause in `_enemy_contact_target`, ranked below a Machine**, and nothing else changed. A
+   Breaker with a Smelter in reach still chews the Smelter with somebody standing next to it,
+   which is what makes GLOSSARY.md's sentence literal rather than aspirational.
+2. **Either kind bites a player it can reach.** #15's clause, ranked below a Machine and above
+   the Nest — so standing in a doorway is a real way to buy the Nest time, at the price of your
+   own skin. See the Gear section.
+3. **Either kind bites the Nest it is standing at.** A Breaker out of Factory is still an Enemy
    at the gate, and the Nest is still the only loss that ends the Run.
-3. **Either kind chews out of a pocket it cannot route out of**, Machines before Walls. Without
+4. **Either kind chews out of a pocket it cannot route out of**, Machines before Walls. Without
    it, sealing a Breach behind a ring of Walls would be a cheese rather than a defence. With it,
    sealing buys exactly as much time as the Walls have hit points — which is what a Wall is for,
    and what `test_sealing_a_breach_buys_time_rather_than_stopping_a_wave` asserts. An Enemy
@@ -991,6 +1002,13 @@ call-early bounty — so nothing the Factory produced could reach the Build Gun 
 not fund a *second* Ammo Press out of its own output, which is exactly what the balance note
 above says you need. See the Nest's store, below.
 
+**Open: the store is not yet what arms a player.** #15 made firing spend **Ammunition** out
+of these same pockets, and `player.starting_stock` is deliberately still plate alone — so a
+Run opens able to build its line and swing a wrench and unable to fire a shot. The faucet
+exists now; what has not been done is the pass that checks a Run can actually keep a magazine
+full out of it, which is a balance question and wants somebody playing it. See the Gear
+section.
+
 ### Rotation
 
 `WorldGrid.rotated_footprint` swaps a footprint's extents without moving its anchor, so a
@@ -1070,10 +1088,216 @@ Run's whole meaning.
   locks nothing and a stock that pays for anything (`DELIVERIES` / `STOCKED` in
   `test_depth`, `test_turrets`, `test_world_view`, `test_heat`, `test_enemies`,
   `test_nest`). `test_delivery.gd` is the one place the shipped chain itself is asserted.
-- **Gear components and Stratagems are identifiers nothing reads yet**, and that is on
-  purpose. The frames, the Silo, the Charges and the Painting are later milestones; what a
-  Run has unlocked is recorded, hashed and saved *now*, because that is the half that cannot
-  be retrofitted onto a Run already in progress.
+- **Gear components are read now; Stratagems still are not.** #15 made `_unlocked_gear_ids` the
+  gate on what a player may fit to their weapon frame, and `Definitions.locks_gear` the one
+  authority on what starts locked — exactly the arrangement `unlocks_machines` already had, and
+  the reason there is no `locked` column in `gear.csv` either. Every id in `unlocks_gear` must
+  now name a row in that file. The Stratagem ids are still identifiers nothing reads, for the
+  reason the Gear ones were: the Silo, the Charges and the Painting are a later milestone, and
+  what a Run has unlocked is recorded, hashed and saved *now* because that is the half that
+  cannot be retrofitted onto a Run already in progress.
+
+## Gear, first-person combat, and what dying costs
+
+The other half of the keystone loop. #10 proved that production is combat power through a
+Turret; this is the same claim in the player's own hands — **you fight with what your
+Factory made** — and it is the project's highest-risk pillar, because code is the easy
+half. First-person combat lives or dies on animation and feel, which no test can assert.
+So the mechanism is built to be *tuned by playing*: every number that decides how a weapon
+feels is a row in `content/gear.csv` or a key in `[gear]`, and editing either applies to the
+Run you are standing in.
+
+### One frame, interchangeable components, and no tiers
+
+- **`content/gear.csv` is the whole of it, and nothing in `sim/` names a weapon, a
+  component or a slot.** A fourth weapon is a row, exactly as a Cannon Turret was —
+  `test_gear.gd` adds a Rivet Cannon to the shipped table and shoots a Breaker dead with
+  it, with no code change at all.
+- **The slot a component occupies is its own `kind`, and the set of slots is exactly the
+  set of kinds the table mentions** other than the reserved `weapon`. That is the Items'
+  arrangement — the set of Items is exactly what the Recipes mention, and there is no Item
+  table — and it buys the same thing: a fourth slot is a row. The shipped table names four
+  (barrel, magazine, sight, plating), interned in sorted order, and that order is hashed
+  because it is the index space a `FIT_COMPONENT` intent travels in.
+- **A weapon row carries no modifiers and a component row carries nothing else.** The
+  loader refuses either mistake by name, which is how "power comes from combination rather
+  than from tiers" survives contact with a designer: there is nowhere to write a Rifle Mk2
+  even if somebody wanted to. A component whose six modifiers are all zero is refused too
+  — a Delivery a player paid for and cannot feel is worse than no tier at all.
+- **Modifiers are whole percentages, summed once and applied with one floor.** Additive
+  rather than multiplicative so two components can be reasoned about in either order, so
+  nothing rounds at each link, and so the order they were fitted in cannot reach the state
+  hash. `_scaled` is the one function, and it works unchanged on a count of hit points and
+  on a fixed-point count of metres.
+- **A piece of Gear is locked because a Delivery tier names it**, exactly as a Machine is.
+  There is no `locked` column in `gear.csv` and there will not be one: the Gear a Run opens
+  with is exactly the Gear no tier mentions. So all three weapons are open from tick 0 — a
+  game that made a player deliver goods before it let them hold a wrench would be a
+  different game — and every component is earned, which is the pillar's whole point: **a
+  build goal translates into a Factory goal.**
+- **What a player is holding is an id, and what is fitted is a sorted array of ids.**
+  Indices would renumber under a hot-reload; `_player_component_ids` is the same shape a
+  player's pockets are, for the same two reasons.
+
+### Firing, and where the aim comes from
+
+- **No aim crosses the float boundary for a shot, and that is the strongest version of the
+  rule rather than an omission.** `InputAction.Kind.FIRE` carries nothing at all. A
+  player's yaw and pitch are already authoritative fixed-point Simulation state, put there
+  by the quantised `LOOK` intent (#6), so where a round goes is something the Simulation
+  knows exactly; a tile or a direction in the intent would be a *second* opinion about the
+  aim, derived from a float, and in lockstep the second opinion is the one that diverges.
+- **What did gain a crossing is the hand tool's aim**, and it went where every crossing
+  goes: `InputQuantiser.aimed_tile_at_height`. `aimed_tile` is the Build Gun's and only
+  ever meets the *ground*, because building is flat and a hologram snaps to a floor tile. A
+  wrench is held against a Machine's body several metres up, so aiming it down the ground
+  plane means looking at your own feet to mend something at eye level. Same three rules —
+  floors toward negative infinity, bounded by reach, NAN reduced rather than cast — and its
+  own tests in `test_input_quantiser.gd`.
+- **`FIRE` is held, like `REPAIR` and `MOVE`.** Automatic fire is the absence of letting go
+  rather than a second intent, and `_fight` consumes and clears the flag every tick, so it
+  is zero at every point a hash is taken. One intent for all three weapons, because there
+  is one frame: whether it swings or shoots is the `attack` column.
+- **Combat resolution is integer arithmetic, all of it.** An Enemy is a point (#9), so a
+  round is resolved against a capsule standing on it — `gear.enemy_hit_radius_metres`
+  across, `gear.enemy_hit_height_metres` tall — with three tests in the order that rejects
+  most cheaply: distance along the line of aim (a dot product), distance off it (a cross
+  product), then the height the round is at by then (eye height plus the tangent of the
+  pitch). The third is what makes aiming up and down mean something rather than firing a
+  vertical plane of lead. Walked in Enemy index order on a **strict** improvement, so two
+  Enemies exactly as far away hand the hit to the earlier spawn on every client — the rule
+  a Turret's acquisition already obeys.
+- **Two RNG draws every shot, hit or miss.** The stream is a function of how many times the
+  trigger was pulled rather than of what happened to be standing there, which is what keeps
+  a replay identical when a Crawler dies a tick earlier on one client than another. Melee
+  consumes none: a swing catches the nearest living Enemy in front of the player inside the
+  weapon's reach, because a swing is a sweep and not a ray.
+- **A shot leaves from eye height, never from the camera.** Survey View lifts the camera to
+  twenty-six metres and is explicitly not a mode, so a player who raises it to read their
+  Factory must not thereby be firing from a helicopter.
+- **Recoil is Simulation state because it moves where the next round goes.** A kick the
+  renderer applied on its own would be a lie about aiming, and the pitch it adds to is
+  authoritative already. `query_player_camera_pitch_turns` includes it, so the view and the
+  aim are one number. The recovery is **proportional to what is left** — the one place in
+  this project where that is the right shape, because recoil converges on *zero* and so has
+  nowhere to drift, where Heat and the Power credit accumulate for forty hours and would. A
+  flat recovery was tried first and is unusable: a weapon firing eight times a second adds
+  eight kicks and a flat rate sheds two, so the view climbs without bound and a held trigger
+  ends up pointed at the sky.
+- **Firing spends Ammunition out of the player's own pockets** — the same pockets the Build
+  Gun spends from. That is the first-person half of the keystone loop, and
+  `query_fire_refusal` is the projection that lets the HUD read `DRY` off the weapon rather
+  than off a count a player has to do themselves.
+
+### Downed, dead, and back at the Nest
+
+- **A player has health now**, which is what #11 said was missing: it could only read
+  GLOSSARY.md's "a Breaker prefers Machines rather than players" as "rather than the Nest".
+  `_enemy_contact_target` gained exactly one clause and nothing else — ranked **below a
+  Machine**, so a Breaker with a Smelter in reach still chews the Smelter with somebody
+  standing next to it, and **above the Nest**, so putting yourself in a doorway buys the
+  Nest time at the only price this game charges: your own skin.
+- **A player is reached by distance and not by tile contact**, unlike everything else an
+  Enemy bites. The Nest, a Machine and a Wall stand on tiles; a player is a position in
+  fixed-point metres, and asking which tile they are on would make a bite land or miss
+  depending on which side of a boundary they happened to be, which is not something a
+  player could read off the screen.
+- **Solo play has no Downed state** (GLOSSARY.md), and that is the whole of the rule: there
+  is nobody to revive you, so a Downed state on a one-player Run would be a pause with no
+  counterplay. A solo player dies outright and waits out `player.respawn_delay_seconds`.
+- **`_player_life_state` and `_player_life_since_tick` are the whole clock.** The tick a
+  state began rather than a countdown, so how long somebody has been bleeding out is
+  arithmetic over two numbers that are hashed anyway — no second counter to keep in step,
+  and the "does not act on the tick it arrived" rule falls out for free: a player Downed
+  this tick has been Downed for zero ticks. `_lives()` runs **last** in the tick, after
+  `_enemies()`, because `_enemies` is what put them down.
+- **Reviving is hand repair pointed at a person**, down to the arithmetic: an integer credit
+  against the revive's own length, one floor applied to the total, and credit that does not
+  survive letting go or walking out of reach. What it costs the rescuer is what a wrench
+  costs — standing still, in the open, during a Wave, doing nothing else.
+- **Death costs tempo and nothing else** (GLOSSARY.md, DESIGN.md), and the criterion is
+  written as the *absence* of code: `_respawn` touches position, health and the clock. Not
+  a plate, not a round, not a Delivery, not the components on the frame. There is nowhere
+  in that function for a death penalty to be added without somebody arguing for it first.
+- **Being Downed is a refusal, not a mode.** `_player_can_act` is consulted by every
+  refusal a player's intent goes through, so `Refusal.PLAYER_IS_DOWN` comes out of the same
+  function that does the refusing and the HUD gets the real reason. Nothing anywhere asks
+  whether acting is *currently permitted* — it asks whether this player is on their feet,
+  which is a fact about them in the same way their wallet is. Building is still never gated.
+
+### Where the controls went, and the one that had to move
+
+- **Left mouse is the trigger**, held. Placing a Machine moved to `KEY_PLACE` (E), which is
+  not a happy binding and not a permanent one: the real answer is a hand — a holster that
+  puts either the Build Gun or a weapon in front of the player — and DESIGN.md already says
+  Gear assembly and Recipe selection belong in a *menu*. Until that ticket, a key, because
+  the alternative was making the two acts fight over one button and the first thing a player
+  would discover is that shooting builds a Smelter.
+- `KEY_1`–`KEY_3` are the weapon frames, in the sorted order the table interns them, so a
+  fourth weapon becomes the fourth key without `player_controller.gd` changing. `KEY_4`
+  onwards are the slots, each cycling the components that fit it with "nothing fitted" as
+  one more position in the ring. The cycle holds no state: where it is comes out of
+  `query_player_component` and what is in it comes out of the definition set.
+- `KEY_REVIVE` (T) is held, like the wrench, and does nothing on a solo Run.
+
+### The weapon in frame, and the honest limit of what shipped
+
+`WorldView._sync_weapon` draws a **placeholder**: one box for a frame and one for a barrel,
+parented to the camera, swaying with the player's own velocity and kicking when a shot
+lands. Every number it moves by is read out of the Simulation, so nothing there is a second
+opinion and all of it replays — and the barrel's length comes off the weapon's own reach, so
+a fourth weapon looks different without the renderer changing.
+
+What it is **not** is the purchased first-person arms and their named takes. The packs are
+there and `docs/LICENSED_ASSETS.md` records exactly what each FBX holds and the frame ranges
+of every take — Shoot, Reload, Draw, PutAway, walk, run, idle, plus Pump and Chamber — so
+the research is done. What is not done is the pipeline: those are FBX inside the gitignored
+quarantine, Godot cannot import an FBX at runtime, and nothing non-redistributable may be
+committed. Using them therefore needs a Blender step that converts the named takes into a
+GLB **outside** the repository, plus a runtime glTF load of the result.
+`WorldView.WEAPON_BODY_DIRECTORY` is the seam that waits for it: a GLB named for the weapon,
+loaded if it is there and silently skipped if it is not, so **the repository stays buildable
+and testable for anyone without those files**. That is a ticket of its own and it is the
+single highest-value thing left on this pillar, because feel is what this pillar is.
+
+### Where the balance stands, and what nobody has played
+
+Shipped numbers, not a measured Run. The Bolt Rifle kills a 30 hp Crawler in one shot and a
+240 hp Breaker in six, one round a shot, 0.8 s between them, 0.4° of scatter. The Drum
+Autocannon needs three shots for a Crawler and twenty for a Breaker but puts out eight
+shots a second at two rounds each — so it empties a magazine sixteen times faster for a
+little over twice the damage, and 5° of scatter plus the recoil bloom means a long burst
+sprays where a tapped one does not. The Pneumatic Wrench kills a Crawler in one swing at
+0.6 s and cannot touch a Breaker before the Breaker touches it.
+
+A player has 150 hit points against a Crawler's 10 a bite and a Breaker's 60 — fifteen
+seconds of standing in Chaff, three bites from the thing that actually hunts you, which is
+the same sentence DESIGN.md writes about Machines. Hardened Plating takes 30% off that.
+
+**The Ammunition chain closes, and `test_gear.gd` walks every link of it.**
+`player.starting_stock` is deliberately still plate alone — putting rounds in it would conjure
+exactly the thing the keystone loop says the Factory must make — so a Run opens with a rifle
+that is a stick.
+`test_a_player_can_take_the_ammunition_the_factory_made_and_fire_it` builds a Miner, a
+Smelter and an Ammo Press out of the opening eighty plates, runs a Belt into the Nest, waits
+for the counter to bank a round, withdraws it (#27) and kills a Crawler with it. That is the
+pillar's whole sentence as one test.
+
+**What has not been done is the balance of it.** Nobody has checked a Run can keep a magazine
+*full* that way against a Wave schedule that is simultaneously eating a Turret's rounds out of
+the same Ammo Press — and the arithmetic in the Turrets section says one Press cannot even
+feed the Turret. The honest reading is that a player who wants to shoot needs a second
+production line, which is the right answer and an untested one. Until somebody plays it, the
+Bolt Rifle and the Drum Autocannon are *tested* rather than *played*, and the rest of
+`test_gear.gd` arms its own player because a test about what a weapon does should not have to
+build a Factory first.
+
+**Nobody has played any of this.** The joint balance pass #10, #12 and #11 are all waiting
+for should now take `gear.csv`, `[gear]`, `player.health`, `enemy.player_bite_reach_metres`
+and the Ammo Press's rate together, because every one of them is priced against the others.
+The two numbers most likely to be wrong are `gear.view_kick_degrees_per_shot` — the whole
+feel of automatic fire rides on it — and `gear.enemy_hit_radius_metres`, which decides
+whether a swarm at twenty metres is a target or a lottery.
 
 ## The Nest's store, and the faucet it is
 
@@ -1157,7 +1381,14 @@ is float arithmetic — so the crossing is made **exactly once**, in
 
 It has a contract of its own in `tests/cases/test_input_quantiser.gd`, like `Fixed`, because
 its rounding is not observable through the façade. If you need to read a new float device,
-add a function there rather than converting at the call site.
+add a function there rather than converting at the call site. #15 did exactly that:
+`aimed_tile_at_height` is the Pneumatic Wrench's aim, which crosses the *body* of a Machine
+rather than the ground the Build Gun's hologram snaps to.
+
+**Firing crosses nothing, and that is the rule honoured rather than dodged.** A player's yaw
+and pitch are already authoritative fixed-point state, so where a round goes is something the
+Simulation knows exactly; an aim carried in a `FIRE` intent would be a second opinion derived
+from a float. See the Gear section above.
 
 `game/player_controller.gd` holds the only other float on the way in: a **device buffer**
 of mouse travel and clicks gathered between frames. That is the same category of thing as

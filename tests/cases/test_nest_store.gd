@@ -64,6 +64,14 @@ const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,u
 t01_opening,Opening Licence,1,iron_ore:3;iron_frame:2,,drum_magazine,
 """
 
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One weapon
+## frame and the component the tier above names, because a tier naming Gear that does not
+## exist is content somebody broke. This file is about the counter rather than about combat.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+drum_magazine,Drum Magazine,magazine,,0,0,0,0,,0,0,0,0,-30,0,0
+"""
+
 const WAVES: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
 chaff_crawlers,crawler,0,6,150,40
 """
@@ -77,6 +85,12 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+health = 150
+downed_bleed_out_seconds = 20
+respawn_delay_seconds = 8
+revive_seconds = 4
+revive_reach_metres = 3
+starting_weapon = "pneumatic_wrench"
 starting_stock = "iron_plate:2"
 [belt]
 items_per_second = 4
@@ -116,8 +130,14 @@ breach_tier = 2
 breach_crafts = 40
 breach_offset_tiles = 6
 breach_telegraph_seconds = 45
+[gear]
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.5
 [enemy]
 crawler_health = 30
+player_bite_reach_metres = 1.6
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
@@ -135,11 +155,13 @@ func _content(tuning: String = TUNING) -> Definitions:
 		tuning,
 		WAVES,
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 

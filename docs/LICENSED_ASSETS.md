@@ -173,6 +173,35 @@ worry.**
 No splitting work was performed, because none is needed. The frame ranges above
 are recorded so the finding does not have to be re-derived.
 
+### Still not wired in, and exactly what wiring them in needs
+
+Issue #15 shipped the Gear mechanism and a **placeholder** view model —
+`WorldView._sync_weapon`, two boxes parented to the camera, swaying and kicking off
+Simulation state. None of the arms above are loaded, and the reason is the pipeline rather
+than the research:
+
+* **Godot cannot import an FBX at runtime.** `.fbx` is an editor-time import, and
+  `assets_licensed/.gdignore` deliberately keeps the importer out of this directory
+  anyway — see "Why Godot does not scan this directory" above.
+* **Nothing here may be committed**, so the converted mesh cannot land in `assets/`
+  either. It has to be a build artefact outside the shipping tree.
+
+So the work is: a Blender step that imports one `Weapon pack/*_animation.fbx`, keeps the
+named takes and drops `default`, picks one of the three arm meshes, downscales the textures
+(the Deagle's normals alone are 180 MB), and writes a `.glb` per weapon into a gitignored
+directory; then a runtime `GLTFDocument.append_from_file` of the result and an
+`AnimationPlayer` driven by `query_player_last_shot_tick`,
+`query_player_fire_cooldown_ticks` and `query_player_velocity`.
+
+The seam already exists and is tested: `WorldView.WEAPON_BODY_DIRECTORY` is
+`res://assets_licensed/generated/gear/`, and a `<weapon id>.glb` there is loaded if present
+and **silently skipped if not**, so the repository stays buildable and testable for anyone
+without these files. Which weapon maps to which pack is a choice for that ticket; the
+obvious reading of `content/gear.csv` against the table above is `L96_animation.fbx` for the
+Bolt Rifle (it has the `Chamber` take a bolt-action wants), `Akm_animation.fbx` for the Drum
+Autocannon, and RgsDev's `Arms_Combat_Knife.fbx` for the Pneumatic Wrench — the only rigged
+arms in the collection that swing rather than shoot.
+
 ### `shapita/` — Factory Line 86
 
 | | |

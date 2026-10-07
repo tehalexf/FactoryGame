@@ -61,6 +61,12 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+health = 150
+downed_bleed_out_seconds = 20
+respawn_delay_seconds = 8
+revive_seconds = 4
+revive_reach_metres = 3
+starting_weapon = "pneumatic_wrench"
 starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
@@ -95,8 +101,14 @@ breach_tier = 2
 breach_crafts = 40
 breach_offset_tiles = 6
 breach_telegraph_seconds = 45
+[gear]
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.5
 [enemy]
 crawler_health = 30
+player_bite_reach_metres = 1.6
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
@@ -127,11 +139,13 @@ func _definitions(walk_speed: String) -> Definitions:
 		"[player]\nwalk_speed_metres_per_second = %s\n" % walk_speed + OTHER_TUNING,
 		WAVES,
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -183,7 +197,7 @@ func test_the_same_definitions_produce_the_same_starting_hash() -> void:
 func test_definitions_that_failed_to_load_are_reported_and_nothing_is_invented() -> void:
 	# A Run must not start on a broken definition set, and the way it refuses is by
 	# saying so rather than by substituting plausible numbers.
-	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n", WAVES, DELIVERIES)
+	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n", WAVES, DELIVERIES, GEAR)
 	var sim: Simulation = Simulation.new(SEED, PLAYERS, broken)
 
 	assert_true(sim.query_definition_errors().size() > 0)
@@ -259,7 +273,8 @@ func test_a_reload_of_a_broken_definition_set_is_refused() -> void:
 	var before: int = sim.hash()
 
 	var broken: Definitions = Definitions.parse(
-		MACHINES, RECIPES, "[player]\nwalk_speed = oops\n", WAVES, DELIVERIES
+		MACHINES, RECIPES, "[player]\nwalk_speed = oops\n", WAVES, DELIVERIES,
+		GEAR
 	)
 	sim.step([InputAction.reload_definitions(0, broken)])
 
@@ -350,6 +365,16 @@ func test_a_replay_under_the_same_definitions_is_not_refused() -> void:
 	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording, same)
 	assert_false(divergence.definitions_mismatch)
 	assert_true(divergence.is_identical, divergence.describe())
+
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
 
 
 ## The Delivery tiers, inline so the fixture is a complete definition set. Progression is

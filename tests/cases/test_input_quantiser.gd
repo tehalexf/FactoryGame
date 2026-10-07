@@ -150,3 +150,63 @@ func test_a_quarter_turn_of_yaw_faces_along_negative_x() -> void:
 func test_pitching_down_points_the_ray_at_the_ground() -> void:
 	var forward: Vector3 = InputQuantiser.forward_vector(0, -Fixed.QUARTER_TURN)
 	assert_true(is_equal_approx(forward.y, -1.0), "straight down, got %f" % forward.y)
+
+
+# ── A hand tool's aim ─────────────────────────────────────────────────────────
+# `aimed_tile` is the Build Gun's aim and only ever meets the ground, because building is
+# flat and a hologram snaps to a floor tile. A wrench is held against a Machine's *body*,
+# several metres up, so it crosses a different plane — and a level look that meets neither
+# still has to land somewhere a player can see.
+
+func test_a_level_look_at_eye_height_meets_the_tool_plane_it_is_level_with() -> void:
+	# The camera is already on the plane, so the ray never crosses it and the answer falls
+	# back to the limit of reach ahead of the player rather than to infinity.
+	var tile: Vector3i = InputQuantiser.aimed_tile_at_height(
+		Vector3(0.0, 2.0, 0.0), Vector3(0.0, 0.0, -1.0), 2.0, 10.0, 2.0
+	)
+	assert_eq(tile, Vector3i(0, 0, -5), "ten metres ahead, which is five tiles")
+
+
+func test_looking_down_from_eye_height_meets_the_tool_plane_before_the_ground() -> void:
+	# From 4 m up at forty-five degrees, the 2 m plane is 2 m ahead and the ground is 4 m
+	# ahead. A wrench aims at the first of those; the Build Gun aims at the second.
+	var camera: Vector3 = Vector3(0.0, 4.0, 0.0)
+	var forward: Vector3 = Vector3(0.0, -1.0, -1.0)
+	assert_eq(
+		InputQuantiser.aimed_tile_at_height(camera, forward, 2.0, 20.0, 2.0),
+		Vector3i(0, 0, -1),
+		"two metres ahead: tile -1"
+	)
+	assert_eq(
+		InputQuantiser.aimed_tile(camera, forward, 20.0, 2.0),
+		Vector3i(0, 0, -2),
+		"against four metres for the ground plane: tile -2"
+	)
+
+
+func test_looking_up_from_below_the_tool_plane_still_meets_it() -> void:
+	# A player crouched under a gantry looking up at a Machine's body. The ray crosses the
+	# plane going the other way, and the sign of the gap is what decides whether it does.
+	var tile: Vector3i = InputQuantiser.aimed_tile_at_height(
+		Vector3(0.0, 0.0, 0.0), Vector3(0.0, 1.0, -1.0), 2.0, 20.0, 2.0
+	)
+	assert_eq(tile, Vector3i(0, 0, -1), "two metres ahead, two metres up")
+
+
+func test_a_tool_aim_is_pulled_back_to_the_limit_of_reach() -> void:
+	# Bounded, like every other conversion in this module: an unbounded intent is an
+	# unbounded aim. From 22 m up at a shallow angle the plane is 200 m ahead, and four
+	# metres of reach is four metres of reach.
+	var tile: Vector3i = InputQuantiser.aimed_tile_at_height(
+		Vector3(0.0, 22.0, 0.0), Vector3(0.0, -0.1, -1.0), 2.0, 4.0, 2.0
+	)
+	assert_eq(tile, Vector3i(0, 0, -2), "four metres ahead, which is two tiles")
+
+
+func test_a_tool_plane_that_is_not_a_number_is_reduced_rather_than_cast() -> void:
+	# NAN compares false against everything, so an unguarded cast would let it through as an
+	# arbitrary integer and desync a Run. Reduced to the ground plane instead.
+	var tile: Vector3i = InputQuantiser.aimed_tile_at_height(
+		Vector3(0.0, 4.0, 0.0), Vector3(0.0, -1.0, -1.0), NAN, 20.0, 2.0
+	)
+	assert_eq(tile, Vector3i(0, 0, -2), "the ground plane, four metres ahead")

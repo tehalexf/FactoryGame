@@ -49,11 +49,13 @@ func _content(overrides: Array = [], waves: String = "") -> Definitions:
 		tuning.replace(SHIPPED_STOCK, STOCKED),
 		_read("res://content/waves.csv") if waves.is_empty() else waves,
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -913,6 +915,16 @@ func test_rebalancing_the_wave_table_mid_run_changes_the_next_wave() -> void:
 
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
 
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,

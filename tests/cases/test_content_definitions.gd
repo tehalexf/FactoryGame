@@ -40,6 +40,12 @@ const OTHER_TUNING: String = """
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+health = 150
+downed_bleed_out_seconds = 20
+respawn_delay_seconds = 8
+revive_seconds = 4
+revive_reach_metres = 3
+starting_weapon = "pneumatic_wrench"
 starting_stock = "iron_ore:200;iron_plate:200"
 [belt]
 items_per_second = 4
@@ -74,8 +80,14 @@ breach_tier = 2
 breach_crafts = 40
 breach_offset_tiles = 6
 breach_telegraph_seconds = 45
+[gear]
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.5
 [enemy]
 crawler_health = 30
+player_bite_reach_metres = 1.6
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
@@ -110,7 +122,8 @@ func _parse(
 	recipes: String,
 	tuning: String,
 	waves: String = WAVES,
-	deliveries: String = DELIVERIES
+	deliveries: String = DELIVERIES,
+	gear: String = GEAR
 ) -> Definitions:
 	return Definitions.parse(
 		machines,
@@ -118,12 +131,26 @@ func _parse(
 		tuning,
 		waves,
 		deliveries,
+		gear,
 		MACHINES,
 		RECIPES,
 		TUNING,
 		WAVES_PATH,
-		DELIVERIES_PATH
+		DELIVERIES_PATH,
+		"gear.csv"
 	)
+
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+gear_a,Component A,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+gear_b,Component B,sight,,0,0,0,0,,0,0,0,-10,0,0,0
+"""
 
 
 const DELIVERIES_PATH: String = "deliveries.csv"
@@ -910,3 +937,217 @@ func test_the_wave_table_knows_the_breaker_by_name() -> void:
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(definitions.wave_entry_at(0).enemy_kind, EnemyKind.BREAKER)
+
+
+# ── The Gear table ────────────────────────────────────────────────────────────
+# Gear is modular: one weapon frame accepting components made on different production
+# lines, and power from combination rather than from tiers (GLOSSARY.md). Half of "there
+# is no Rifle Mk2" is enforced by the schema — a weapon states what it is and carries no
+# modifiers, a component carries nothing but modifiers — and this is where that is
+# asserted.
+
+const GEAR_HEADER: String = (
+	"id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,"
+	+ "ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,"
+	+ "interval_percent,ammunition_percent,damage_taken_percent\n"
+)
+
+## A well-formed weapon row, so a test that varies one column carries the rest unchanged.
+const GOOD_WEAPON: String = (
+	"pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0\n"
+)
+
+
+## A Delivery tier that unlocks a Machine rather than a piece of Gear, so a test varying
+## the Gear table is not also obliged to keep a component the tier names alive.
+const GEAR_TEST_DELIVERIES: String = (
+	"id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems\n"
+	+ "t01_a,A,1,iron_plate:1,smelter_mk1,,\n"
+)
+
+
+func _with_gear(rows: String) -> Definitions:
+	return _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		WAVES,
+		GEAR_TEST_DELIVERIES,
+		GEAR_HEADER + rows
+	)
+
+
+func test_a_gear_table_with_no_rows_is_an_error_not_a_run_with_nothing_to_fight_with() -> void:
+	var definitions: Definitions = _with_gear("")
+	assert_true(definitions.has_errors())
+	assert_true(definitions.describe_errors().contains("no rows"), definitions.describe_errors())
+
+
+func test_a_gear_table_with_no_weapon_frame_is_an_error() -> void:
+	# Components fit a frame. A table of nothing but components is a table with nothing to
+	# hold, and `player.starting_weapon` could never name anything in it.
+	var definitions: Definitions = _with_gear(
+		"heavy_barrel,Heavy Barrel,barrel,,0,0,0,0,,0,40,0,0,0,0,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("no frame to hold"), definitions.describe_errors()
+	)
+
+
+func test_a_weapon_carrying_a_modifier_is_refused_because_that_would_be_a_tier() -> void:
+	# The schema half of "power comes from combination, not from tiers". A frame that gave
+	# itself +40% damage would be a Rifle Mk2 written in the modifier columns.
+	var definitions: Definitions = _with_gear(
+		GOOD_WEAPON
+		+ "bolt_rifle,Bolt Rifle,weapon,ranged,30,60,0.4,0.8,ammunition,1,40,0,0,0,0,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("a tier in disguise"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_component_that_changes_nothing_is_refused_by_name() -> void:
+	# A Delivery tier a player paid for and cannot feel is worse than no tier at all.
+	var definitions: Definitions = _with_gear(
+		GOOD_WEAPON + "dead_weight,Dead Weight,barrel,,0,0,0,0,,0,0,0,0,0,0,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("changes nothing measurable"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_component_carrying_a_frame_column_is_refused() -> void:
+	var definitions: Definitions = _with_gear(
+		GOOD_WEAPON + "long_barrel,Long Barrel,barrel,,0,30,0,0,,0,40,0,0,0,0,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("belong to the frame"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_weapon_with_no_attack_and_a_component_with_one_are_both_refused() -> void:
+	# Two different mistakes with two different sentences, because a loader that said only
+	# "bad attack" would leave the author guessing which.
+	var missing: Definitions = _with_gear(
+		"bolt_rifle,Bolt Rifle,weapon,,30,60,0,0.8,ammunition,1,0,0,0,0,0,0\n"
+	)
+	assert_true(missing.has_errors())
+	assert_true(
+		missing.describe_errors().contains("has to reach somehow"), missing.describe_errors()
+	)
+
+	var spurious: Definitions = _with_gear(
+		GOOD_WEAPON + "heavy_barrel,Heavy Barrel,barrel,melee,0,0,0,0,,0,40,0,0,0,0,0\n"
+	)
+	assert_true(spurious.has_errors())
+	assert_true(
+		spurious.describe_errors().contains("leave it empty"), spurious.describe_errors()
+	)
+
+
+func test_a_ranged_weapon_firing_an_item_no_recipe_mentions_is_refused() -> void:
+	# The Items that exist are exactly the ones some Recipe mentions, so a weapon firing
+	# `plasma` is a weapon nothing in the Factory could ever load.
+	var definitions: Definitions = _with_gear(
+		GOOD_WEAPON + "arc_gun,Arc Gun,weapon,ranged,30,60,0,0.8,plasma,1,0,0,0,0,0,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("not an Item any Recipe mentions"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_melee_weapon_naming_ammunition_is_refused() -> void:
+	var definitions: Definitions = _with_gear(
+		"club,Club,weapon,melee,55,4,0,0.6,iron_plate,1,0,0,0,0,0,0\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("spends a player's presence"),
+		definitions.describe_errors()
+	)
+
+
+func test_the_slots_are_interned_from_the_kind_column_and_sorted() -> void:
+	# There is no slot table, for the reason there is no Item table: writing `barrel` in a
+	# row is what makes a barrel slot exist, so a fourth slot is a row. Sorted, so the index
+	# a `FIT_COMPONENT` intent carries is a property of the content and not of row order.
+	var definitions: Definitions = _with_gear(
+		GOOD_WEAPON
+		+ "a_sight,A Sight,sight,,0,0,0,0,,0,0,0,-10,0,0,0\n"
+		+ "a_barrel,A Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0\n"
+		+ "b_sight,B Sight,sight,,0,0,0,0,,0,0,0,-20,0,0,0\n"
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_eq(
+		definitions.gear_slot_ids(),
+		PackedStringArray(["barrel", "sight"]),
+		"two slots from three components, in sorted order"
+	)
+	assert_eq(definitions.weapon_count(), 1)
+
+
+func test_a_tier_unlocking_gear_that_does_not_exist_names_the_row() -> void:
+	# One authority, exactly as `unlocks_machines` has one: the Gear a Run opens with is
+	# exactly the Gear no tier names, so there is no `locked` column in `gear.csv` either.
+	var definitions: Definitions = _with_deliveries(
+		"t01_a,A,1,iron_plate:1,,nonesuch_barrel,\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("not a piece of Gear in gear.csv"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_starting_weapon_that_is_a_component_or_missing_is_refused_by_name() -> void:
+	# The likelier of the two mistakes is naming a component, and it is the more confusing
+	# to debug, because the row exists.
+	var missing: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING.replace('starting_weapon = "pneumatic_wrench"', 'starting_weapon = "nonesuch"')
+	)
+	assert_true(missing.has_errors())
+	assert_true(
+		missing.describe_errors().contains("is not a row in gear.csv"), missing.describe_errors()
+	)
+
+	var component: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING.replace(
+			'starting_weapon = "pneumatic_wrench"', 'starting_weapon = "placeholder_gear"'
+		)
+	)
+	assert_true(component.has_errors())
+	assert_true(
+		component.describe_errors().contains("rather than a weapon frame"),
+		component.describe_errors()
+	)
+
+
+func test_a_starting_weapon_a_delivery_locks_is_refused() -> void:
+	# A Run cannot open holding something it has not earned, and the rule is the one
+	# sentence it has always been: the Gear a Run opens with is exactly the Gear no tier
+	# names.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		WAVES,
+		DELIVERY_HEADER + "t01_a,A,1,iron_plate:1,,pneumatic_wrench,\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("unlocked by a Delivery tier"),
+		definitions.describe_errors()
+	)

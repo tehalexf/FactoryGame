@@ -38,6 +38,12 @@ const OTHER_TUNING: String = """
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+health = 150
+downed_bleed_out_seconds = 20
+respawn_delay_seconds = 8
+revive_seconds = 4
+revive_reach_metres = 3
+starting_weapon = "pneumatic_wrench"
 starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
@@ -72,8 +78,14 @@ breach_tier = 2
 breach_crafts = 40
 breach_offset_tiles = 6
 breach_telegraph_seconds = 45
+[gear]
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.5
 [enemy]
 crawler_health = 30
+player_bite_reach_metres = 1.6
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
@@ -113,6 +125,7 @@ func before_each() -> void:
 	_write(Definitions.TUNING_FILE, TUNING)
 	_write(Definitions.WAVES_FILE, WAVES)
 	_write(Definitions.DELIVERIES_FILE, DELIVERIES)
+	_write(Definitions.GEAR_FILE, GEAR)
 
 
 func after_each() -> void:
@@ -122,6 +135,7 @@ func after_each() -> void:
 		Definitions.TUNING_FILE,
 		Definitions.WAVES_FILE,
 		Definitions.DELIVERIES_FILE,
+		Definitions.GEAR_FILE,
 	]:
 		DirAccess.remove_absolute("%s/%s" % [DIR, file_name])
 	DirAccess.remove_absolute(DIR)
@@ -352,4 +366,13 @@ func test_a_frame_with_no_tick_holds_the_edit_until_there_is_one() -> void:
 ## so nothing this file builds is locked behind it.
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
+"""
+
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and the component the tier above names, because a tier naming Gear that
+## does not exist is content somebody broke.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
 """

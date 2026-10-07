@@ -30,6 +30,12 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+health = 150
+downed_bleed_out_seconds = 20
+respawn_delay_seconds = 8
+revive_seconds = 4
+revive_reach_metres = 3
+starting_weapon = "pneumatic_wrench"
 starting_stock = "iron_frame:40;iron_ore:40;iron_plate:40"
 [belt]
 items_per_second = 4
@@ -64,8 +70,14 @@ breach_tier = 2
 breach_crafts = 40
 breach_offset_tiles = 6
 breach_telegraph_seconds = 45
+[gear]
+enemy_hit_radius_metres = 0.6
+enemy_hit_height_metres = 1.6
+view_kick_degrees_per_shot = 0.35
+view_kick_recover_seconds = 0.5
 [enemy]
 crawler_health = 30
+player_bite_reach_metres = 1.6
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
@@ -96,11 +108,13 @@ func _content() -> Definitions:
 		TUNING,
 		WAVES,
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -558,6 +572,16 @@ func test_demolishing_then_rebuilding_renumbers_nothing_a_player_can_see() -> vo
 	assert_eq(sim.query_machine_tile(0), Vector3i(0, 0, 0), "the first Miner is still first")
 	assert_eq(sim.query_machine_tile(1), Vector3i(8, 0, 0), "and the third has moved up")
 	assert_eq(sim.query_machine_at_tile(Vector3i(5, 0, 1)), -1, "the middle one is really gone")
+
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
 
 
 ## The Delivery tiers, inline so the fixture is a complete definition set. Progression is

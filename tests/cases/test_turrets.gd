@@ -31,11 +31,13 @@ func _content(overrides: Array = []) -> Definitions:
 		tuning.replace(SHIPPED_STOCK, STOCKED),
 		_read("res://content/waves.csv"),
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -97,11 +99,13 @@ func _ammo_content(overrides: Array = [], waves: String = ONE_CRAWLER) -> Defini
 		tuning,
 		waves,
 		AMMO_DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -339,11 +343,13 @@ func test_a_turret_with_nothing_in_reach_is_not_on_the_power_grid() -> void:
 		),
 		ONE_CRAWLER,
 		AMMO_DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
@@ -528,11 +534,13 @@ func _cannon_content() -> Definitions:
 		_read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED),
 		_read("res://content/waves.csv"),
 		DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 
 
@@ -566,11 +574,13 @@ func test_a_cannon_turret_fires_further_and_harder_with_no_code_that_knows_about
 		tuning,
 		ONE_CRAWLER,
 		AMMO_DELIVERIES,
+		GEAR,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
-		"deliveries.csv"
+		"deliveries.csv",
+		"gear.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 
@@ -758,6 +768,16 @@ func test_a_run_with_a_turret_mid_fight_saves_and_resumes_identically() -> void:
 
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+## The Gear a Run is holding, inline so the fixture is a complete definition set. One
+## weapon frame and whatever component this file's Delivery tiers name, because a tier
+## naming Gear that does not exist is content somebody broke. These tests are not about
+## combat, so the frame is the Pneumatic Wrench and nothing is fitted to it.
+const GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+placeholder_gear,Placeholder Barrel,barrel,,0,0,0,0,,0,10,0,0,0,0,0
+"""
+
 
 ## A tier against the shipped Items that names no Machine, so every row of the shipped
 ## `machines.csv` is buildable from tick 0.
