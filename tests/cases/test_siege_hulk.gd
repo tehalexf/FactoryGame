@@ -794,14 +794,21 @@ func _hive_sortie(sim: Simulation, log: Array) -> void:
 	)
 	var centre: FixedVec2 = WorldGrid.tile_centre_metres(sim.query_hive_tile(0))
 	_walk_to(sim, centre, 10, 60 * Simulation.TICKS_PER_SECOND, log)
-	for burst: int in range(10):
+	# The aim is recomputed **every tick**, the same shape `_fire_at` has, rather than once
+	# per burst and then repeated. A `LOOK` intent is a count of pixels of mouse travel, so
+	# one held for a hundred and twenty ticks turns the view a hundred and twenty times —
+	# which only aimed at the Hive at all while the walk happened to leave the player's yaw
+	# already on it and the rounded delta at zero. #29 moved where that walk stops (sprint
+	# ramps in now, so the tick the player comes inside ten metres is a different tick) and
+	# the burst then spun the view off the target. Per tick converges instead of diverging.
+	for tick: int in range(20 * Simulation.TICKS_PER_SECOND):
 		if sim.query_hive_count() == 0:
 			break
 		_advance(
 			sim,
 			log,
 			[_look_at(sim, sim.query_player_position(0), centre), InputAction.fire(0)],
-			2 * Simulation.TICKS_PER_SECOND
+			1
 		)
 
 

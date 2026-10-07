@@ -191,7 +191,10 @@ no brass, copper, polished wood or whimsy.
 
 **Build Gun** — The tool through which all construction happens. A hologram
 snaps to the grid; placement and rotation are immediate. Available at all times,
-including mid-Wave.
+including mid-Wave. **It is a thing held in the hands**, swapped for a weapon with
+a holster key, so left click places with it out and fires with the weapon out —
+which is routing and an animation, never a restriction: the swap is instant and
+nothing anywhere asks whether building is permitted.
 
 **Survey View** — A temporary raised, downward-looking camera used while
 building. Exists because a Factory is illegible from eye level.

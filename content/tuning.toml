@@ -21,7 +21,10 @@
 walk_speed_metres_per_second = 4
 
 # How much faster sprint is than a walk. Multiplies walk speed, so 1.8 is 7.2 m/s.
-# Acceleration is not scaled, so a sprint ramps up over the same time a walk does.
+#
+# Acceleration is not scaled — what ramps a sprint in is `sprint_ramp_seconds` below, and
+# it ramps this multiplier itself, so the speed, the field of view and the bob all arrive
+# together. That is what makes a sprint a change of gear rather than a number going up.
 sprint_speed_multiplier = 1.8
 
 # ── Weight ───────────────────────────────────────────────────────────────────

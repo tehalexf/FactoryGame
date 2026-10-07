@@ -2023,7 +2023,14 @@ func _place_camera(sim: Simulation) -> void:
 	_camera.fov = Fixed.to_float(sim.query_player_field_of_view_degrees(VIEWED_PLAYER))
 
 
-# ── The weapon in frame ───────────────────────────────────────────────────────
+# ── The object in frame ───────────────────────────────────────────────────────
+#
+# **Two objects now, and which one is in frame is a query.** #29 made `B` a holster: the
+# Build Gun and the weapon swap places, one going down while the other comes up, and the
+# crossover is the midpoint of `player.holster_seconds`. `query_player_held_is_build_gun`
+# says which, `query_player_holster_blend` says how far out of frame — and those two queries
+# are the seam a real first-person pass plugs `Draw` and `PutAway` into, which is the whole
+# reason the placeholder below is worth having at all.
 #
 # **This is the honest limit of what this ticket shipped, and it is worth being plain
 # about.** First-person combat lives or dies on animation and feel, and what is here is a
