@@ -320,7 +320,7 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_ore:200;iron_plate:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -334,6 +334,7 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -369,7 +370,7 @@ chaff_crawlers,crawler,0,6,150,40
 
 
 func _fast_content() -> Definitions:
-	return Definitions.parse(FAST_MACHINES, FAST_RECIPES, FAST_TUNING, WAVES)
+	return Definitions.parse(FAST_MACHINES, FAST_RECIPES, FAST_TUNING, WAVES, DELIVERIES)
 
 
 ## A Run whose Miner outruns its Belt, on a Map with one Node at the origin.
@@ -816,3 +817,12 @@ func test_determinism_a_stalled_belt_really_did_stall_during_its_fixture() -> vo
 	assert_true(stalled_ticks > 100, "the Belt spent %d ticks blocked" % stalled_ticks)
 	assert_true(full_ticks > 100, "and %d ticks completely full" % full_ticks)
 	assert_eq(sim.query_machine_output(1, "iron_plate"), 1, "while the Smelter got one plate out")
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
+"""

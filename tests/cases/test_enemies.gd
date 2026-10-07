@@ -42,12 +42,14 @@ func _content(waves: String = SIX_CRAWLERS, overrides: Array = []) -> Definition
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
-		tuning,
+		tuning.replace(SHIPPED_STOCK, STOCKED),
 		waves,
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -506,3 +508,18 @@ func test_a_resumed_run_rebuilds_the_flowfield_rather_than_restoring_it() -> voi
 		sim.step([])
 		restored.step([])
 		assert_eq(restored.hash(), sim.hash(), "diverged at tick %d" % sim.query_tick())
+
+
+# ── Fixtures that keep progression out of the way ─────────────────────────────
+# The shipped Delivery chain locks the Ammo Press and the MG Turret behind its first tier
+# and a Run opens holding exactly the plates for one line (`content/deliveries.csv`,
+# `content/tuning.toml`). Both are balance rather than anything asserted in this file, so
+# these fixtures replace them with a tier that locks nothing and a stock that pays for
+# anything. `test_delivery.gd` is where the real chain is asserted.
+
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""

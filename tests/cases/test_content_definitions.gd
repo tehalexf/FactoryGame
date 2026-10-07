@@ -40,7 +40,7 @@ const OTHER_TUNING: String = """
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_ore:200;iron_plate:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -54,6 +54,7 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -94,8 +95,28 @@ chaff_crawlers,crawler,0,6,150,40
 """
 
 
-func _parse(machines: String, recipes: String, tuning: String, waves: String = WAVES) -> Definitions:
-	return Definitions.parse(machines, recipes, tuning, waves, MACHINES, RECIPES, TUNING, WAVES_PATH)
+func _parse(
+	machines: String,
+	recipes: String,
+	tuning: String,
+	waves: String = WAVES,
+	deliveries: String = DELIVERIES
+) -> Definitions:
+	return Definitions.parse(
+		machines,
+		recipes,
+		tuning,
+		waves,
+		deliveries,
+		MACHINES,
+		RECIPES,
+		TUNING,
+		WAVES_PATH,
+		DELIVERIES_PATH
+	)
+
+
+const DELIVERIES_PATH: String = "deliveries.csv"
 
 
 const WAVES_PATH: String = "waves.csv"
@@ -639,3 +660,157 @@ func test_a_machine_and_recipe_added_only_in_the_files_appear_in_the_definitions
 	assert_eq(recipe.duration_seconds, 49152, "0.75 * 65536")
 	assert_eq(definitions.item_id(recipe.output_item(0)), "iron_gear")
 	assert_eq(definitions.item_ids(), PackedStringArray(["iron_gear", "iron_ore", "iron_plate"]))
+
+
+# ── The Delivery table ────────────────────────────────────────────────────────
+# Progression is physical: goods carried to the Nest unlock the next tier
+# (GLOSSARY.md). The tiers are a table, so adding one is a row.
+
+const DELIVERY_HEADER: String = (
+	"id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems\n"
+)
+
+
+func _with_deliveries(rows: String) -> Definitions:
+	return _parse(GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING, WAVES, DELIVERY_HEADER + rows)
+
+
+func test_a_delivery_table_with_no_rows_is_an_error_not_a_run_without_progression() -> void:
+	var definitions: Definitions = _with_deliveries("")
+	assert_true(definitions.has_errors())
+	assert_true(definitions.describe_errors().contains("no rows"), definitions.describe_errors())
+
+
+func test_a_tier_unlocking_a_machine_that_does_not_exist_names_the_row() -> void:
+	var definitions: Definitions = _with_deliveries(
+		"t01_a,A,1,iron_plate:1,nonesuch_mk1,,\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("deliveries.csv:2"), definitions.describe_errors()
+	)
+	assert_true(
+		definitions.describe_errors().contains("nonesuch_mk1"), definitions.describe_errors()
+	)
+
+
+func test_a_tier_wanting_an_item_no_recipe_mentions_names_the_row() -> void:
+	var definitions: Definitions = _with_deliveries("t01_a,A,1,unobtainium:1,,gear_a,\n")
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("unobtainium"), definitions.describe_errors()
+	)
+
+
+func test_a_tier_that_unlocks_nothing_names_the_row() -> void:
+	var definitions: Definitions = _with_deliveries("t01_a,A,1,iron_plate:1,,,\n")
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("unlocks nothing"), definitions.describe_errors()
+	)
+
+
+func test_a_tier_that_costs_nothing_names_the_row() -> void:
+	var definitions: Definitions = _with_deliveries("t01_a,A,1,,,gear_a,\n")
+	assert_true(definitions.has_errors())
+	assert_true(definitions.describe_errors().contains("goods:"), definitions.describe_errors())
+
+
+func test_a_depth_that_goes_backwards_down_the_chain_names_the_row() -> void:
+	# The chain is walked in id order and nothing is skipped, so a tier shallower than one
+	# before it could never be the thing holding it up.
+	var definitions: Definitions = _with_deliveries(
+		"t01_a,A,3,iron_plate:1,,gear_a,\nt02_b,B,1,iron_plate:1,,gear_b,\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(definitions.describe_errors().contains("shallower"), definitions.describe_errors())
+
+
+func test_a_machine_unlocked_by_two_tiers_names_the_row() -> void:
+	var definitions: Definitions = _with_deliveries(
+		"t01_a,A,1,iron_plate:1,miner_mk1,,\nt02_b,B,1,iron_plate:1,miner_mk1,,\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("already unlocked"), definitions.describe_errors()
+	)
+
+
+func test_delivery_tiers_are_ordered_by_id_whatever_order_the_rows_are_in() -> void:
+	var forwards: Definitions = _with_deliveries(
+		"t01_a,A,1,iron_plate:1,,gear_a,\nt02_b,B,1,iron_plate:1,,gear_b,\n"
+	)
+	var backwards: Definitions = _with_deliveries(
+		"t02_b,B,1,iron_plate:1,,gear_b,\nt01_a,A,1,iron_plate:1,,gear_a,\n"
+	)
+	assert_false(forwards.has_errors(), forwards.describe_errors())
+	assert_false(backwards.has_errors(), backwards.describe_errors())
+	assert_eq(backwards.delivery_at(0).id, "t01_a")
+	assert_eq(
+		forwards.digest(), backwards.digest(), "and the order of the rows cannot reach the hash"
+	)
+
+
+func test_an_opening_stock_naming_an_unknown_item_names_the_key() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING.replace(
+			'starting_stock = "iron_ore:200;iron_plate:200"',
+			'starting_stock = "unobtainium:1"'
+		)
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("player.starting_stock"),
+		definitions.describe_errors()
+	)
+
+
+func test_an_empty_opening_stock_is_a_run_that_opens_empty_handed() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING.replace(
+			'starting_stock = "iron_ore:200;iron_plate:200"', 'starting_stock = ""'
+		)
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_eq(definitions.player_starting_stock_items.size(), 0)
+
+
+func test_the_opening_stock_is_sorted_whatever_order_it_is_written_in() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING.replace(
+			'starting_stock = "iron_ore:200;iron_plate:200"',
+			'starting_stock = "iron_plate:3;iron_ore:7"'
+		)
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_eq(
+		definitions.player_starting_stock_items, PackedStringArray(["iron_ore", "iron_plate"])
+	)
+	assert_eq(definitions.player_starting_stock_counts, PackedInt64Array([7, 3]))
+
+
+func test_the_shipped_content_defines_the_delivery_tiers_in_id_order() -> void:
+	var definitions: Definitions = Definitions.load_from_directory(Definitions.CONTENT_DIR)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_true(definitions.delivery_count() >= 2, "the shipped file defines tiers")
+	var ids: PackedStringArray = PackedStringArray()
+	for index: int in range(definitions.delivery_count()):
+		ids.append(definitions.delivery_at(index).id)
+	var sorted: PackedStringArray = ids.duplicate()
+	sorted.sort()
+	assert_eq(String(", ").join(ids), String(", ").join(sorted), "sorted by id")
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""

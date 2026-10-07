@@ -117,6 +117,14 @@ func _session() -> Array:
 	calling_again.call_wave_clicked = true
 	ticks.append(calling_again)
 
+	# Walk at the Nest and try to hand a Delivery over. A Run opens out of reach of it and
+	# holding nothing the first tier wants, so this is refused — which is exactly why it
+	# belongs here: a refused hand-over has to be a no-op that replays like any other tick,
+	# the same claim the refused build and the refused lever above make.
+	var handing_over: PlayerController.DeviceSample = _sample()
+	handing_over.deliver_clicked = true
+	ticks.append(handing_over)
+
 	for tick: int in range(120):
 		ticks.append(_sample())
 
@@ -160,13 +168,21 @@ func test_the_recorded_session_really_walked_looked_surveyed_and_built() -> void
 		sim.step(script.actions_at(tick))
 
 	assert_true(sim.query_machine_count() >= 1, "the session built a Factory")
+	assert_eq(
+		sim.query_delivery_goods_delivered(sim.query_delivery_goods(0)[0]),
+		0,
+		"and the Delivery it tried to hand over really was refused"
+	)
 	assert_true(sim.query_belt_count() >= 1, "including a Belt")
 	assert_ne(sim.query_player_position(0).x, 0, "and walked off the spot")
 	assert_ne(sim.query_player_yaw_turns(0), 0, "and looked around while doing it")
+	# The session spends a build cost and collects a called Wave's bounty, so what it proves
+	# is that materials *moved* — the two are asserted apart in `test_build_gun` and
+	# `test_heat`, and pinning the arithmetic of both here would only duplicate them.
 	assert_ne(
 		sim.query_player_item(0, "iron_plate"),
-		sim.query_definitions().player_starting_stock,
-		"and spent materials on it"
+		sim.query_definitions().player_starting_stock_counts[0],
+		"and moved materials doing it"
 	)
 
 

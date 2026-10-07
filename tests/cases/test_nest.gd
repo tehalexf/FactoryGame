@@ -47,12 +47,15 @@ func _quick_content(nest_health: int = 40, interval: String = "1") -> Definition
 			)
 			. replace("spawn_interval_seconds = 0.5", "spawn_interval_seconds = 0.2")
 			. replace("health = 6000", "health = %d" % nest_health)
+			. replace(SHIPPED_STOCK, STOCKED)
 		),
 		TWO_CRAWLERS,
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -270,3 +273,18 @@ func test_a_run_that_has_ended_stays_ended_and_stops_escalating() -> void:
 	assert_eq(sim.query_run_over_tick(), ended_at, "and the tick it ended on is frozen")
 	assert_eq(sim.query_wave_number(), wave, "the Wave reached is the Wave that did it")
 	assert_eq(sim.query_enemy_count(), enemies, "no further Wave is sent at a dead Nest")
+
+
+# ── Fixtures that keep progression out of the way ─────────────────────────────
+# The shipped Delivery chain locks the Ammo Press and the MG Turret behind its first tier
+# and a Run opens holding exactly the plates for one line (`content/deliveries.csv`,
+# `content/tuning.toml`). Both are balance rather than anything asserted in this file, so
+# these fixtures replace them with a tier that locks nothing and a stock that pays for
+# anything. `test_delivery.gd` is where the real chain is asserted.
+
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""

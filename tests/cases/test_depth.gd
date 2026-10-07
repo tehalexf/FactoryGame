@@ -39,12 +39,14 @@ func _content(overrides: Array = []) -> Definitions:
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
-		tuning,
+		tuning.replace(SHIPPED_STOCK, STOCKED),
 		_read("res://content/waves.csv"),
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -482,11 +484,16 @@ func test_the_starter_map_offers_depth_a_shipped_miner_cannot_reach() -> void:
 
 
 func test_the_shipped_numbers_open_a_breach_on_the_starter_map() -> void:
-	# The shipped figures end to end, on the shipped Map, with no override at all:
-	# depth.breach_crafts is 40 and depth.breach_telegraph_seconds is 45. A Depth 2 Miner
-	# draws 320 kW against a 300 kW baseline plant, so the duty cycle stretches 40 crafts of
-	# 90 ticks out to 3840, and the warning runs 2700 ticks behind that.
-	var sim: Simulation = Simulation.new(9, 1)
+	# The shipped figures end to end, on the shipped Map: depth.breach_crafts is 40 and
+	# depth.breach_telegraph_seconds is 45. A Depth 2 Miner draws 320 kW against a 300 kW
+	# baseline plant, so the duty cycle stretches 40 crafts of 90 ticks out to 3840, and the
+	# warning runs 2700 ticks behind that.
+	#
+	# The one thing not shipped is the Delivery chain, which locks Miner Mk2 behind two tiers
+	# (`content/deliveries.csv`). Whether a Run has earned the licence to dig is a different
+	# question from what digging costs, and these are the figures for the second — so the
+	# fixture replaces the chain and leaves every number the test names alone.
+	var sim: Simulation = _starter_sim(9)
 	var seam: int = -1
 	for index: int in range(sim.query_node_count()):
 		if sim.query_node_depth(index) == 2:
@@ -574,7 +581,12 @@ func test_determinism_a_new_breach_opening_and_being_telegraphed_replays_identic
 	# the Map in canonical order, and the Wave clock starting to count against two Breaches
 	# instead of one. Every tick of it compared, because a fault that perturbs a few ticks and
 	# settles back is still a desync.
-	var sim: Simulation = Simulation.new(7, 1)
+	#
+	# It carries its own definition set rather than letting the replay re-read `content/`,
+	# because the Run it describes needs a Miner Mk2 the shipped Delivery chain has not
+	# unlocked — which is exactly the case CLAUDE.md says to pass one for.
+	var content: Definitions = _content()
+	var sim: Simulation = Simulation.new(7, 1, content)
 	var seam: Vector3i = Vector3i.ZERO
 	for index: int in range(sim.query_node_count()):
 		if sim.query_node_depth(index) == 2:
@@ -585,13 +597,34 @@ func test_determinism_a_new_breach_opening_and_being_telegraphed_replays_identic
 	script.add_tick([InputAction.build_machine(0, _machine(sim, "miner_mk2"), seam)])
 	script.add_idle_ticks(6700)
 
-	var recording: ReplayRecording = DeterminismHarness.record(script, 7, 1)
+	var recording: ReplayRecording = DeterminismHarness.record(script, 7, 1, content)
 	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording)
 	assert_true(divergence.is_identical, divergence.describe())
 
 	# The fixture has to actually contain the thing it claims to: a replay of a Run where
 	# nothing happened would be just as identical.
-	var replayed: Simulation = Simulation.new(7, 1)
+	var replayed: Simulation = Simulation.new(7, 1, content)
 	replayed.step([InputAction.build_machine(0, _machine(replayed, "miner_mk2"), seam)])
 	_run(replayed, 6700)
 	assert_eq(replayed.query_breach_count(), 2, "the Run really did open a second Breach")
+
+
+# ── Fixtures that keep progression out of the way ─────────────────────────────
+# The shipped Delivery chain locks the two deeper Miners behind its tiers, and a Run opens
+# holding exactly the plates for one line (`content/deliveries.csv`, `content/tuning.toml`).
+# This file is about what a Miner tier *reaches*, which is the question the chain is priced
+# against rather than one it answers, so these fixtures replace both with a tier that locks
+# nothing and a stock that pays for anything. `test_delivery.gd` is where the chain itself is
+# asserted.
+
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""
+
+
+## A Run on the Map a Run starts on, reading that same content.
+func _starter_sim(world_seed: int) -> Simulation:
+	return Simulation.new(world_seed, 1, _content(), MapLayout.starter())
