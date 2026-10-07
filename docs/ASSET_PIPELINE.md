@@ -454,7 +454,56 @@ UV layers, mangled take names. Three things are specific to a viewmodel:
 `viewmodel.fbx` fixture in `build_fixtures.py`, which reproduces those breakages
 without a single licensed byte.
 
-## 8. Audio, which is the other path that ends outside the repository
+## 8. Set dressing, which never enters the repository either
+
+The props the Factory stands among take the same road the viewmodels do, for the
+same reason, and the two scripts are deliberately shaped alike.
+
+`assets_licensed/heyheythere/`, `assets_licensed/shapita/` and
+`assets_licensed/lukami-ch/` are about 360 purchased industrial props. All three
+licences permit use in a shipped game and forbid redistribution, so a converted
+`.glb` is exactly as forbidden as its source and section 1's guard blocks it:
+
+    bash tools/assets/convert_props.sh       # -> assets_licensed/generated/props/
+
+`tools/assets/convert_props.py` is both the converter and **the catalogue** —
+which prop comes from which pack and why — because the selection is the decision
+and the rewriting is mechanical. `LICENSED_ROOT` and `PROP_OUT` move either end.
+**With no packs installed it prints a note and exits 0.**
+
+`game/set_dressing.gd` loads `<prop id>.glb` at runtime if it is there and draws
+a **self-authored stand-in** for that prop's *role* if it is not — a crate-sized
+box in olive drab, a pipe-sized cylinder in oiled steel, wearing the committed
+palette materials the Machines are made of. The layout is identical either way,
+so a clone without the packs gets a yard with the same shape and density, plainer.
+`tests/cases/test_set_dressing.gd` asserts that directly, as
+`test_weapon_viewmodel.gd` does for the arms.
+
+### What the conversion actually does, and why it is not a Blender recipe
+
+Nothing here needs Blender: it is a glTF **chunk rewriter** in the standard
+library, because what these files need is not geometry work.
+
+| Problem | What arrives | What the converter does |
+|---|---|---|
+| One atlas, 213 props | Every heyheythere GLB points at `../textures/atlas.png` and `../textures/atlas_glow.png` by relative URI. Carried forward, Godot decodes a 2048 square per prop and holds forty copies of one image | Strips `images`, `textures` and `samplers` out of every GLB and copies the two PNGs once into the output directory. `SetDressing` builds **one** `StandardMaterial3D` over them and overrides it onto every pool, so the whole yard draws in tens of calls rather than hundreds |
+| Two art directions | Every pack is lit and coloured for a white studio backdrop; this world is an ochre smog at late afternoon, and Shapita in particular is clean modern industrial where the palette is 1920s-40s heavy industry | Multiplies each material's `baseColorFactor` by a per-pack tint toward `dieselpunk_palette.json` — the move `convert_weapons.sh` makes on the arms. Shapita and Lukami are additionally used **only past the Map's edge**, where fog and distance do the rest |
+| Origins are not all on the floor | A high-bay light hangs below its pivot, a roof truss bears on its own zero, an overhead pipe section is modelled at 3.0 m | Records each prop's measured bounds in `props.json` beside the GLBs, read out of the POSITION accessors' own `min`/`max`. The layout then uses the pack's *own* datums rather than inventing heights: its pipe racks stand 3.37 m and its pipe sections sit at 3.03 m, so a run is simply the pieces at their own heights |
+| Emission | The glow atlas is almost entirely black — only lamps are lit | The shared material uses `EMISSION_OP_MULTIPLY`. Godot's **default operator adds**, which with a warm tint lights every crate in the yard instead of the lamps |
+
+**heyheythere is the pack this leans on, and the reason is the grid.** It is
+authored at 1 unit to the metre on a **2 m grid with 4 m storeys**, which is
+exactly `WorldGrid`'s, so its props sit on our tiles with no scale factor and no
+fudge — see [LICENSED_ASSETS.md](LICENSED_ASSETS.md) for the rest of its datums.
+That is also why it cannot give a *Machine* its silhouette: #24 solved footprints
+deliberately and these are props, not Machines.
+
+`tools/assets/tests/test_convert_props.py` covers the whole of it on a fixture
+built in-process, without a single licensed byte, and asserts the one thing the
+two halves can drift on: every prop in the catalogue is a prop
+`game/set_dressing.gd` actually asks for.
+
+## 9. Audio, which is the other path that ends outside the repository
 
 The sounds are the second asset class whose best material cannot be committed,
 and the shape of the solution is section 7's with one improvement.
@@ -516,7 +565,7 @@ are imported normally and loaded with `load`.
 `tools/assets/tests/test_wav_to_cue.py` covers the analysis and the filter
 building against synthesised signals, so none of it needs the bundle to be tested.
 
-## 9. Adding an asset
+## 10. Adding an asset
 
 1. Check the licence. CC0 / permissive / self-authored → `assets/`. Anything
    else → `assets_licensed/`, which never enters git.

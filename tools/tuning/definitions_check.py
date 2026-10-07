@@ -44,6 +44,13 @@ TUNING_FILE = "tuning.toml"
 
 _PREFIX = "DEFINITION-ERROR: "
 
+## Where Godot keeps the `class_name` globals. `check_definitions.gd` says
+## `Definitions`, which only resolves through this file — so on a checkout that has
+## never been imported the script fails to parse and the deep check reports nothing
+## at all rather than reporting the tuning. `tools/run_tests.sh` buys the same
+## insurance for the engine suite; this is the dashboard's copy of it.
+_CLASS_CACHE = Path(".godot") / "global_script_class_cache.cfg"
+
 
 class Checker:
     """Runs the loader out of process. Call it with the candidate file's text."""
@@ -60,12 +67,32 @@ class Checker:
         page rather than pretending the deep check happened."""
         return bool(self.godot) and self.script.is_file()
 
+    def _import_if_never_imported(self) -> None:
+        """One import pass when there is no class cache, and nothing at all when
+        there is. A fresh clone pays about a second for it once; every run after
+        that pays nothing."""
+        if (self.repo / _CLASS_CACHE).is_file():
+            return
+        try:
+            subprocess.run(
+                [self.godot, "--headless", "--path", str(self.repo), "--import"],
+                capture_output=True,
+                text=True,
+                timeout=max(self.timeout, 300.0),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            # Nothing to do about it here: the run below will say what it found,
+            # and an import that failed is not itself a tuning error.
+            pass
+
     def errors(self, candidate: str) -> list[str]:
         """Every error `Definitions` would report for this tuning file, or an
         empty list. An empty list from an unavailable checker means "not asked",
         which is why `available` is reported separately."""
         if not self.available:
             return []
+
+        self._import_if_never_imported()
 
         content = self.repo / "content"
         with tempfile.TemporaryDirectory(prefix="tuning-check-") as work:
