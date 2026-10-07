@@ -14,7 +14,7 @@ document is the mechanism.
 
 Everything here runs headless and is covered by tests:
 
-    bash tools/assets/run_tests.sh      # the licence guard plus 101 pipeline tests
+    bash tools/assets/run_tests.sh      # the licence guard plus 119 pipeline tests
 
 ## 1. The licence guard
 
@@ -218,14 +218,14 @@ genuinely exhibits the fault.
 
 Every Machine mesh is scripted output. The generator is the artifact; a Machine
 is a function, not a `.blend` file somebody once saved. One command rebuilds all
-ten Milestone 1 bodies:
+eleven Milestone 1 bodies:
 
     bash tools/assets/generate_machines.sh            # all of them
     bash tools/assets/generate_machines.sh --only smelter_mk1
     bash tools/assets/generate_machines.sh --output-dir /tmp/try
 
 It wraps `blender --background --factory-startup --python
-tools/assets/generate_machines.py`. Ten Machines take under a second, and the
+tools/assets/generate_machines.py`. Eleven Machines take under a second, and the
 output is **byte-identical on every run** — which is what makes re-running it a
 reviewable diff rather than noise, and is enforced by the suite.
 
@@ -241,8 +241,9 @@ apart silently, so there is exactly one declaration of each fact:
 | Footprint of a body the Simulation does not declare yet (Nest, Belt, Machines awaiting a Recipe) | `content/machine_bodies.csv` | the generator |
 | Input and output port positions | `content/machine_ports.csv` | the Simulation, and the generator |
 | Housing height | `content/machine_bodies.csv` | the generator |
-| Material palette | `tools/assets/dieselpunk_palette.json` | the generator |
+| Material palette, and which generated texture each material wears | `tools/assets/dieselpunk_palette.json` | the generator, `machine_materials.py`, the contact-sheet renderer |
 | Geometry | `tools/assets/machine_recipes.py` over the kit in `machine_parts.py` | the generator |
+| The surface Godot draws | `assets/machines/materials/*.tres`, generated from the palette | the engine, via `_subresources` in each `.glb.import` |
 
 `machines.csv` wins. Where it names a Machine, its footprint is used and
 `machine_bodies.csv`'s columns are only a cross-check — a disagreement is a load
@@ -276,16 +277,80 @@ From [DESIGN.md](DESIGN.md), and all of them are tested rather than trusted:
 Dieselpunk: 1920s-40s heavy industry. Cast iron, welded steel, olive drab over
 red-oxide primer, hydraulics, soot, rivets. Not Victorian brass steampunk —
 brass and copper appear only as gauge bezels and pipework, and a Machine that
-reads as brass has gone wrong. Chunky, boxy, legible silhouettes, because a
-player identifies a Machine across a Factory by its outline and never by its
-surface: a drill tower, a stack, an H-frame, a gantry, a drum, a flywheel, a
-magazine, a launch tube, a bunker and a mast, a trestle.
+reads as brass has gone wrong.
 
 **One palette across every Machine**, declared in
 `tools/assets/dieselpunk_palette.json`. This is the thing hand-modelling cannot
-hold across ten bodies, so it is both centralised *and* checked: the suite fails
-if a mesh names a material the palette does not declare, or gives a shared name
-different numbers in two files.
+hold across eleven bodies, so it is both centralised *and* checked: the suite
+fails if a mesh names a material the palette does not declare, or gives a shared
+name different numbers in two files.
+
+### Silhouette is a gameplay requirement
+
+The core skill in a factory game is reading your own production line at a glance.
+A player has to know what a building is from its outline alone, at distance, in
+peripheral vision, while something is chasing them — so two Machines that are the
+same black shape are a gameplay defect and not a cosmetic one. Each recipe
+therefore commits to one **gross form**, and the forms are chosen to be mutually
+unmistakable: an open drill derrick, a pithead's two winding wheels, a blast
+furnace's bellied vessel, a boiler drum end-on beside a brick house, an engine
+bed under one huge flywheel, an H-frame with a ram travelling through the gap, a
+magazine drum under a raking feed, a sawtooth-roofed shed that does not reach up
+at all, one enormous launch tube, a stepped ziggurat, a trestle.
+
+Height, mass, roof shape and what projects from the body — never detailing, which
+is gone by thirty metres.
+
+That claim is **measured**, so it cannot decay the next time a recipe is edited:
+
+    python3 tools/assets/machine_silhouette.py            # the distance matrix
+    python3 tools/assets/machine_silhouette.py --ascii    # every outline, as text
+
+It rasterises each committed mesh's outline into a deliberately coarse grid —
+28 cm a cell, so a chimney moves the score and a rivet cannot — and reports
+1 minus intersection-over-union for every pair, in the better of two orthogonal
+views. The asset suite fails below 0.38. For reference: before this gate existed
+the closest pair sat at 0.29 and four bodies read as "a dark box with a chimney";
+the set that replaced them has a closest pair of 0.42.
+
+And it is **visible**, in three sheets committed under `docs/images/`:
+
+    bash tools/assets/render_machines.sh     # rewrites all three
+
+| Sheet | What it is for |
+|---|---|
+| `machine_silhouettes_front.png` | every Machine flat black on white, looking down the Belt line, with a 1.8 m figure. Judge this one first — if two are ambiguous in black, no texture will save them |
+| `machine_silhouettes_side.png` | the same, looking across the line |
+| `machines_lit.png` | the same row with a sun and the real surfaces, which is what the player sees |
+
+### Texture
+
+The meshes are **UV'd at world scale: one UV unit is one metre**, by projecting
+each face along its dominant normal. No unwrapping, no per-part layout to
+maintain when a recipe gains a part, and identical texture density on every part
+of every Machine — which is what lets `texture_scale_m`, one number per material
+in the palette, be the only thing that decides how big a texture is.
+`test_measures_its_uvs_in_metres` asserts that identity triangle by triangle.
+
+The `.glb` embeds **no images**. Eight 1024x1024 PNGs inside each of eleven
+Machines would be 130 MB of duplicated pixels in a public repository to say
+something the engine can say once. Instead the glTF material is identity — a
+palette name — and Godot substitutes a shared `StandardMaterial3D` for it on
+import:
+
+    python3 tools/assets/machine_materials.py            # what it would write
+    python3 tools/assets/machine_materials.py --write    # write it
+
+which generates `assets/machines/materials/<Name>.tres` from the palette and
+points the `_subresources` material override in every `.glb.import` at them. One
+copy of each generated texture on disk and in VRAM, for every Machine. Where a
+material has a texture the **texture carries the colour** — the set was generated
+one map per surface — and `texture_tint` brings it back to the palette's values;
+the palette file says why in full.
+
+Run it after adding a Machine, and after any palette change. The suite re-derives
+both halves and fails on a difference, so a hand-edited `.tres` cannot become a
+second authority on what a Machine looks like.
 
 ### Changing a Machine
 
@@ -299,13 +364,19 @@ manual step in between, which is the whole point:
 
 Adding a Machine: add a row to `content/machine_bodies.csv` naming a `body`, add
 its ports to `content/machine_ports.csv`, add that body to `_RECIPES` in
-`tools/assets/machine_recipes.py`, regenerate. A body with no recipe, or a recipe
-with no row, fails loudly rather than shipping an empty file.
+`tools/assets/machine_recipes.py`, regenerate, let Godot import the new `.glb`,
+then run `machine_materials.py --write` so the new mesh is wired to the shared
+materials. A body with no recipe, or a recipe with no row, fails loudly rather
+than shipping an empty file — and a body that looks like one that already exists
+fails the silhouette gate, which is the point at which to change its gross form
+rather than its detailing.
 
 ### Verifying
 
     bash tools/assets/run_tests.sh                   # includes everything below
     bash tools/assets/verify_machines_in_godot.sh    # in-engine, on its own
+    python3 tools/assets/machine_silhouette.py       # the readability matrix
+    bash tools/assets/render_machines.sh             # look at them
 
 The Python suite checks the glTF bytes against the declaration. The Godot script
 checks the same numbers on the far side of Godot's own importer, which is what

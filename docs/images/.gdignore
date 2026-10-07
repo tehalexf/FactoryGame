@@ -1,0 +1,8 @@
+Godot's resource importer must leave this directory alone. These PNGs are
+documentation — the Machine contact sheets that make the readability claim in
+ASSET_PIPELINE.md section 6 re-checkable — not game assets. Without this file the
+importer claims all three, writes a .import sidecar beside each, costs an import
+pass several megabytes of texture conversion, and carries them into an export of
+a game that never draws them.
+
+Rebuild them with `bash tools/assets/render_machines.sh`.

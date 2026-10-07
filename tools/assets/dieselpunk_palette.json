@@ -11,7 +11,35 @@
     "uses materials from this file and nothing else, and that the numbers match.",
     "",
     "base_color is linear RGBA, which is what both Blender's Principled BSDF and",
-    "glTF's baseColorFactor take, so the value survives export unchanged."
+    "glTF's baseColorFactor take, so the value survives export unchanged.",
+    "",
+    "`texture` names a map in assets/generated/textures, generated on this",
+    "machine by tools/aigen. `texture_scale_m` is how many metres across one",
+    "tile of it covers on a Machine: the meshes are UV'd at world scale, one UV",
+    "unit to the metre, so this number is the only thing that sets texture",
+    "density, and a Machine that is made bigger does not stretch its surface.",
+    "",
+    "An entry with no `texture` is painted colour only, on purpose - a gauge",
+    "bezel is 11 cm across and a sight glass 7 cm, so a 1024x1024 map on them",
+    "would cost VRAM to render a coloured dot. poured_concrete is in the",
+    "generated set and is deliberately not here: it is the Map's floor, not a",
+    "surface any Machine wears.",
+    "",
+    "Where a material has a texture, THE TEXTURE CARRIES THE COLOUR. The set was",
+    "generated per surface - cast iron is iron-coloured, olive drab is olive -",
+    "so multiplying it by base_color as well would square an already dark value",
+    "and render every Machine as a black box with a sheen. base_color stays the",
+    "authority for the untextured entries, for the glTF baseColorFactor the asset",
+    "suite checks, and as the flat fallback.",
+    "",
+    "`texture_tint` is what each map is multiplied by, and it is the knob that",
+    "brings the generated set back to this palette's values. The maps were made",
+    "to be lit as photographs and come out a stop or two brighter and more",
+    "saturated than interwar machinery ever looked; a tint near 0.5 grey darkens",
+    "a surface without flattening the relief, which multiplying by base_color",
+    "(0.055 for cast iron) would do. Hazard striping is the other kind of tint:",
+    "the set has no yellow surface, so the grey tread plate is pushed past 1.0",
+    "into yellow. Default is white."
   ],
   "materials": [
     {
@@ -19,35 +47,50 @@
       "_use": "Machine bodies, frames, heavy castings. The default surface.",
       "base_color": [0.055, 0.058, 0.063, 1.0],
       "metallic": 1.0,
-      "roughness": 0.62
+      "roughness": 0.62,
+      "texture": "cast_iron_plate",
+      "texture_scale_m": 1.6,
+      "texture_tint": [0.52, 0.52, 0.55]
     },
     {
       "name": "WeldedSteel",
       "_use": "Plate panels, brackets, catwalks, bolted flanges.",
       "base_color": [0.14, 0.145, 0.15, 1.0],
       "metallic": 1.0,
-      "roughness": 0.45
+      "roughness": 0.45,
+      "texture": "riveted_steel_plate",
+      "texture_scale_m": 1.2,
+      "texture_tint": [0.6, 0.62, 0.66]
     },
     {
       "name": "OliveDrab",
       "_use": "Painted housings and cowlings. The silhouette colour.",
       "base_color": [0.052, 0.058, 0.028, 1.0],
       "metallic": 0.0,
-      "roughness": 0.58
+      "roughness": 0.58,
+      "texture": "olive_drab_paint",
+      "texture_scale_m": 2.4,
+      "texture_tint": [0.46, 0.52, 0.28]
     },
     {
       "name": "OxideRed",
       "_use": "Primer showing through where paint has gone, and inner frames.",
       "base_color": [0.13, 0.035, 0.022, 1.0],
       "metallic": 0.0,
-      "roughness": 0.7
+      "roughness": 0.7,
+      "texture": "rust_pitted_steel",
+      "texture_scale_m": 1.1,
+      "texture_tint": [0.58, 0.36, 0.26]
     },
     {
       "name": "OiledSteel",
       "_use": "Hydraulic rams, piston rods, shafts. Wet-looking, not shiny.",
       "base_color": [0.09, 0.09, 0.095, 1.0],
       "metallic": 1.0,
-      "roughness": 0.18
+      "roughness": 0.18,
+      "texture": "oiled_machine_housing",
+      "texture_scale_m": 0.9,
+      "texture_tint": [0.52, 0.52, 0.56]
     },
     {
       "name": "DullBrass",
@@ -68,21 +111,30 @@
       "_use": "Chimney mouths, firebox interiors, grime in recesses.",
       "base_color": [0.015, 0.014, 0.013, 1.0],
       "metallic": 0.0,
-      "roughness": 0.95
+      "roughness": 0.95,
+      "texture": "soot_brick",
+      "texture_scale_m": 0.8,
+      "texture_tint": [0.28, 0.27, 0.26]
     },
     {
       "name": "HazardYellow",
       "_use": "Port collars and edge stripes. Reads a port at a glance.",
       "base_color": [0.45, 0.3, 0.02, 1.0],
       "metallic": 0.0,
-      "roughness": 0.55
+      "roughness": 0.55,
+      "texture": "diamond_tread_plate",
+      "texture_scale_m": 0.7,
+      "texture_tint": [1.25, 0.84, 0.08]
     },
     {
       "name": "BeltRubber",
       "_use": "Belt decking.",
       "base_color": [0.022, 0.022, 0.024, 1.0],
       "metallic": 0.0,
-      "roughness": 0.85
+      "roughness": 0.85,
+      "texture": "oiled_machine_housing",
+      "texture_scale_m": 0.45,
+      "texture_tint": [0.3, 0.3, 0.32]
     },
     {
       "name": "GaugeGlass",

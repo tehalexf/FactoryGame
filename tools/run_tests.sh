@@ -36,4 +36,22 @@ for _pass in $(seq "$IMPORT_PASSES"); do
 	"$GODOT" --headless --path "$PROJECT_ROOT" --import >/dev/null 2>&1 || true
 done
 
-exec "$GODOT" --headless --path "$PROJECT_ROOT" --script res://tests/run_tests.gd -- "$@"
+# Give this run its own log file.
+#
+# The runtime-abort guard reads the engine's log to notice a test method severed
+# by a GDScript error. The default log lives under the *user data* directory,
+# which Godot derives from the project's name — so every worktree of this repo
+# shares one file, and a second checkout running its suite rotates the log out
+# from under the first. That is not hypothetical: it made the guard's own tests
+# fail about one cold run in four while sibling branches were being tested in
+# parallel, which reads as flakiness in the guard rather than contention.
+#
+# .godot/ is per-worktree and already ignored, so a log in there is private to
+# this run.
+TEST_LOG="$PROJECT_ROOT/.godot/test_run.log"
+mkdir -p "$(dirname "$TEST_LOG")"
+rm -f "$TEST_LOG"
+export DEEP_FOUNDRY_TEST_LOG="$TEST_LOG"
+
+exec "$GODOT" --headless --path "$PROJECT_ROOT" --log-file "$TEST_LOG" \
+	--script res://tests/run_tests.gd -- "$@"
