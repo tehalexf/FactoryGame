@@ -181,7 +181,8 @@ what lets a client whose own files hash differently refuse instead of desyncing.
   renderer and the Blender mesh generator all read those same two columns, and a
   second copy would drift on the first balance change.
 - `sim/map_layout.gd` is the Map's geography: where the Nodes are, what Resource
-  each yields, what Depth tier it sits at. Deliberately *not* in `content/` —
+  each yields, what Depth tier it sits at, where the Nest stands and where the
+  Breaches are. Deliberately *not* in `content/` —
   those files are definitions and hot-reloadable, and moving a Node under a
   Factory that is standing on it is a different Map, not a balance change.
 - **Nodes never deplete.** There is no quantity on a Node and nothing subtracts
@@ -334,6 +335,102 @@ GLOSSARY.md and DESIGN.md, and it is the whole model.
   exactly one Miner and one Smelter, so the first Machine beyond the opening line is
   the moment Power becomes the player's problem.
 
+## The Nest, the Breaches, the Waves and the Enemies
+
+The threat, and the thing that makes a Run losable. `MapLayout` owns where all of it
+is, because it is geography; `content/tuning.toml` owns the numbers, because they are
+balance.
+
+- **The Nest is not a Machine.** DESIGN.md lists it alongside Belt and Wall, outside
+  the eight Machines: no row in `content/machines.csv`, no Recipe, no Power, and it
+  cannot be built or demolished. It is a 4x4 footprint on the Map that obstructs
+  building and Belts, with hit points from `nest.health`. **Its destruction ends the
+  Run and nothing else does** (GLOSSARY.md).
+- **A Run that ended stays ended.** `_run_over_tick` is set on the tick the Nest fell
+  and never cleared, so `query_wave_number` freezes at the Wave that did it — which is
+  what the Run-over report names — and a later ticket that lets a Nest be repaired
+  cannot un-end a Run. Waves stop and Enemies stop; the Factory is deliberately not
+  gated, because there is no build mode anywhere in this project.
+- **A Breach is fixed and known in advance**, which is the whole deal GLOSSARY.md
+  strikes: it is fortifiable, and it could not be if it moved. `MapLayout` sorts them
+  into tile order, and Enemies are released in that order, so which Breach goes first
+  is geography rather than the order somebody typed the rows in. A Map with **no**
+  Breach has no Waves at all — which is the geography `MapLayout.empty()` gives a test
+  that is studying the Factory and not the threat.
+- **The Wave schedule here is a scaffold and says so.** A baseline timer and a count
+  that grows linearly, four keys in `[wave]`. Heat, the Telegraph and the
+  call-Wave-early lever are what will really decide arrival and size; that ticket
+  replaces `_waves()` and the whole `[wave]` section.
+
+### Enemies are array entries, never nodes
+
+Per ADR 0001, and this is the decision the whole Enemy scale target rests on.
+Idiomatic engine agents cap out around 150-250 before frame times collapse; instanced
+array entries reach thousands. Milestone 1 ships twenty Crawlers **on the final
+architecture** so that the Chaff tier switching on later is more array entries rather
+than a rewrite.
+
+- An Enemy is an index into parallel `PackedInt64Array`s — serial, kind, position in
+  fixed-point metres, health, spawn tick, bite cooldown. There is no Enemy class, no
+  Enemy instance and no node. `WorldView` draws the whole swarm through one
+  `MultiMeshInstance3D`, and `test_world_view` asserts that the scene tree does not
+  grow by a single node when a Wave arrives.
+- **Index order is ascending spawn serial, always.** Spawns append; `_enemy_serial`
+  rises strictly with index. Every loop over Enemies therefore walks them in the one
+  order every client agrees on. The purity lint catches a float; it would never catch
+  an ordering bug, so `test_enemies` asserts the invariant directly on every tick of a
+  Wave.
+- A **serial** is issued once and never reused. That is the handle to hold rather than
+  an index, because indices shift as Enemies die — which is what a Turret needs to
+  keep shooting at the thing it was shooting at.
+- Enemies do not collide with one another, by design. A swarm is a swarm, and the
+  alternative is an O(n²) separation pass the Chaff tier could not afford. Nothing in
+  an Enemy's tick reads another Enemy, so index order carries none of the bias Belts
+  have to avoid.
+- An Enemy does not act on the tick it came through its Breach, for the reason a
+  Machine does not run on the tick it was built.
+
+### One shared flowfield, not a path per agent
+
+DESIGN.md calls this not a close call: rebuilding one field is O(map) once and is then
+amortised across every Enemy alive, where per-agent A* is O(agents × path) every time
+anything moves — and every Enemy converges on the same destination.
+
+- `_flow_direction` holds a `WorldGrid` direction per ground tile, `_flow_distance` the
+  exact tile count to the Nest, both as flat arrays indexed by tile. One breadth-first
+  sweep outward from the **whole Nest footprint**, four-connected, so no heuristic is
+  involved and an Enemy heading for the Nest's near edge is not routed to its anchor.
+- **Derived, so it is rebuilt rather than hashed**, exactly like `_belt_update_order`.
+  It is a pure function of the Map and the obstructions standing on it, both of which
+  are hashed. Rebuilt when a Machine is built or demolished or a reload could have
+  resized a footprint — never on a tick that changed neither, and never at all while
+  no Enemy is on the Map.
+- **`_mark_obstructions` is the single definition of what obstructs**, and
+  `query_tile_obstructs_enemies` reads what it painted rather than asking the question
+  a second way. Machines obstruct; Belts and Nodes do not — a Crawler crawls over a
+  conveyor. **Walls join that function in the ticket that adds them**, as one more loop.
+- It paints by walking the **Machines**, not by asking each of the 16641 tiles what is
+  standing on it. That is O(Machines) against O(tiles × Machines), and it is the
+  difference between a 2.5 ms rebuild and a 55 ms one — a three-frame hitch every time
+  a player places something.
+- The sweep walks **flat index space** rather than `Vector3i`, for the same reason:
+  `FIELD_STEPS` mirrors `WorldGrid.DIRECTION_STEPS` so the recorded direction still
+  means what `direction_step` says it means, and `test_flowfield` walks a 60x60 region
+  of the field a tile at a time to prove the two orders agree.
+- An Enemy on a tile the field cannot route — inside a Machine a player dropped on top
+  of it, or in a pocket sealed off from the Nest — walks straight at the Nest instead.
+  Without that, pinning a Crawler under a Machine would be a cheese rather than a
+  defence.
+- Measured: 0.10 ms a tick at 20 Enemies and 0.84 ms at 200, against a 16.67 ms frame.
+
+### Open: the Nest's footprint has two authorities
+
+`MapLayout.NEST_FOOTPRINT_TILES` and the `nest` row of `content/machine_bodies.csv`
+both say 4x4, and the asset suite's cross-check only covers rows that
+`content/machines.csv` declares — which the Nest never will, because it is not a
+Machine. The art pass should teach the mesh generator to read the footprint from the
+Simulation's constant, the way it reads a Machine's from `machines.csv`.
+
 ## The player, the Build Gun and Survey View
 
 A player is 1.8 m against 2 m tiles, and every single thing they do crosses into the
@@ -480,6 +577,15 @@ mid-stride.
 - **A property in a type the format cannot encode is refused by name**, not
   silently zeroed. Hold state as parallel integer arrays — which is the convention
   anyway — or teach `_encode_value` about the type.
+- **`RunSave.DERIVED_PROPERTIES` is the one exception to "every property".** The
+  flowfield is one entry per tile of the Map three arrays over, so carrying it would
+  make every save hundreds of kilobytes of numbers the next tick recomputes, growing
+  with the square of the Map rather than with the Factory. Excluding a property is safe
+  only because the names on that list are **absent from `hash()`** too, which is what
+  leaves the round-trip check with teeth — so check `hash()` before adding to it. A
+  restored Run notices it is holding no field by its size rather than by a flag, and
+  `test_enemies` steps a saved and a resumed Run side by side to prove the rebuild
+  agrees.
 - **The format is line-oriented text**, `<property> <type-tag> <payload…>`, keyed by
   name rather than by position. Chosen for diffability in a project whose method is
   comparing two states, and because a positional blob cannot report which field it is

@@ -68,6 +68,28 @@ const MAGIC: String = "deep_foundry_run_save"
 ## would misread; a file declaring any other version is refused by number.
 const FORMAT_VERSION: int = 1
 
+## The properties this deliberately does **not** write: derived state that is a pure
+## function of what it does write, rebuilt on demand, and absent from `Simulation.hash()`
+## for the same reason.
+##
+## The one exception to "every property is saved", and it is narrow on purpose. The
+## flowfield is one entry per tile of the Map, three arrays over, so writing it would make
+## every save hundreds of kilobytes of numbers that the first tick after a load recomputes
+## anyway — and it would grow with the square of the Map rather than with the Factory.
+##
+## Excluding a property is only safe because of what that costs: a name here is a name
+## **absent from the state hash**, so the hash the save carries and re-checks on load still
+## proves the round trip exact. A name here that *was* hashed would make every load fail
+## loudly, which is the right failure but a confusing one — so if you add to this list,
+## check `hash()` first. `_belt_update_order` is derived too and is deliberately left in
+## the census: it is one entry per Belt, which costs nothing to carry.
+const DERIVED_PROPERTIES: Array = [
+	"_flow_direction",
+	"_flow_distance",
+	"_flow_blocked",
+	"_flowfield_stale",
+]
+
 const KEY_FORMAT: String = "format"
 const KEY_DEFINITIONS_DIGEST: String = "definitions_digest"
 const KEY_STATE_HASH: String = "state_hash"
@@ -156,6 +178,7 @@ static func serialise(sim: Simulation) -> String:
 ##
 ## This is the mechanism the rest of the file rests on. It asks the Simulation what it
 ## is made of instead of being told, so a new array is persisted the moment it exists.
+## `DERIVED_PROPERTIES` is the only thing it leaves out, and that list says why.
 static func state_property_names(sim: Simulation) -> PackedStringArray:
 	var names: PackedStringArray = PackedStringArray()
 	# purity-ok: an Array walked in index order; the entries are indexed by known key
@@ -163,7 +186,10 @@ static func state_property_names(sim: Simulation) -> PackedStringArray:
 	for property: Variant in sim.get_property_list():
 		if int(property["usage"]) & PROPERTY_USAGE_SCRIPT_VARIABLE == 0:
 			continue
-		names.append(String(property["name"]))
+		var property_name: String = String(property["name"])
+		if DERIVED_PROPERTIES.has(property_name):
+			continue
+		names.append(property_name)
 	names.sort()
 	return names
 

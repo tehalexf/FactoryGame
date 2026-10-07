@@ -38,6 +38,19 @@ transition_seconds = 0.4
 pitch_degrees = 68
 [power]
 baseline_supply_kw = 300
+[nest]
+health = 6000
+[wave]
+first_wave_seconds = 90
+interval_seconds = 120
+crawlers_in_first_wave = 6
+crawlers_added_per_wave = 4
+spawn_interval_seconds = 0.5
+[enemy]
+crawler_health = 30
+crawler_speed_metres_per_second = 3
+crawler_damage = 10
+crawler_attack_interval_seconds = 1
 """
 
 
@@ -365,17 +378,17 @@ func test_a_save_made_under_different_content_definitions_is_refused() -> void:
 ## would hash it.
 class SimulationWithEnemies extends Simulation:
 	var _enemy_hp: PackedInt64Array = PackedInt64Array()
-	var _enemy_kind: PackedStringArray = PackedStringArray()
+	var _enemy_sigil: PackedStringArray = PackedStringArray()
 
 	func spawn(hp: int, kind: String) -> void:
 		_enemy_hp.append(hp)
-		_enemy_kind.append(kind)
+		_enemy_sigil.append(kind)
 
 	func hash() -> int:
 		var hasher: StateHasher = StateHasher.new()
 		hasher.feed_int(super.hash())
 		hasher.feed_ints(_enemy_hp)
-		for kind: String in _enemy_kind:
+		for kind: String in _enemy_sigil:
 			hasher.feed_text(kind)
 		return hasher.digest()
 
@@ -424,7 +437,7 @@ func test_a_save_missing_state_this_build_holds_is_refused_by_name() -> void:
 
 	assert_true(loaded.has_errors())
 	assert_true(loaded.state_mismatch)
-	assert_true(loaded.describe_errors().contains("_enemy_kind"), loaded.describe_errors())
+	assert_true(loaded.describe_errors().contains("_enemy_sigil"), loaded.describe_errors())
 	assert_null(loaded.simulation)
 
 

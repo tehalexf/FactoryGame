@@ -117,3 +117,63 @@ pitch_degrees = 68
 # (120 + 180 kW) and not one watt more, so the first Machine beyond that opening
 # line is the moment Power becomes the player's problem.
 baseline_supply_kw = 300
+
+[nest]
+
+# The Nest's hit points. The Run ends when these reach zero (GLOSSARY.md) and
+# nothing else ends it, so this is the single number that decides how much of a
+# mistake a player can survive.
+#
+# 6000 against a Crawler's 10 damage a second means six Crawlers chewing unopposed
+# take a hundred seconds. With no Turret built, Waves accumulate and the Nest falls
+# somewhere around the third one — which is the intended outcome until defence
+# exists, not a balance oversight.
+health = 6000
+
+[wave]
+
+# Wave scheduling, in its thinnest possible form: a baseline timer and a count that
+# grows. Heat is what will really drive arrival and size (GLOSSARY.md, DESIGN.md),
+# along with the Telegraph and the call-early lever, and the ticket that adds Heat
+# replaces every key in this section. Until then these exist so that a Breach has
+# something to obey.
+
+# How long after a Run starts the first Wave arrives, in seconds. Long enough to get
+# an opening line running and see it work before anything comes for it.
+first_wave_seconds = 90
+
+# How long between Waves after the first, in seconds.
+interval_seconds = 120
+
+# How many Crawlers the first Wave sends through each Breach.
+crawlers_in_first_wave = 6
+
+# How many more Crawlers each subsequent Wave sends through each Breach. Linear and
+# unbounded, so a Run that is never defended is eventually lost — "infinitely
+# scaling" (GLOSSARY.md) in its crudest form until Heat shapes it.
+crawlers_added_per_wave = 4
+
+# How long between one Crawler of a Wave emerging from a Breach and the next, in
+# seconds. A Wave trickles out rather than appearing as a stack of Enemies on one
+# tile, which is both legible and what makes a chokepoint work.
+spawn_interval_seconds = 0.5
+
+[enemy]
+
+# The Crawler: Chaff, the weakest Enemy, which swarms toward the Nest (GLOSSARY.md).
+
+# A Crawler's hit points. One hit from anything, by design — Chaff is the *sense* of
+# threat rather than the threat (DESIGN.md), and nothing shoots back until a Turret
+# exists.
+crawler_health = 30
+
+# How fast a Crawler moves, in metres per second. Faster than a walking player at
+# 4 m/s would be unfair on foot; 3 m/s is a tile and a half a second, which reads as
+# scuttling without outrunning anyone.
+crawler_speed_metres_per_second = 3
+
+# How much damage one Crawler does to the Nest per bite.
+crawler_damage = 10
+
+# How long between one Crawler's bites, in seconds.
+crawler_attack_interval_seconds = 1

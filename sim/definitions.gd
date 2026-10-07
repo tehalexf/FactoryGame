@@ -76,6 +76,18 @@ const TUNING_BELT_ITEMS_PER_SECOND: String = "belt.items_per_second"
 const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
 const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
 const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
+const TUNING_NEST_HEALTH: String = "nest.health"
+const TUNING_WAVE_FIRST_SECONDS: String = "wave.first_wave_seconds"
+const TUNING_WAVE_INTERVAL_SECONDS: String = "wave.interval_seconds"
+const TUNING_WAVE_FIRST_CRAWLERS: String = "wave.crawlers_in_first_wave"
+const TUNING_WAVE_CRAWLERS_ADDED: String = "wave.crawlers_added_per_wave"
+const TUNING_WAVE_SPAWN_INTERVAL_SECONDS: String = "wave.spawn_interval_seconds"
+const TUNING_CRAWLER_HEALTH: String = "enemy.crawler_health"
+const TUNING_CRAWLER_SPEED: String = "enemy.crawler_speed_metres_per_second"
+const TUNING_CRAWLER_DAMAGE: String = "enemy.crawler_damage"
+const TUNING_CRAWLER_ATTACK_INTERVAL_SECONDS: String = (
+	"enemy.crawler_attack_interval_seconds"
+)
 
 ## Every problem that makes this set unusable, each naming the file and the row.
 var errors: PackedStringArray = PackedStringArray()
@@ -114,6 +126,38 @@ var survey_transition_seconds: int = 0
 
 ## How far down the Survey View camera tilts at the top, in fixed-point degrees.
 var survey_pitch_degrees: int = 0
+
+## The Nest's hit points. The Run ends when these reach zero, and nothing else ends
+## it. Whole points rather than fixed point: damage is counted in them.
+var nest_health: int = 0
+
+## How long after a Run starts the first Wave arrives, in fixed-point seconds.
+var wave_first_seconds: int = 0
+
+## How long between Waves after the first, in fixed-point seconds.
+var wave_interval_seconds: int = 0
+
+## How many Crawlers the first Wave sends through each Breach.
+var wave_first_crawlers: int = 0
+
+## How many more Crawlers each subsequent Wave sends through each Breach.
+var wave_crawlers_added: int = 0
+
+## How long between one Crawler of a Wave emerging and the next, in fixed-point
+## seconds.
+var wave_spawn_interval_seconds: int = 0
+
+## A Crawler's hit points.
+var crawler_health: int = 0
+
+## How fast a Crawler moves, in fixed-point metres per second.
+var crawler_speed: int = 0
+
+## How much damage one Crawler does to the Nest per bite, in whole hit points.
+var crawler_damage: int = 0
+
+## How long between one Crawler's bites, in fixed-point seconds.
+var crawler_attack_interval_seconds: int = 0
 
 ## A Belt's rated throughput, in fixed-point Items per second. The Simulation turns
 ## this into a whole number of ticks per Item, which is what makes the rate exact.
@@ -349,6 +393,16 @@ func digest() -> int:
 	hasher.feed_int(belt_items_per_tile)
 	hasher.feed_int(machine_input_buffer_crafts)
 	hasher.feed_int(power_baseline_supply_kw)
+	hasher.feed_int(nest_health)
+	hasher.feed_int(wave_first_seconds)
+	hasher.feed_int(wave_interval_seconds)
+	hasher.feed_int(wave_first_crawlers)
+	hasher.feed_int(wave_crawlers_added)
+	hasher.feed_int(wave_spawn_interval_seconds)
+	hasher.feed_int(crawler_health)
+	hasher.feed_int(crawler_speed)
+	hasher.feed_int(crawler_damage)
+	hasher.feed_int(crawler_attack_interval_seconds)
 
 	# Errors are part of the verdict, not of the content, but a set that failed to
 	# load must never share a digest with one that loaded empty.
@@ -659,6 +713,18 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	belt_items_per_tile = tuning.require_int(TUNING_BELT_ITEMS_PER_TILE)
 	machine_input_buffer_crafts = tuning.require_int(TUNING_MACHINE_INPUT_BUFFER_CRAFTS)
 	power_baseline_supply_kw = tuning.require_int(TUNING_POWER_BASELINE_SUPPLY_KW)
+	nest_health = tuning.require_int(TUNING_NEST_HEALTH)
+	wave_first_seconds = tuning.require_fixed(TUNING_WAVE_FIRST_SECONDS)
+	wave_interval_seconds = tuning.require_fixed(TUNING_WAVE_INTERVAL_SECONDS)
+	wave_first_crawlers = tuning.require_int(TUNING_WAVE_FIRST_CRAWLERS)
+	wave_crawlers_added = tuning.require_int(TUNING_WAVE_CRAWLERS_ADDED)
+	wave_spawn_interval_seconds = tuning.require_fixed(TUNING_WAVE_SPAWN_INTERVAL_SECONDS)
+	crawler_health = tuning.require_int(TUNING_CRAWLER_HEALTH)
+	crawler_speed = tuning.require_fixed(TUNING_CRAWLER_SPEED)
+	crawler_damage = tuning.require_int(TUNING_CRAWLER_DAMAGE)
+	crawler_attack_interval_seconds = tuning.require_fixed(
+		TUNING_CRAWLER_ATTACK_INTERVAL_SECONDS
+	)
 
 	# A rate or a capacity of zero is not a slow Belt, it is a Belt that cannot work.
 	# Refused by name rather than accepted and puzzled over later.
@@ -708,6 +774,40 @@ func _read_tuning(tuning: TomlDocument) -> void:
 		if power_baseline_supply_kw < 0:
 			_report_tuning(
 				tuning, TUNING_POWER_BASELINE_SUPPLY_KW, "a grid cannot supply less than nothing"
+			)
+		if nest_health <= 0:
+			_report_tuning(
+				tuning, TUNING_NEST_HEALTH, "a Nest that starts destroyed ends the Run at tick 0"
+			)
+		if wave_first_seconds < 0:
+			_report_tuning(tuning, TUNING_WAVE_FIRST_SECONDS, "a Wave cannot arrive in the past")
+		if wave_interval_seconds <= 0:
+			_report_tuning(
+				tuning, TUNING_WAVE_INTERVAL_SECONDS, "Waves with no gap are one endless Wave"
+			)
+		if wave_first_crawlers < 0:
+			_report_tuning(tuning, TUNING_WAVE_FIRST_CRAWLERS, "a Wave cannot send fewer than none")
+		if wave_crawlers_added < 0:
+			_report_tuning(
+				tuning, TUNING_WAVE_CRAWLERS_ADDED, "Waves escalate without bound, never backwards"
+			)
+		if wave_spawn_interval_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_WAVE_SPAWN_INTERVAL_SECONDS,
+				"a whole Wave arriving in no time is a stack of Enemies on one tile"
+			)
+		if crawler_health <= 0:
+			_report_tuning(tuning, TUNING_CRAWLER_HEALTH, "an Enemy has to be able to take a hit")
+		if crawler_speed <= 0:
+			_report_tuning(tuning, TUNING_CRAWLER_SPEED, "a Crawler that cannot move never arrives")
+		if crawler_damage <= 0:
+			_report_tuning(tuning, TUNING_CRAWLER_DAMAGE, "an Enemy that does no damage is scenery")
+		if crawler_attack_interval_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_CRAWLER_ATTACK_INTERVAL_SECONDS,
+				"a bite that takes no time does unbounded damage"
 			)
 
 	# Checked after every read, so this names exactly the keys nothing asked for.
@@ -767,6 +867,16 @@ func _discard_content() -> void:
 	belt_items_per_tile = 0
 	machine_input_buffer_crafts = 0
 	power_baseline_supply_kw = 0
+	nest_health = 0
+	wave_first_seconds = 0
+	wave_interval_seconds = 0
+	wave_first_crawlers = 0
+	wave_crawlers_added = 0
+	wave_spawn_interval_seconds = 0
+	crawler_health = 0
+	crawler_speed = 0
+	crawler_damage = 0
+	crawler_attack_interval_seconds = 0
 
 
 static func _read_file(path: String) -> String:

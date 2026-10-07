@@ -44,6 +44,25 @@ const MAX_PITCH_TURNS: int = Fixed.ONE * 24 / 100
 ## thousand, so the tuning file carries a number around 0.4 rather than 0.0004.
 const LOOK_PIXEL_UNIT: int = 1000
 
+## How many ground tiles the flowfield covers on each axis, and in total. The Map is
+## finite and handcrafted (GLOSSARY.md), so the field is a flat array indexed by tile
+## rather than a growing structure — one allocation, no Dictionary, and an index that is
+## pure arithmetic.
+const FIELD_WIDTH_TILES: int = WorldGrid.HALF_EXTENT_TILES * 2 + 1
+const FIELD_TILES: int = FIELD_WIDTH_TILES * FIELD_WIDTH_TILES
+
+## What one step in each direction adds to a field index. **In the same order as
+## `WorldGrid.DIRECTION_STEPS`** — +x, +z, -x, -z — because the direction the sweep records
+## is a `WorldGrid` direction and an Enemy resolves it back through `direction_step`. The
+## sweep works in index space rather than in tiles because it visits every tile of the Map
+## four times and vector arithmetic there is the difference between a frame and three.
+## `test_flowfield` asserts the two orders agree by following the field a tile at a time.
+const FIELD_STEPS: Array = [1, FIELD_WIDTH_TILES, -1, -FIELD_WIDTH_TILES]
+
+## The one Enemy kind Milestone 1 ships. Held as an integer in `_enemy_kind` so the
+## Breaker and the Siege Hulk join the same arrays rather than getting their own.
+const ENEMY_KIND_CRAWLER: int = 0
+
 ## Degrees in one whole turn. Angles are turns everywhere inside the Simulation; the
 ## tuning file is allowed degrees because that is how a human reasons about a tilt.
 const DEGREES_PER_TURN: int = 360
@@ -181,6 +200,114 @@ var _node_tile_y: PackedInt64Array = PackedInt64Array()
 var _node_tile_z: PackedInt64Array = PackedInt64Array()
 var _node_resource: PackedStringArray = PackedStringArray()
 var _node_depth: PackedInt64Array = PackedInt64Array()
+
+## Where the Nest stands and how much of it is left.
+##
+## The structure the whole Run is about: its destruction ends the Run and nothing else
+## does (GLOSSARY.md). The tile and the footprint are geography, copied out of
+## `MapLayout` and never changed; the health is the one number Enemies move.
+##
+## Not a Machine. It runs no Recipe, draws no Power, and cannot be built or
+## demolished — DESIGN.md lists it alongside Belt and Wall, outside the eight
+## Machines — so it has no row in `content/machines.csv` and no entry in the Machine
+## arrays. Its hit points come from `nest.health` in `content/tuning.toml`, because
+## that is a balance number.
+var _nest_tile_x: int = 0
+var _nest_tile_y: int = 0
+var _nest_tile_z: int = 0
+var _nest_health: int = 0
+
+## The Breaches: the fixed tiles Enemies enter the Map at, in the canonical order
+## `MapLayout` sorted them into. Constant through a Run — a Breach is known in advance
+## and fortifiable (GLOSSARY.md), which it could not be if it moved. Deep mining opens
+## new ones, which is the ticket that makes this array grow mid-Run.
+var _breach_tile_x: PackedInt64Array = PackedInt64Array()
+var _breach_tile_y: PackedInt64Array = PackedInt64Array()
+var _breach_tile_z: PackedInt64Array = PackedInt64Array()
+
+## Which Wave the Run has reached, the ticks until the next one arrives, how many
+## Crawlers each Breach still has to release from the current one, and the ticks until
+## the next one crawls out.
+##
+## Deliberately the thinnest possible schedule: a baseline timer and a count that
+## grows. Heat is what will really drive arrival and size, along with the Telegraph and
+## the call-early lever, and that ticket replaces all four of these along with the
+## `[wave]` section of the tuning file. What matters here is only that a Breach has
+## something to obey and that the Wave reached is a number the Run-over report can name.
+var _wave_number: int = 0
+var _ticks_until_next_wave: int = 0
+var _wave_spawns_remaining: int = 0
+var _ticks_until_next_spawn: int = 0
+
+## The tick the Run ended on, or -1 while it is still running.
+##
+## State rather than `_nest_health <= 0` derived, for two reasons: the moment a Run
+## ended is a fact worth reporting next to the Wave it reached, and a later ticket that
+## lets a fallen Nest be repaired must not thereby un-end a Run.
+var _run_over_tick: int = -1
+
+## The Enemies on the Map. Parallel arrays of integers, **never nodes and never one
+## object each** — ADR 0001 makes Godot a renderer, and the ~100-Enemy target DESIGN.md
+## sets depends on exactly this: idiomatic engine agents cap out around 150-250 before
+## frame times collapse, where instanced array entries reach thousands. Milestone 1
+## ships twenty Crawlers; the architecture is sized for the Chaff tier that switches on
+## later, because the layout is the part that is expensive to change afterwards.
+##
+## Positions are fixed-point metres on the horizontal plane, like a player's.
+##
+## **Index order is spawn order, always.** `_enemy_serial` rises strictly with index,
+## entries are only ever appended, and a removal pass preserves the order of the
+## survivors. Every loop over Enemies therefore walks them in the one order every
+## client agrees on, which is the half of determinism the purity lint cannot check: it
+## catches a float, it would never catch an ordering bug.
+var _enemy_serial: PackedInt64Array = PackedInt64Array()
+var _enemy_kind: PackedInt64Array = PackedInt64Array()
+var _enemy_x: PackedInt64Array = PackedInt64Array()
+var _enemy_z: PackedInt64Array = PackedInt64Array()
+var _enemy_health: PackedInt64Array = PackedInt64Array()
+var _enemy_spawn_tick: PackedInt64Array = PackedInt64Array()
+
+## Ticks until each Enemy may bite again. 0 means it bites the moment it is in contact.
+var _enemy_attack_cooldown: PackedInt64Array = PackedInt64Array()
+
+## The serial the next Enemy to spawn will carry. Monotonic and never reused, so an
+## Enemy has a stable identity across the ticks it exists for even as indices shift
+## under it — which is what a Turret needs to keep shooting at the thing it was
+## shooting at.
+var _next_enemy_serial: int = 0
+
+## The flowfield: one shared vector field over the ground, pointing every tile at the
+## Nest.
+##
+## **One field, not one path each.** Rebuilding this is O(map) once and is then
+## amortised across every Enemy alive, where per-agent A* is O(agents x path) every time
+## anything moves. Every Enemy converges on the same destination, so the shared field is
+## not a compromise — it is strictly the better structure, and DESIGN.md calls it not a
+## close call.
+##
+## `_flow_direction` holds a `WorldGrid` direction per ground tile — the way out of that
+## tile towards the Nest — and -1 where there is none: inside the Nest itself, inside an
+## obstruction, and on ground the Nest cannot be reached from. `_flow_distance` holds the
+## tile count to the Nest, which is what makes "the field routes around this" a thing a
+## test can assert rather than infer from where Enemies ended up.
+##
+## **Derived, so it is rebuilt rather than hashed**, exactly like `_belt_update_order`: a
+## pure function of the Map and the obstructions standing on it. Rebuilt when that set
+## changes — a Machine built or demolished, a definition reload that could resize a
+## footprint — and never on a tick that changed neither.
+var _flow_direction: PackedInt64Array = PackedInt64Array()
+var _flow_distance: PackedInt64Array = PackedInt64Array()
+
+## Which ground tiles an Enemy cannot walk through, one byte each, rebuilt alongside the
+## field it shaped.
+##
+## Marked by walking the *Machines* and painting their footprints rather than by asking
+## every tile on the Map what is standing on it: the first is O(Machines), the second is
+## O(tiles x Machines), and at 16641 tiles the second is a visible hitch every time a
+## player places something. It doubles as the answer `query_tile_obstructs_enemies` gives,
+## so the obstruction set still has exactly one definition.
+var _flow_blocked: PackedByteArray = PackedByteArray()
+var _flowfield_stale: bool = true
 
 ## The Machines standing in the Factory, in the order they were built. Parallel
 ## arrays rather than objects, so a tick walks integers in index order.
@@ -344,6 +471,18 @@ func _init(
 	_node_resource = layout.node_resource.duplicate()
 	_node_depth = layout.node_depth.duplicate()
 
+	_nest_tile_x = layout.nest_tile.x
+	_nest_tile_y = layout.nest_tile.y
+	_nest_tile_z = layout.nest_tile.z
+	_nest_health = _definitions.nest_health
+	_breach_tile_x = layout.breach_tile_x.duplicate()
+	_breach_tile_y = layout.breach_tile_y.duplicate()
+	_breach_tile_z = layout.breach_tile_z.duplicate()
+
+	# The first Wave is on the clock from tick 0, so the Telegraph a later ticket adds has
+	# a countdown to read rather than a schedule to invent.
+	_ticks_until_next_wave = _seconds_to_ticks(_definitions.wave_first_seconds)
+
 	var players: int = maxi(player_count, 1)
 	_player_x.resize(players)
 	_player_z.resize(players)
@@ -414,6 +553,8 @@ func step(actions: Array) -> void:
 	_power()
 	_extract()
 	_craft()
+	_waves()
+	_enemies()
 
 	_tick += 1
 
@@ -1366,6 +1507,10 @@ func _apply_build_machine(action: InputAction) -> void:
 	_machine_buffer_counts.append(PackedInt64Array())
 	_machine_input_items.append(PackedStringArray())
 	_machine_input_counts.append(PackedInt64Array())
+	# A new footprint is a new obstruction, so the Enemies' shared field no longer
+	# describes the Map. Rebuilt on the next tick that has an Enemy to move, never here:
+	# a player laying out a Factory places a Machine a second and the field is O(map).
+	_flowfield_stale = true
 
 
 ## Why a placement would be refused, or `Refusal.NONE`.
@@ -1407,6 +1552,11 @@ func _can_pay_for(player_id: int, definition: MachineDefinition) -> bool:
 ## Walks both in index order, which is cheap at Milestone 1 scale and ordered by
 ## construction.
 func _footprint_is_occupied(origin: Vector3i, size_x: int, size_z: int) -> bool:
+	var nest: Vector2i = query_nest_footprint()
+	if WorldGrid.footprints_overlap(
+		origin, size_x, size_z, query_nest_tile(), nest.x, nest.y
+	):
+		return true
 	for index: int in range(query_machine_count()):
 		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
 		if definition == null:
@@ -1508,6 +1658,7 @@ func _remove_machine(index: int) -> void:
 	_machine_buffer_counts.remove_at(index)
 	_machine_input_items.remove_at(index)
 	_machine_input_counts.remove_at(index)
+	_flowfield_stale = true
 
 
 ## Removes a Belt and the Items on it. The update order is derived from which Belt
@@ -1596,6 +1747,8 @@ func _apply_build_belt(action: InputAction) -> void:
 			return
 		if query_belt_at_tile(tile) != -1 or query_machine_at_tile(tile) != -1:
 			return
+		if _nest_covers(tile):
+			return
 
 	_belt_tile_x.append(from_tile.x)
 	_belt_tile_y.append(from_tile.y)
@@ -1641,6 +1794,362 @@ func _apply_reload_definitions(action: InputAction) -> void:
 
 	_definitions = incoming
 	_definition_generation += 1
+	# A reload can resize a footprint, which moves an obstruction without moving a
+	# Machine, so the field has to be taken as stale even though nothing was built.
+	_flowfield_stale = true
+
+
+
+# ── The Nest, the Breaches and the Waves ──────────────────────────
+
+## Runs the Wave clock and lets Crawlers out of the Breaches.
+##
+## Deliberately the thinnest schedule that makes a Breach do something: a timer arrives,
+## a count is set, and the Breaches trickle that many Crawlers out one every
+## `wave.spawn_interval_seconds`. Heat, the Telegraph and the call-early lever are what
+## will really decide when and how much (GLOSSARY.md, DESIGN.md), and that ticket
+## replaces this function wholesale.
+##
+## A Map with no Breach has no Waves at all. Enemies enter the Map at Breaches and
+## nowhere else, so geography with nowhere to enter is geography nothing attacks — which
+## is also what lets a test studying the Factory ask for a Map without the threat.
+func _waves() -> void:
+	if query_run_is_over() or query_breach_count() == 0:
+		return
+
+	if _ticks_until_next_wave > 0:
+		_ticks_until_next_wave -= 1
+	if _ticks_until_next_wave == 0:
+		_wave_number += 1
+		_wave_spawns_remaining = maxi(
+			_definitions.wave_first_crawlers
+			+ (_wave_number - 1) * _definitions.wave_crawlers_added,
+			0
+		)
+		_ticks_until_next_wave = maxi(_seconds_to_ticks(_definitions.wave_interval_seconds), 1)
+		_ticks_until_next_spawn = 0
+
+	if _wave_spawns_remaining <= 0:
+		return
+	if _ticks_until_next_spawn > 0:
+		_ticks_until_next_spawn -= 1
+		return
+
+	# One Crawler out of every Breach, walked in the canonical tile order `MapLayout`
+	# sorted them into. Geography rather than authoring order, so two clients spawn the
+	# same Enemies in the same sequence and the serials they carry agree.
+	for index: int in range(query_breach_count()):
+		_spawn_crawler(query_breach_tile(index))
+	_wave_spawns_remaining -= 1
+	# One short of the interval, for the reason a bite cooldown is: this tick is the first
+	# of the gap, so a Crawler emerges every `wave.spawn_interval_seconds` exactly.
+	_ticks_until_next_spawn = maxi(
+		_seconds_to_ticks(_definitions.wave_spawn_interval_seconds) - 1, 0
+	)
+
+
+## Puts one Crawler on the Map at the centre of a tile.
+##
+## Appends, always, which is the whole of why Enemy iteration order is deterministic: the
+## arrays are in ascending serial order by construction and nothing reorders them.
+func _spawn_crawler(tile: Vector3i) -> void:
+	var centre: FixedVec2 = WorldGrid.tile_centre_metres(tile)
+	_enemy_serial.append(_next_enemy_serial)
+	_enemy_kind.append(ENEMY_KIND_CRAWLER)
+	_enemy_x.append(centre.x)
+	_enemy_z.append(centre.z)
+	_enemy_health.append(_definitions.crawler_health)
+	_enemy_spawn_tick.append(_tick)
+	_enemy_attack_cooldown.append(0)
+	_next_enemy_serial += 1
+
+
+## Moves every Enemy one tick along the shared flowfield, and lets the ones in contact
+## with the Nest bite it.
+##
+## Walked in index order, which is ascending spawn serial and therefore identical on every
+## client. Nothing here reads another Enemy's position, so index order carries no bias of
+## the kind the Belts have to avoid: Enemies do not collide with each other, by design —
+## a swarm is a swarm, and the alternative is an O(n²) separation pass that the Chaff tier
+## could not afford.
+func _enemies() -> void:
+	if query_run_is_over() or query_enemy_count() == 0:
+		return
+
+	var field: PackedInt64Array = _flowfield()
+	var step_metres: int = Fixed.div(
+		_definitions.crawler_speed, Fixed.from_int(TICKS_PER_SECOND)
+	)
+	var bite_ticks: int = maxi(
+		_seconds_to_ticks(_definitions.crawler_attack_interval_seconds), 1
+	)
+
+	for index: int in range(query_enemy_count()):
+		# An Enemy does not act on the tick it came through its Breach, for the reason a
+		# Machine does not run on the tick it was built: it arrived *during* that tick, and
+		# crediting it a whole tick of walking would put its first step a tick early.
+		if _enemy_spawn_tick[index] == _tick:
+			continue
+		if _enemy_is_in_contact(index):
+			if _enemy_attack_cooldown[index] > 0:
+				_enemy_attack_cooldown[index] -= 1
+				continue
+			_damage_the_nest(_definitions.crawler_damage)
+			# One short of the interval, because this tick is the first of the wait. A bite
+			# every `enemy.crawler_attack_interval_seconds` exactly, with nothing rounding.
+			_enemy_attack_cooldown[index] = bite_ticks - 1
+			continue
+		_advance_enemy(index, field, step_metres)
+
+
+## One Enemy, one tick, along the field.
+##
+## The field names the way out of the tile the Enemy is standing on; the Enemy walks that
+## way and, at the same time, slides towards the middle of its lane by no more than the
+## same distance. The lane correction is what keeps an Enemy that was nudged off centre
+## from cutting a corner through an obstruction, and it can never make the Enemy faster
+## than its tuned speed along the axis it is travelling on.
+##
+## An Enemy on a tile the field has no direction for — inside an obstruction a player
+## built on top of it, or on ground the Nest cannot be reached from — falls back to
+## walking straight at the Nest on whichever axis it is further out on. Without that a
+## Crawler could be parked for ever by dropping a Machine on it, which is a cheese rather
+## than a defence.
+func _advance_enemy(index: int, field: PackedInt64Array, step_metres: int) -> void:
+	var tile: Vector3i = WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+	var cell: int = _field_index(tile)
+	var direction: int = -1 if cell == -1 else field[cell]
+
+	var step: Vector3i = Vector3i.ZERO
+	if direction == -1:
+		step = _towards_the_nest(tile)
+	else:
+		step = WorldGrid.direction_step(direction)
+	if step == Vector3i.ZERO:
+		return
+
+	_enemy_x[index] += step.x * step_metres
+	_enemy_z[index] += step.z * step_metres
+
+	# Slide towards the middle of the lane, on the axis the Enemy is not travelling along.
+	var centre: FixedVec2 = WorldGrid.tile_centre_metres(
+		WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+	)
+	if step.x == 0:
+		_enemy_x[index] += Fixed.clamp_fixed(centre.x - _enemy_x[index], -step_metres, step_metres)
+	if step.z == 0:
+		_enemy_z[index] += Fixed.clamp_fixed(centre.z - _enemy_z[index], -step_metres, step_metres)
+
+
+## The one-tile step that closes the larger of the two gaps to the Nest's footprint. The
+## fallback for a tile the field cannot route, and nothing else uses it — a straight line
+## is not pathing, it is a refusal to be stuck.
+func _towards_the_nest(tile: Vector3i) -> Vector3i:
+	var size: Vector2i = query_nest_footprint()
+	var anchor: Vector3i = query_nest_tile()
+	var gap_x: int = _gap_to_span(tile.x, anchor.x, anchor.x + size.x - 1)
+	var gap_z: int = _gap_to_span(tile.z, anchor.z, anchor.z + size.y - 1)
+	if absi(gap_x) >= absi(gap_z) and gap_x != 0:
+		return Vector3i(signi(gap_x), 0, 0)
+	if gap_z != 0:
+		return Vector3i(0, 0, signi(gap_z))
+	return Vector3i.ZERO
+
+
+## How far a coordinate is from the nearer end of a span, signed towards it. 0 when it is
+## already inside the span.
+func _gap_to_span(value: int, low: int, high: int) -> int:
+	if value < low:
+		return low - value
+	if value > high:
+		return high - value
+	return 0
+
+
+## Whether an Enemy is close enough to the Nest to bite it: standing on a tile the Nest's
+## footprint covers, or on one sharing an edge with it.
+##
+## Tiles rather than a fixed-point radius, because the Nest is a footprint on a grid
+## rather than a point, and a tile answer cannot disagree with the flowfield about which
+## tiles count as at the Nest.
+func _enemy_is_in_contact(index: int) -> bool:
+	if not _is_enemy(index):
+		return false
+	var tile: Vector3i = WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+	if _nest_covers(tile):
+		return true
+	for direction: int in range(WorldGrid.DIRECTION_COUNT):
+		if _nest_covers(tile + WorldGrid.direction_step(direction)):
+			return true
+	return false
+
+
+## Whether the Nest's footprint covers a tile.
+func _nest_covers(tile: Vector3i) -> bool:
+	var size: Vector2i = query_nest_footprint()
+	return WorldGrid.footprint_covers(query_nest_tile(), size.x, size.y, tile)
+
+
+## Takes hit points off the Nest, and ends the Run if that was the last of them.
+##
+## The Run ends exactly once. `_run_over_tick` is set on the tick the Nest fell and never
+## cleared, so the Wave reached is frozen at the Wave that did it rather than drifting
+## afterwards, and a later ticket that lets a Nest be repaired cannot un-end a Run.
+func _damage_the_nest(points: int) -> void:
+	if points <= 0 or query_run_is_over():
+		return
+	_nest_health = maxi(_nest_health - points, 0)
+	if _nest_health == 0:
+		_run_over_tick = _tick
+
+
+## How many whole ticks a fixed-point number of seconds is. Floored, like every other
+## lossy conversion, and never negative.
+func _seconds_to_ticks(seconds: int) -> int:
+	return maxi(Fixed.floor_to_int(Fixed.mul(seconds, Fixed.from_int(TICKS_PER_SECOND))), 0)
+
+
+# ── The flowfield ───────────────────────────────────────────
+
+## The field every Enemy steers by, rebuilt only if the obstructions moved.
+##
+## The size check is not belt-and-braces: the field is derived, so `RunSave` leaves it out
+## of a save entirely, and a Run restored from one arrives holding nothing. Asking whether
+## it is the right size rather than trusting a flag is what makes that correct however the
+## Simulation was constructed.
+func _flowfield() -> PackedInt64Array:
+	if _flowfield_stale or _flow_direction.size() != FIELD_TILES:
+		_rebuild_flowfield()
+	return _flow_direction
+
+
+## Rebuilds the shared field: one breadth-first sweep outward from the Nest.
+##
+## O(map) once, amortised across every Enemy alive — which is the whole argument for a
+## field over per-agent A*, and it only gets stronger as the Chaff tier arrives. Breadth
+## first over four-connected tiles, so the distance it records is the exact number of
+## tiles a walk to the Nest takes and no heuristic is involved.
+##
+## The direction stored on a tile is the way *back* towards whichever tile reached it
+## first. Neighbours are pushed in `WorldGrid.DIRECTION_STEPS` index order out of a FIFO
+## queue, so which tile gets there first is fixed by the grid's own direction order rather
+## than by anything that happened during the Run: two clients build the identical field,
+## down to which way a tile equidistant from two routes points.
+##
+## Obstructions are skipped rather than entered, which is what makes a wall a wall: the
+## sweep flows around it, the tiles behind it get a longer distance or none at all, and
+## every Enemy on the Map inherits the new route on the tick the field is rebuilt.
+func _rebuild_flowfield() -> void:
+	_flow_direction.resize(FIELD_TILES)
+	_flow_direction.fill(-1)
+	_flow_distance.resize(FIELD_TILES)
+	_flow_distance.fill(-1)
+	_mark_obstructions()
+
+	# Seeded on the whole Nest footprint, because the destination is a 4x4 building and
+	# not a point: an Enemy heading for its near edge must not be routed to its anchor.
+	var queue: PackedInt64Array = PackedInt64Array()
+	var size: Vector2i = query_nest_footprint()
+	var anchor: Vector3i = query_nest_tile()
+	for offset_x: int in range(size.x):
+		for offset_z: int in range(size.y):
+			var seed_cell: int = _field_index(
+				Vector3i(anchor.x + offset_x, anchor.y, anchor.z + offset_z)
+			)
+			if seed_cell == -1:
+				continue
+			_flow_distance[seed_cell] = 0
+			queue.append(seed_cell)
+
+	var head: int = 0
+	while head < queue.size():
+		var cell: int = queue[head]
+		head += 1
+		@warning_ignore("integer_division")
+		var row: int = cell / FIELD_WIDTH_TILES
+		var reached_in: int = _flow_distance[cell] + 1
+		for direction: int in range(WorldGrid.DIRECTION_COUNT):
+			var offset: int = FIELD_STEPS[direction]
+			var neighbour: int = cell + offset
+			if neighbour < 0 or neighbour >= FIELD_TILES:
+				continue
+			# A step along x must not wrap off one edge of the Map onto the other.
+			@warning_ignore("integer_division")
+			if absi(offset) == 1 and neighbour / FIELD_WIDTH_TILES != row:
+				continue
+			if _flow_distance[neighbour] != -1 or _flow_blocked[neighbour] != 0:
+				continue
+			_flow_distance[neighbour] = reached_in
+			# The neighbour's way out is back the way this step came.
+			_flow_direction[neighbour] = WorldGrid.wrap_rotation(direction + 2)
+			queue.append(neighbour)
+
+	_flowfield_stale = false
+
+
+## Paints every tile an Enemy cannot walk through.
+##
+## Machines obstruct: a Factory is a maze, and that is what makes laying one out a
+## defensive decision rather than decoration. Belts do not — a Crawler crawls over a
+## conveyor — and neither do Nodes, which are ground. **Walls join this function in the
+## ticket that adds them**, as one more loop and nothing else; it is the single definition
+## of the obstruction set, which is why `query_tile_obstructs_enemies` reads what it paints
+## rather than asking the question a second way.
+##
+## The Nest itself is deliberately not painted: it is the destination, seeded at distance
+## zero, so a sweep that treated it as solid would have nowhere to start.
+func _mark_obstructions() -> void:
+	_flow_blocked.resize(FIELD_TILES)
+	_flow_blocked.fill(0)
+	for index: int in range(query_machine_count()):
+		var size: Vector2i = _machine_size(index)
+		if size == Vector2i.ZERO:
+			continue
+		var origin: Vector3i = query_machine_tile(index)
+		for offset_x: int in range(size.x):
+			for offset_z: int in range(size.y):
+				var cell: int = _field_index(
+					Vector3i(origin.x + offset_x, origin.y, origin.z + offset_z)
+				)
+				if cell != -1:
+					_flow_blocked[cell] = 1
+
+
+## Whether a tile stops an Enemy walking through it — what `_mark_obstructions` painted,
+## read back for one tile. A tile the field does not cover obstructs nothing: it is not
+## ground an Enemy could be walking on in the first place.
+func _tile_obstructs_enemies(tile: Vector3i) -> bool:
+	var cell: int = _field_index(tile)
+	if cell == -1:
+		return false
+	_flowfield()
+	return _flow_blocked[cell] != 0
+
+
+## Where a ground tile sits in the flat field arrays, or -1 for a tile the field does not
+## cover — outside the Map, or on a layer above the ground. Pure arithmetic, so no
+## Dictionary and no lookup table.
+func _field_index(tile: Vector3i) -> int:
+	if tile.y != WorldGrid.GROUND_LAYER:
+		return -1
+	if absi(tile.x) > WorldGrid.HALF_EXTENT_TILES or absi(tile.z) > WorldGrid.HALF_EXTENT_TILES:
+		return -1
+	return (
+		(tile.z + WorldGrid.HALF_EXTENT_TILES) * FIELD_WIDTH_TILES
+		+ tile.x
+		+ WorldGrid.HALF_EXTENT_TILES
+	)
+
+
+## The tile a field index belongs to. The exact inverse of `_field_index`.
+func _field_tile(cell: int) -> Vector3i:
+	@warning_ignore("integer_division")
+	var row: int = cell / FIELD_WIDTH_TILES
+	return Vector3i(
+		cell - row * FIELD_WIDTH_TILES - WorldGrid.HALF_EXTENT_TILES,
+		WorldGrid.GROUND_LAYER,
+		row - WorldGrid.HALF_EXTENT_TILES
+	)
 
 
 # ── Hashing ───────────────────────────────────────────────────────────────────
@@ -1688,6 +2197,36 @@ func hash() -> int:
 	hasher.feed_ints(_node_depth)
 	for resource_id: String in _node_resource:
 		hasher.feed_text(resource_id)
+	# The Nest and the Breaches. Where they are is geography and constant through a Run,
+	# hashed anyway for the reason the Nodes are; what is left of the Nest is the one
+	# number that can end the Run, so a divergence in it is a divergence about whether the
+	# game is still being played.
+	hasher.feed_int(_nest_tile_x)
+	hasher.feed_int(_nest_tile_y)
+	hasher.feed_int(_nest_tile_z)
+	hasher.feed_int(_nest_health)
+	hasher.feed_ints(_breach_tile_x)
+	hasher.feed_ints(_breach_tile_y)
+	hasher.feed_ints(_breach_tile_z)
+	# The Wave clock, and whether the Run is over. Every one of these decides what the next
+	# tick does, so none of them may sit outside the hash.
+	hasher.feed_int(_wave_number)
+	hasher.feed_int(_ticks_until_next_wave)
+	hasher.feed_int(_wave_spawns_remaining)
+	hasher.feed_int(_ticks_until_next_spawn)
+	hasher.feed_int(_run_over_tick)
+	# Every Enemy on the Map, in index order — which is ascending spawn serial, the one
+	# order every client agrees on. The flowfield they steer by is deliberately *not*
+	# hashed: it is derived, a pure function of the Map and the Machines standing on it,
+	# both of which are hashed above. `_belt_update_order` is left out for the same reason.
+	hasher.feed_ints(_enemy_serial)
+	hasher.feed_ints(_enemy_kind)
+	hasher.feed_ints(_enemy_x)
+	hasher.feed_ints(_enemy_z)
+	hasher.feed_ints(_enemy_health)
+	hasher.feed_ints(_enemy_spawn_tick)
+	hasher.feed_ints(_enemy_attack_cooldown)
+	hasher.feed_int(_next_enemy_serial)
 	# The Factory: what is built, where, how far through a craft it is, and what it
 	# is holding. All of it, because a divergence the harness cannot see is a
 	# divergence that reaches co-op.
@@ -2130,6 +2669,166 @@ func query_node_under_machine(index: int) -> int:
 	return _node_under_machine(index, definition)
 
 
+# ── The Nest, the Breaches, the Waves and the Enemies ─────────────────────────
+
+## The tile the Nest's footprint is anchored at.
+func query_nest_tile() -> Vector3i:
+	return Vector3i(_nest_tile_x, _nest_tile_y, _nest_tile_z)
+
+
+## The ground the Nest covers, as (tiles along x, tiles along z). Square, so there is no
+## rotation to ask about.
+func query_nest_footprint() -> Vector2i:
+	return Vector2i(MapLayout.NEST_FOOTPRINT_TILES, MapLayout.NEST_FOOTPRINT_TILES)
+
+
+## What is left of the Nest, in whole hit points. 0 means the Run is over.
+func query_nest_health() -> int:
+	return _nest_health
+
+
+## What the Nest has when it is whole, from `nest.health` in `content/tuning.toml`. What
+## a HUD draws a bar against.
+func query_nest_max_health() -> int:
+	return _definitions.nest_health
+
+
+## Whether a tile is part of the Nest. True for every tile of the footprint, not only its
+## anchor, like `query_machine_at_tile`.
+func query_nest_covers_tile(tile: Vector3i) -> bool:
+	return _nest_covers(tile)
+
+
+## How many Breaches the Map has.
+func query_breach_count() -> int:
+	return _breach_tile_x.size()
+
+
+## The tile a Breach sits on. The origin for an unknown index, rather than crashing.
+func query_breach_tile(index: int) -> Vector3i:
+	if index < 0 or index >= query_breach_count():
+		return Vector3i.ZERO
+	return Vector3i(_breach_tile_x[index], _breach_tile_y[index], _breach_tile_z[index])
+
+
+## Which Wave the Run has reached. 0 before the first one arrives, and frozen at whatever
+## it was once the Run is over — which is the number the Run-over report names.
+func query_wave_number() -> int:
+	return _wave_number
+
+
+## How many ticks until the next Wave arrives. What the Telegraph a later ticket adds will
+## count down.
+func query_ticks_until_next_wave() -> int:
+	return _ticks_until_next_wave
+
+
+## How many Crawlers the current Wave has still to send through each Breach. 0 between
+## Waves.
+func query_wave_spawns_remaining() -> int:
+	return _wave_spawns_remaining
+
+
+## Whether the Run has ended. True from the tick the Nest fell, and never false again.
+func query_run_is_over() -> bool:
+	return _run_over_tick != -1
+
+
+## The tick the Run ended on, or -1 while it is still running. Read beside
+## `query_wave_number` to report how far a Run got and how long it took.
+func query_run_over_tick() -> int:
+	return _run_over_tick
+
+
+## How many Enemies are on the Map.
+func query_enemy_count() -> int:
+	return _enemy_serial.size()
+
+
+## Where an Enemy is, in fixed-point metres on the horizontal plane. The origin for an
+## unknown index, like an unknown player.
+func query_enemy_position_metres(index: int) -> FixedVec2:
+	if not _is_enemy(index):
+		return FixedVec2.zero()
+	return FixedVec2.new(_enemy_x[index], _enemy_z[index])
+
+
+## The ground tile an Enemy is standing on.
+func query_enemy_tile(index: int) -> Vector3i:
+	if not _is_enemy(index):
+		return Vector3i.ZERO
+	return WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+
+
+## An Enemy's remaining hit points. 0 for an unknown index.
+func query_enemy_health(index: int) -> int:
+	if not _is_enemy(index):
+		return 0
+	return _enemy_health[index]
+
+
+## Which kind of Enemy this is — `ENEMY_KIND_CRAWLER` for everything Milestone 1 spawns.
+## -1 for an unknown index, never a plausible-looking default.
+func query_enemy_kind(index: int) -> int:
+	if not _is_enemy(index):
+		return -1
+	return _enemy_kind[index]
+
+
+## An Enemy's serial: a number issued once at spawn and never reused.
+##
+## The thing to hold on to rather than an index, because indices shift as Enemies die.
+## Strictly increasing with index, which is the invariant that makes Enemy iteration order
+## deterministic — a test asserts it directly rather than trusting the comment.
+func query_enemy_serial(index: int) -> int:
+	if not _is_enemy(index):
+		return -1
+	return _enemy_serial[index]
+
+
+## The tick an Enemy came through its Breach.
+func query_enemy_spawn_tick(index: int) -> int:
+	if not _is_enemy(index):
+		return -1
+	return _enemy_spawn_tick[index]
+
+
+## Whether an Enemy is in contact with the Nest, and therefore biting it rather than
+## walking. What the renderer reads to show a Crawler chewing.
+func query_enemy_is_attacking(index: int) -> bool:
+	return _enemy_is_in_contact(index)
+
+
+## The way out of a tile towards the Nest, as a `WorldGrid` direction, or -1 where there is
+## none: inside the Nest, inside an obstruction, off the Map, or on ground the Nest cannot
+## be walked to from.
+##
+## The shared field itself, exposed so a test can assert that an obstruction re-routed it
+## rather than inferring that from where Enemies happened to end up.
+func query_flow_direction(tile: Vector3i) -> int:
+	var cell: int = _field_index(tile)
+	if cell == -1:
+		return -1
+	var field: PackedInt64Array = _flowfield()
+	return field[cell]
+
+
+## How many tiles a walk from a tile to the Nest takes along the field, or -1 where the
+## Nest cannot be reached. 0 on the Nest's own tiles.
+func query_flow_distance_tiles(tile: Vector3i) -> int:
+	var cell: int = _field_index(tile)
+	if cell == -1:
+		return -1
+	_flowfield()
+	return _flow_distance[cell]
+
+
+## Whether a tile stops an Enemy walking through it. Machines do; Belts, Nodes and bare
+## ground do not. Walls join the answer with the ticket that adds them.
+func query_tile_obstructs_enemies(tile: Vector3i) -> bool:
+	return _tile_obstructs_enemies(tile)
+
+
 # ── The Power grid ────────────────────────────────────────────────────────────
 
 ## What the one Power grid supplied on the tick that last ran, in whole kilowatts: the
@@ -2355,6 +3054,10 @@ func _belt_covers(index: int, tile: Vector3i) -> bool:
 	if along < 0 or along >= _belt_tiles[index]:
 		return false
 	return entry + step * along == tile
+
+
+func _is_enemy(index: int) -> bool:
+	return index >= 0 and index < _enemy_serial.size()
 
 
 func _is_belt(index: int) -> bool:

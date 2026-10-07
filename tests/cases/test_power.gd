@@ -66,6 +66,19 @@ transition_seconds = 0.4
 pitch_degrees = 68
 [power]
 baseline_supply_kw = 1
+[nest]
+health = 6000
+[wave]
+first_wave_seconds = 90
+interval_seconds = 120
+crawlers_in_first_wave = 6
+crawlers_added_per_wave = 4
+spawn_interval_seconds = 0.5
+[enemy]
+crawler_health = 30
+crawler_speed_metres_per_second = 3
+crawler_damage = 10
+crawler_attack_interval_seconds = 1
 """
 
 
@@ -337,6 +350,19 @@ transition_seconds = 0.4
 pitch_degrees = 68
 [power]
 baseline_supply_kw = %d
+[nest]
+health = 6000
+[wave]
+first_wave_seconds = 90
+interval_seconds = 120
+crawlers_in_first_wave = 6
+crawlers_added_per_wave = 4
+spawn_interval_seconds = 0.5
+[enemy]
+crawler_health = 30
+crawler_speed_metres_per_second = 3
+crawler_damage = 10
+crawler_attack_interval_seconds = 1
 """ % baseline_kw
 	)
 
