@@ -8,6 +8,7 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 
 ```bash
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
+tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 godot --path .                   # run the game
@@ -51,6 +52,14 @@ assets/   committed CC0 and self-authored assets. intake/ holds the source FBX.
 tools/    developer scripts. tools/assets/ is the asset pipeline and its tests.
 docs/     design, ADRs, asset licensing.
 ```
+
+Machine meshes are scripted output, not modelled files: `content/` declares the
+footprints and ports, `tools/assets/machine_recipes.py` declares the geometry,
+and `generate_machines.sh` produces `assets/machines/*.glb`. Change a dimension
+by editing the declaration and re-running, never by editing a `.glb`. The grid
+facts have one authority each, and the asset suite fails if a mesh and the
+Simulation disagree — see [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md)
+section 6.
 
 The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in

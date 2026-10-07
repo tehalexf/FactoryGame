@@ -1,0 +1,49 @@
+# Machine bodies: which Machines have a procedurally generated mesh, and how big
+# that mesh is. Read by tools/assets/generate_machines.py and by nothing else.
+#
+# WHO OWNS A FOOTPRINT
+#
+# `machines.csv` is the authority on footprints. It is the file the Simulation
+# loads, and where it names a Machine, its footprint wins — the generator reads
+# it from there and this table's columns are then only a cross-check, which the
+# asset suite fails on any disagreement.
+#
+# Leave footprint_x and footprint_z BLANK to say "machines.csv owns this one",
+# which is the end state for every row: as gameplay tickets add a Machine with a
+# real Recipe to machines.csv, that ticket blanks this row's two footprint
+# columns and the duplicate is gone. Until then a filled-in pair lets the art
+# pipeline run ahead of the gameplay tables without inventing Recipes, at the
+# cost of a cross-check instead of a single source — and the cross-check is a
+# test, not a promise.
+#
+# A blank footprint for a Machine that machines.csv does not declare is an
+# error, so a row can never resolve to no footprint at all.
+#
+# miner_mk1 and smelter_mk1 are already there: machines.csv declares them, so
+# their footprints are blank here and there is exactly one authority. The rest
+# follow as their Recipes arrive.
+#
+# Not every body is a Machine. The Nest is the structure the Run is lost with
+# and a Belt is the logistics primitive; neither runs a Recipe, so neither
+# belongs in machines.csv, and their footprints are declared only here.
+#
+# body            Which recipe in tools/assets/machine_recipes.py builds it.
+# footprint_x/z   Footprint in TILES on the 2 m grid, or blank (see above).
+# body_height_mm  Height of the main housing above the ground, in millimetres.
+#                 Art direction, not a grid rule: M1 builds flat, so the
+#                 Simulation has no opinion about height. Masts, stacks and
+#                 launch tubes rise above this; it is the housing, not the
+#                 silhouette. Everything is sized against the 1800 mm player.
+#                 For a Belt it is the deck height, which must equal the Belt
+#                 port height in machine_ports.csv.
+machine_id,body,footprint_x,footprint_z,body_height_mm
+miner_mk1,miner,,,2100
+smelter_mk1,smelter,,,3300
+press_mk1,press,2,3,2400
+assembler_mk1,assembler,3,3,2600
+steam_boiler_mk1,boiler,3,2,2200
+generator_mk1,generator,2,2,2400
+ammo_press_mk1,ammo_press,2,3,2400
+silo_mk1,silo,4,4,3000
+nest,nest,4,4,2800
+belt_straight,belt,1,1,900
