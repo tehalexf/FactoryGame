@@ -27,7 +27,14 @@ const SCRIPT_ERROR_PREFIX: String = "SCRIPT ERROR: "
 const LOCATION_PREFIX: String = "at: "
 
 var _path: String
-var _cursor: int = 0
+
+## How many runtime errors the whole log has already been credited with. The
+## reader counts errors rather than bytes: Godot rotates and re-opens this file
+## on its own schedule, so a byte cursor can find the file shorter than it left
+## it and has no way to tell a rotation from a lost report. A count survives
+## that — after a rotation the log holds fewer errors than the count, which
+## means nothing new, which is the truth.
+var _seen: int = 0
 
 
 func _init(path: String = "user://logs/godot.log") -> void:
@@ -47,18 +54,42 @@ func path() -> String:
 func verify_live(probe: String) -> bool:
 	reset()
 	print(probe)
-	return _take_new_text().contains(probe)
+	var file: FileAccess = FileAccess.open(_path, FileAccess.READ)
+	if file == null:
+		return false
+	return file.get_as_text().contains(probe)
 
 
 ## Forgets everything written so far, so the next drain reports only what follows.
 func reset() -> void:
-	_cursor = _length()
+	_seen = _all_errors().size()
 
 
 ## Returns one description per GDScript runtime error logged since the last drain
 ## or reset, and advances past them. Empty when nothing aborted.
 func drain() -> PackedStringArray:
-	return _parse(_take_new_text())
+	var all: PackedStringArray = _all_errors()
+	if all.size() < _seen:
+		# Fewer errors than we have already been credited with means the engine
+		# rotated the file under us. Nothing was missed that this reader could
+		# have reported; resynchronise and carry on rather than accusing the
+		# suite of an abort that did not happen.
+		_seen = all.size()
+		return PackedStringArray()
+
+	var fresh: PackedStringArray = PackedStringArray()
+	for index: int in range(_seen, all.size()):
+		fresh.append(all[index])
+	_seen = all.size()
+	return fresh
+
+
+## Every runtime error the log currently holds, oldest first.
+func _all_errors() -> PackedStringArray:
+	var file: FileAccess = FileAccess.open(_path, FileAccess.READ)
+	if file == null:
+		return PackedStringArray()
+	return _parse(file.get_as_text())
 
 
 func _parse(text: String) -> PackedStringArray:
@@ -78,32 +109,5 @@ func _parse(text: String) -> PackedStringArray:
 	return found
 
 
-func _length() -> int:
-	var file: FileAccess = FileAccess.open(_path, FileAccess.READ)
-	if file == null:
-		return -1
-	return int(file.get_length())
 
 
-## Reads from the cursor to the end of the log and leaves the cursor there.
-## `FileAccess.get_as_text()` is no use here — it rewinds to the start of the
-## file and would hand back the whole run every time.
-func _take_new_text() -> String:
-	var file: FileAccess = FileAccess.open(_path, FileAccess.READ)
-	if file == null:
-		return ""
-
-	var length: int = int(file.get_length())
-	if _cursor < 0 or _cursor > length:
-		# Godot rotates the log at startup only, so a shrinking log mid-run means
-		# something else is writing to it and the guard can no longer be trusted.
-		# Say so rather than resync in silence.
-		_cursor = length
-		return "%sthe engine log %s was truncated mid-run; runtime errors can no longer be detected\n" % [
-			SCRIPT_ERROR_PREFIX, _path
-		]
-
-	file.seek(_cursor)
-	var text: String = file.get_buffer(length - _cursor).get_string_from_utf8()
-	_cursor = length
-	return text

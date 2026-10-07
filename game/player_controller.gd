@@ -33,6 +33,28 @@ const KEY_SPRINT: Key = KEY_SHIFT
 const KEY_DEMOLISH: Key = KEY_X
 const KEY_BELT: Key = KEY_B
 
+## Saving and resuming a Run. Gathered here with the rest so the rebinding ticket has
+## one file to change, but deliberately **not** read by `sample_devices` and never
+## turned into an Input Action — `Main._input` handles them where it handles Escape.
+##
+## Saving is a window-management concern for the same reason Escape is: it does nothing
+## to the Run. It is a pure read of the Simulation, it leaves the hash where it was, and
+## a replay has nothing to reproduce.
+##
+## **Loading is not an Input Action either, and for a stronger reason: it could not be
+## one.** An Input Action is an intent `step` applies *to* a Simulation. A load does not
+## change a Simulation — it replaces it, and a method on an object cannot swap the object
+## out from under its caller. Nor could it replay: a recording is one Simulation evolving
+## from a known starting state, and an action that substitutes a different starting state
+## mid-script has no meaning there. Resuming a Run is the same category of act as
+## constructing one, which ADR 0002 already puts outside `step`. Contrast
+## `RELOAD_DEFINITIONS`, which *is* an action: it mutates the Simulation that exists, at
+## a known tick, and must be ordered against the other intents of that tick. In co-op
+## the distinction is the same one — a load is the session starting again from a state
+## everybody adopts, not a tick-level intent the Host broadcasts.
+const KEY_SAVE: Key = KEY_F5
+const KEY_LOAD: Key = KEY_F9
+
 ## How many tiles of Belt one press lays.
 ##
 ## Belts have no row in `content/machines.csv` — a Belt is not a Machine, and GLOSSARY.md

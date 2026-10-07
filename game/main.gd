@@ -31,7 +31,8 @@
 class_name Main
 extends Node
 
-## Fixed for now. Becomes a new-Run / load-Run choice once saves exist.
+## The seed a *new* Run starts on. A resumed Run carries its own, out of the save.
+## Becomes a menu choice once there is a menu.
 const WORLD_SEED: int = 1
 const PLAYER_COUNT: int = 1
 
@@ -93,8 +94,18 @@ func _input(event: InputEvent) -> void:
 	# way to meet a game. Not a player action and not an Input Action: it is a window
 	# management concern and the Simulation has no opinion about it.
 	if event is InputEventKey and (event as InputEventKey).pressed:
-		if (event as InputEventKey).keycode == KEY_ESCAPE:
+		var key: InputEventKey = event
+		if key.keycode == KEY_ESCAPE:
 			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+		# Saving and resuming sit here with Escape rather than in `PlayerController`,
+		# because neither is an Input Action. Saving is a pure read of the Simulation and
+		# leaves its hash alone; loading *replaces* the Simulation, which is something no
+		# method on it could do and nothing a replay could reproduce. The reasoning is
+		# written out in full above `PlayerController.KEY_SAVE`.
+		elif key.keycode == PlayerController.KEY_SAVE and not key.echo:
+			save_run()
+		elif key.keycode == PlayerController.KEY_LOAD and not key.echo:
+			load_run()
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 		_capture_the_mouse()
 
@@ -154,6 +165,44 @@ func collect_input_actions() -> Array:
 		_controller.actions_for_tick(_simulation, LOCAL_PLAYER, _controller.sample_devices())
 	)
 	return actions
+
+
+# ── Saving and resuming a Run ─────────────────────────────────────────────────
+# Both are driven by a key in `_input` and both are callable directly, because headless
+# never reports a key press and this is behaviour worth asserting.
+
+## Writes the Run to `path`. Returns an empty string on success, or the reason it failed.
+##
+## A read of the Simulation and nothing more: no step, no Input Action, and the hash
+## where it was. A Run saved mid-flight carries on along exactly the ticks it would have
+## followed unsaved.
+func save_run(path: String = RunSave.DEFAULT_PATH) -> String:
+	var failure: String = RunSave.write_to_file(_simulation, path)
+	if failure != "":
+		push_error("could not save the Run: %s" % failure)
+	return failure
+
+
+## Resumes the Run in `path`, replacing the Simulation. Returns an empty string on
+## success, or the reasons it refused.
+##
+## A refusal leaves the Run that is running completely untouched — the same rule a failed
+## hot-reload obeys, and for the same reason: a bad file must never take a Factory down.
+## Nothing reconstructs the renderer, because there is nothing to reconstruct: `WorldView`
+## rebuilds every frame from `query_*` and holds no state of its own, so the Factory on
+## screen is whatever the Simulation says the moment after the swap.
+func load_run(path: String = RunSave.DEFAULT_PATH) -> String:
+	var loaded: RunSave.Load = RunSave.read_from_file(path)
+	if loaded.has_errors():
+		push_error("could not resume the Run: %s" % loaded.describe_errors())
+		return loaded.describe_errors()
+
+	_simulation = loaded.simulation
+	# A queued hot-reload belonged to the Run that has just been replaced. The resumed
+	# Run already loaded against the content on disk — that is what its digest check
+	# proved — so there is nothing left to apply.
+	_pending_definitions = null
+	return ""
 
 
 ## The controller, so a test can feed it a device sample by hand rather than pressing
