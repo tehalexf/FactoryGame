@@ -135,11 +135,12 @@ content/recipes.csv     one row per Recipe
 content/waves.csv       one row per tier of Wave composition
 content/deliveries.csv  one row per tier of Delivery progression
 content/gear.csv        one row per weapon frame and per component that fits one
+content/stratagems.csv  one row per Stratagem a Silo's Charges pay for
 content/tuning.toml     balance numbers that are not per-Machine or per-Recipe
 ```
 
-**Adding a Machine, a Recipe, an Enemy tier to the Waves, a Delivery tier, a weapon or
-a Gear component is a row. It is never a code change.** There is no
+**Adding a Machine, a Recipe, an Enemy tier to the Waves, a Delivery tier, a weapon, a
+Gear component or a Stratagem is a row. It is never a code change.** There is no
 registry, no enum and no Item table — the set of Items is exactly the set the
 Recipes mention, interned in sorted order. Every column is documented in the
 header comment of the file it belongs to; read that before adding a row.
@@ -163,26 +164,29 @@ the rows from an export. These files are read with `FileAccess`, not `load()`.
 - A tuning key nothing reads is a **warning**, because a file carrying a number
   that does nothing lies to whoever is tuning it.
 
-`Definitions.load_from_directory` reads all six files and `Definitions.parse` takes all
-six sources, in that order. A missing one is an error naming the path, never an empty
-table — and `game/definition_watcher.gd` digests all six, so editing any of them
+`Definitions.load_from_directory` reads all seven files and `Definitions.parse` takes all
+seven sources, in that order. A missing one is an error naming the path, never an empty
+table — and `game/definition_watcher.gd` digests all seven, so editing any of them
 hot-reloads.
 
 The **order they are read in** is not the order they are listed in, and it is load-bearing:
-Recipes first (the Items are interned from them), then Machines, then Gear, then the Waves,
-then the Deliveries — and **tuning last**, because `player.starting_weapon` has to name a
-weapon frame that no Delivery tier locks, which is a question only the Gear table and the
-Delivery table together can answer. Errors are still gathered in *file* order, so the report
-reads like a list of things to go and fix.
+Recipes first (the Items are interned from them), then Machines, then Gear, then the
+**Stratagems** — a `sentry` row has to name a Turret in `machines.csv` — then the Waves, then
+the Deliveries, whose three unlock columns each have to name a row in one of the tables above
+— and **tuning last**, because `player.starting_weapon` has to name a weapon frame that no
+Delivery tier locks, which is a question only the Gear table and the Delivery table together
+can answer. Errors are still gathered in *file* order, so the report reads like a list of
+things to go and fix.
 
 `sim/csv_table.gd` and `sim/toml_document.gd` are the only parsers. Both are
 hand-rolled: Godot ships no TOML parser, and vendoring one into a public repo is
 out (`docs/ASSETS.md`). The TOML subset is sections, `key = value`, comments,
 integers, decimals, quoted strings, `true`/`false` — and nothing else. Arrays,
 inline tables and dates are valid TOML and are refused by name and line number.
-If you need a sixth data file, reuse `CsvTable` rather than writing a parser —
-`content/waves.csv` and `content/deliveries.csv` are the worked examples of doing
-exactly that.
+If you need another data file, reuse `CsvTable` rather than writing a parser —
+`content/waves.csv`, `content/deliveries.csv`, `content/gear.csv` and
+`content/stratagems.csv` are four worked examples of doing exactly that, and none of them
+cost `CsvTable` a line.
 
 Rates are written in decimal because that is how a human reasons about them, and
 cross into fixed point exactly once, through `Fixed.from_decimal_string`, which
@@ -295,8 +299,8 @@ arrays, never as an object per Item.
   that file and the mesh markers that match it, declaring an exact edge and tile for each
   port. The Simulation accepts a Belt against *any* footprint edge tile, which is looser.
   It still cannot adopt the file: the table describes eleven Machine bodies and
-  `content/machines.csv` defines six — #10 added the Ammo Press and the MG Turret, leaving
-  `press_mk1`, `assembler_mk1`, `generator_mk1` and `silo_mk1` undeclared — so loading it
+  `content/machines.csv` defines ten — #10 added the Ammo Press and the MG Turret and #17
+  added the Silo, leaving `press_mk1`, `assembler_mk1` and `generator_mk1` undeclared — so loading it
   under its own documented rule ("machine_id must name a row in machines.csv") would still
   fail the whole content load. The Turret also has no row *there*, so the Belt that feeds
   it docks against any footprint edge for now. The ticket that brings the remaining
@@ -1091,14 +1095,14 @@ Run's whole meaning.
   locks nothing and a stock that pays for anything (`DELIVERIES` / `STOCKED` in
   `test_depth`, `test_turrets`, `test_world_view`, `test_heat`, `test_enemies`,
   `test_nest`). `test_delivery.gd` is the one place the shipped chain itself is asserted.
-- **Gear components are read now; Stratagems still are not.** #15 made `_unlocked_gear_ids` the
-  gate on what a player may fit to their weapon frame, and `Definitions.locks_gear` the one
-  authority on what starts locked — exactly the arrangement `unlocks_machines` already had, and
-  the reason there is no `locked` column in `gear.csv` either. Every id in `unlocks_gear` must
-  now name a row in that file. The Stratagem ids are still identifiers nothing reads, for the
-  reason the Gear ones were: the Silo, the Charges and the Painting are a later milestone, and
-  what a Run has unlocked is recorded, hashed and saved *now* because that is the half that
-  cannot be retrofitted onto a Run already in progress.
+- **All three unlock columns are read, and all three name a real row.** #15 made
+  `_unlocked_gear_ids` the gate on what a player may fit to their weapon frame and #17 made
+  `_unlocked_stratagem_ids` the gate on what a Silo may be loaded with, each through its own
+  `Definitions.locks_*` — exactly the arrangement `unlocks_machines` already had, and the
+  reason there is no `locked` column in `gear.csv` or `stratagems.csv` either. So the table has
+  no identifiers in it that nothing reads, and the half that could not have been retrofitted —
+  recording, hashing and saving what a Run has earned from the day it earns it — was already
+  there when the mechanics arrived to consult it.
 
 ## Gear, first-person combat, and what dying costs
 
@@ -1577,6 +1581,169 @@ spending and the thing you defend.
   Belt routing rather than a statement about materials — and it carries no Breach, so no Wave
   interrupts the accounting. What is being measured is whether the Factory can pay.
 
+
+## The Silo, the Charges, the dial and the Painting
+
+The design's most distinctive mechanic, borrowed from StarCraft's nuclear silo and sharpened,
+and the clearest statement of the keystone loop there is: a Charge is assembled out of
+Belt-fed plate and rounds, so **more production means more artillery, full stop** (DESIGN.md).
+
+- **A Silo is a Machine whose output is a Charge rather than an Item**, which is the Turret's
+  trick a third time. `role=silo` in `content/machines.csv`, a Recipe with inputs and no
+  outputs, and `_craft` advances it exactly as it advances a Smelter. The only thing the
+  Simulation adds is what happens instead of depositing an output: `_assemble_a_charge`.
+  **`produces_no_items()` is the predicate it joined** rather than a rival — a generator makes
+  Power, a Turret makes damage or repair, a Silo makes a Charge, and the loader's
+  outputs-must-be-empty rule needed no new clause. There is no Silo table: the stockpile, the
+  loaded shell and the loaded count are three more per-Machine arrays indexed exactly like
+  `_machine_progress_ticks`, because giving a Silo its own index space is how a Silo stops
+  being a Machine.
+- **A full Silo is idle and off the Power grid**, by one more clause in `_machine_would_work` —
+  the single predicate behind what the grid bills, what advances and what a query calls
+  starved. Deliberately *not* starvation: it has everything its Recipe asks for and nowhere to
+  put the result, which is exactly the standing a Turret with nothing in reach has. Without it
+  a Silo at capacity would go on eating plate and rounds and browning out the Factory to
+  produce nothing.
+- **`charge_capacity` is a column, so a bigger Silo is a row** — the argument `range_tiles` and
+  `damage` already made. How much artillery a Factory can bank is the most consequential number
+  about a Silo and it belongs next to the Power it draws and the hit points a Breaker has to
+  chew through to take the stockpile with it.
+- **A destroyed Silo loses its stockpile, and so does a demolished one.** `_remove_machine`
+  drops the three entries and nothing anywhere hands a Charge back — #11's asymmetry applied to
+  the most expensive thing a Factory can be holding, plus the one extra claim this mechanic
+  makes: a load is irreversible, so taking the Silo apart must not be a way to undo one. A
+  Charge is not an Item, so there is nothing for `_refund_machine` to return even if it wanted
+  to. That is what makes a breakthrough threaten the players' heaviest weapon and not just
+  their smelters.
+
+### Loading by hand, and why it cannot be taken back
+
+DESIGN.md names Silo loading **first** in its list of diegetic controls, and the reason is in
+the same paragraph: friction is satisfying when it is problem-solving under pressure and tedious
+when it is transcription. An irreversible commitment made *before* the fight is the first kind.
+
+- **The dial is per-player Simulation state and commits nothing.** `_player_dial_stratagem` and
+  `_player_dial_charges` are where a player has wound the shell selector and the charge counter
+  before they walk over — the arrangement `_player_selected_machine` has, for both of its
+  reasons: the controller may hold nothing authoritative, and in co-op what somebody else is
+  winding up is worth drawing. Per player rather than per Silo, because a shared dial would let
+  one player change another's commitment under their hands.
+- **`LOAD_SILO` is the irreversible one, and the irreversibility is the absence of code.**
+  There is no unload intent and there will not be one; `_load_silo_refusal` returns
+  `SILO_ALREADY_LOADED` rather than replacing what is in the tube; and the only thing that ever
+  clears a load is a Painting beginning. Fire what you loaded or lose it with the Silo.
+- **A Charge is a multiplier, not a second Stratagem.** The count on the dial scales whichever
+  magnitude the row quotes — `damage_per_charge` for a Barrage, `goods_per_charge` for a Supply
+  Drop or a Sentry's magazine — so four Charges mean the same thing whatever is in the tube, and
+  there is one rule rather than three. `silo.max_charges_per_load` is the dial's upper stop and
+  is deliberately a *different* number from a Silo's `charge_capacity`: one says how much
+  artillery a Factory may bank, the other how big one strike may be.
+- **The refusal is a projection and the action consults it**, which matters more here than
+  anywhere else in the project because this is the one act a player cannot take back. The HUD
+  reads `query_load_silo_refusal` every frame about the Silo the key would commit to, so "already
+  loaded — fire it or lose it" is on screen *before* the key goes down. That is what makes the
+  irreversibility fair rather than cruel.
+- **Which Silo the key means is presentation, and `game/` owns it.**
+  `PlayerController.silo_tile_for_loading` is the Silo under the tool aim, or failing that the
+  first Silo in reach, and **the HUD calls the same function** — a reason on screen about a
+  different Silo from the one the key means is worse than no reason at all. Reach itself is the
+  Simulation's answer, asked through the refusal, so there is no second opinion about how far an
+  arm goes. The same split `BuildGun.refusal_text` and `KEY_WITHDRAW`'s choice of amount make.
+
+### Painting, and what an interrupted one costs
+
+The best co-op moment the design has, because one player is committed and helpless while the
+others cover them (GLOSSARY.md).
+
+- **The Charges leave the Silo on the tick the channel begins.** That is the whole of "an
+  interrupted Painting consumes the Charge and produces nothing" — it is true by construction
+  rather than by a rule somebody has to remember, because `_begin_painting` takes them out and
+  there is no path by which they go back. Every interruption is then simply the channel not
+  finishing.
+- **Three things interrupt it: letting go, aiming somewhere else, and being hit.** `PAINT` is
+  held and sent every tick, like `REPAIR` and `FIRE`, so releasing it *is* the interruption; and
+  `_damage_player` calls `_interrupt_painting` on **any** damage rather than on going down,
+  because a Stratagem a player could soak two Breaker bites through would not be exposed in any
+  sense a player could feel. That one clause is what makes covering somebody a job.
+- **A player must stand at the target, literally.** The painted tile is the tile under their
+  feet — `_paint_refusal` returns `NOT_AT_THE_TARGET` otherwise — rather than a tile within some
+  reach, because the whole price of a Stratagem is walking into the place you want it to land.
+  It is also why `_walk` roots them once the channel starts: "at the target" has to mean
+  something. **No aim crosses the float boundary**, for the reason `FIRE` carries none: where a
+  player stands is authoritative fixed-point state already, so the controller derives the tile
+  from a query.
+- **Being mid-Painting is a refusal, not a mode.** `_act_refusal` is the one function every
+  refusal a player's intent goes through now opens with, and it answers `PLAYER_IS_DOWN` or
+  `PLAYER_IS_PAINTING` — two states in which a player does nothing, both *facts about them* in
+  the same way their wallet is. Nothing anywhere asks whether acting is currently permitted, and
+  building is still never gated. It is deliberately **not** folded into `_player_can_act`, which
+  `_damage_player` and `query_player_is_alive` consult: a player mid-Painting is emphatically
+  still alive and still takes the bite that interrupts them.
+- **What interruption cost is state, not an inference.**
+  `_player_paint_interrupted_tick` and `_player_charges_wasted` are hashed and saved, for two
+  reasons. A player has to be able to read what a lost Painting cost them — a Charge that
+  vanished with no accounting is exactly the bad luck Heat is built to avoid. And it is what
+  lets a replay fixture *prove* an interruption happened rather than infer it from an effect
+  that failed to arrive, which is a weaker claim about a stronger-sounding thing.
+
+### The three Stratagems, and what each one reuses
+
+`content/stratagems.csv` is the whole of it and **nothing in `sim/` names a Stratagem**. What
+the Simulation knows is the three `effect` values; a second Barrage with a wider radius and a
+longer channel is a row.
+
+- **Artillery Barrage** takes `damage_per_charge × charges` off every Enemy within
+  `radius_tiles` of the painted tile. Reach is compared **squared**, like a Turret's and a
+  wrench's. Walked in **descending** Enemy index order — the one place in the project that does
+  not walk Enemies forwards — because nothing here is a *choice* between Enemies, so there is no
+  selection bias to avoid, and a kill removes its entry immediately exactly as `_fire` does.
+  Enemies only: there is no friendly fire anywhere in this Simulation and this would be the one
+  place it existed.
+- **Supply Drop** hands `goods_per_charge × charges` to the painting player through
+  `_give_to_player` — **their own pockets**, which are the same pockets the Build Gun spends
+  from and a weapon fires out of. That is what makes it the answer to having run out; a drop
+  that banked at the Nest would be a Delivery run in reverse and would ask the player to walk
+  home, which is what a Stratagem is for not doing.
+- **Sentry Drop** calls `_place_machine` with the Turret its row names, an expiry tick, and its
+  input buffer pre-filled. **It is an ordinary Machine in every respect a player can observe** —
+  it aims through `_aim`, spends rounds through `_craft`, obstructs Enemies, can be chewed down,
+  and does not work on the tick it arrived. The two things that make it a Sentry are that expiry
+  tick and that pre-filled buffer, and neither is a mechanism: it is how a Machine that arrived
+  from outside the Map and needs no Belt is expressed in arrays that already existed.
+  `_add_to_input` is uncapped — the cap lives in `_input_has_room` and belongs to a *Belt*
+  hand-off — so a Sentry legitimately arrives holding more than a Belt could ever have put
+  there, which is the literal content of "needs no Belt", and
+  `query_turret_ammunition_capacity` reports `max(capacity, held)` so the gauge tells the truth
+  about it.
+- **`_place_machine` was extracted for this**, and it is the one place a Machine joins the
+  Factory. A Sentry Drop places a Turret with no Build Gun, no build cost and nobody standing
+  there, and a second copy of those appends would have been a second place to forget an array.
+- **`_expire` walks Machines in descending index order** so removing one does not skip the next,
+  and runs before anything reads a Machine index for the tick — the grid, the aim, the craft — so
+  a Sentry whose time ran out draws no Power and fires nothing on the tick it goes. Its rounds
+  go with it, for a different reason from a destruction: they were never the Factory's, so
+  letting a Sentry expire next to a Belt is not a way to bank a Supply Drop.
+- **Which Silo a Painting draws from is geography.** `_loaded_silo` takes the loaded Silo whose
+  tile comes first in canonical tile order, through `MapLayout.tile_precedes` — the single
+  definition of tile order this project has. Index order would have made "which of my two Silos
+  fired" a fact about which one a player happened to build first.
+
+### Where the balance stands, and nobody has played it
+
+Shipped numbers, not a measured Run. A Barrage Charge is 150 points against a Crawler's 30 and a
+Breaker's 240, over a six-tile radius, behind a five-second channel — so one Charge clears Chaff
+and two kill a Breaker, if a player can stand still for five seconds in the middle of it. The
+Silo's Recipe is **a plate and twenty rounds every twenty seconds**, deliberately priced in the
+very Item a Turret and a player both spend: artillery competes with the magazine rather than
+being free once the line is up. `silo.max_charges_per_load` is 4 against a capacity of 8, so a
+full Silo is two strikes rather than one big button.
+
+**The number most likely to be wrong is that twenty rounds a Charge**, because it is the one
+that decides whether a Run that builds a Silo thereby stops being able to feed its Turrets — and
+the joint pass #10, #11, #12 and #15 are all waiting for now has a fourth claimant on the same
+Ammo Press. The second is `paint_seconds`: five seconds is a guess at how long a player can be
+asked to be helpless, and it is the whole feel of the mechanic.
+
 ## The float-to-fixed boundary
 
 ADR 0002 says nothing converts a float back into a Simulation quantity. A first-person
@@ -1728,6 +1895,14 @@ the scenario needs content the shipped files do not have.
 
 `verify` takes an optional replacement Simulation, which is how a save/load round
 trip gets proved exact and how the harness itself is proved to have teeth.
+
+**A fixture is worth nothing without an honesty check beside it.** A replay of a Run in which
+the thing never happened reads as a passing determinism test, and the failure mode is silent.
+`test_gear.gd` established the shape and `test_silo.gd` leans on it hardest: its pair of
+fixtures is a Charge assembled and **fired** and a Painting **interrupted**, and each has a
+test that drives the same script and asserts the event rather than its absence — because an
+interruption is exactly the kind of thing it is easy to conclude from an effect that failed to
+arrive.
 
 `tests/cases/test_recorded_session.gd` is the strongest fixture in the suite and the shape
 later ones should copy: it drives the **real input producer** with a sequence of device

@@ -40,10 +40,23 @@ enum Role {
 	## A Repair Pylon is that same trick a third time: its output is repair, which is not
 	## an Item either.
 	TURRET = 3,
+	## Assembles **Charges** out of Belt-fed inputs and stockpiles them, up to
+	## `charge_capacity`. Its Recipe has at least one input and no outputs, because a
+	## Charge is not an Item: it is one stockpiled use of a Stratagem (GLOSSARY.md), loaded
+	## into the Silo by hand and called in by Painting.
+	##
+	## The third Machine whose product is not an Item, and the third time the same trick is
+	## played: a generator makes Power, a Turret makes damage or repair, a Silo makes a
+	## Charge. All three answer `produces_no_items()`, which is why the loader's
+	## outputs-must-be-empty rule did not need a clause of its own. What the Simulation adds
+	## beyond a Smelter's tick is one line — what happens instead of depositing an output —
+	## and a full Silo is idle and off the Power grid for the reason a Turret with nothing in
+	## reach is.
+	SILO = 4,
 }
 
 ## Spelling of each Role in the file, indexed by the enum value.
-const ROLE_NAMES: Array = ["miner", "crafter", "generator", "turret"]
+const ROLE_NAMES: Array = ["miner", "crafter", "generator", "turret", "silo"]
 
 ## Largest footprint DESIGN.md allows, in tiles on the 2 m grid.
 const MAX_FOOTPRINT_TILES: int = 4
@@ -95,6 +108,14 @@ var damage: int = 0
 ## repair, never both and never neither, which is what `heals()` answers and what
 ## `Definitions` refuses a row for.
 var repair: int = 0
+
+## How many Charges a Silo stockpiles. 0 for anything that is not a Silo.
+##
+## A column rather than a tuning key, for the reason `range_tiles` and `damage` are columns:
+## it is what makes a bigger Silo a **row**. How much artillery a Factory can bank is the
+## single most consequential number about a Silo, and it belongs next to the Power it draws
+## and the hit points a Breaker has to chew through to take the stockpile with it.
+var charge_capacity: int = 0
 
 ## What this Machine costs to build, as parallel arrays of Item id and count, sorted
 ## by id so the order is a property of the content rather than of how the row was
@@ -161,6 +182,10 @@ func is_turret() -> bool:
 	return role == Role.TURRET
 
 
+func is_silo() -> bool:
+	return role == Role.SILO
+
+
 ## Whether this Machine's shot mends rather than hurts — a Repair Pylon.
 ##
 ## A predicate on the row rather than a fifth Role, because GLOSSARY.md calls a Repair
@@ -174,10 +199,12 @@ func heals() -> bool:
 
 ## Whether this Machine's Recipe is forbidden an output, because what the Machine
 ## produces is not an Item. True of a generator, whose product is Power, and of a Turret,
-## whose product is damage. One predicate rather than two tests at every call site, so
-## the next role whose output is not an Item joins the rule rather than forgetting it.
+## whose product is damage, and of a Silo, whose product is a Charge. One predicate rather
+## than two tests at every call site, so the next role whose output is not an Item joins the
+## rule rather than forgetting it — which the Silo did, in #17, by adding itself here and
+## nowhere else.
 func produces_no_items() -> bool:
-	return is_generator() or is_turret()
+	return is_generator() or is_turret() or is_silo()
 
 
 ## Feeds this definition into a hash, in a fixed order. `recipe_id` goes in rather
@@ -196,6 +223,7 @@ func feed_into(hasher: StateHasher) -> void:
 	hasher.feed_int(range_tiles)
 	hasher.feed_int(damage)
 	hasher.feed_int(repair)
+	hasher.feed_int(charge_capacity)
 	hasher.feed_text(recipe_id)
 	hasher.feed_int(build_cost_items.size())
 	for index: int in range(build_cost_items.size()):

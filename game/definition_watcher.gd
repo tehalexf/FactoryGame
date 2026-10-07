@@ -108,6 +108,7 @@ func _read_content_digest() -> int:
 		Definitions.WAVES_FILE,
 		Definitions.DELIVERIES_FILE,
 		Definitions.GEAR_FILE,
+		Definitions.STRATAGEMS_FILE,
 	]:
 		var path: String = "%s/%s" % [directory, file_name]
 		var file: FileAccess = FileAccess.open(path, FileAccess.READ)

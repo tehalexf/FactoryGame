@@ -44,6 +44,7 @@ const TUNING_FILE: String = "tuning.toml"
 const WAVES_FILE: String = "waves.csv"
 const DELIVERIES_FILE: String = "deliveries.csv"
 const GEAR_FILE: String = "gear.csv"
+const STRATAGEMS_FILE: String = "stratagems.csv"
 
 const MACHINE_COLUMNS: Array = [
 	"id",
@@ -58,6 +59,7 @@ const MACHINE_COLUMNS: Array = [
 	"range_tiles",
 	"damage",
 	"repair",
+	"charge_capacity",
 	"recipe_id",
 	"build_cost",
 ]
@@ -102,6 +104,18 @@ const GEAR_COLUMNS: Array = [
 	"damage_taken_percent",
 ]
 
+const STRATAGEM_COLUMNS: Array = [
+	"id",
+	"display_name",
+	"effect",
+	"paint_seconds",
+	"radius_tiles",
+	"damage_per_charge",
+	"goods_per_charge",
+	"sentry_machine",
+	"sentry_seconds",
+]
+
 ## Tuning keys the Simulation reads. Each must be present.
 const TUNING_PLAYER_SPRINT_MULTIPLIER: String = "player.sprint_speed_multiplier"
 const TUNING_PLAYER_WALK_SPEED: String = "player.walk_speed_metres_per_second"
@@ -137,6 +151,8 @@ const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
 const TUNING_NEST_HEALTH: String = "nest.health"
 const TUNING_NEST_DELIVERY_REACH: String = "nest.delivery_reach_metres"
 const TUNING_NEST_STORE_CAPACITY: String = "nest.store_capacity_per_item"
+const TUNING_SILO_LOAD_REACH: String = "silo.load_reach_metres"
+const TUNING_SILO_MAX_CHARGES_PER_LOAD: String = "silo.max_charges_per_load"
 const TUNING_WAVE_TELEGRAPH_SECONDS: String = "wave.telegraph_seconds"
 const TUNING_WAVE_SPAWN_INTERVAL_SECONDS: String = "wave.spawn_interval_seconds"
 const TUNING_WAVE_CALL_EARLY_BOUNTY: String = "wave.call_early_bounty_per_item"
@@ -295,6 +311,19 @@ var nest_delivery_reach: int = 0
 ## would be a cross-Item interaction nobody tuned and whose outcome depended on arrival
 ## order.
 var nest_store_capacity_per_item: int = 0
+
+## How close a player stands to a Silo to work its dial, in fixed-point metres from the edge
+## of its footprint. Loading is a **diegetic** act performed at the Machine (DESIGN.md), so
+## there is a place a player has to be standing, exactly as there is for a Delivery.
+var silo_load_reach_metres: int = 0
+
+## The most Charges one load may commit — the dial's upper stop.
+##
+## Deliberately a separate number from a Silo's `charge_capacity`: that column says how much
+## artillery a Factory may *bank*, this key says how big one strike may be. A Silo holding
+## eight Charges that may only put four in the tube at once is a legitimate thing to want to
+## tune, and collapsing the two would make it unexpressible.
+var silo_max_charges_per_load: int = 0
 
 ## How long the Telegraph runs in front of a Wave, in fixed-point seconds. A floor on
 ## the warning rather than a target for it: no Wave arrives before it has been
@@ -479,6 +508,8 @@ var _waves: Array = []
 var _deliveries: Array = []
 var _gear: Array = []
 var _gear_ids: PackedStringArray = PackedStringArray()
+var _stratagems: Array = []
+var _stratagem_ids: PackedStringArray = PackedStringArray()
 
 ## Every slot a component can be fitted into, sorted. **Interned from the Gear table's
 ## `kind` column rather than declared anywhere**, exactly as the Items are interned from
@@ -499,7 +530,13 @@ var _weapon_gear_indices: PackedInt64Array = PackedInt64Array()
 static func load_from_directory(dir_path: String) -> Definitions:
 	var missing: PackedStringArray = PackedStringArray()
 	for file_name: String in [
-		MACHINES_FILE, RECIPES_FILE, TUNING_FILE, WAVES_FILE, DELIVERIES_FILE, GEAR_FILE
+		MACHINES_FILE,
+		RECIPES_FILE,
+		TUNING_FILE,
+		WAVES_FILE,
+		DELIVERIES_FILE,
+		GEAR_FILE,
+		STRATAGEMS_FILE,
 	]:
 		var path: String = "%s/%s" % [dir_path, file_name]
 		if not FileAccess.file_exists(path):
@@ -517,6 +554,7 @@ static func load_from_directory(dir_path: String) -> Definitions:
 	var waves: String = _read_file("%s/%s" % [dir_path, WAVES_FILE])
 	var deliveries: String = _read_file("%s/%s" % [dir_path, DELIVERIES_FILE])
 	var gear: String = _read_file("%s/%s" % [dir_path, GEAR_FILE])
+	var stratagems: String = _read_file("%s/%s" % [dir_path, STRATAGEMS_FILE])
 
 	var definitions: Definitions = parse(
 		machines,
@@ -525,12 +563,14 @@ static func load_from_directory(dir_path: String) -> Definitions:
 		waves,
 		deliveries,
 		gear,
+		stratagems,
 		"%s/%s" % [dir_path, MACHINES_FILE],
 		"%s/%s" % [dir_path, RECIPES_FILE],
 		"%s/%s" % [dir_path, TUNING_FILE],
 		"%s/%s" % [dir_path, WAVES_FILE],
 		"%s/%s" % [dir_path, DELIVERIES_FILE],
-		"%s/%s" % [dir_path, GEAR_FILE]
+		"%s/%s" % [dir_path, GEAR_FILE],
+		"%s/%s" % [dir_path, STRATAGEMS_FILE]
 	)
 	return definitions
 
@@ -545,12 +585,14 @@ static func parse(
 	waves_source: String,
 	deliveries_source: String,
 	gear_source: String,
+	stratagems_source: String,
 	machines_path: String = MACHINES_FILE,
 	recipes_path: String = RECIPES_FILE,
 	tuning_path: String = TUNING_FILE,
 	waves_path: String = WAVES_FILE,
 	deliveries_path: String = DELIVERIES_FILE,
-	gear_path: String = GEAR_FILE
+	gear_path: String = GEAR_FILE,
+	stratagems_path: String = STRATAGEMS_FILE
 ) -> Definitions:
 	var definitions: Definitions = Definitions.new()
 
@@ -562,6 +604,9 @@ static func parse(
 		deliveries_source, deliveries_path, PackedStringArray(DELIVERY_COLUMNS)
 	)
 	var gear: CsvTable = CsvTable.parse(gear_source, gear_path, PackedStringArray(GEAR_COLUMNS))
+	var stratagems: CsvTable = CsvTable.parse(
+		stratagems_source, stratagems_path, PackedStringArray(STRATAGEM_COLUMNS)
+	)
 
 	definitions._read_recipes(recipes)
 	definitions._intern_items()
@@ -574,6 +619,11 @@ static func parse(
 	# can answer. Nothing in the three tables reads a tuning value, so the order costs
 	# nothing.
 	definitions._read_gear(gear)
+	# Stratagems after the Machines and before the Delivery table, for the two reasons the
+	# Gear table sits where it does: a `sentry` row has to name a Turret in `machines.csv`,
+	# and `unlocks_stratagems` has to name a row here. One authority each, checked rather
+	# than assumed.
+	definitions._read_stratagems(stratagems)
 	definitions._read_waves(waves)
 	definitions._read_deliveries(deliveries)
 	definitions._read_tuning(tuning)
@@ -587,6 +637,7 @@ static func parse(
 	definitions.errors.append_array(waves.errors)
 	definitions.errors.append_array(deliveries.errors)
 	definitions.errors.append_array(gear.errors)
+	definitions.errors.append_array(stratagems.errors)
 
 	if definitions.has_errors():
 		definitions._discard_content()
@@ -828,6 +879,51 @@ func weapon_gear_index(nth: int) -> int:
 	return _weapon_gear_indices[nth]
 
 
+# -- Stratagems ----------------------------------------------------------------
+# The interventions a Silo's Charges pay for, sorted by id. Index order is what a
+# `SET_SILO_DIAL` or `LOAD_SILO` intent travels in, so - exactly as with the Machines and
+# the Gear - it is a property of the table rather than of the order somebody typed the
+# rows in, and the Simulation stores the resolved *id* so a hot-reload cannot change what
+# a Silo is loaded with under a player's hands.
+
+func stratagem_count() -> int:
+	return _stratagems.size()
+
+
+func stratagem_ids() -> PackedStringArray:
+	return _stratagem_ids.duplicate()
+
+
+func has_stratagem(id: String) -> bool:
+	return _stratagem_ids.find(id) != -1
+
+
+func stratagem_index(id: String) -> int:
+	return _stratagem_ids.find(id)
+
+
+func stratagem_at(index: int) -> StratagemDefinition:
+	if index < 0 or index >= _stratagems.size():
+		return null
+	return _stratagems[index]
+
+
+## A Stratagem by id, or null. Null rather than a blank definition, so a mistyped id cannot
+## be mistaken for a Barrage that does no damage.
+func stratagem(id: String) -> StratagemDefinition:
+	return stratagem_at(stratagem_index(id))
+
+
+## Whether some Delivery tier is what unlocks a Stratagem - the same question as whether a
+## Run starts without it. The Stratagems a Run opens with are exactly the ones no tier
+## names, which is why there is no `locked` column in `stratagems.csv` either.
+func locks_stratagem(stratagem_id: String) -> bool:
+	for definition: DeliveryDefinition in _deliveries:
+		if definition.unlocks_stratagems.find(stratagem_id) != -1:
+			return true
+	return false
+
+
 # ── Hashing ───────────────────────────────────────────────────────────────────
 
 ## Reduces the whole definition set to one integer.
@@ -873,6 +969,10 @@ func digest() -> int:
 	for slot_id: String in _gear_slot_ids:
 		hasher.feed_text(slot_id)
 
+	hasher.feed_int(_stratagems.size())
+	for definition: StratagemDefinition in _stratagems:
+		definition.feed_into(hasher)
+
 	hasher.feed_int(player_walk_speed)
 	hasher.feed_int(player_sprint_multiplier)
 	hasher.feed_int(player_walk_acceleration)
@@ -892,6 +992,8 @@ func digest() -> int:
 	hasher.feed_int(nest_health)
 	hasher.feed_int(nest_delivery_reach)
 	hasher.feed_int(nest_store_capacity_per_item)
+	hasher.feed_int(silo_load_reach_metres)
+	hasher.feed_int(silo_max_charges_per_load)
 	hasher.feed_int(wave_telegraph_seconds)
 	hasher.feed_int(wave_spawn_interval_seconds)
 	hasher.feed_int(wave_call_early_bounty)
@@ -1091,6 +1193,7 @@ func _read_machines(table: CsvTable) -> void:
 		definition.range_tiles = table.require_int(row, "range_tiles")
 		definition.damage = table.require_int(row, "damage")
 		definition.repair = table.require_int(row, "repair")
+		definition.charge_capacity = table.require_int(row, "charge_capacity")
 		definition.recipe_id = table.require_id(row, "recipe_id")
 		_read_build_cost(table, row, definition)
 
@@ -1187,6 +1290,24 @@ func _check_machine_values(
 		if definition.repair != 0:
 			table.report_row(row, "repair: only a Repair Pylon repairs, so this must be 0")
 
+	# A Silo's stockpile depth is a per-Machine number for the reason a Turret's reach is:
+	# it is what makes a bigger Silo a row. Everything that is not a Silo must leave it at
+	# zero, so a stray number cannot sit in the table looking meaningful.
+	if role == MachineDefinition.Role.SILO:
+		if definition.charge_capacity < 1:
+			table.report_row(
+				row,
+				(
+					"charge_capacity: a Silo that stockpiles nothing could never be loaded —"
+					+ " Charges are built in advance, never instantaneous"
+				)
+			)
+	elif role != -1:
+		if definition.charge_capacity != 0:
+			table.report_row(
+				row, "charge_capacity: only a Silo stockpiles Charges, so this must be 0"
+			)
+
 	# A Machine either feeds the one Power grid or draws from it. Allowing both would
 	# make a generator's own throttle depend on its own output, and the grid stops being
 	# a sum of two columns.
@@ -1272,7 +1393,7 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 						definition.id,
 						MachineDefinition.role_name(definition.role),
 						used.id,
-						"Power" if definition.is_generator() else "damage",
+						_what_it_produces(definition),
 					]
 				)
 		elif used.output_count() == 0:
@@ -1285,6 +1406,174 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 					used.id,
 				]
 			)
+
+
+# -- Reading the Stratagem table -----------------------------------------------
+
+## Reads `content/stratagems.csv`: the interventions a Silo's Charges pay for.
+##
+## An empty table is an **error**, not a quiet Run with no artillery. A Silo with nothing to
+## load would be a Machine a player can build, feed and never use, and the symptom would be
+## a dial with no positions on it - which is the hardest kind of content bug to notice.
+func _read_stratagems(table: CsvTable) -> void:
+	for row: int in range(table.row_count()):
+		var definition: StratagemDefinition = StratagemDefinition.new()
+		definition.source_row = row
+		definition.id = table.require_id(row, "id")
+		definition.display_name = table.value(row, "display_name")
+		definition.paint_seconds = table.require_fixed(row, "paint_seconds")
+		definition.radius_tiles = table.require_int(row, "radius_tiles")
+		definition.damage_per_charge = table.require_int(row, "damage_per_charge")
+		definition.sentry_seconds = table.require_int(row, "sentry_seconds")
+		definition.sentry_machine = table.value(row, "sentry_machine").strip_edges()
+
+		var goods: Array = _parse_item_list(table, row, "goods_per_charge")
+		definition.set_goods(goods[0], goods[1])
+
+		var effect: int = StratagemDefinition.parse_effect(table.value(row, "effect"))
+		if effect == -1:
+			table.report_row(
+				row,
+				'effect: expected one of %s, got "%s"'
+				% [
+					", ".join(PackedStringArray(StratagemDefinition.EFFECT_NAMES)),
+					table.value(row, "effect"),
+				]
+			)
+		else:
+			definition.effect = effect
+
+		_check_stratagem_values(table, row, definition, effect)
+
+		if definition.id.is_empty():
+			continue
+		if _stratagem_ids.find(definition.id) != -1:
+			table.report_row(row, 'id: "%s" is already defined' % definition.id)
+			continue
+
+		_stratagem_ids.append(definition.id)
+		_stratagems.append(definition)
+
+	_sort_stratagems()
+
+	if table.row_count() == 0 and not table.has_errors():
+		table.report_row(
+			-1,
+			(
+				"the table has no rows - a Silo with nothing to load is a Machine a player can"
+				+ " build, feed and never use"
+			)
+		)
+
+
+## Every column a row must fill and every column it must leave alone.
+##
+## The shape `_check_gear_values` has, for the same reason: the schema is what enforces the
+## design, so there is nowhere to write a Barrage that also drops a Turret even if somebody
+## wanted to. Each effect reads exactly the columns that belong to it, and a number parked in
+## one of the others is an error naming the column rather than a value quietly ignored.
+func _check_stratagem_values(
+	table: CsvTable, row: int, definition: StratagemDefinition, effect: int
+) -> void:
+	if definition.paint_seconds <= 0:
+		table.report_row(
+			row,
+			(
+				"paint_seconds: a Painting with no channel is not a Painting - what every"
+				+ " Stratagem costs is a player standing at the target, exposed and unable to act"
+			)
+		)
+
+	for item: String in definition.goods_items:
+		if _item_ids.find(item) == -1:
+			table.report_row(
+				row,
+				(
+					'goods_per_charge: "%s" is not an Item any Recipe mentions, so nothing in'
+					+ " the Factory could ever make one"
+				) % item
+			)
+
+	if effect == StratagemDefinition.Effect.BARRAGE:
+		if definition.radius_tiles < 1:
+			table.report_row(
+				row, "radius_tiles: a Barrage that reaches nowhere shells nothing"
+			)
+		if definition.damage_per_charge < 1:
+			table.report_row(
+				row,
+				(
+					"damage_per_charge: a Barrage's output is damage, so a Charge has to be"
+					+ " worth some of it"
+				)
+			)
+		if not definition.goods_items.is_empty():
+			table.report_row(
+				row, "goods_per_charge: a Barrage delivers nothing - it shells the ground"
+			)
+	elif effect != -1:
+		if definition.radius_tiles != 0:
+			table.report_row(
+				row, "radius_tiles: only a Barrage covers an area, so this must be 0"
+			)
+		if definition.damage_per_charge != 0:
+			table.report_row(
+				row, "damage_per_charge: only a Barrage deals damage, so this must be 0"
+			)
+		if definition.goods_items.is_empty():
+			table.report_row(
+				row,
+				(
+					"goods_per_charge: a %s delivers goods, so name what one Charge is worth"
+					% StratagemDefinition.effect_name(definition.effect)
+				)
+			)
+
+	if effect == StratagemDefinition.Effect.SENTRY:
+		if definition.sentry_seconds < 1:
+			table.report_row(
+				row,
+				(
+					"sentry_seconds: a Sentry that stands for no time at all never fires - and"
+					+ " a Sentry that stands forever is a Machine the Build Gun should be"
+					+ " placing instead"
+				)
+			)
+		var dropped: MachineDefinition = machine(definition.sentry_machine)
+		if dropped == null:
+			table.report_row(
+				row,
+				'sentry_machine: "%s" is not a Machine in machines.csv'
+				% definition.sentry_machine
+			)
+		elif not dropped.is_turret():
+			table.report_row(
+				row,
+				(
+					'sentry_machine: "%s" is a %s - a Sentry Drop places a Turret, which is'
+					+ " what lets it defend ground nobody fortified"
+				) % [definition.sentry_machine, MachineDefinition.role_name(dropped.role)]
+			)
+	elif effect != -1:
+		if definition.sentry_seconds != 0:
+			table.report_row(
+				row, "sentry_seconds: only a Sentry Drop is temporary, so this must be 0"
+			)
+		if not definition.sentry_machine.is_empty():
+			table.report_row(
+				row, "sentry_machine: only a Sentry Drop places a Machine, so this must be empty"
+			)
+
+
+## What a Machine whose output is not an Item produces, for the error that says so. Three
+## roles answer `produces_no_items()` and each makes something different; naming it in the
+## message is what turns "must have no outputs" into a sentence somebody can act on.
+func _what_it_produces(definition: MachineDefinition) -> String:
+	if definition.is_generator():
+		return "Power"
+	if definition.is_silo():
+		return "a Charge"
+	return "repair" if definition.heals() else "damage"
 
 
 # ── Reading the Wave table ────────────────────────────────────────────────────
@@ -1459,6 +1748,12 @@ func _check_delivery_values(table: CsvTable, row: int, definition: DeliveryDefin
 			table.report_row(
 				row, 'unlocks_gear: "%s" is not a piece of Gear in gear.csv' % gear_id
 			)
+	for stratagem_id: String in definition.unlocks_stratagems:
+		if _stratagem_ids.find(stratagem_id) == -1:
+			table.report_row(
+				row,
+				'unlocks_stratagems: "%s" is not a Stratagem in stratagems.csv' % stratagem_id
+			)
 	if (
 		definition.unlocks_machines.is_empty()
 		and definition.unlocks_gear.is_empty()
@@ -1484,6 +1779,7 @@ func _check_delivery_chain(table: CsvTable) -> void:
 	var deepest_so_far: int = 0
 	var claimed: PackedStringArray = PackedStringArray()
 	var claimed_gear: PackedStringArray = PackedStringArray()
+	var claimed_stratagems: PackedStringArray = PackedStringArray()
 	for definition: DeliveryDefinition in _deliveries:
 		if definition.min_depth < deepest_so_far:
 			table.report_row(
@@ -1511,6 +1807,15 @@ func _check_delivery_chain(table: CsvTable) -> void:
 				)
 				continue
 			claimed_gear.append(gear_id)
+		for stratagem_id: String in definition.unlocks_stratagems:
+			if claimed_stratagems.has(stratagem_id):
+				table.report_row(
+					definition.source_row,
+					'unlocks_stratagems: "%s" is already unlocked by an earlier tier'
+					% stratagem_id
+				)
+				continue
+			claimed_stratagems.append(stratagem_id)
 
 
 # ── Reading the Gear table ────────────────────────────────────────────────────
@@ -1705,6 +2010,8 @@ func _check_gear_ammunition(table: CsvTable, row: int, definition: GearDefinitio
 func _intern_gear_slots() -> void:
 	_gear_slot_ids.clear()
 	_weapon_gear_indices.clear()
+	_stratagems.clear()
+	_stratagem_ids.clear()
 	for index: int in range(_gear.size()):
 		var definition: GearDefinition = _gear[index]
 		if definition.is_weapon():
@@ -1748,6 +2055,8 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	nest_health = tuning.require_int(TUNING_NEST_HEALTH)
 	nest_delivery_reach = tuning.require_fixed(TUNING_NEST_DELIVERY_REACH)
 	nest_store_capacity_per_item = tuning.require_int(TUNING_NEST_STORE_CAPACITY)
+	silo_load_reach_metres = tuning.require_fixed(TUNING_SILO_LOAD_REACH)
+	silo_max_charges_per_load = tuning.require_int(TUNING_SILO_MAX_CHARGES_PER_LOAD)
 	wave_telegraph_seconds = tuning.require_fixed(TUNING_WAVE_TELEGRAPH_SECONDS)
 	wave_spawn_interval_seconds = tuning.require_fixed(TUNING_WAVE_SPAWN_INTERVAL_SECONDS)
 	wave_call_early_bounty = tuning.require_int(TUNING_WAVE_CALL_EARLY_BOUNTY)
@@ -1864,6 +2173,18 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				tuning,
 				TUNING_NEST_STORE_CAPACITY,
 				"a store that holds nothing is a Nest nothing can be banked at"
+			)
+		if silo_load_reach_metres <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_SILO_LOAD_REACH,
+				"a reach of nothing is a dial nobody can turn"
+			)
+		if silo_max_charges_per_load < 1:
+			_report_tuning(
+				tuning,
+				TUNING_SILO_MAX_CHARGES_PER_LOAD,
+				"a load of no Charges is a Silo that can never be fired"
 			)
 		if nest_health <= 0:
 			_report_tuning(
@@ -2305,6 +2626,15 @@ func _sort_gear() -> void:
 		_gear_ids.append(definition.id)
 
 
+func _sort_stratagems() -> void:
+	_stratagems.sort_custom(
+		func(a: StratagemDefinition, b: StratagemDefinition) -> bool: return a.id < b.id
+	)
+	_stratagem_ids.clear()
+	for definition: StratagemDefinition in _stratagems:
+		_stratagem_ids.append(definition.id)
+
+
 func _sort_waves() -> void:
 	_waves.sort_custom(func(a: WaveEntry, b: WaveEntry) -> bool: return a.id < b.id)
 
@@ -2397,6 +2727,8 @@ func _discard_content() -> void:
 	gear_view_kick_degrees_per_shot = 0
 	gear_view_kick_recover_seconds = 0
 	enemy_player_bite_reach_metres = 0
+	silo_load_reach_metres = 0
+	silo_max_charges_per_load = 0
 
 
 static func _read_file(path: String) -> String:

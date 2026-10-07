@@ -30,6 +30,15 @@
 #                             Turret classes — MG, Cannon, Repair Pylon — are this
 #                             one role, differing in range_tiles, damage, repair and
 #                             Recipe, which are a row rather than code.
+#                   silo    — assembles Charges out of Belt-fed inputs and stockpiles
+#                             them, up to `charge_capacity`. Its Recipe must have no
+#                             outputs, because a Charge is not an Item either: it is
+#                             one stockpiled use of a Stratagem (GLOSSARY.md), loaded
+#                             by hand and called in by Painting. The same trick a
+#                             generator and a Turret already play — see
+#                             `MachineDefinition.produces_no_items`. A full Silo is
+#                             idle and off the Power grid, exactly as a Turret with
+#                             nothing in reach is.
 #   footprint_x     Tiles occupied, on the 2 m grid. DESIGN.md caps Machines at
 #   footprint_z     4x4; Belts are 1x1.
 #   power_draw_kw   Demand on the one Power grid when running. Shortfall throttles
@@ -60,6 +69,9 @@
 #                   anything that is not a Turret, and a Turret must carry exactly
 #                   one of `damage` and `repair`: its output is damage or it is
 #                   repair, never both and never neither.
+#   charge_capacity How many Charges a Silo stockpiles. At least 1 on a silo, and must
+#                   be 0 on anything else. A bigger Silo is this column, so the shape of
+#                   "how much artillery can a Factory bank" is a row rather than code.
 #   recipe_id       The Recipe in recipes.csv this Machine runs. Must exist.
 #   build_cost      What it costs to build, as `item:count`, several separated by
 #                   `;` — the same form a Recipe's inputs use. Every Item named must
@@ -78,13 +90,14 @@
 # to reach the Depth the tier after it is gated at — so the chain pays for the tool that
 # opens its own next gate.
 #
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,recipe_id,build_cost
-ammo_press_mk1,Ammo Press Mk1,crafter,2,3,150,0,450,0,0,0,0,make_ammunition,iron_plate:14
-coal_miner_mk1,Coal Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_coal,iron_plate:8
-mg_turret_mk1,MG Turret Mk1,turret,2,2,90,0,350,0,8,15,0,fire_mg,iron_plate:20
-miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,mine_iron_ore,iron_plate:8
-miner_mk2,Miner Mk2,miner,2,2,200,0,460,2,0,0,0,mine_iron_ore_deep,iron_plate:24
-miner_mk3,Miner Mk3,miner,2,2,320,0,520,3,0,0,0,mine_iron_ore_deep,iron_plate:48
-repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,mend_machinery,iron_plate:18
-smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,smelt_iron_plate,iron_plate:12
-steam_boiler_mk1,Steam Boiler Mk1,generator,3,2,0,600,450,0,0,0,0,burn_coal,iron_plate:16
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+ammo_press_mk1,Ammo Press Mk1,crafter,2,3,150,0,450,0,0,0,0,0,make_ammunition,iron_plate:14
+coal_miner_mk1,Coal Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_coal,iron_plate:8
+mg_turret_mk1,MG Turret Mk1,turret,2,2,90,0,350,0,8,15,0,0,fire_mg,iron_plate:20
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,0,0,0,0,mine_iron_ore,iron_plate:8
+miner_mk2,Miner Mk2,miner,2,2,200,0,460,2,0,0,0,0,mine_iron_ore_deep,iron_plate:24
+miner_mk3,Miner Mk3,miner,2,2,320,0,520,3,0,0,0,0,mine_iron_ore_deep,iron_plate:48
+repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,60,0,300,0,6,0,40,0,mend_machinery,iron_plate:18
+smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,0,0,0,0,smelt_iron_plate,iron_plate:12
+steam_boiler_mk1,Steam Boiler Mk1,generator,3,2,0,600,450,0,0,0,0,0,burn_coal,iron_plate:16
+silo_mk1,Silo Mk1,silo,4,4,400,0,900,0,0,0,0,8,assemble_charge,iron_plate:60
