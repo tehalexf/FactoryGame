@@ -48,6 +48,31 @@ const LOOK_PIXEL_UNIT: int = 1000
 ## tuning file is allowed degrees because that is how a human reasons about a tilt.
 const DEGREES_PER_TURN: int = 360
 
+
+## Why a Build Gun intent would be refused.
+##
+## A refused build stays a silent no-op whose hash does not move — a misaimed Build
+## Gun is an ordinary thing for a player to do. The *reason* is therefore not stored
+## state but a pure projection: `query_build_refusal` answers it about a placement
+## that has not happened, so the hologram can show the reason before the click rather
+## than after it, and `_apply_build_machine` consults the same function so the two can
+## never disagree.
+enum Refusal {
+	## Nothing in the way. The placement would succeed.
+	NONE = 0,
+	## The intent names no Machine in the current definition set.
+	NO_SUCH_MACHINE = 1,
+	## Some tile of the footprint is outside the Map, or on a layer building cannot
+	## reach — which is every layer but the ground while building is flat.
+	OFF_THE_MAP = 2,
+	## A Machine or a Belt is already standing on some tile of the footprint.
+	OCCUPIED = 3,
+	## The player does not hold the Machine's build cost.
+	MISSING_MATERIALS = 4,
+	## Nothing to demolish on that tile.
+	NOTHING_THERE = 5,
+}
+
 # Note what is *not* a constant here any more: how fast a player walks. That lives
 # in content/tuning.toml, because it is a balance number and balance numbers belong
 # to whoever is tuning the game, not to whoever is editing code.
@@ -121,6 +146,32 @@ var _player_intent_strafe: PackedInt64Array = PackedInt64Array()
 var _player_survey_held: PackedInt64Array = PackedInt64Array()
 var _player_survey_ticks: PackedInt64Array = PackedInt64Array()
 
+## What each player has on the Build Gun, and which way round.
+##
+## The *id* rather than the definition index, for the reason a placed Machine holds
+## its id: a hot-reload resorts the definition table, and a player must not find a
+## different Machine on the Build Gun because somebody added a row. The rotation
+## persists until changed, so a player lines a Machine up once and places several.
+##
+## Here rather than in the controller because the controller is forbidden to hold
+## anything authoritative — and because in co-op what another player is lining up is
+## worth drawing.
+var _player_selected_machine: PackedStringArray = PackedStringArray()
+var _player_build_rotation: PackedInt64Array = PackedInt64Array()
+
+## What each player is carrying, as one sorted `PackedStringArray` of Item ids and one
+## matching `PackedInt64Array` of counts per player — the same shape a Machine's
+## buffers use, for the same reasons: ids rather than interned indices, so a
+## hot-reload cannot relabel a player's pockets, and sorted, so iteration order is a
+## property of the content rather than of what happened.
+##
+## Building spends a Machine's `build_cost` out of this and demolishing returns it in
+## full, which is what makes iterating on a layout cheap (issue #1, user story 7).
+## Where the materials come from in the first place is
+## `player.starting_stock_per_item` for now, and Delivery progression later.
+var _player_item_ids: Array = []
+var _player_item_counts: Array = []
+
 ## The Map's Nodes, as parallel arrays in the canonical order `MapLayout` sorted
 ## them into. None of this changes during a Run: a Node is inexhaustible (DESIGN.md),
 ## so there is no quantity here to run down and nothing subtracts from one.
@@ -140,6 +191,11 @@ var _machine_id: PackedStringArray = PackedStringArray()
 var _machine_tile_x: PackedInt64Array = PackedInt64Array()
 var _machine_tile_y: PackedInt64Array = PackedInt64Array()
 var _machine_tile_z: PackedInt64Array = PackedInt64Array()
+
+## Which way each Machine faces, in quarter turns. A quarter or three-quarter turn
+## swaps the footprint's extents; the anchor tile does not move. Hashed, because a
+## turned Machine covers different ground and presents its ports to different tiles.
+var _machine_rotation: PackedInt64Array = PackedInt64Array()
 
 ## The tick each Machine was placed on. A Machine does not run on the tick it was
 ## built: it was placed during that tick, and crediting it a full tick of work for
@@ -273,6 +329,26 @@ func _init(
 	_player_survey_ticks.resize(players)
 	_player_survey_held.fill(0)
 	_player_survey_ticks.fill(0)
+	_player_build_rotation.resize(players)
+	_player_build_rotation.fill(0)
+	# The first Machine by id, so a fresh Run has something on the Build Gun rather
+	# than nothing. Empty when the definitions failed to load, which is the one case
+	# where there is genuinely nothing to hold.
+	var opening_machine: String = "" if _definitions.machine_count() == 0 else _definitions.machine_ids()[0]
+	_player_selected_machine.resize(players)
+	_player_selected_machine.fill(opening_machine)
+
+	# The opening stock, granted once at construction. Deliberately not re-granted on a
+	# hot-reload: raising the number mid-Run must not be a way to conjure materials.
+	for player_id: int in range(players):
+		var stock_ids: PackedStringArray = PackedStringArray()
+		var stock_counts: PackedInt64Array = PackedInt64Array()
+		if _definitions.player_starting_stock > 0:
+			for item_id: String in _definitions.item_ids():
+				stock_ids.append(item_id)
+				stock_counts.append(_definitions.player_starting_stock)
+		_player_item_ids.append(stock_ids)
+		_player_item_counts.append(stock_counts)
 
 
 # ── Advancing ─────────────────────────────────────────────────────────────────
@@ -318,6 +394,12 @@ func _apply(action: InputAction) -> void:
 			_apply_look(action)
 		InputAction.Kind.SURVEY_VIEW:
 			_apply_survey_view(action)
+		InputAction.Kind.SELECT_MACHINE:
+			_apply_select_machine(action)
+		InputAction.Kind.ROTATE_BUILD:
+			_apply_rotate_build(action)
+		InputAction.Kind.DEMOLISH:
+			_apply_demolish(action)
 
 
 ## Records the throttle a player asked for this tick. Applying it is `_walk`'s job,
@@ -450,6 +532,20 @@ func _wanted_velocity(player_id: int, speed: int) -> FixedVec2:
 	return FixedVec2.new(
 		Fixed.mul(Fixed.mul(forward, -sine) + Fixed.mul(strafe, cosine), speed),
 		Fixed.mul(Fixed.mul(forward, -cosine) + Fixed.mul(strafe, -sine), speed)
+	)
+
+
+## The footprint a placed Machine actually occupies, turned by its rotation, as
+## (size along x, size along z). Zero when the Machine's definition has gone — which
+## a hot-reload that removed a row can do — so callers skip it rather than crash.
+func _machine_size(index: int) -> Vector2i:
+	if not _is_machine(index):
+		return Vector2i.ZERO
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition == null:
+		return Vector2i.ZERO
+	return WorldGrid.rotated_footprint(
+		definition.footprint_x, definition.footprint_z, _machine_rotation[index]
 	)
 
 
@@ -918,10 +1014,11 @@ func _ticks_per_craft(recipe: RecipeDefinition) -> int:
 ## the lowest-indexed one, which is the canonical order `MapLayout` sorted them into.
 func _node_under_machine(index: int, definition: MachineDefinition) -> int:
 	var origin: Vector3i = query_machine_tile(index)
+	var size: Vector2i = WorldGrid.rotated_footprint(
+		definition.footprint_x, definition.footprint_z, _machine_rotation[index]
+	)
 	for node_index: int in range(query_node_count()):
-		if WorldGrid.footprint_covers(
-			origin, definition.footprint_x, definition.footprint_z, query_node_tile(node_index)
-		):
+		if WorldGrid.footprint_covers(origin, size.x, size.y, query_node_tile(node_index)):
 			return node_index
 	return -1
 
@@ -1071,6 +1168,29 @@ func _take_from_input(index: int, item_id: String, quantity: int) -> void:
 	_machine_input_counts[index] = counts
 
 
+## Puts a Machine on a player's Build Gun.
+##
+## An index naming no Machine is refused and the previous choice stands, because a
+## selection that silently became "nothing" would leave a player clicking at a
+## hologram that was not there.
+func _apply_select_machine(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	var definition: MachineDefinition = _definitions.machine_at(action.selected_machine_index())
+	if definition == null:
+		return
+	_player_selected_machine[action.player_id] = definition.id
+
+
+## Turns a player's Build Gun by a signed number of quarter turns.
+func _apply_rotate_build(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	_player_build_rotation[action.player_id] = WorldGrid.wrap_rotation(
+		_player_build_rotation[action.player_id] + action.rotation_quarter_turns()
+	)
+
+
 ## Places a Machine, or refuses to.
 ##
 ## Refused when the action names no Machine, when any tile of the footprint is
@@ -1082,17 +1202,22 @@ func _take_from_input(index: int, item_id: String, quantity: int) -> void:
 ## The footprint comes from `content/machines.csv` and from nowhere else. There is
 ## deliberately no second copy of those numbers in this file.
 func _apply_build_machine(action: InputAction) -> void:
-	var definition: MachineDefinition = _definitions.machine_at(action.build_machine_index())
-	if definition == null:
+	var rotation: int = WorldGrid.wrap_rotation(action.build_rotation())
+	var tile: Vector3i = action.build_tile()
+
+	if _build_refusal(action.player_id, action.build_machine_index(), tile, rotation) != Refusal.NONE:
 		return
 
-	var tile: Vector3i = action.build_tile()
-	if not WorldGrid.footprint_is_buildable(tile, definition.footprint_x, definition.footprint_z):
-		return
-	if _footprint_is_occupied(tile, definition.footprint_x, definition.footprint_z):
-		return
+	var definition: MachineDefinition = _definitions.machine_at(action.build_machine_index())
+	for index: int in range(definition.build_cost_items.size()):
+		_take_from_player(
+			action.player_id,
+			definition.build_cost_items[index],
+			definition.build_cost_counts[index]
+		)
 
 	_machine_id.append(definition.id)
+	_machine_rotation.append(rotation)
 	_machine_tile_x.append(tile.x)
 	_machine_tile_y.append(tile.y)
 	_machine_tile_z.append(tile.z)
@@ -1104,6 +1229,41 @@ func _apply_build_machine(action: InputAction) -> void:
 	_machine_input_counts.append(PackedInt64Array())
 
 
+## Why a placement would be refused, or `Refusal.NONE`.
+##
+## The single authority on whether a build is legal. `_apply_build_machine` obeys it
+## and `query_build_refusal` reports it, so what a player is told and what the
+## Simulation does are the same rule rather than two copies of it.
+func _build_refusal(player_id: int, machine_index: int, tile: Vector3i, rotation: int) -> int:
+	var definition: MachineDefinition = _definitions.machine_at(machine_index)
+	if definition == null:
+		return Refusal.NO_SUCH_MACHINE
+
+	var size: Vector2i = WorldGrid.rotated_footprint(
+		definition.footprint_x, definition.footprint_z, WorldGrid.wrap_rotation(rotation)
+	)
+	if not WorldGrid.footprint_is_buildable(tile, size.x, size.y):
+		return Refusal.OFF_THE_MAP
+	if _footprint_is_occupied(tile, size.x, size.y):
+		return Refusal.OCCUPIED
+	# The ground before the wallet: a player aiming at a wall has a more immediate
+	# problem than an empty pocket, and one they can fix by aiming somewhere else.
+	if not _can_pay_for(player_id, definition):
+		return Refusal.MISSING_MATERIALS
+	return Refusal.NONE
+
+
+## Whether a player is carrying everything a Machine costs to build.
+func _can_pay_for(player_id: int, definition: MachineDefinition) -> bool:
+	if not _is_player(player_id):
+		return false
+	for index: int in range(definition.build_cost_items.size()):
+		var held: int = query_player_item(player_id, definition.build_cost_items[index])
+		if held < definition.build_cost_counts[index]:
+			return false
+	return true
+
+
 ## Whether a footprint would overlap something already placed — a Machine or a Belt.
 ## Walks both in index order, which is cheap at Milestone 1 scale and ordered by
 ## construction.
@@ -1112,9 +1272,9 @@ func _footprint_is_occupied(origin: Vector3i, size_x: int, size_z: int) -> bool:
 		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
 		if definition == null:
 			continue
+		var standing: Vector2i = _machine_size(index)
 		if WorldGrid.footprints_overlap(
-			origin, size_x, size_z,
-			query_machine_tile(index), definition.footprint_x, definition.footprint_z
+			origin, size_x, size_z, query_machine_tile(index), standing.x, standing.y
 		):
 			return true
 	for offset_x: int in range(size_x):
@@ -1123,6 +1283,150 @@ func _footprint_is_occupied(origin: Vector3i, size_x: int, size_z: int) -> bool:
 			if query_belt_at_tile(tile) != -1:
 				return true
 	return false
+
+
+# ── Demolishing ───────────────────────────────────────────────────────────
+
+## Takes a Machine or a Belt back apart, returning its materials to the player.
+##
+## Nothing is destroyed. A Machine hands back its build cost in full *and* whatever it
+## was holding in either buffer; a Belt hands back the Items riding it. A Belt has no
+## build cost to return because it has no row in `content/machines.csv` — it is not a
+## Machine (GLOSSARY.md), and its one tier's rating lives in tuning. Giving Belts a
+## cost belongs to the ticket that gives them tiers.
+##
+## A Machine is demolished by pointing at any tile of its footprint rather than at its
+## anchor, because a player aiming a Build Gun is aiming at a Machine and not at a
+## coordinate.
+func _apply_demolish(action: InputAction) -> void:
+	var tile: Vector3i = action.demolish_tile()
+	if _demolish_refusal(action.player_id, tile) != Refusal.NONE:
+		return
+
+	var machine: int = query_machine_at_tile(tile)
+	if machine != -1:
+		_refund_machine(action.player_id, machine)
+		_remove_machine(machine)
+		return
+
+	var belt: int = query_belt_at_tile(tile)
+	if belt != -1:
+		_refund_belt(action.player_id, belt)
+		_remove_belt(belt)
+
+
+## Why demolishing at a tile would be refused, or `Refusal.NONE`.
+func _demolish_refusal(player_id: int, tile: Vector3i) -> int:
+	if not _is_player(player_id):
+		return Refusal.NOTHING_THERE
+	if query_machine_at_tile(tile) != -1 or query_belt_at_tile(tile) != -1:
+		return Refusal.NONE
+	return Refusal.NOTHING_THERE
+
+
+## Hands a Machine's build cost and both its buffers back to a player.
+func _refund_machine(player_id: int, index: int) -> void:
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition != null:
+		for cost: int in range(definition.build_cost_items.size()):
+			_give_to_player(
+				player_id,
+				definition.build_cost_items[cost],
+				definition.build_cost_counts[cost]
+			)
+
+	var output_items: PackedStringArray = _machine_buffer_items[index]
+	var output_counts: PackedInt64Array = _machine_buffer_counts[index]
+	for slot: int in range(output_items.size()):
+		_give_to_player(player_id, output_items[slot], output_counts[slot])
+
+	var input_items: PackedStringArray = _machine_input_items[index]
+	var input_counts: PackedInt64Array = _machine_input_counts[index]
+	for slot: int in range(input_items.size()):
+		_give_to_player(player_id, input_items[slot], input_counts[slot])
+
+
+## Hands the Items riding a Belt back to a player. One Item a slot, so a packed Belt
+## returns everything it was carrying.
+func _refund_belt(player_id: int, index: int) -> void:
+	var riding: PackedStringArray = _belt_item_ids[index]
+	for slot: int in range(riding.size()):
+		_give_to_player(player_id, riding[slot], 1)
+
+
+## Removes a Machine from every parallel array. Machines are indexed by build order, so
+## this shifts the indices after it — which is safe because nothing outside the
+## Simulation holds an index across a tick, and nothing inside holds one at all.
+func _remove_machine(index: int) -> void:
+	_machine_id.remove_at(index)
+	_machine_rotation.remove_at(index)
+	_machine_tile_x.remove_at(index)
+	_machine_tile_y.remove_at(index)
+	_machine_tile_z.remove_at(index)
+	_machine_built_tick.remove_at(index)
+	_machine_progress_ticks.remove_at(index)
+	_machine_buffer_items.remove_at(index)
+	_machine_buffer_counts.remove_at(index)
+	_machine_input_items.remove_at(index)
+	_machine_input_counts.remove_at(index)
+
+
+## Removes a Belt and the Items on it. The update order is derived from which Belt
+## feeds which, so it is stale the moment a run disappears.
+func _remove_belt(index: int) -> void:
+	_belt_tile_x.remove_at(index)
+	_belt_tile_y.remove_at(index)
+	_belt_tile_z.remove_at(index)
+	_belt_direction.remove_at(index)
+	_belt_tiles.remove_at(index)
+	_belt_item_ids.remove_at(index)
+	_belt_item_offsets.remove_at(index)
+	_belt_update_order_stale = true
+
+
+# ── What a player is carrying ────────────────────────────────────────────
+
+## Adds to what a player is carrying, keeping the Item ids sorted.
+func _give_to_player(player_id: int, item_id: String, quantity: int) -> void:
+	if not _is_player(player_id) or quantity <= 0:
+		return
+
+	var items: PackedStringArray = _player_item_ids[player_id]
+	var counts: PackedInt64Array = _player_item_counts[player_id]
+
+	var slot: int = items.find(item_id)
+	if slot != -1:
+		counts[slot] += quantity
+	else:
+		slot = items.bsearch(item_id)
+		items.insert(slot, item_id)
+		counts.insert(slot, quantity)
+
+	_player_item_ids[player_id] = items
+	_player_item_counts[player_id] = counts
+
+
+## Takes from what a player is carrying. An Item that runs out leaves no zero-count
+## entry behind, so two players holding the same materials hold the same arrays and
+## hash the same.
+func _take_from_player(player_id: int, item_id: String, quantity: int) -> void:
+	if not _is_player(player_id) or quantity <= 0:
+		return
+
+	var items: PackedStringArray = _player_item_ids[player_id]
+	var counts: PackedInt64Array = _player_item_counts[player_id]
+
+	var slot: int = items.find(item_id)
+	if slot == -1:
+		return
+
+	counts[slot] = maxi(counts[slot] - quantity, 0)
+	if counts[slot] == 0:
+		items.remove_at(slot)
+		counts.remove_at(slot)
+
+	_player_item_ids[player_id] = items
+	_player_item_counts[player_id] = counts
 
 
 # ── Laying a Belt ─────────────────────────────────────────────────────────────
@@ -1221,6 +1525,16 @@ func hash() -> int:
 	hasher.feed_ints(_player_velocity_z)
 	hasher.feed_ints(_player_survey_held)
 	hasher.feed_ints(_player_survey_ticks)
+	hasher.feed_ints(_player_build_rotation)
+	for machine_id: String in _player_selected_machine:
+		hasher.feed_text(machine_id)
+	for player_id: int in range(query_player_count()):
+		var carried: PackedStringArray = _player_item_ids[player_id]
+		var carried_counts: PackedInt64Array = _player_item_counts[player_id]
+		hasher.feed_int(carried.size())
+		for slot: int in range(carried.size()):
+			hasher.feed_text(carried[slot])
+			hasher.feed_int(carried_counts[slot])
 	# The definitions are state. A Run using different content is in a different
 	# state even before its first tick, and a Run that reloaded mid-flight is in a
 	# different state from one that did not.
@@ -1240,6 +1554,7 @@ func hash() -> int:
 	hasher.feed_ints(_machine_tile_x)
 	hasher.feed_ints(_machine_tile_y)
 	hasher.feed_ints(_machine_tile_z)
+	hasher.feed_ints(_machine_rotation)
 	hasher.feed_ints(_machine_built_tick)
 	hasher.feed_ints(_machine_progress_ticks)
 	for index: int in range(query_machine_count()):
@@ -1311,6 +1626,53 @@ func query_player_velocity(player_id: int) -> FixedVec2:
 	if not _is_player(player_id):
 		return FixedVec2.zero()
 	return FixedVec2.new(_player_velocity_x[player_id], _player_velocity_z[player_id])
+
+
+## How much of an Item a player is carrying. 0 for one they have none of.
+func query_player_item(player_id: int, item_id: String) -> int:
+	if not _is_player(player_id):
+		return 0
+	var items: PackedStringArray = _player_item_ids[player_id]
+	var slot: int = items.find(item_id)
+	if slot == -1:
+		return 0
+	return _player_item_counts[player_id][slot]
+
+
+## Every Item a player is carrying at least one of, sorted by id.
+func query_player_items(player_id: int) -> PackedStringArray:
+	if not _is_player(player_id):
+		return PackedStringArray()
+	return (_player_item_ids[player_id] as PackedStringArray).duplicate()
+
+
+## Why demolishing whatever is on `tile` would be refused, or `Refusal.NONE`. A pure
+## projection, like `query_build_refusal`, so the HUD can say why before a player
+## clicks rather than after.
+func query_demolish_refusal(player_id: int, tile: Vector3i) -> int:
+	return _demolish_refusal(player_id, tile)
+
+
+## The id of the Machine a player has on the Build Gun. Empty only when the
+## definitions carry no Machines at all.
+func query_player_selected_machine(player_id: int) -> String:
+	if not _is_player(player_id):
+		return ""
+	return _player_selected_machine[player_id]
+
+
+## The definition index of the Machine a player has on the Build Gun, or -1. Derived
+## from the stored id rather than held beside it, so the two cannot disagree after a
+## hot-reload resorts the table.
+func query_player_selected_machine_index(player_id: int) -> int:
+	return _definitions.machine_index(query_player_selected_machine(player_id))
+
+
+## How many quarter turns a player's Build Gun is turned by, in [0, 4).
+func query_player_build_rotation(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_build_rotation[player_id]
 
 
 ## Whether a player is holding Survey View. True the moment the key goes down, even
@@ -1453,6 +1815,31 @@ func query_machine_id(index: int) -> String:
 	return _machine_id[index]
 
 
+## Why placing `machine_index` at `tile`, turned by `rotation` quarter turns, would be
+## refused — or `Refusal.NONE` if it would succeed.
+##
+## A projection of state that has not changed: asking costs nothing and changes
+## nothing, which is what lets the hologram ask every frame about the tile it is
+## hovering over and put the reason on screen before a player clicks. The wording
+## belongs to the Godot layer; the rule belongs here.
+func query_build_refusal(player_id: int, machine_index: int, tile: Vector3i, rotation: int) -> int:
+	return _build_refusal(player_id, machine_index, tile, rotation)
+
+
+## Which way a Machine faces, in quarter turns.
+func query_machine_rotation(index: int) -> int:
+	if not _is_machine(index):
+		return 0
+	return _machine_rotation[index]
+
+
+## The footprint a Machine occupies, turned by its rotation: (tiles along x, tiles
+## along z). The renderer sizes a mesh from this rather than from the file's two
+## columns, so a turned Machine is drawn over the ground it actually covers.
+func query_machine_footprint(index: int) -> Vector2i:
+	return _machine_size(index)
+
+
 ## The tile a Machine's footprint is anchored at.
 func query_machine_tile(index: int) -> Vector3i:
 	if not _is_machine(index):
@@ -1465,12 +1852,10 @@ func query_machine_tile(index: int) -> Vector3i:
 ## on, not only its anchor.
 func query_machine_at_tile(tile: Vector3i) -> int:
 	for index: int in range(query_machine_count()):
-		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
-		if definition == null:
+		var size: Vector2i = _machine_size(index)
+		if size == Vector2i.ZERO:
 			continue
-		if WorldGrid.footprint_covers(
-			query_machine_tile(index), definition.footprint_x, definition.footprint_z, tile
-		):
+		if WorldGrid.footprint_covers(query_machine_tile(index), size.x, size.y, tile):
 			return index
 	return -1
 

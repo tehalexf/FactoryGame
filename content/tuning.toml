@@ -44,6 +44,15 @@ look_sensitivity_turns_per_1000_pixels = 0.4
 # down on. Change this and the whole sense of scale changes with it.
 eye_height_metres = 1.7
 
+# How many of each Item a player starts a Run carrying.
+#
+# A scaffold, and labelled as one: Delivery progression (DESIGN.md, milestone 5) is
+# what will really decide where a player's materials come from, and this key goes away
+# when it lands. Until then it is what makes the Build Gun usable at all — building
+# spends a Machine's `build_cost` and demolishing returns it, so a Run has to open with
+# something in hand.
+starting_stock_per_item = 200
+
 [belt]
 
 # A Belt's rated throughput, in Items a second. This is the primary number: the

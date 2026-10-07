@@ -44,8 +44,8 @@ const STEP_AT_SLOW: int = -274
 const STEP_AT_FAST: int = -410
 
 const MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id
-miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore,
 """
 
 const RECIPES: String = """
@@ -60,6 +60,7 @@ const OTHER_TUNING: String = """
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
+starting_stock_per_item = 200
 [belt]
 items_per_second = 4
 items_per_tile = 4

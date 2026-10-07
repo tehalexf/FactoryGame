@@ -40,7 +40,8 @@ enum Kind {
 	## digest earns its place — every client reloads its own copy of the files, and a
 	## client whose copy hashes differently can refuse instead of desyncing silently.
 	RELOAD_DEFINITIONS = 2,
-	## Build a Machine. args = [machine definition index, tile x, tile y, tile z].
+	## Build a Machine. args = [machine definition index, tile x, tile y, tile z,
+	## rotation in quarter turns].
 	##
 	## The Machine travels as an index into the definition set's sorted Machine ids
 	## rather than as a string, because an intent on the wire is integers; the
@@ -85,6 +86,31 @@ enum Kind {
 	## (DESIGN.md, GLOSSARY.md), and nothing in the Simulation consults it to decide
 	## whether an intent is allowed.
 	SURVEY_VIEW = 6,
+	## Put a Machine on the Build Gun. args = [machine definition index].
+	##
+	## What a player is about to place is Simulation state rather than something the
+	## controller remembers, because the controller is forbidden to hold anything
+	## authoritative — and because in co-op what another player is lining up is worth
+	## drawing. The Simulation stores the resolved *id*, so a hot-reload that resorts
+	## the table cannot change what is on the Build Gun under a player's hands.
+	SELECT_MACHINE = 7,
+	## Turn the Build Gun's hologram. args = [quarter turns, signed].
+	##
+	## The rotation persists until changed, so a player lines a Machine up once and
+	## places several. It travels in the build intent as well, which keeps that intent
+	## self-contained: a recorded script describes what was placed and which way round
+	## without having to be replayed from the beginning to find out.
+	ROTATE_BUILD = 8,
+	## Take a Machine or a Belt back apart. args = [tile x, tile y, tile z].
+	##
+	## A tile rather than an index, because a player aims a Build Gun at a thing and not
+	## at a position in an array — and because an index into the Simulation's Machine
+	## arrays is not something anything outside it may hold.
+	##
+	## Everything comes back: a Machine's build cost in full, whatever it was holding,
+	## and the Items riding a Belt. Demolishing destroys nothing, which is what makes
+	## iterating on a layout cheap (issue #1, user story 7).
+	DEMOLISH = 9,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -166,12 +192,37 @@ static func reload_definitions(acting_player: int, definitions: Definitions) -> 
 ## Builds a Machine at a tile. The tile is the footprint's anchor, and the footprint
 ## grows along +x and +z from it by whatever `content/machines.csv` says — that file
 ## is the only authority for a footprint.
-static func build_machine(acting_player: int, machine_index: int, tile: Vector3i) -> InputAction:
+## `rotation` is in quarter turns and is carried in the intent rather than read from
+## the player's Build Gun, so the intent describes the placement completely.
+static func build_machine(
+	acting_player: int, machine_index: int, tile: Vector3i, rotation: int = 0
+) -> InputAction:
 	return InputAction.new(
 		Kind.BUILD_MACHINE,
 		acting_player,
-		PackedInt64Array([machine_index, tile.x, tile.y, tile.z])
+		PackedInt64Array([
+			machine_index, tile.x, tile.y, tile.z, WorldGrid.wrap_rotation(rotation)
+		])
 	)
+
+
+## Takes apart whatever is standing on a tile. Any tile of a Machine's footprint will
+## do, and any tile of a Belt's run takes the whole run.
+static func demolish(acting_player: int, tile: Vector3i) -> InputAction:
+	return InputAction.new(
+		Kind.DEMOLISH, acting_player, PackedInt64Array([tile.x, tile.y, tile.z])
+	)
+
+
+## Puts a Machine on a player's Build Gun, by index into the definition set's sorted
+## Machine ids. An index naming no Machine is refused and the previous choice stands.
+static func select_machine(acting_player: int, machine_index: int) -> InputAction:
+	return InputAction.new(Kind.SELECT_MACHINE, acting_player, PackedInt64Array([machine_index]))
+
+
+## Turns a player's Build Gun by `quarter_turns`, which may be negative.
+static func rotate_build(acting_player: int, quarter_turns: int) -> InputAction:
+	return InputAction.new(Kind.ROTATE_BUILD, acting_player, PackedInt64Array([quarter_turns]))
 
 
 ## Lays a Belt along the straight run from one tile to another, both ends included.
@@ -205,6 +256,26 @@ func build_machine_index() -> int:
 ## The tile a `BUILD_MACHINE` action anchors its footprint at.
 func build_tile() -> Vector3i:
 	return Vector3i(_arg(1), _arg(2), _arg(3))
+
+
+## How many quarter turns a `BUILD_MACHINE` action turns its footprint by.
+func build_rotation() -> int:
+	return _arg(4)
+
+
+## The tile a `DEMOLISH` action is aimed at.
+func demolish_tile() -> Vector3i:
+	return Vector3i(_arg(0), _arg(1), _arg(2))
+
+
+## The Machine definition index a `SELECT_MACHINE` action names.
+func selected_machine_index() -> int:
+	return _arg(0)
+
+
+## How many quarter turns a `ROTATE_BUILD` action turns the Build Gun by, signed.
+func rotation_quarter_turns() -> int:
+	return _arg(0)
 
 
 ## The definition set a `RELOAD_DEFINITIONS` action carries, or null.

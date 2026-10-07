@@ -92,6 +92,26 @@ static func footprint_covers(origin: Vector3i, size_x: int, size_z: int, tile: V
 	return tile.z >= origin.z and tile.z < origin.z + size_z
 
 
+## A footprint turned by `rotation` quarter turns, as (size along x, size along z).
+##
+## The anchor does not move. A footprint still grows along +x and +z from the tile it
+## was placed on, so a quarter or three-quarter turn swaps the extents and a half turn
+## leaves them alone. That is one convention rather than two: placement validation,
+## the renderer and the mesh generator all ask this same question and get the same
+## answer, and no caller needs its own opinion about where a turned Machine's origin
+## went.
+static func rotated_footprint(size_x: int, size_z: int, rotation: int) -> Vector2i:
+	if wrap_rotation(rotation) % 2 == 0:
+		return Vector2i(size_x, size_z)
+	return Vector2i(size_z, size_x)
+
+
+## A rotation reduced to [0, DIRECTION_COUNT). Rotating past the fourth quarter comes
+## back round, and rotating backwards wraps the other way.
+static func wrap_rotation(rotation: int) -> int:
+	return rotation - Fixed.floor_div(rotation, DIRECTION_COUNT) * DIRECTION_COUNT
+
+
 ## Whether two footprints share a tile.
 static func footprints_overlap(
 	a_origin: Vector3i, a_size_x: int, a_size_z: int,
