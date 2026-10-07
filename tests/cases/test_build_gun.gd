@@ -26,6 +26,7 @@ press_iron_frame,Press Iron Frame,iron_plate:2,iron_frame:1,2
 const TUNING: String = """\
 [player]
 walk_speed_metres_per_second = 4
+sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7

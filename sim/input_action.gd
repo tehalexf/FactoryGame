@@ -86,6 +86,10 @@ enum Kind {
 	## (DESIGN.md, GLOSSARY.md), and nothing in the Simulation consults it to decide
 	## whether an intent is allowed.
 	SURVEY_VIEW = 6,
+
+	## Whether the player is sprinting. Held, like SURVEY_VIEW: the Simulation keeps
+	## the flag so letting go of the key is itself an action with a tick attached.
+	SPRINT = 10,
 	## Put a Machine on the Build Gun. args = [machine definition index].
 	##
 	## What a player is about to place is Simulation state rather than something the
@@ -173,6 +177,15 @@ static func survey_view(acting_player: int, held: bool) -> InputAction:
 	return InputAction.new(
 		Kind.SURVEY_VIEW, acting_player, PackedInt64Array([1 if held else 0])
 	)
+
+
+## Replaces the Simulation's content definitions with `definitions`.
+##
+## The digest goes into `args` so that the action's hash describes the set it
+## carries. A Simulation refuses the action if the payload is missing, failed to
+## load, or does not hash to the digest claimed here.
+static func sprint(acting_player: int, held: bool) -> InputAction:
+	return InputAction.new(Kind.SPRINT, acting_player, PackedInt64Array([1 if held else 0]))
 
 
 ## Replaces the Simulation's content definitions with `definitions`.
@@ -293,6 +306,11 @@ func declared_digest() -> int:
 ## Whether a `SURVEY_VIEW` action is holding the camera up or letting it down.
 func survey_is_held() -> bool:
 	return _arg(0) != 0
+
+
+## Whether a `SPRINT` action is holding the sprint on or letting it go.
+func sprint_is_held() -> bool:
+	return args.size() > 0 and args[0] != 0
 
 
 ## Pixels of rightward mouse travel a `LOOK` action carries, fixed-point.

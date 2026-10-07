@@ -57,6 +57,7 @@ baseline_supply_kw = 300
 const GOOD_TUNING: String = """
 [player]
 walk_speed_metres_per_second = 4
+sprint_speed_multiplier = 1.8
 """ + OTHER_TUNING
 
 
@@ -187,7 +188,7 @@ func test_a_tuning_value_reaches_the_definitions_as_fixed_point() -> void:
 
 func test_a_tuning_value_may_be_written_as_a_decimal() -> void:
 	var definitions: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5.5\n" + OTHER_TUNING
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5.5\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(definitions.player_walk_speed, 360448, "5.5 * 65536")
@@ -365,10 +366,10 @@ func test_the_digest_does_not_depend_on_comments_or_blank_lines() -> void:
 
 func test_the_digest_does_not_depend_on_tuning_key_order() -> void:
 	var one: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 4\n" + OTHER_TUNING
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 4\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
 	)
 	var other: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\n# a comment first\nwalk_speed_metres_per_second = 4\n" + OTHER_TUNING
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\n# a comment first\nwalk_speed_metres_per_second = 4\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
 	)
 	assert_eq(one.digest(), other.digest())
 
@@ -387,7 +388,7 @@ func test_changing_a_rate_changes_the_digest() -> void:
 
 func test_changing_a_tuning_value_changes_the_digest() -> void:
 	var changed: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5\n" + OTHER_TUNING
+		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
 	)
 	assert_ne(changed.digest(), _good().digest())
 

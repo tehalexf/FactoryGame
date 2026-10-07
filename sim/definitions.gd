@@ -59,6 +59,7 @@ const MACHINE_COLUMNS: Array = [
 const RECIPE_COLUMNS: Array = ["id", "display_name", "inputs", "outputs", "seconds"]
 
 ## Tuning keys the Simulation reads. Each must be present.
+const TUNING_PLAYER_SPRINT_MULTIPLIER: String = "player.sprint_speed_multiplier"
 const TUNING_PLAYER_WALK_SPEED: String = "player.walk_speed_metres_per_second"
 const TUNING_PLAYER_WALK_ACCELERATION: String = (
 	"player.walk_acceleration_metres_per_second_squared"
@@ -85,6 +86,9 @@ var warnings: PackedStringArray = PackedStringArray()
 
 ## How fast a player walks, in fixed-point metres per second.
 var player_walk_speed: int = 0
+
+## How much faster a sprinting player moves. Multiplies walk speed.
+var player_sprint_multiplier: int = 0
 
 ## How hard a player accelerates towards the walking speed, in fixed-point metres
 ## per second squared. The same figure decelerates them when they let go.
@@ -333,6 +337,7 @@ func digest() -> int:
 		definition.feed_into(hasher)
 
 	hasher.feed_int(player_walk_speed)
+	hasher.feed_int(player_sprint_multiplier)
 	hasher.feed_int(player_walk_acceleration)
 	hasher.feed_int(player_look_sensitivity)
 	hasher.feed_int(player_eye_height)
@@ -642,6 +647,7 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 
 func _read_tuning(tuning: TomlDocument) -> void:
 	player_walk_speed = tuning.require_fixed(TUNING_PLAYER_WALK_SPEED)
+	player_sprint_multiplier = tuning.require_fixed(TUNING_PLAYER_SPRINT_MULTIPLIER)
 	player_walk_acceleration = tuning.require_fixed(TUNING_PLAYER_WALK_ACCELERATION)
 	player_look_sensitivity = tuning.require_fixed(TUNING_PLAYER_LOOK_SENSITIVITY)
 	player_eye_height = tuning.require_fixed(TUNING_PLAYER_EYE_HEIGHT)
@@ -657,6 +663,8 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	# A rate or a capacity of zero is not a slow Belt, it is a Belt that cannot work.
 	# Refused by name rather than accepted and puzzled over later.
 	if not tuning.has_errors():
+		if player_sprint_multiplier < Fixed.ONE:
+			errors.append("%s must be at least 1: sprinting is not slower than walking" % TUNING_PLAYER_SPRINT_MULTIPLIER)
 		if player_walk_speed <= 0:
 			_report_tuning(tuning, TUNING_PLAYER_WALK_SPEED, "a player who cannot walk is stuck")
 		if player_walk_acceleration <= 0:
@@ -747,6 +755,7 @@ func _discard_content() -> void:
 	_recipe_ids.clear()
 	_item_ids.clear()
 	player_walk_speed = 0
+	player_sprint_multiplier = 0
 	player_walk_acceleration = 0
 	player_look_sensitivity = 0
 	player_eye_height = 0

@@ -144,6 +144,7 @@ var _player_intent_strafe: PackedInt64Array = PackedInt64Array()
 ## is what lets its height and duration be tuned in `content/tuning.toml` while the
 ## game is running. Finding out whether a lift feels good means trying several.
 var _player_survey_held: PackedInt64Array = PackedInt64Array()
+var _player_sprint_held: PackedInt64Array = PackedInt64Array()
 var _player_survey_ticks: PackedInt64Array = PackedInt64Array()
 
 ## What each player has on the Build Gun, and which way round.
@@ -361,8 +362,10 @@ func _init(
 	_player_intent_forward.fill(0)
 	_player_intent_strafe.fill(0)
 	_player_survey_held.resize(players)
+	_player_sprint_held.resize(players)
 	_player_survey_ticks.resize(players)
 	_player_survey_held.fill(0)
+	_player_sprint_held.fill(0)
 	_player_survey_ticks.fill(0)
 	_player_build_rotation.resize(players)
 	_player_build_rotation.fill(0)
@@ -434,6 +437,8 @@ func _apply(action: InputAction) -> void:
 			_apply_look(action)
 		InputAction.Kind.SURVEY_VIEW:
 			_apply_survey_view(action)
+		InputAction.Kind.SPRINT:
+			_player_sprint_held[action.player_id] = 1 if action.sprint_is_held() else 0
 		InputAction.Kind.SELECT_MACHINE:
 			_apply_select_machine(action)
 		InputAction.Kind.ROTATE_BUILD:
@@ -519,7 +524,12 @@ func _walk() -> void:
 	)
 
 	for player_id: int in range(query_player_count()):
-		var wanted: FixedVec2 = _wanted_velocity(player_id, speed)
+		# Sprinting scales the speed a player is reaching for, not their acceleration, so
+		# a sprint ramps up over the same time a walk does rather than snapping.
+		var player_speed: int = speed
+		if _player_sprint_held[player_id] != 0:
+			player_speed = Fixed.mul(speed, _definitions.player_sprint_multiplier)
+		var wanted: FixedVec2 = _wanted_velocity(player_id, player_speed)
 
 		var gap_x: int = wanted.x - _player_velocity_x[player_id]
 		var gap_z: int = wanted.z - _player_velocity_z[player_id]
@@ -1653,6 +1663,7 @@ func hash() -> int:
 	hasher.feed_ints(_player_velocity_x)
 	hasher.feed_ints(_player_velocity_z)
 	hasher.feed_ints(_player_survey_held)
+	hasher.feed_ints(_player_sprint_held)
 	hasher.feed_ints(_player_survey_ticks)
 	hasher.feed_ints(_player_build_rotation)
 	for machine_id: String in _player_selected_machine:
@@ -1822,6 +1833,12 @@ func query_player_is_surveying(player_id: int) -> bool:
 
 ## How far through the Survey View transition a player is, in fixed point: 0 at eye
 ## level, Fixed.ONE fully raised, eased so the ends are gentle.
+## Whether this player is sprinting. For the HUD; the Simulation reads the flag
+## directly rather than going back through a query.
+func query_player_is_sprinting(player_id: int) -> bool:
+	return _player_sprint_held[player_id] != 0
+
+
 func query_player_survey_blend(player_id: int) -> int:
 	if not _is_player(player_id):
 		return 0

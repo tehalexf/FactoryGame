@@ -20,6 +20,10 @@
 # still matters.
 walk_speed_metres_per_second = 4
 
+# How much faster sprint is than a walk. Multiplies walk speed, so 1.8 is 7.2 m/s.
+# Acceleration is not scaled, so a sprint ramps up over the same time a walk does.
+sprint_speed_multiplier = 1.8
+
 # How hard a player accelerates towards that speed, in metres per second squared.
 # This is the weight of the character: 24 reaches walking pace in a third of a
 # second, which reads as a person rather than as a cursor, and the same number
@@ -36,7 +40,7 @@ walk_acceleration_metres_per_second_squared = 24
 # the mouse is a count of pixels and a client cannot turn faster by sending a bigger
 # number. In co-op that makes it the Host's number; when per-client preferences
 # arrive this is the key that moves out of content and into settings.
-look_sensitivity_turns_per_1000_pixels = 0.4
+look_sensitivity_turns_per_1000_pixels = 0.2
 
 # How high a player's eyes are off the ground, in metres. The player is 1.8 m tall
 # against 2 m tiles, so the eye sits a little below the top of a tile — which is what

@@ -57,6 +57,7 @@ mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 ## The tuning keys this file is not about. Every key the Simulation reads must be present
 ## for a set to load, so a test that varies one carries the rest unchanged.
 const OTHER_TUNING: String = """
+sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7

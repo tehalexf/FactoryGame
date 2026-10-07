@@ -29,6 +29,7 @@ const KEY_BACK: Key = KEY_S
 const KEY_STRAFE_LEFT: Key = KEY_A
 const KEY_STRAFE_RIGHT: Key = KEY_D
 const KEY_SURVEY: Key = KEY_Q
+const KEY_SPRINT: Key = KEY_SHIFT
 const KEY_DEMOLISH: Key = KEY_X
 const KEY_BELT: Key = KEY_B
 
@@ -59,6 +60,7 @@ class DeviceSample extends RefCounted:
 	var mouse_motion: Vector2 = Vector2.ZERO
 	## Whether Survey View is being held down this tick.
 	var survey_held: bool = false
+	var sprint_held: bool = false
 	## Edges, not held states: one click is one Machine, not one a tick.
 	var place_clicked: bool = false
 	var demolish_clicked: bool = false
@@ -128,6 +130,7 @@ func sample_devices() -> DeviceSample:
 	if Input.is_key_pressed(KEY_STRAFE_LEFT):
 		sample.strafe -= 1.0
 	sample.survey_held = Input.is_key_pressed(KEY_SURVEY)
+	sample.sprint_held = Input.is_key_pressed(KEY_SPRINT)
 
 	sample.mouse_motion = _unsent_mouse_motion
 	sample.rotate_steps = _unsent_rotate_steps
@@ -221,6 +224,7 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# Sent every tick rather than on the edges, because the Simulation counts ticks of
 	# transition and "still held" is the thing it needs to know.
 	actions.append(InputAction.survey_view(player_id, sample.survey_held))
+	actions.append(InputAction.sprint(player_id, sample.sprint_held))
 
 	return actions
 

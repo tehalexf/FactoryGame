@@ -50,6 +50,7 @@ mine_iron_ore,Mine Iron Ore,,iron_ore:1,0.1
 
 const THIRD_TUNING: String = """[player]
 walk_speed_metres_per_second = 4
+sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
@@ -320,6 +321,7 @@ func _thinning_content(baseline_kw: int) -> Definitions:
 		THIN_RECIPES,
 		"""[player]
 walk_speed_metres_per_second = 4
+sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7

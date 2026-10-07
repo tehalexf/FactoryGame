@@ -19,6 +19,40 @@ const ACCELERATION_PER_TICK: int = 26214
 const WALK_SPEED: int = 262144
 
 
+
+## The look tests below are worked examples in a *fixed* sensitivity, so they pin their
+## own tuning rather than reading the shipped one. Sensitivity is a feel setting the
+## player owns and is expected to change; the Simulation's arithmetic is not. Coupling
+## the two meant every tweak to how the game felt broke the maths tests.
+const LOOK_TUNING: String = """[player]
+walk_speed_metres_per_second = 4
+sprint_speed_multiplier = 1.8
+walk_acceleration_metres_per_second_squared = 24
+look_sensitivity_turns_per_1000_pixels = 0.4
+eye_height_metres = 1.7
+starting_stock_per_item = 200
+[belt]
+items_per_second = 4
+items_per_tile = 4
+[machine]
+input_buffer_crafts = 2
+[survey]
+height_metres = 26
+transition_seconds = 0.4
+pitch_degrees = 68
+[power]
+baseline_supply_kw = 300
+"""
+
+
+## A Simulation whose look sensitivity is exactly 0.4 turns per 1000 pixels.
+func _looking_sim(players: int = 1) -> Simulation:
+	var machines: String = FileAccess.get_file_as_string("res://content/machines.csv")
+	var recipes: String = FileAccess.get_file_as_string("res://content/recipes.csv")
+	var definitions: Definitions = Definitions.parse(machines, recipes, LOOK_TUNING)
+	assert_true(definitions.errors.is_empty(), "the look fixture's content must load")
+	return Simulation.new(0, players, definitions)
+
 func _step_many(sim: Simulation, actions: Array, ticks: int) -> void:
 	for tick: int in range(ticks):
 		sim.step(actions)
@@ -38,7 +72,7 @@ func test_a_player_starts_facing_along_negative_z_and_level() -> void:
 
 
 func test_moving_the_mouse_right_turns_the_player_clockwise() -> void:
-	var sim: Simulation = Simulation.new()
+	var sim: Simulation = _looking_sim()
 	# 500 pixels is half a thousand; half of 0.4 turns is 0.2 turns, which is
 	# 13107.2 in fixed point and floors to 13107. Turning right is a *decrease* in
 	# yaw, because a positive rotation about Godot's +y axis turns left.
@@ -47,13 +81,13 @@ func test_moving_the_mouse_right_turns_the_player_clockwise() -> void:
 
 
 func test_moving_the_mouse_left_turns_the_player_the_other_way() -> void:
-	var sim: Simulation = Simulation.new()
+	var sim: Simulation = _looking_sim()
 	sim.step([InputAction.look(0, Fixed.from_int(-500), 0)])
 	assert_eq(sim.query_player_yaw_turns(0), 13107)
 
 
 func test_yaw_wraps_rather_than_growing_without_bound() -> void:
-	var sim: Simulation = Simulation.new()
+	var sim: Simulation = _looking_sim()
 	# 2500 pixels is one whole turn at this sensitivity: 2.5 × 0.4. Three of those
 	# is three turns, which has to read as facing forward again.
 	_step_many(sim, [InputAction.look(0, Fixed.from_int(2500), 0)], 3)
@@ -68,7 +102,7 @@ func test_yaw_wraps_rather_than_growing_without_bound() -> void:
 
 
 func test_moving_the_mouse_down_pitches_the_view_down() -> void:
-	var sim: Simulation = Simulation.new()
+	var sim: Simulation = _looking_sim()
 	sim.step([InputAction.look(0, 0, Fixed.from_int(250))])
 	# A quarter of a thousand pixels is 0.1 turns, 6553.6 floored to 6553.
 	assert_eq(sim.query_player_pitch_turns(0), -6553, "down is a negative pitch")
@@ -87,7 +121,7 @@ func test_pitch_stops_at_the_vertical_rather_than_rolling_over() -> void:
 
 
 func test_a_look_action_turns_only_the_player_who_sent_it() -> void:
-	var sim: Simulation = Simulation.new(0, 3)
+	var sim: Simulation = _looking_sim(3)
 	sim.step([InputAction.look(1, Fixed.from_int(500), 0)])
 	assert_eq(sim.query_player_yaw_turns(0), 0, "player 0 did not look")
 	assert_eq(sim.query_player_yaw_turns(1), Fixed.TURN - 13107, "player 1 did")
@@ -136,7 +170,7 @@ func test_a_player_walks_forward_along_the_way_they_are_looking() -> void:
 
 
 func test_turning_a_quarter_turn_turns_which_way_forward_is() -> void:
-	var sim: Simulation = Simulation.new()
+	var sim: Simulation = _looking_sim()
 	sim.step([InputAction.look(0, Fixed.from_int(-QUARTER_TURN_PIXELS), 0)])
 	assert_eq(sim.query_player_yaw_turns(0), Fixed.QUARTER_TURN, "the premise of the rest")
 

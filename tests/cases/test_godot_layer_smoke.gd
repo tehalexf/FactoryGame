@@ -112,10 +112,12 @@ func test_mouse_travel_becomes_a_look_intent_and_turns_the_player() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
 	var sample: PlayerController.DeviceSample = _sample()
-	sample.mouse_motion = Vector2(500.0, 0.0)
+	sample.mouse_motion = Vector2(1000.0, 0.0)
 
 	sim.step(controller.actions_for_tick(sim, 0, sample))
-	# 500 pixels at 0.4 turns a thousand is 0.2 of a turn, clockwise.
+	# 1000 pixels is exactly the sensitivity's own unit, so the player turns by
+	# whatever one unit is worth — 0.2 of a turn at the shipped setting, clockwise.
+	# 0.2 in fixed point is 13107.2, which floors to 13107.
 	assert_eq(sim.query_player_yaw_turns(0), Fixed.TURN - 13107)
 
 

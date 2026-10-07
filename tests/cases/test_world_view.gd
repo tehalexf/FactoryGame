@@ -130,7 +130,8 @@ func test_the_camera_follows_the_player_as_they_walk() -> void:
 func test_the_camera_turns_with_the_yaw_the_simulation_holds() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
-	sim.step([InputAction.look(0, Fixed.from_int(-625), 0)])
+	# 1250 pixels left is a quarter turn at the shipped 0.2 turns per 1000 pixels.
+	sim.step([InputAction.look(0, Fixed.from_int(-1250), 0)])
 	view.sync(sim)
 	# A quarter turn of yaw is a quarter of TAU in radians.
 	assert_true(

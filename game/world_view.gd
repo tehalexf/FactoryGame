@@ -450,6 +450,8 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 
 	if sim.query_player_is_surveying(VIEWED_PLAYER):
 		lines.append("survey view")
+	if sim.query_player_is_sprinting(VIEWED_PLAYER):
+		lines.append("sprinting")
 
 	return lines
 
