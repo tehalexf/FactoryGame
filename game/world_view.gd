@@ -80,6 +80,16 @@ const NEST_HEIGHT_METRES: float = 6.0
 ## enough that the Crawlers coming out of it are what the eye catches.
 const BREACH_HEIGHT_METRES: float = 0.2
 
+## A Breach that has been announced but has not opened yet, drawn as a thin bright frame on
+## the ground where it will be.
+##
+## Deliberately a *different* marker from a Breach rather than a dimmer one: "a hole is about
+## to appear here" and "there is a hole here" ask a player for different things, and a warning
+## that looks like a faded version of the real thing is a warning that reads as a rendering
+## artefact. Brighter than the Breach it becomes, because the point is to be noticed from
+## across the Factory while there is still time to put a Turret in the way.
+const PENDING_BREACH_HEIGHT_METRES: float = 0.35
+
 ## How big a Crawler is, in metres. Smaller than a 2 m tile, so a swarm packed into a
 ## chokepoint still reads as a number of individuals.
 const ENEMY_SIZE_METRES: float = 0.9
@@ -167,6 +177,10 @@ var _enemy_transforms: PackedFloat32Array = PackedFloat32Array()
 var _nest_mesh: Node3D = null
 var _breach_meshes: Array[MeshInstance3D] = []
 
+## A marker per Breach that has been announced but has not opened. A pool, because how many
+## are coming is a function of how greedily a player has been digging.
+var _pending_breach_meshes: Array[MeshInstance3D] = []
+
 ## The Ammunition gauge over every Turret: a dark backing bar and the coloured fill in front
 ## of it, one pair per Turret. Pools rather than children of a Machine node, because a
 ## Machine is not a node here either — it is a box this view rebuilds from the queries.
@@ -245,6 +259,7 @@ func sync(sim: Simulation) -> void:
 	_sync_nodes(sim)
 	_sync_nest(sim)
 	_sync_breaches(sim)
+	_sync_pending_breaches(sim)
 	_sync_machines(sim)
 	_sync_turret_gauges(sim)
 	_sync_enemies(sim)
@@ -277,6 +292,11 @@ func nest_position() -> Vector3:
 ## How many Breaches are marked on screen.
 func breach_marker_count() -> int:
 	return _breach_meshes.size()
+
+
+## How many Breaches that have not opened yet are marked on screen.
+func pending_breach_marker_count() -> int:
+	return _pending_breach_meshes.size()
 
 
 ## How many Enemies are on screen. Instances of one mesh, so this is a count of
@@ -769,6 +789,32 @@ func _sync_breaches(sim: Simulation) -> void:
 		)
 
 
+## A bright frame on the ground wherever a Breach is about to open.
+##
+## Drawn from `query_pending_breach_*`, which is a projection about a hole that does not exist
+## yet — the same arrangement the build hologram has, and for the same reason: the player is
+## told before the fact rather than after it. The pool empties itself when the Breach opens,
+## because `_sync_breaches` then has one more to draw.
+func _sync_pending_breaches(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	_resize_pool(
+		_pending_breach_meshes,
+		sim.query_pending_breach_count(),
+		tile_size,
+		PENDING_BREACH_HEIGHT_METRES,
+		Color(0.90, 0.38, 0.12)
+	)
+	for index: int in range(sim.query_pending_breach_count()):
+		var tile: Vector3i = sim.query_pending_breach_tile(index)
+		var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+		_pending_breach_meshes[index].position = Vector3(
+			Fixed.to_float(centre.x),
+			Fixed.to_float(sim.query_layer_height_metres(tile.y))
+			+ PENDING_BREACH_HEIGHT_METRES * 0.5,
+			Fixed.to_float(centre.z)
+		)
+
+
 ## Every Enemy on the Map, at the position the Simulation says it is at.
 ##
 ## One MultiMesh for the whole swarm and **no node per Enemy** (ADR 0001). That is the
@@ -1000,6 +1046,7 @@ func _sync_hud(sim: Simulation) -> void:
 	if sim.query_run_is_over():
 		lines.append("THE NEST HAS FALLEN — reached wave %d" % sim.query_wave_number())
 	lines.append_array(_telegraph_lines(sim))
+	lines.append_array(_breach_opening_lines(sim))
 	lines.append("tick %d" % sim.query_tick())
 	# What the Run is about, the pressure on it, and what is on the Map. Read out of the
 	# queries every frame, so none of it can be stale.
@@ -1078,9 +1125,13 @@ func _sync_hud(sim: Simulation) -> void:
 			state = "throttled"
 		# A Turret is always named, however healthy it looks: "running" and out of
 		# Ammunition are the same word for a Turret, and a dry one costs the Run.
+		# A Miner running up a Breach is always named too, for exactly the reason a Turret is:
+		# "running" is the wrong word for a Machine whose consequence a player has not seen
+		# yet, and a consequence nobody watched themselves cause reads as bad luck.
 		if (
 			state == "running"
 			and not sim.query_machine_is_turret(index)
+			and not _is_digging_up_a_breach(sim, index)
 			and not is_hot.has(index)
 		):
 			healthy += 1
@@ -1106,6 +1157,14 @@ func _sync_hud(sim: Simulation) -> void:
 		# what a player reads mid-fight; this is what they read afterwards to work out which
 		# Belt could not keep up, and it says DRY in capitals because an empty Turret is the
 		# one Machine state that costs the Run.
+		# How close this mine is to opening a Breach, on the mine's own line. The Heat rule
+		# applied to geography: a player reads the cause next to the thing causing it.
+		if _is_digging_up_a_breach(sim, index):
+			var node: int = sim.query_node_under_machine(index)
+			line += " — digging %d/%d" % [
+				sim.query_node_deep_crafts(node),
+				sim.query_node_deep_crafts_until_a_breach(),
+			]
 		if sim.query_machine_is_turret(index):
 			var held: int = sim.query_turret_ammunition(index)
 			line += " — ammo %d/%d" % [held, sim.query_turret_ammunition_capacity(index)]
@@ -1161,6 +1220,42 @@ func _telegraph_lines(sim: Simulation) -> PackedStringArray:
 			called,
 		]
 	)
+	return lines
+
+
+## Whether a Machine is a mine working deep enough to open a Breach, and has not opened its
+## one yet. Asked of the Simulation rather than inferred from a Depth: what counts as deep is
+## `depth.breach_tier`, which is tuning, and a renderer with its own opinion about it would be
+## the wrong one the day somebody changed the file.
+func _is_digging_up_a_breach(sim: Simulation, index: int) -> bool:
+	var node: int = sim.query_node_under_machine(index)
+	if node == -1 or sim.query_node_has_opened_a_breach(node):
+		return false
+	return sim.query_node_deep_crafts(node) > 0
+
+
+## The klaxon for a Breach that deep mining has opened and that is about to let something out.
+##
+## As loud as a Wave's Telegraph and for the same reason: a hole appearing silently beside a
+## Factory is the ambush the Telegraph exists to prevent (DESIGN.md). It says **where**,
+## because unlike a Wave — which arrives at Breaches a player already knows — the only useful
+## response to this one is to go and look at a tile they have never defended.
+func _breach_opening_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var total: int = maxi(sim.query_breach_telegraph_ticks(), 1)
+	for index: int in range(sim.query_pending_breach_count()):
+		var left: int = sim.query_pending_breach_ticks_remaining(index)
+		var filled: int = mini((total - left) * TELEGRAPH_GAUGE_CELLS / total, TELEGRAPH_GAUGE_CELLS)
+		var tile: Vector3i = sim.query_pending_breach_tile(index)
+		lines.append(
+			"!! BREACH OPENING AT (%d, %d) IN %ds [%s]"
+			% [
+				tile.x,
+				tile.z,
+				(left + Simulation.TICKS_PER_SECOND - 1) / Simulation.TICKS_PER_SECOND,
+				"#".repeat(filled) + ".".repeat(TELEGRAPH_GAUGE_CELLS - filled),
+			]
+		)
 	return lines
 
 

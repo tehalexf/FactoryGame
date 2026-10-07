@@ -258,3 +258,54 @@ crawler_damage = 10
 
 # How long between one Crawler's bites, in seconds.
 crawler_attack_interval_seconds = 1
+
+[depth]
+
+# Depth: the tier a Node sits at, and what reaching it costs. Deeper ore is richer,
+# but it needs a better Miner, it draws more Power, it raises more Heat (see
+# `heat.per_craft_per_depth` above) and it opens a new Breach near the mine — so
+# greed rearranges the Map a player has to defend rather than just moving a number.
+#
+# Which tiers a Miner can reach is `max_depth` in machines.csv, because that is a
+# property of the Machine. Everything here is about the Depth itself.
+
+# How much more Power a Miner draws per tier of Depth past the first, as a percentage
+# of its own quoted `power_draw_kw`.
+#
+# A percentage of the Machine rather than a flat surcharge, so the cost scales with the
+# Miner: a surcharge in kilowatts would be shrugged off by a big Mk3 and would choke a
+# Mk1. 60 means a Depth 3 Node costs a Miner 2.2 times what the same Miner costs on
+# Depth 1 — `power.baseline_supply_kw` is 300, so the first deep mine is immediately a
+# Boiler's worth of problem and not an afterthought.
+draw_percent_per_depth = 60
+
+# The shallowest Depth whose extraction opens Breaches. Depth 1 is the ore a Run opens
+# on, so it must not: the opening Factory is not a transgression.
+breach_tier = 2
+
+# How many completed crafts from one deep Node open a Breach near it.
+#
+# **Sustained** extraction, not a single craft, and counted per Node rather than per
+# Miner: the geography is what did it, so knocking the Miner down and rebuilding it does
+# not reset the clock, and a Breach is attributable to the mine a player chose to open.
+# One Node opens at most one Breach, ever, which is what keeps this bounded — a
+# forty-hour Run cannot ring itself with a hundred holes.
+breach_crafts = 40
+
+# How far from the mine the new Breach opens, in tiles. Chebyshev distance, so this is
+# the side of a square around the Node.
+#
+# Near enough that the Breach is unmistakably *that mine's* consequence, far enough that
+# it does not open underneath the Miner that caused it. Which tile of the ring it lands
+# on is fixed by the Map's own canonical tile order, so it is predictable — and it has to
+# be, because a Breach a player cannot plan for is not fortifiable (GLOSSARY.md).
+breach_offset_tiles = 6
+
+# How long a newly opened Breach is telegraphed before it first lets anything out, in
+# seconds.
+#
+# Load-bearing, exactly as `wave.telegraph_seconds` is: a Breach appearing silently next
+# to a player's base is the ambush the Telegraph exists to prevent. Longer than a Wave's
+# Telegraph, because the answer to a new Breach is a Turret and a Belt rather than
+# standing somewhere different.
+breach_telegraph_seconds = 45

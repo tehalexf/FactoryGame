@@ -93,13 +93,35 @@ func _threat_sim(extra: Array = [], waves: String = "") -> Simulation:
 	)
 
 
+## A tuning override that takes the Power grid out of the picture, for the tests whose
+## subject is Heat and not the brownout a deep Miner causes.
+func _power_to_spare() -> Array:
+	return [PackedStringArray(["baseline_supply_kw = 300", "baseline_supply_kw = 9000"])]
+
+
 func _miner_index(sim: Simulation) -> int:
 	return sim.query_definitions().machine_index("miner_mk1")
 
 
-## Puts a Miner on the Node at `node_index` and steps the tick that places it.
+## The shallowest Miner tier that reaches a given Depth. A Miner cannot extract from ore
+## deeper than its `max_depth` (#13), so a test studying Heat at Depth has to bring the tier
+## that can actually lift it — and the shallowest one, so nothing here is paying for reach it
+## is not using.
+func _miner_for_depth(sim: Simulation, depth: int) -> int:
+	for id: String in ["miner_mk1", "miner_mk2", "miner_mk3"]:
+		var definition: MachineDefinition = sim.query_definitions().machine(id)
+		if definition != null and definition.max_depth >= depth:
+			return sim.query_definitions().machine_index(id)
+	assert_true(false, "no shipped Miner reaches Depth %d" % depth)
+	return -1
+
+
+## Puts a Miner on the Node at `node_index` and steps the tick that places it, choosing the
+## tier that reaches that Node's Depth.
 func _build_miner(sim: Simulation, node_index: int) -> void:
-	sim.step([InputAction.build_machine(0, _miner_index(sim), sim.query_node_tile(node_index))])
+	var tile: Vector3i = sim.query_node_tile(node_index)
+	var tier: int = _miner_for_depth(sim, sim.query_node_depth(node_index))
+	sim.step([InputAction.build_machine(0, tier, tile)])
 
 
 func _step(sim: Simulation, ticks: int) -> void:
@@ -141,8 +163,10 @@ func test_a_built_but_idle_machine_raises_no_heat() -> void:
 
 
 func test_a_deeper_node_is_a_louder_craft() -> void:
-	var shallow: Simulation = _sim()
-	var deep: Simulation = _sim()
+	# On a grid with room to spare: a Depth 3 Miner's draw scales with its Depth (#13), so on
+	# the shipped baseline it would be throttled and the subject here would stop being Heat.
+	var shallow: Simulation = _sim(_power_to_spare())
+	var deep: Simulation = _sim(_power_to_spare())
 	# Node 0 is the Depth 1 ore, Node 1 the Depth 3 ore — `_heat_layout` sorts them by
 	# tile, and 4 comes before 10 on x.
 	_build_miner(shallow, 0)
@@ -235,7 +259,7 @@ func test_a_factory_that_went_cold_does_not_bank_its_decay() -> void:
 # ── Heat and its contributors are visible ─────────────────────────────────────
 
 func test_each_machine_reports_the_heat_it_has_added() -> void:
-	var sim: Simulation = _sim()
+	var sim: Simulation = _sim(_power_to_spare())
 	_build_miner(sim, 0)
 	_build_miner(sim, 1)
 	_step(sim, 90)
@@ -664,7 +688,9 @@ func test_a_machine_can_be_built_while_a_wave_is_on_the_map() -> void:
 # ── Round-tripping through a save ─────────────────────────────────────────────
 
 func test_heat_and_the_whole_schedule_survive_a_save_and_a_resume() -> void:
-	var content: Definitions = _content(_schedule_overrides())
+	# Power out of the way, because this works the Depth 3 Node and what that costs on the
+	# grid (#13) is `test_depth`'s subject rather than this one's.
+	var content: Definitions = _content(_schedule_overrides(_power_to_spare()))
 	var sim: Simulation = Simulation.new(12, 1, content, _threat_layout())
 	_build_miner(sim, 0)
 	_build_miner(sim, 1)
@@ -717,14 +743,20 @@ func test_a_resumed_run_arrives_at_the_same_wave_on_the_same_tick() -> void:
 # definitions, so the replay re-reads content/ and a balance change that would alter the Run
 # is reported as a `definitions_mismatch` rather than passing unnoticed.
 
-## The starter Map's three Nodes, each with the Miner that can work it. Three Miners is past
-## `power.baseline_supply_kw`, so this Factory is in a brownout as well as being loud —
+## The starter Map's three Depth 1 Nodes, each with the Miner that can work it. Three Miners
+## is past `power.baseline_supply_kw`, so this Factory is in a brownout as well as being loud —
 ## which is the realistic case, and the one where a Heat rate and a duty cycle have to agree.
+##
+## The Map's deeper seams are deliberately left alone: what Depth costs is `test_depth`'s
+## subject, and a fixture about Heat rising with throughput should not also be a fixture about
+## a Breach opening.
 func _three_miners(sim: Simulation) -> Array:
 	var iron: int = sim.query_definitions().machine_index("miner_mk1")
 	var coal: int = sim.query_definitions().machine_index("coal_miner_mk1")
 	var actions: Array = []
 	for index: int in range(sim.query_node_count()):
+		if sim.query_node_depth(index) != 1:
+			continue
 		var definition_index: int = coal if sim.query_node_resource(index) == "coal" else iron
 		actions.append(InputAction.build_machine(0, definition_index, sim.query_node_tile(index)))
 	return actions
@@ -733,7 +765,7 @@ func _three_miners(sim: Simulation) -> Array:
 func test_determinism_heat_rising_with_throughput_replays_identically() -> void:
 	var sim: Simulation = Simulation.new(21, 1)
 	var opening: Array = _three_miners(sim)
-	assert_eq(opening.size(), 3, "the starter Map has three Nodes")
+	assert_eq(opening.size(), 3, "the starter Map has three Nodes at Depth 1")
 
 	var script: InputScript = InputScript.new()
 	script.add_tick(opening)

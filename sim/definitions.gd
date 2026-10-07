@@ -110,6 +110,11 @@ const TUNING_HEAT_DECAY_PER_MINUTE: String = "heat.decay_per_minute"
 const TUNING_HEAT_WAVE_INTERVAL_BASELINE: String = "heat.wave_interval_baseline_seconds"
 const TUNING_HEAT_WAVE_INTERVAL_MINIMUM: String = "heat.wave_interval_minimum_seconds"
 const TUNING_HEAT_PER_SECOND_SOONER: String = "heat.per_second_sooner"
+const TUNING_DEPTH_DRAW_PERCENT: String = "depth.draw_percent_per_depth"
+const TUNING_DEPTH_BREACH_TIER: String = "depth.breach_tier"
+const TUNING_DEPTH_BREACH_CRAFTS: String = "depth.breach_crafts"
+const TUNING_DEPTH_BREACH_OFFSET_TILES: String = "depth.breach_offset_tiles"
+const TUNING_DEPTH_BREACH_TELEGRAPH_SECONDS: String = "depth.breach_telegraph_seconds"
 const TUNING_CRAWLER_HEALTH: String = "enemy.crawler_health"
 const TUNING_CRAWLER_SPEED: String = "enemy.crawler_speed_metres_per_second"
 const TUNING_CRAWLER_DAMAGE: String = "enemy.crawler_damage"
@@ -206,6 +211,26 @@ var heat_wave_interval_minimum_seconds: int = 0
 
 ## How much Heat shaves one second off the interval between Waves.
 var heat_per_second_sooner: int = 0
+
+## How much more Power a Miner draws per tier of Depth past the first, as a whole
+## percentage of its own quoted draw. A percentage of the Machine rather than a flat
+## surcharge, so the cost scales with the Miner.
+var depth_draw_percent_per_depth: int = 0
+
+## The shallowest Depth whose extraction opens Breaches. Depth 1 is the ore a Run opens
+## on, so the opening Factory is not a transgression.
+var depth_breach_tier: int = 0
+
+## How many completed crafts from one deep Node open a Breach near it. Per Node rather
+## than per Miner: the geography is what did it.
+var depth_breach_crafts: int = 0
+
+## How far from the mine a newly opened Breach lands, in tiles of Chebyshev distance.
+var depth_breach_offset_tiles: int = 0
+
+## How long a newly opened Breach is telegraphed before it first lets anything out, in
+## fixed-point seconds. Load-bearing exactly as `wave_telegraph_seconds` is.
+var depth_breach_telegraph_seconds: int = 0
 
 ## A Crawler's hit points.
 var crawler_health: int = 0
@@ -552,6 +577,11 @@ func digest() -> int:
 	hasher.feed_int(heat_wave_interval_baseline_seconds)
 	hasher.feed_int(heat_wave_interval_minimum_seconds)
 	hasher.feed_int(heat_per_second_sooner)
+	hasher.feed_int(depth_draw_percent_per_depth)
+	hasher.feed_int(depth_breach_tier)
+	hasher.feed_int(depth_breach_crafts)
+	hasher.feed_int(depth_breach_offset_tiles)
+	hasher.feed_int(depth_breach_telegraph_seconds)
 	hasher.feed_int(crawler_health)
 	hasher.feed_int(crawler_speed)
 	hasher.feed_int(crawler_damage)
@@ -1130,6 +1160,13 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	heat_wave_interval_baseline_seconds = tuning.require_fixed(TUNING_HEAT_WAVE_INTERVAL_BASELINE)
 	heat_wave_interval_minimum_seconds = tuning.require_fixed(TUNING_HEAT_WAVE_INTERVAL_MINIMUM)
 	heat_per_second_sooner = tuning.require_int(TUNING_HEAT_PER_SECOND_SOONER)
+	depth_draw_percent_per_depth = tuning.require_int(TUNING_DEPTH_DRAW_PERCENT)
+	depth_breach_tier = tuning.require_int(TUNING_DEPTH_BREACH_TIER)
+	depth_breach_crafts = tuning.require_int(TUNING_DEPTH_BREACH_CRAFTS)
+	depth_breach_offset_tiles = tuning.require_int(TUNING_DEPTH_BREACH_OFFSET_TILES)
+	depth_breach_telegraph_seconds = tuning.require_fixed(
+		TUNING_DEPTH_BREACH_TELEGRAPH_SECONDS
+	)
 	crawler_health = tuning.require_int(TUNING_CRAWLER_HEALTH)
 	crawler_speed = tuning.require_fixed(TUNING_CRAWLER_SPEED)
 	crawler_damage = tuning.require_int(TUNING_CRAWLER_DAMAGE)
@@ -1257,6 +1294,39 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				tuning,
 				TUNING_WAVE_SPAWN_INTERVAL_SECONDS,
 				"a whole Wave arriving in no time is a stack of Enemies on one tile"
+			)
+		if depth_draw_percent_per_depth < 0:
+			_report_tuning(
+				tuning,
+				TUNING_DEPTH_DRAW_PERCENT,
+				"deeper ore costs more Power, never less"
+			)
+		if depth_breach_tier < 2:
+			_report_tuning(
+				tuning,
+				TUNING_DEPTH_BREACH_TIER,
+				(
+					"must be at least 2 — Depth 1 is the ore a Run opens on, and a Map that"
+					+ " punishes the opening Factory teaches nothing"
+				)
+			)
+		if depth_breach_crafts < 1:
+			_report_tuning(
+				tuning,
+				TUNING_DEPTH_BREACH_CRAFTS,
+				"a Breach opened by no extraction at all would open before the Miner runs"
+			)
+		if depth_breach_offset_tiles < 1:
+			_report_tuning(
+				tuning,
+				TUNING_DEPTH_BREACH_OFFSET_TILES,
+				"a Breach on the mine itself is a Breach underneath the Miner"
+			)
+		if depth_breach_telegraph_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_DEPTH_BREACH_TELEGRAPH_SECONDS,
+				"a Breach that opens unannounced is the ambush the Telegraph exists to prevent"
 			)
 		if crawler_health <= 0:
 			_report_tuning(tuning, TUNING_CRAWLER_HEALTH, "an Enemy has to be able to take a hit")
@@ -1401,6 +1471,11 @@ func _discard_content() -> void:
 	heat_wave_interval_baseline_seconds = 0
 	heat_wave_interval_minimum_seconds = 0
 	heat_per_second_sooner = 0
+	depth_draw_percent_per_depth = 0
+	depth_breach_tier = 0
+	depth_breach_crafts = 0
+	depth_breach_offset_tiles = 0
+	depth_breach_telegraph_seconds = 0
 	crawler_health = 0
 	crawler_speed = 0
 	crawler_damage = 0

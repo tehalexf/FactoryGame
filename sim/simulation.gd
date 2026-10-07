@@ -72,6 +72,12 @@ const FIELD_STEPS: Array = [1, FIELD_WIDTH_TILES, -1, -FIELD_WIDTH_TILES]
 ## Breaker and the Siege Hulk join the same arrays rather than getting their own.
 const ENEMY_KIND_CRAWLER: int = EnemyKind.CRAWLER
 
+## How far past `depth.breach_offset_tiles` the search for somewhere to put a new Breach will
+## widen if every tile on the ring is already taken. Four, which is far more slack than the
+## shipped Map needs — the point is that a crowded corner of the Map degrades into a Breach a
+## few tiles further out rather than into no consequence at all.
+const RING_SEARCH_WIDENING: int = 4
+
 ## Degrees in one whole turn. Angles are turns everywhere inside the Simulation; the
 ## tuning file is allowed degrees because that is how a human reasons about a tilt.
 const DEGREES_PER_TURN: int = 360
@@ -239,6 +245,24 @@ var _node_tile_z: PackedInt64Array = PackedInt64Array()
 var _node_resource: PackedStringArray = PackedStringArray()
 var _node_depth: PackedInt64Array = PackedInt64Array()
 
+## How many crafts each Node has given up at a Depth of `depth.breach_tier` or more, and
+## whether it has already opened its Breach. One entry per Node, in Node index order.
+##
+## **Per Node, not per Miner, and this is the design decision rather than a convenience.**
+## What opens a Breach is the hole in the ground, so knocking the Miner down and putting a
+## new one back is not a way to reset the count, and the Breach is attributable to the mine
+## a player chose to open rather than to a Machine that has since been demolished.
+##
+## `_node_breach_opened` is what bounds the whole mechanic: a Node opens at most one Breach,
+## ever. Without it a forty-hour Run could ring itself with a hundred holes, which is a
+## performance ceiling as much as a balance one — and the cap being per Node rather than per
+## Run is what keeps the *second* deep mine a real decision too.
+##
+## A Node is still inexhaustible (DESIGN.md): nothing here subtracts from what it yields.
+## This is a count of what the Factory has taken, not of what is left.
+var _node_deep_crafts: PackedInt64Array = PackedInt64Array()
+var _node_breach_opened: PackedInt64Array = PackedInt64Array()
+
 ## Where the Nest stands and how much of it is left.
 ##
 ## The structure the whole Run is about: its destruction ends the Run and nothing else
@@ -255,10 +279,6 @@ var _nest_tile_y: int = 0
 var _nest_tile_z: int = 0
 var _nest_health: int = 0
 
-## The Breaches: the fixed tiles Enemies enter the Map at, in the canonical order
-## `MapLayout` sorted them into. Constant through a Run — a Breach is known in advance
-## and fortifiable (GLOSSARY.md), which it could not be if it moved. Deep mining opens
-## new ones, which is the ticket that makes this array grow mid-Run.
 # ── Delivery progression ──────────────────────────────────────────────────────
 # Progression is physical: goods brought to the Nest unlock the next tier of Machines,
 # Gear components and Stratagems (GLOSSARY.md). There is no research menu, no science
@@ -297,9 +317,44 @@ var _unlocked_stratagem_ids: PackedStringArray = PackedStringArray()
 var _delivery_items: PackedStringArray = PackedStringArray()
 var _delivery_counts: PackedInt64Array = PackedInt64Array()
 
+## The Breaches: the tiles Enemies enter the Map at, in the canonical tile order
+## `MapLayout.tile_precedes` defines. A Breach never moves once it exists — it is known in
+## advance and fortifiable (GLOSSARY.md), which it could not be if it moved — but the set
+## **grows**, because sustained deep mining opens new ones.
+##
+## That growth is why these are Simulation state and not a question asked of `MapLayout`
+## every tick. `MapLayout` is the geography a Run *starts* from: it is authored, it is not
+## hot-reloadable, and it is the same for every Run on this Map. Where the Breaches are *now*
+## is a fact about this Run and about what this player chose to dig, so it lives here, it is
+## hashed, and `RunSave` carries it. The line between the two is exactly that: `MapLayout`
+## owns the opening geography and the canonical order; the Simulation owns the live set.
+##
+## **New Breaches are inserted in canonical position, never appended.** Enemies are released
+## in Breach order, so appending would make which Breach goes first a function of when a
+## player dug rather than of geography — and two clients whose Miners finished a craft in a
+## different order would then release Enemies in a different sequence. `_insert_breach` is
+## the one way anything joins this array.
 var _breach_tile_x: PackedInt64Array = PackedInt64Array()
 var _breach_tile_y: PackedInt64Array = PackedInt64Array()
 var _breach_tile_z: PackedInt64Array = PackedInt64Array()
+
+## The Breaches that have been announced but have not opened yet: where each one will be,
+## which tick it was announced on, and how many ticks of its Telegraph are left.
+##
+## **A Breach is telegraphed before it first spawns, and that is a gate rather than a
+## courtesy** — the same rule every Wave obeys. A hole opening silently beside a Factory is
+## precisely the ambush the Telegraph exists to prevent (DESIGN.md), and the warning here is
+## longer than a Wave's because the answer to a new Breach is a Turret and a Belt rather
+## than standing somewhere different.
+##
+## The announced tick is held so a pending Breach does not spend its first tick of warning on
+## the tick it was announced — the same rule a Machine built this tick follows, and held
+## explicitly rather than left to where `_breaches_open` sits in `step`.
+var _pending_breach_tile_x: PackedInt64Array = PackedInt64Array()
+var _pending_breach_tile_y: PackedInt64Array = PackedInt64Array()
+var _pending_breach_tile_z: PackedInt64Array = PackedInt64Array()
+var _pending_breach_announced_tick: PackedInt64Array = PackedInt64Array()
+var _pending_breach_ticks_left: PackedInt64Array = PackedInt64Array()
 
 ## Heat: the scalar that measures how much attention the Factory has drawn
 ## (GLOSSARY.md), and the thing that makes scaling up a bet rather than a free gain.
@@ -641,6 +696,10 @@ func _init(
 	_node_tile_z = layout.node_tile_z.duplicate()
 	_node_resource = layout.node_resource.duplicate()
 	_node_depth = layout.node_depth.duplicate()
+	_node_deep_crafts.resize(_node_resource.size())
+	_node_deep_crafts.fill(0)
+	_node_breach_opened.resize(_node_resource.size())
+	_node_breach_opened.fill(0)
 
 	_nest_tile_x = layout.nest_tile.x
 	_nest_tile_y = layout.nest_tile.y
@@ -716,6 +775,7 @@ func step(actions: Array) -> void:
 	_extract()
 	_craft()
 	_heat_bleeds()
+	_breaches_open()
 	_waves()
 	_enemies()
 
@@ -1311,9 +1371,38 @@ func _read_the_grid() -> void:
 		if definition == null or not _machine_would_work(index, definition):
 			continue
 		supply += definition.power_supply_kw
-		demand += definition.power_draw_kw
+		demand += _depth_adjusted_draw_kw(index, definition)
 	_power_supply_kw = supply
 	_power_demand_kw = demand
+
+
+## What a Machine actually draws from the one grid: its quoted draw, plus what Depth adds.
+##
+## **Deeper ore costs proportionally more Power** (GLOSSARY.md), and this is the only place
+## that is decided. The first tier draws exactly what `content/machines.csv` says, and every
+## tier past it adds `depth.draw_percent_per_depth` of that figure — so the cost scales with
+## the Machine rather than being a flat surcharge that a big Miner would shrug off and a
+## small one would choke on.
+##
+## Whole kilowatts, with the one division floored and **applied to the total rather than
+## accumulated**: this is recomputed from scratch every tick out of two integers from the
+## definitions, so unlike the Power credit and the Heat decay there is nothing here that
+## could drift. That is the same reason `_wave_interval_ticks` is derived rather than stored.
+##
+## Only a Miner has a Depth; a crafter, a generator and a Turret draw what their row says.
+func _depth_adjusted_draw_kw(index: int, definition: MachineDefinition) -> int:
+	var base: int = definition.power_draw_kw
+	if base <= 0 or not definition.is_miner():
+		return base
+	var node_index: int = _node_under_machine(index, definition)
+	if node_index == -1:
+		return base
+	var tiers_past_the_first: int = maxi(_node_depth[node_index] - 1, 0)
+	@warning_ignore("integer_division")
+	var surcharge: int = (
+		base * _definitions.depth_draw_percent_per_depth * tiers_past_the_first / 100
+	)
+	return base + surcharge
 
 
 ## Whether a Machine has everything it needs to advance a craft this tick, leaving Power
@@ -1346,8 +1435,24 @@ func _machine_has_its_inputs(index: int, definition: MachineDefinition) -> bool:
 		return false
 	if definition.is_miner():
 		var node_index: int = _node_under_machine(index, definition)
-		return node_index != -1 and _recipe_yields(recipe, _node_resource[node_index])
+		if node_index == -1 or not _miner_reaches(definition, node_index):
+			return false
+		return _recipe_yields(recipe, _node_resource[node_index])
 	return _holds_a_whole_recipe(index, recipe)
+
+
+## Whether a Miner's tier reaches the Depth a Node sits at.
+##
+## `max_depth` in `content/machines.csv` is the whole of a Miner's tier, so a Miner that
+## reaches deeper is a **row** and never a code change (GLOSSARY.md: different Miners reach
+## different Depths). The comparison is the only place the number is read, and it is read
+## through `_machine_has_its_inputs`, so a Miner over ore it cannot reach is **starved** —
+## not throttled, not halted, and not quietly banking progress. That matters three ways at
+## once: it draws no Power, it advances no craft, and `query_machine_is_starved` already
+## says so, which is the same treatment a Miner on bare rock gets. A Miner over ore it
+## cannot lift is visibly doing nothing, which is the only honest reading of it.
+func _miner_reaches(definition: MachineDefinition, node_index: int) -> bool:
+	return _node_depth[node_index] <= definition.max_depth
 
 
 ## Whether the grid lets a given Machine advance this tick.
@@ -1396,6 +1501,7 @@ func _extract() -> void:
 			_machine_progress_ticks[index] -= required
 			_deposit_outputs(index, recipe)
 			_note_a_craft(index, definition)
+			_note_a_deep_craft(index, definition)
 
 
 # ── Crafting ──────────────────────────────────────────────────────────────────
@@ -2277,6 +2383,164 @@ func _heat_bleeds() -> void:
 		_heat_decay_credit = 0
 
 
+# ── Depth: the Breach a deep mine opens ───────────────────────────────────────
+# The half of Depth that is not a number. Deeper ore is richer, draws more Power and raises
+# more Heat — all three of which a player could read as an upgrade with a price tag. What
+# makes Depth a *decision* is that extracting at it **rearranges the Map they have to
+# defend**: a new Breach opens near the mine, so reaching for better ore buys geography it
+# did not ask for. A bigger number would have been the easy version and the wrong one.
+
+## Counts one completed craft against the Node it came out of, and opens a Breach once that
+## Node has given up `depth.breach_crafts` of them.
+##
+## **Sustained extraction, not a single craft**: one load of deep ore is prospecting and
+## should not summon anything, where a line that has been running on it for minutes is a hole
+## in the ground somebody has noticed. Counted per Node for the reason `_node_deep_crafts`
+## explains, and only at or past `depth.breach_tier`, so the ore a Run opens on is never a
+## transgression.
+##
+## Separate from `_note_a_craft` rather than folded into it, because Heat and Breaches are
+## two mechanics that happen to share an event: Heat returns early when a craft is worth no
+## units, and a Factory tuned to make no Heat must still be answerable for digging.
+func _note_a_deep_craft(index: int, definition: MachineDefinition) -> void:
+	if not definition.is_miner():
+		return
+	var node_index: int = _node_under_machine(index, definition)
+	if node_index == -1 or _node_depth[node_index] < _definitions.depth_breach_tier:
+		return
+
+	_node_deep_crafts[node_index] += 1
+	if _node_breach_opened[node_index] != 0:
+		return
+	if _node_deep_crafts[node_index] < _definitions.depth_breach_crafts:
+		return
+	if _announce_a_breach_near(node_index):
+		_node_breach_opened[node_index] = 1
+
+
+## Announces a Breach near a Node, and reports whether it found anywhere to put one.
+##
+## The tile is the **first valid one on the ring `depth.breach_offset_tiles` tiles out from
+## the mine, in the Map's own canonical tile order** — ascending x, then ascending z, which
+## in practice puts it on the ring's north-west corner. Predictable rather than random, and
+## deliberately so twice over: a Breach is only fortifiable if a player can plan for it
+## (GLOSSARY.md), and geography that depended on an RNG draw would make *which* Breach you
+## got a function of how many draws the Run had spent.
+##
+## A valid tile is on the Map, on the ground, not already a Breach or an announced one, and
+## not under the Nest. Obstructions are deliberately **not** consulted: that would mean
+## reading the flowfield, the flowfield is built lazily, and forcing a rebuild here is
+## exactly the "rebuild of unrelated state" this must not do. A Breach that ends up inside a
+## Machine is already handled — the field cannot route that tile, so an Enemy there walks
+## straight at the Nest (see `_advance_enemy`).
+##
+## The ring widens by up to `RING_SEARCH_WIDENING` if every tile on it is taken, and if even
+## that fails nothing is announced and the Node stays eligible: the next deep craft tries
+## again. A Map with nowhere to put a Breach is geography, not an error.
+func _announce_a_breach_near(node_index: int) -> bool:
+	var mine: Vector3i = query_node_tile(node_index)
+	var offset: int = maxi(_definitions.depth_breach_offset_tiles, 1)
+	for ring: int in range(offset, offset + RING_SEARCH_WIDENING + 1):
+		for step_x: int in range(-ring, ring + 1):
+			for step_z: int in range(-ring, ring + 1):
+				# The ring, not the square: only tiles at exactly this Chebyshev distance.
+				if absi(step_x) != ring and absi(step_z) != ring:
+					continue
+				var tile: Vector3i = Vector3i(mine.x + step_x, mine.y, mine.z + step_z)
+				if not _tile_can_hold_a_breach(tile):
+					continue
+				_pending_breach_tile_x.append(tile.x)
+				_pending_breach_tile_y.append(tile.y)
+				_pending_breach_tile_z.append(tile.z)
+				_pending_breach_announced_tick.append(_tick)
+				_pending_breach_ticks_left.append(_breach_telegraph_ticks())
+				return true
+	return false
+
+
+## Whether a tile could become a Breach: on the Map, on the ground, and not already taken by
+## a Breach, an announced one or the Nest.
+func _tile_can_hold_a_breach(tile: Vector3i) -> bool:
+	if _field_index(tile) == -1:
+		return false
+	if _nest_covers(tile):
+		return false
+	for index: int in range(query_breach_count()):
+		if query_breach_tile(index) == tile:
+			return false
+	for index: int in range(query_pending_breach_count()):
+		if query_pending_breach_tile(index) == tile:
+			return false
+	return true
+
+
+## How long a newly opened Breach is telegraphed, in whole ticks. At least one, for the
+## reason `_telegraph_ticks` is: a warning of no length is the ambush it exists to prevent.
+func _breach_telegraph_ticks() -> int:
+	return maxi(_seconds_to_ticks(_definitions.depth_breach_telegraph_seconds), 1)
+
+
+## Runs down every announced Breach's Telegraph and opens the ones whose warning is served.
+##
+## Runs before `_waves`, so the Breach set a Wave reads is settled for the tick. A Breach
+## announced on *this* tick is skipped, which is the same rule a Machine built this tick
+## follows — it was announced during the tick, and crediting it a tick of warning for the
+## instant it appeared would make the first warning a tick short.
+##
+## **This does not mark the flowfield stale, and that is the point rather than an omission.**
+## The field is a pure function of the Map's ground and the Machines standing on it; a Breach
+## is neither, because a Breach does not obstruct and is not a destination. The field already
+## routes every ground tile to the Nest, so the tile a new Breach opens on already has a
+## direction and a distance, and an Enemy coming out of it steers by the same field every
+## other Enemy is using. Rebuilding would be O(map) work to arrive at the identical answer.
+func _breaches_open() -> void:
+	var survivor: int = 0
+	for index: int in range(query_pending_breach_count()):
+		var tile: Vector3i = query_pending_breach_tile(index)
+		var announced: int = _pending_breach_announced_tick[index]
+		var left: int = _pending_breach_ticks_left[index]
+		if announced < _tick:
+			left -= 1
+		if left <= 0:
+			_insert_breach(tile)
+			continue
+		# Kept, shuffled down over whatever has already opened. Order is preserved among the
+		# survivors, exactly as `_remove_enemy` preserves it among Enemies.
+		_pending_breach_tile_x[survivor] = tile.x
+		_pending_breach_tile_y[survivor] = tile.y
+		_pending_breach_tile_z[survivor] = tile.z
+		_pending_breach_announced_tick[survivor] = announced
+		_pending_breach_ticks_left[survivor] = left
+		survivor += 1
+
+	_pending_breach_tile_x.resize(survivor)
+	_pending_breach_tile_y.resize(survivor)
+	_pending_breach_tile_z.resize(survivor)
+	_pending_breach_announced_tick.resize(survivor)
+	_pending_breach_ticks_left.resize(survivor)
+
+
+## Puts a Breach on the Map **in canonical tile order**, which is the one way anything joins
+## that array.
+##
+## This is the determinism trap in the whole feature. `MapLayout` sorts the starting Breaches
+## into tile order and `_release_from_the_breaches` walks them in index order, so Enemy
+## release order is geography. Appending a runtime Breach would quietly change that to "the
+## order a player happened to dig in" — and because serials are issued in release order, two
+## clients whose Miners completed a craft in a different order would then disagree about
+## which Crawler is which. Inserting at the position `MapLayout.tile_precedes` names keeps
+## the invariant exactly, and `test_depth` asserts the array is still ascending afterwards.
+func _insert_breach(tile: Vector3i) -> void:
+	var at: int = query_breach_count()
+	for index: int in range(query_breach_count()):
+		if MapLayout.tile_precedes(tile, query_breach_tile(index)):
+			at = index
+			break
+	_breach_tile_x.insert(at, tile.x)
+	_breach_tile_y.insert(at, tile.y)
+	_breach_tile_z.insert(at, tile.z)
+
+
 # ── The Nest, the Breaches and the Waves ──────────────────────────
 
 ## Runs the Wave schedule: the Telegraph, the arrival, and the Breaches letting Enemies out.
@@ -2493,10 +2757,12 @@ func _next_delivery_index() -> int:
 ## again by taking that Miner down. So the gate measures the Factory, which is the only
 ## thing a player can argue with.
 ##
-## Three conditions, all of them already the Simulation's own rules: the Machine is a
-## Miner, its footprint covers a Node, and it can actually work that Node — its Recipe
-## yields the Node's Resource and the Node is no deeper than the Miner reaches. A Miner Mk1
-## parked on a Depth 3 Node has reached Depth nothing.
+## Three conditions, all of them already the Simulation's own rules and asked through the
+## same functions `_machine_has_its_inputs` asks: the Machine is a Miner, its footprint
+## covers a Node, and `_miner_reaches` says its tier reaches that Node's Depth with a Recipe
+## that yields what is under it. A Miner Mk1 parked on a Depth 3 Node is starved, and it has
+## reached Depth nothing — one predicate, so the Delivery gate and the extraction rule cannot
+## disagree about what a Factory is mining.
 func _depth_reached() -> int:
 	var deepest: int = 0
 	for index: int in range(query_machine_count()):
@@ -2506,13 +2772,12 @@ func _depth_reached() -> int:
 		var node: int = _node_under_machine(index, definition)
 		if node == -1:
 			continue
-		var depth: int = _node_depth[node]
-		if depth > definition.max_depth:
+		if not _miner_reaches(definition, node):
 			continue
 		var recipe: RecipeDefinition = _definitions.recipe(definition.recipe_id)
 		if recipe == null or not _recipe_yields(recipe, _node_resource[node]):
 			continue
-		deepest = maxi(deepest, depth)
+		deepest = maxi(deepest, _node_depth[node])
 	return deepest
 
 
@@ -3106,6 +3371,16 @@ func hash() -> int:
 	for slot: int in range(_delivery_items.size()):
 		hasher.feed_text(_delivery_items[slot])
 		hasher.feed_int(_delivery_counts[slot])
+	# Depth: what each Node has given up and the Breaches that are on their way. All of it
+	# decides what a later tick does — a Node one craft from its threshold is in a different
+	# state from one that has just opened a Breach, and a warning half-served is a warning.
+	hasher.feed_ints(_node_deep_crafts)
+	hasher.feed_ints(_node_breach_opened)
+	hasher.feed_ints(_pending_breach_tile_x)
+	hasher.feed_ints(_pending_breach_tile_y)
+	hasher.feed_ints(_pending_breach_tile_z)
+	hasher.feed_ints(_pending_breach_announced_tick)
+	hasher.feed_ints(_pending_breach_ticks_left)
 	# The Wave clock, and whether the Run is over. Every one of these decides what the next
 	# tick does, so none of them may sit outside the hash.
 	hasher.feed_int(_heat)
@@ -3387,6 +3662,29 @@ func query_node_resource(index: int) -> String:
 	if not _is_node(index):
 		return ""
 	return _node_resource[index]
+
+
+## How many crafts a Node has given up at `depth.breach_tier` or deeper. What a player reads
+## to know how close their deep mine is to opening a hole — the counter is hashed state rather
+## than an estimate, for the reason `query_machine_heat_units` is.
+func query_node_deep_crafts(index: int) -> int:
+	if not _is_node(index):
+		return 0
+	return _node_deep_crafts[index]
+
+
+## How many deep crafts open a Breach. The threshold the count above is read against, so a
+## HUD can show "31/40" rather than a number with no scale.
+func query_node_deep_crafts_until_a_breach() -> int:
+	return _definitions.depth_breach_crafts
+
+
+## Whether a Node has already opened its Breach. One each, ever, so a player knows the mine
+## they have been running for an hour is not about to cost them a second hole.
+func query_node_has_opened_a_breach(index: int) -> bool:
+	if not _is_node(index):
+		return false
+	return _node_breach_opened[index] != 0
 
 
 ## The Depth tier a Node sits at. Tiers start at 1; 0 for an unknown Node.
@@ -3703,6 +4001,39 @@ func query_breach_tile(index: int) -> Vector3i:
 	if index < 0 or index >= query_breach_count():
 		return Vector3i.ZERO
 	return Vector3i(_breach_tile_x[index], _breach_tile_y[index], _breach_tile_z[index])
+
+
+## How many Breaches have been announced but have not opened yet.
+func query_pending_breach_count() -> int:
+	return _pending_breach_tile_x.size()
+
+
+## Where an announced Breach will open. The origin for an unknown index, rather than crashing.
+##
+## A projection about a hole that does not exist yet, which is what lets the renderer mark the
+## ground and the HUD raise a klaxon over it *before* anything comes out. The same arrangement
+## `query_build_refusal` has: the player is told before the fact rather than after it.
+func query_pending_breach_tile(index: int) -> Vector3i:
+	if index < 0 or index >= query_pending_breach_count():
+		return Vector3i.ZERO
+	return Vector3i(
+		_pending_breach_tile_x[index],
+		_pending_breach_tile_y[index],
+		_pending_breach_tile_z[index]
+	)
+
+
+## How many ticks of warning an announced Breach has left before it opens.
+func query_pending_breach_ticks_remaining(index: int) -> int:
+	if index < 0 or index >= query_pending_breach_count():
+		return 0
+	return _pending_breach_ticks_left[index]
+
+
+## How long a newly opened Breach is telegraphed for, in whole ticks — what the countdown
+## above is a fraction of, so a gauge has a denominator.
+func query_breach_telegraph_ticks() -> int:
+	return _breach_telegraph_ticks()
 
 
 ## Which Wave the Run has reached. 0 before the first one arrives, and frozen at whatever
@@ -4115,6 +4446,22 @@ func query_power_ratio() -> int:
 	if _power_supply_kw >= _power_demand_kw:
 		return Fixed.ONE
 	return Fixed.from_rational(_power_supply_kw, _power_demand_kw)
+
+
+## What one Machine is putting on the grid this tick, in whole kilowatts, and 0 for one that
+## is not working — because a Machine that is not working is not on the grid at all.
+##
+## Not a second opinion about the draw: this is the very figure `_read_the_grid` totals, so
+## the attribution a player reads off a deep Miner and the brownout they are trying to
+## explain are one number. It is where Depth's Power cost becomes visible, which matters
+## because a surcharge nothing reports is a surcharge that reads as a bug.
+func query_machine_power_draw_kw(index: int) -> int:
+	if not _is_machine(index):
+		return 0
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition == null or not _machine_would_work(index, definition):
+		return 0
+	return _depth_adjusted_draw_kw(index, definition)
 
 
 ## Whether the grid is short: demand above supply. The brownout, as one boolean.

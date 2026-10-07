@@ -53,19 +53,20 @@
 #   78 plates against the 80 `player.starting_stock` grants — because DESIGN.md's whole
 #   thesis is that a fed Turret behind a production chain is what a Run is, and a game that
 #   made a player earn the right to defend themselves before the first Wave would be a
-#   different game. What the chain sells is what comes *after* that line.
+#   different game. What the chain sells is Depth, which is the other direction the Factory
+#   can grow in.
 #
 #   `t01_munitions` wants coal, so the first thing a player does is run a Belt out of the
 #   coal Miner and into the Nest and watch the Factory pay for its own progression.
 #   `t02_deep_mining` wants plate and Ammunition, so it competes directly with the magazine
-#   the player is trying to keep full — and it unlocks Miner Mk2, which is the one shipped
-#   Machine a Run cannot build until it is earned. `t03_deep_survey` then sits at Depth 2,
-#   which only a Miner Mk2 standing on a Depth 2 Node reaches: the chain pays for the tool
-#   that opens the gate on the tier after it. The starter Map has no Depth 2 ground, so on
-#   the content that ships today t03 is where the chain stops — which is exactly what Depth
-#   gating looks like from inside a Run, and what the Depth ticket opens up.
+#   the player is trying to keep full — and it unlocks Miner Mk2, the Miner that reaches the
+#   Depth 2 seam. `t03_deep_survey` then sits at Depth 2, which only a Mk2 actually working
+#   that seam reaches, and unlocks Mk3 for the Depth 3 one: **each tier pays for the tool
+#   that opens the gate on the tier after it**, which is the whole shape of "Depth gates what
+#   is possible to deliver". And the deep seam is the one that opens new Breaches, so the
+#   chain is also what talks a player into being hunted from a second direction.
 #
 id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_munitions,Munitions Licence,1,coal:20,,mg_drum_magazine,
 t02_deep_mining,Deep Mining Licence,1,iron_plate:120;ammunition:60,miner_mk2,heavy_barrel;reflex_sight,resupply_drop
-t03_deep_survey,Deep Survey Licence,2,iron_plate:400;coal:200,,hardened_plating,orbital_barrage
+t03_deep_survey,Deep Survey Licence,2,iron_plate:400;coal:200,miner_mk3,hardened_plating,orbital_barrage

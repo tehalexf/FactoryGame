@@ -57,6 +57,12 @@ decay_per_minute = 240
 wave_interval_baseline_seconds = 150
 wave_interval_minimum_seconds = 40
 per_second_sooner = 20
+[depth]
+draw_percent_per_depth = 60
+breach_tier = 2
+breach_crafts = 40
+breach_offset_tiles = 6
+breach_telegraph_seconds = 45
 [enemy]
 crawler_health = 30
 crawler_speed_metres_per_second = 3
