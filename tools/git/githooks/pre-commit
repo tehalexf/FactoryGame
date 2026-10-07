@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Repo-managed pre-commit hook. Installed by tools/git/install_hooks.sh, which
+# points core.hooksPath at this directory so the hook is version-controlled and
+# shared rather than living in one developer's .git/hooks.
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+
+# Licence guard: this repository is public; non-redistributable assets must
+# never be committed. See docs/ASSETS.md.
+python3 "$repo_root/tools/assets/check_licensed_staged.py"

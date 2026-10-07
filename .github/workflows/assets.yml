@@ -1,0 +1,25 @@
+name: assets
+
+# The licence backstop. This repository is public and purchased assets forbid
+# redistribution (docs/ASSETS.md), so the guard runs on every push and pull
+# request regardless of whether anyone installed the local pre-commit hook.
+on:
+  push:
+  pull_request:
+
+jobs:
+  licence-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No licensed asset may exist in this public repo
+        run: python3 tools/assets/check_licensed_staged.py --all
+
+  asset-pipeline-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Asset tooling tests (Blender-dependent tests self-skip)
+        run: bash tools/assets/run_tests.sh

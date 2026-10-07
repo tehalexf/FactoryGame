@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Bone map: Quaternius 'LowPoly Animated Monsters' Skeleton rig -> the shared",
+    "humanoid skeleton (Godot SkeletonProfileHumanoid names). See",
+    "docs/ASSET_PIPELINE.md.",
+    "",
+    "This rig is a worked example of why the map exists: the artist built the arms",
+    "by duplicating the leg chains, so they arrive named L.UpperLeg.001 and",
+    "L.DownLeg.001. Their bone positions (heads at Z~1.8, extending sideways)",
+    "identify them as arms. Renaming is the only way animation from another",
+    "character can ever drive this one.",
+    "",
+    "The rig has no shoulder, hand, foot or toe bones, so four bones that",
+    "SkeletonProfileHumanoid marks required are absent. The converter reports",
+    "every unmapped bone; a Godot BoneMap leaves the missing entries empty."
+  ],
+  "Hips": "Hips",
+  "Torso": "Spine",
+  "Neck": "Neck",
+  "Head": "Head",
+  "L.UpperLeg": "LeftUpperLeg",
+  "L.DownLeg": "LeftLowerLeg",
+  "R.UpperLeg": "RightUpperLeg",
+  "R.DownLeg": "RightLowerLeg",
+  "L.UpperLeg.001": "LeftUpperArm",
+  "L.DownLeg.001": "LeftLowerArm",
+  "R.UpperLeg.001": "RightUpperArm",
+  "R.DownLeg.001": "RightLowerArm"
+}
