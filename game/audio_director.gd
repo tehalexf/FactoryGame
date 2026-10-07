@@ -85,6 +85,11 @@ const REPEAT_COOLDOWN_TICKS: int = 18
 ## than a wrench that occasionally takes credit for a Turret.
 const MELEE_WINDOW_TICKS: int = 12
 
+## How many cooldown keys may pile up before the bag is swept. Comfortably more
+## than the Milestone 1 Enemy count plus a Factory's worth of Machines, so a sweep
+## is a rare event rather than a per-frame cost.
+const COOLDOWN_KEYS_BEFORE_PRUNE: int = 256
+
 # ── How the Factory's two ambience beds are mixed ─────────────────────────────
 # "Machinery ambience scales with Factory size" (issue #21), and the measure is
 # **working** Machines rather than placed ones: a starved Factory is a quiet
@@ -181,7 +186,9 @@ class Snapshot extends RefCounted:
 var _bank: SoundBank = SoundBank.new()
 var _last: Snapshot = Snapshot.new()
 ## Object key -> the tick a cue about it last fired on, so a Machine being eaten
-## groans rather than buzzes.
+## groans rather than buzzes. Pruned as it goes — see `_cooled_down` — because an
+## Enemy serial is never reused and a long Run would otherwise accumulate one key
+## per Enemy that ever swung.
 var _cooldowns: Dictionary = {}
 
 var _positional: Array[AudioStreamPlayer3D] = []
@@ -189,9 +196,13 @@ var _local: Array[AudioStreamPlayer] = []
 ## Cue name -> the player holding that sustained bed. Four of them, built on
 ## demand: the two Factory beds, the Telegraph klaxon and the Painting channel.
 var _sustained: Dictionary = {}
-## Whether every bed and voice has been built. Deferred to the first `sync` rather
-## than done in `_init`, so a director constructed by a test that only ever calls
-## `cues_for_frame` never touches the AudioServer at all.
+## Whether the one-shot voice pools have been built. Deferred to the first `sync`
+## rather than done in `_init`, so a director a test only ever asks
+## `cues_for_frame` of never touches the AudioServer at all. The sustained beds are
+## separate and later still — `_hold` builds each one the first time it is wanted.
+##
+## The pools are built **once and all at once**, which is the rule `WorldView`
+## keeps for Machines: the scene tree must not grow a node as a Run goes on.
 var _voices_built: bool = false
 
 
@@ -429,8 +440,9 @@ func _diegetic_cues(sim: Simulation, was: Snapshot, now: Snapshot, cues: Array) 
 		cues.append(Cue.new(SoundBank.DELIVERY_COMPLETE, nest, true))
 
 	# 5. The call-Wave-early lever. On the Nest, where the lever will be when it is
-	# art rather than `KEY_CALL_WAVE`. The klaxon that goes with it is the Telegraph's
-	# own, which this starts by starting the Wave.
+	# art rather than `KEY_CALL_WAVE`; the klaxon that goes with it is the Telegraph's
+	# own, in `sustained_cues`.
+	#
 	# **On the Telegraph starting, not on the Wave arriving.** Pulling the lever does
 	# not produce a Wave; it produces a Telegraph, and the Wave lands a dozen seconds
 	# later (`wave.telegraph_seconds` is a floor on the warning, including for a Wave
@@ -577,15 +589,34 @@ func _cooled_down(key: String, tick: int) -> bool:
 	var last: int = _cooldowns.get(key, -REPEAT_COOLDOWN_TICKS - 1) as int
 	if tick - last < REPEAT_COOLDOWN_TICKS:
 		return false
+	if _cooldowns.size() >= COOLDOWN_KEYS_BEFORE_PRUNE:
+		_prune_cooldowns(tick)
 	_cooldowns[key] = tick
 	return true
+
+
+## Drop the keys that could not refuse anything any more.
+##
+## An Enemy serial is never reused and a Machine tile is reused rarely, so without
+## this the bag grows for as long as the Run does. An entry older than the cooldown
+## would return true on its next lookup anyway, so forgetting it changes nothing a
+## player could hear — which is why this can be a blunt sweep rather than
+## bookkeeping at every death.
+func _prune_cooldowns(tick: int) -> void:
+	var fresh: Dictionary = {}
+	for key: String in _cooldowns.keys():
+		if tick - (_cooldowns[key] as int) < REPEAT_COOLDOWN_TICKS:
+			fresh[key] = _cooldowns[key]
+	_cooldowns = fresh
 
 
 ## A fixed-point horizontal position as a world point on the ground plane.
 ##
 ## `Fixed.to_float` is the sanctioned crossing from the Simulation's integers into
-## the renderer's floats (`game/world_view.gd`), and this is the only place in this
-## file that crosses it. Everything above works in whatever `_read` produced.
+## the renderer's floats (`game/world_view.gd`), and this and `_tile_centre` are
+## the only two places in this file that cross it — both of them inside `_read`.
+## Every branch above works on whatever `_read` produced and never sees a Fixed
+## value at all.
 func _ground(position: FixedVec2) -> Vector3:
 	return Vector3(Fixed.to_float(position.x), 0.0, Fixed.to_float(position.z))
 

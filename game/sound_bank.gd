@@ -240,6 +240,13 @@ const SCI_FI_PREFIXES: Array = [
 ## times and `load` is not free.
 var _streams: Dictionary = {}
 
+## Cue id -> the files it resolved to, cached because `paths_for` asks the
+## filesystem whether the hero take is there and a Wave asks for the same cue
+## hundreds of times. **Resolved once per session**, which is the same bargain
+## `WeaponViewmodel` makes by loading each model once: an asset tree that changes
+## under a running game is not a case worth a `stat` per gunshot.
+var _resolved: Dictionary = {}
+
 
 ## The stream for `cue` on `tick`, or null when neither the hero take nor any
 ## fallback could be loaded.
@@ -269,6 +276,13 @@ func stream_for(cue: String, tick: int = 0) -> AudioStream:
 ## `tests/cases/test_game_audio.gd` asserts both that the hero takes are used when
 ## present and that nothing is silent when they are not.
 func paths_for(cue: String) -> PackedStringArray:
+	if _resolved.has(cue):
+		return _resolved[cue] as PackedStringArray
+	_resolved[cue] = _resolve(cue)
+	return _resolved[cue] as PackedStringArray
+
+
+func _resolve(cue: String) -> PackedStringArray:
 	var entry: Array = CATALOGUE.get(cue, []) as Array
 	if entry.is_empty():
 		return PackedStringArray()
