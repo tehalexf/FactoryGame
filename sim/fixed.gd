@@ -177,3 +177,57 @@ static func clamp_fixed(value: int, low: int, high: int) -> int:
 static func to_float(value: int) -> float:  # purity-ok: the rendering boundary, outbound only
 	return float(value) / float(ONE)  # purity-ok: the rendering boundary, outbound only
 
+
+# ── Parsing from content files ─────────────────────────────────────────────────
+# Definition tables and the tuning file are written by hand in decimal, because
+# "3.2 seconds" is a rate a human can reason about and `from_rational(16, 5)` is
+# not. The crossing happens exactly once, here, and never touches a float: the
+# text is split into an integer numerator over a power of ten and handed to
+# `from_rational`, so the result floors like every other lossy operation and is
+# bit-identical on every machine.
+
+## True when `text` is a decimal this module will parse: optional sign, at least
+## one digit, and at most one point with digits on both sides of it. Deliberately
+## strict — a loader calls this to reject a typo'd rate by name instead of
+## letting it parse as zero.
+static func is_decimal_string(text: String) -> bool:
+	var body: String = text.strip_edges()
+	if body.begins_with("-") or body.begins_with("+"):
+		body = body.substr(1)
+	if body.is_empty():
+		return false
+
+	var parts: PackedStringArray = body.split(".")
+	if parts.size() > 2:
+		return false
+	for part: String in parts:
+		if part.is_empty() or not part.is_valid_int():
+			return false
+	return true
+
+
+## Converts a decimal string to fixed point, exactly. Returns 0 for anything
+## `is_decimal_string` rejects, so callers must check first rather than trust a
+## zero — a rate that quietly becomes zero is the failure this whole module is
+## arranged to prevent.
+static func from_decimal_string(text: String) -> int:
+	if not is_decimal_string(text):
+		return 0
+
+	var body: String = text.strip_edges()
+	var negative: bool = body.begins_with("-")
+	if negative or body.begins_with("+"):
+		body = body.substr(1)
+
+	var parts: PackedStringArray = body.split(".")
+	var digits: String = parts[0]
+	var denominator: int = 1
+	if parts.size() == 2:
+		digits += parts[1]
+		for i: int in range(parts[1].length()):
+			denominator *= 10
+
+	var numerator: int = digits.to_int()
+	if negative:
+		numerator = -numerator
+	return from_rational(numerator, denominator)

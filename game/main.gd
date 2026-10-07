@@ -25,11 +25,27 @@ const PLAYER_COUNT: int = 1
 
 var _simulation: Simulation = null
 var _tick_pump: TickPump = null
+var _definition_watcher: DefinitionWatcher = null
+
+## A definition set the watcher produced that has not been handed to the Simulation
+## yet, because definitions change on a tick like all other state and a frame does
+## not always earn one.
+var _pending_definitions: Definitions = null
 
 
 func _init() -> void:
 	_simulation = Simulation.new(WORLD_SEED, PLAYER_COUNT)
 	_tick_pump = TickPump.new(Simulation.TICKS_PER_SECOND)
+	_definition_watcher = DefinitionWatcher.new()
+
+	if not _simulation.query_definitions_loaded():
+		# Loud and early. A Run on a definition set that failed to load is a Run with
+		# no Machines and no Recipes, and discovering that by watching nothing happen
+		# is strictly worse than being told.
+		push_error(
+			"refusing to start a Run: the content definitions did not load:\n%s"
+			% "\n".join(_simulation.query_definition_errors())
+		)
 
 
 func _process(delta: float) -> void:
@@ -42,6 +58,13 @@ func _process(delta: float) -> void:
 ## a node tree — which is how the smoke test exercises it. Returns the number of
 ## ticks run.
 func advance_frame(delta_seconds: float) -> int:
+	# Hot-reload: if a content file was saved, the watcher hands back a loaded, valid
+	# definition set, and it is queued as an Input Action for the next tick. A
+	# malformed file yields null and the Run carries on with what it has.
+	var reloaded: Definitions = _definition_watcher.poll(delta_seconds)
+	if reloaded != null:
+		_pending_definitions = reloaded
+
 	var ticks: int = _tick_pump.advance(delta_seconds)
 	for i: int in range(ticks):
 		# Input is sampled per tick rather than per frame, so one Input Action
@@ -59,6 +82,14 @@ func advance_frame(delta_seconds: float) -> int:
 ## stage is that the only channel from a device into the Simulation is a list of
 ## Input Actions.
 func collect_input_actions() -> Array:
+	var actions: Array = []
+
+	# Ordered first, so the tick that reloads already runs on the new definitions.
+	# Taken rather than copied, so one saved edit produces exactly one reload.
+	if _pending_definitions != null:
+		actions.append(InputAction.reload_definitions(0, _pending_definitions))
+		_pending_definitions = null
+
 	var intent_x: int = 0
 	var intent_z: int = 0
 
@@ -71,10 +102,20 @@ func collect_input_actions() -> Array:
 	if Input.is_key_pressed(KEY_W):
 		intent_z -= Fixed.ONE
 
-	if intent_x == 0 and intent_z == 0:
-		return []
+	if intent_x != 0 or intent_z != 0:
+		actions.append(InputAction.move(0, intent_x, intent_z))
 
-	return [InputAction.move(0, intent_x, intent_z)]
+	return actions
+
+
+## The watcher that notices a saved content file. Replaceable so a test can point it
+## at a directory it owns rather than at the repository's own content.
+func definition_watcher() -> DefinitionWatcher:
+	return _definition_watcher
+
+
+func set_definition_watcher(watcher: DefinitionWatcher) -> void:
+	_definition_watcher = watcher
 
 
 ## Read-only access for the rendering layer. Callers may only use `query_*` and

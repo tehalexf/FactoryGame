@@ -1,0 +1,21 @@
+# DEEP FOUNDRY — tuning values.
+#
+# Balance numbers that are not per-Machine or per-Recipe. Edit while the game is
+# running and the change applies when you save.
+#
+# Supported value forms are integers, decimals, "quoted strings", true and false.
+# Decimals become exact fixed-point Simulation quantities — nothing here is ever a
+# float. Anything outside that subset is refused by name and line number rather
+# than ignored, so a value you changed always either takes effect or complains.
+#
+# Every key here is read by the Simulation. A key nothing reads is reported as a
+# warning on load, because a tuning file carrying a number that does nothing is a
+# file that lies to whoever is tuning it.
+
+[player]
+
+# How fast a player walks, in metres per second. The player is 1.8 m tall and the
+# grid is 2 m, so 4 m/s crosses one tile per half-second — fast enough that
+# walking the length of a Factory is not a chore, slow enough that Belt layout
+# still matters.
+walk_speed_metres_per_second = 4

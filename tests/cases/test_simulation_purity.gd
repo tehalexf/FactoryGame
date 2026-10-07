@@ -125,10 +125,12 @@ func test_the_simulation_directory_has_sources_to_check() -> void:
 
 func test_the_simulation_breaks_none_of_the_rules() -> void:
 	var violations: Array = PurityCheck.scan_directory(SIM_DIR)
-	if violations.is_empty():
-		return
 	for violation: PurityCheck.Violation in violations:
 		fail(violation.describe())
+	# Asserted explicitly rather than by returning early, so the method always
+	# records an assertion. The runner treats a method that asserted nothing as a
+	# failure, because that is what an aborted method looks like.
+	assert_eq(violations.size(), 0, "every line in res://sim/ must obey ADR 0002")
 
 
 func test_the_sanctioned_exemptions_are_few_and_accounted_for() -> void:

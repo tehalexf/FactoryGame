@@ -106,3 +106,42 @@ func test_digest_does_not_consume_the_hasher() -> void:
 	var hasher: StateHasher = StateHasher.new()
 	hasher.feed_int(42)
 	assert_eq(hasher.digest(), hasher.digest(), "digest must be a pure read")
+
+
+# ── Text ──────────────────────────────────────────────────────────────────────
+# Content definitions are keyed by identifier, so the hasher has to take strings.
+
+func test_identical_text_gives_an_identical_digest() -> void:
+	assert_eq(
+		StateHasher.new().feed_text("iron_ore").digest(),
+		StateHasher.new().feed_text("iron_ore").digest()
+	)
+
+
+func test_different_text_gives_a_different_digest() -> void:
+	assert_ne(
+		StateHasher.new().feed_text("iron_ore").digest(),
+		StateHasher.new().feed_text("iron_plate").digest()
+	)
+
+
+func test_text_is_length_prefixed_so_a_boundary_cannot_be_forged() -> void:
+	# Without the length, ["ab", "c"] and ["a", "bc"] would hash alike, and two
+	# different definition sets would look like the same one.
+	var joined: StateHasher = StateHasher.new()
+	joined.feed_text("ab")
+	joined.feed_text("c")
+
+	var split: StateHasher = StateHasher.new()
+	split.feed_text("a")
+	split.feed_text("bc")
+
+	assert_ne(joined.digest(), split.digest())
+
+
+func test_empty_text_is_still_fed() -> void:
+	assert_ne(
+		StateHasher.new().feed_text("").digest(),
+		StateHasher.new().digest(),
+		"an empty display name is a value, not an absence"
+	)
