@@ -1,0 +1,24 @@
+# Image-generation stack for tools/aigen.
+#
+# torch is DELIBERATELY ABSENT. The venv is created with
+# --system-site-packages and reuses the system torch 2.12.1+cu130 build
+# (CUDA 13.0, sm_120 / RTX 5090). Never add torch, torchvision or any
+# nvidia-* wheel here -- pip would shadow the working CUDA install.
+#
+# Versions are pinned because they are part of the reproducibility contract:
+# a committed recipe + these versions regenerates equivalent output.
+accelerate==1.15.0
+diffusers==0.41.0
+huggingface_hub==1.33.0
+hf-xet==1.7.0
+safetensors==0.8.0
+sentencepiece==0.2.2
+tokenizers==0.23.2
+transformers==5.19.0
+
+# Provided by system site-packages at the versions below; listed so a clean
+# venv without system packages still works.
+numpy>=2.2
+Pillow>=11.0
+PyYAML>=6.0
+pytest>=8.0

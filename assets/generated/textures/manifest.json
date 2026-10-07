@@ -1,0 +1,421 @@
+{
+  "records": [
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "c9dfa4a39e7be620",
+      "id": "cast_iron_plate",
+      "image_sha256": "55ca6224794a74738309e9368d9d19bd0085979b9c3d682de7bf569751e8d459",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/cast_iron_plate.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.43,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "rough cast iron surface, dense corrosion pitting and casting freckles, dark grey iron, ground-in grime, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260101,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.9132,
+        "y_ratio": 0.8697
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "d685ec867bc30452",
+      "id": "diamond_tread_plate",
+      "image_sha256": "5f4307f3de970b68f4bb7bebfa351f3d7155e0d0231c1e32f61f04f53662b1a8",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/diamond_tread_plate.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.503,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "dark steel checker plate industrial floor, raised diamond tread bars, worn smooth and greasy, dull grey metal, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260112,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.8183,
+        "y_ratio": 0.8561
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "58de973e8c71fd2c",
+      "id": "oiled_machine_housing",
+      "image_sha256": "f3bf385fef24d0764ba8e4c892aa83bfb89217c6134eb19ca9f9fca37f98d3b5",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/oiled_machine_housing.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.904,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "oily worn steel surface, dark grease stains, circular grinding swirl marks, scratched bare metal, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260108,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.8332,
+        "y_ratio": 0.9172
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "ea82a827869e009f",
+      "id": "olive_drab_paint",
+      "image_sha256": "76fdae4f21d1fd615026cda643551e8360f17b734a1b5a3f4a0e6e3701782c7f",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/olive_drab_paint.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.384,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "weathered olive green painted metal, peeling flaking paint, rust spots showing through, deep scratches, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260103,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.7458,
+        "y_ratio": 0.717
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "dbb3131a03d6a757",
+      "id": "poured_concrete",
+      "image_sha256": "313a5c76537ef10606ce9658cb38ea3814d9a774c45551785acc30b2cc7d69b8",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/poured_concrete.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.957,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "poured concrete factory floor, form-board timber marks, hairline cracks, dark oil stains, grey aggregate, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260104,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.9135,
+        "y_ratio": 0.7751
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "a6dddb84cc8721e8",
+      "id": "riveted_steel_plate",
+      "image_sha256": "fe8b8fc01b502a6dab675e78c3c7c40c0005986ca813b8068f441dc90f03d280",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/riveted_steel_plate.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.468,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "welded steel plate, rows of domed hot-driven rivets, raised weld beads, scuffed grey-blue steel, soot streaks, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260102,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.7634,
+        "y_ratio": 0.5583
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "2e1b88f2e16220a9",
+      "id": "rust_pitted_steel",
+      "image_sha256": "a429a3592f44a5c72ce2d169141a1a9b54347294adc9aa30da078e28745be8e3",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/rust_pitted_steel.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.756,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "rusted iron sheet, even orange-brown corrosion, fine rust pitting, oxidised metal surface, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260105,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.9078,
+        "y_ratio": 0.9082
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "e178f101ca2216a5",
+      "id": "soot_brick",
+      "image_sha256": "c580c385d41c90f151df43d9a1cf553c6d4748e4c97b88ce9084469a3375bfa2",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "kind": "texture",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "textures/soot_brick.png",
+      "peak_vram_bytes": 12364560384,
+      "recipe": "/home/alex/code/factorygame/.claude/worktrees/agent-a95c83f6c0a33c12e/tools/aigen/prompts/textures.yaml",
+      "seconds": 6.722,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 6.5,
+        "height": 1024,
+        "key_tolerance": 28.0,
+        "kind": "texture",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "brass, copper, bronze, polished wood, victorian, steampunk, ornate, clean, pristine, shiny chrome, perspective, vignette, drop shadow, text, watermark, border, frame, people, blurry, cartoon, fabric, woven, knitted, chainmail, grass, moss, confetti, abstract pattern",
+        "prompt": "soot-blackened industrial brick wall, dark recessed mortar, coal dust, boiler house, irregular fired brick, seamless tileable texture photograph, top-down flat view, no vignette, sharp surface detail, raking light picking out the relief, interwar heavy industry dieselpunk, worn and grimy",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": true,
+        "seed": 20260107,
+        "steps": 40,
+        "width": 1024
+      },
+      "tiling": {
+        "seamless": true,
+        "tolerance": 1.5,
+        "x_ratio": 0.7329,
+        "y_ratio": 0.657
+      }
+    }
+  ],
+  "schema": 1
+}
