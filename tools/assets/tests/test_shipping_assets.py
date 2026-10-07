@@ -41,6 +41,21 @@ class EveryShippingAsset(unittest.TestCase):
                              if b.endswith("_end")]
                 self.assertEqual(leftovers, [])
 
+    def test_intake_fbx_is_hidden_from_godot(self):
+        """FBX is an intake format only: Godot must not import it as a scene.
+
+        A `.gdignore` in each intake/ directory keeps the engine out, so the
+        committed FBX stays reproducibility evidence rather than a second,
+        uncorrected copy of the character that someone could use by mistake.
+        """
+        intake_dirs = {p.parent for p in REPO.glob("assets/**/intake/*.fbx")}
+        self.assertTrue(intake_dirs, "no intake FBX found")
+        for directory in intake_dirs:
+            with self.subTest(directory=str(directory)):
+                self.assertTrue((directory / ".gdignore").exists(),
+                                f"{directory} needs a .gdignore")
+                self.assertEqual(list(directory.glob("*.import")), [])
+
     def test_carries_no_fbx_mangled_animation_names(self):
         for path in SHIPPING_GLBS:
             with self.subTest(asset=path.name):

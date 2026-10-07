@@ -185,7 +185,9 @@ genuinely exhibits the fault.
 1. Check the licence. CC0 / permissive / self-authored → `assets/`. Anything
    else → `assets_licensed/`, which never enters git.
 2. Put the intake FBX in `assets/<kind>/<name>/intake/` so the conversion stays
-   reproducible.
+   reproducible, with an empty `.gdignore` beside it. Godot would otherwise
+   import the FBX as a second, uncorrected copy of the character that someone
+   could use by mistake; FBX is intake only.
 3. Write or reuse a bone map if it is a humanoid.
 4. Add the conversion to `tools/assets/rebuild_assets.sh` and run it.
 5. Verify with `verify_in_godot.sh`, and with `verify_retarget_in_godot.sh` if it
