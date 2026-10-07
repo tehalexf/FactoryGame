@@ -11,6 +11,20 @@ rsync -a --delete \
   --exclude 'assets_licensed' --exclude 'tools/aigen/.venv' \
   --exclude 'tools/aigen/models' --exclude 'tools/aigen/output' \
   ./ /mnt/c/Users/Alex/FactoryGame/
+
+# The converted weapon viewmodels, which the whole of assets_licensed/ is
+# otherwise excluded from carrying. They are generated from purchased packs:
+# never committed, but the Windows build needs them or the weapon in frame is a
+# placeholder box. Produce them with tools/assets/convert_weapons.sh.
+if [ -d assets_licensed/generated/gear ]; then
+  mkdir -p /mnt/c/Users/Alex/FactoryGame/assets_licensed/generated/gear
+  rsync -a --delete \
+    assets_licensed/generated/gear/ \
+    /mnt/c/Users/Alex/FactoryGame/assets_licensed/generated/gear/
+  echo "weapon view models: $(ls assets_licensed/generated/gear | wc -l) copied"
+else
+  echo "weapon view models: none — run tools/assets/convert_weapons.sh"
+fi
 # Rebuild the Windows-side import cache before launching.
 #
 # Without this the game can come up as a grey screen: content/ gained required
