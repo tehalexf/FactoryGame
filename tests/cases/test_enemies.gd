@@ -406,3 +406,63 @@ func test_determinism_a_run_that_ends_replays_identically() -> void:
 
 func _shipped_index(machine_id: String) -> int:
 	return Definitions.load_from_directory(Definitions.CONTENT_DIR).machine_index(machine_id)
+
+
+# ── Saving a Run with a swarm on the Map ──────────────────────────────────────
+
+func test_a_run_with_crawlers_in_flight_saves_and_resumes_identically() -> void:
+	var content: Definitions = _content()
+	var sim: Simulation = Simulation.new(11, 1, content, _layout())
+	for i: int in range(5 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
+	assert_true(sim.query_enemy_count() > 1, "a swarm is part-way down the lane")
+
+	var loaded: RunSave.Load = RunSave.deserialise(
+		RunSave.serialise(sim), content, Simulation.new(0, 1, content, MapLayout.empty())
+	)
+	assert_false(loaded.has_errors(), loaded.describe_errors())
+	assert_eq(
+		loaded.simulation.hash(),
+		sim.hash(),
+		"every Enemy array, the Nest's health and the Wave clock came back"
+	)
+
+
+func test_a_resumed_run_rebuilds_the_flowfield_rather_than_restoring_it() -> void:
+	# The field is derived, so `RunSave.DERIVED_PROPERTIES` leaves it out of the file: a
+	# save must not be hundreds of kilobytes of numbers the next tick recomputes. A
+	# restored Run therefore arrives holding nothing, and has to notice.
+	var content: Definitions = _content()
+	var sim: Simulation = Simulation.new(11, 1, content, _layout())
+	var smelter: int = content.machine_index("smelter_mk1")
+	sim.step([InputAction.build_machine(0, smelter, Vector3i(5, WorldGrid.GROUND_LAYER, 0))])
+	for i: int in range(5 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
+
+	var text: String = RunSave.serialise(sim)
+	for excluded: String in RunSave.DERIVED_PROPERTIES:
+		assert_false(
+			text.contains("\n%s " % excluded),
+			"the save carries '%s', which it was meant to leave to a rebuild" % excluded
+		)
+
+	var restored: Simulation = RunSave.deserialise(
+		text, content, Simulation.new(0, 1, content, MapLayout.empty())
+	).simulation
+	assert_not_null(restored)
+	var tile: Vector3i = Vector3i(9, WorldGrid.GROUND_LAYER, 1)
+	assert_eq(
+		restored.query_flow_distance_tiles(tile),
+		sim.query_flow_distance_tiles(tile),
+		"and the rebuilt field routes round the restored Machine exactly as the saved one did"
+	)
+	assert_true(
+		restored.query_tile_obstructs_enemies(Vector3i(6, WorldGrid.GROUND_LAYER, 1)),
+		"including which tiles obstruct"
+	)
+
+	# And the two Runs go on agreeing, which is the only test of a field that matters.
+	for i: int in range(5 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
+		restored.step([])
+		assert_eq(restored.hash(), sim.hash(), "diverged at tick %d" % sim.query_tick())

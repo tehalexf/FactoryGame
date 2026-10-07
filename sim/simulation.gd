@@ -2012,8 +2012,13 @@ func _seconds_to_ticks(seconds: int) -> int:
 # ── The flowfield ───────────────────────────────────────────
 
 ## The field every Enemy steers by, rebuilt only if the obstructions moved.
+##
+## The size check is not belt-and-braces: the field is derived, so `RunSave` leaves it out
+## of a save entirely, and a Run restored from one arrives holding nothing. Asking whether
+## it is the right size rather than trusting a flag is what makes that correct however the
+## Simulation was constructed.
 func _flowfield() -> PackedInt64Array:
-	if _flowfield_stale:
+	if _flowfield_stale or _flow_direction.size() != FIELD_TILES:
 		_rebuild_flowfield()
 	return _flow_direction
 

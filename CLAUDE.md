@@ -577,6 +577,15 @@ mid-stride.
 - **A property in a type the format cannot encode is refused by name**, not
   silently zeroed. Hold state as parallel integer arrays — which is the convention
   anyway — or teach `_encode_value` about the type.
+- **`RunSave.DERIVED_PROPERTIES` is the one exception to "every property".** The
+  flowfield is one entry per tile of the Map three arrays over, so carrying it would
+  make every save hundreds of kilobytes of numbers the next tick recomputes, growing
+  with the square of the Map rather than with the Factory. Excluding a property is safe
+  only because the names on that list are **absent from `hash()`** too, which is what
+  leaves the round-trip check with teeth — so check `hash()` before adding to it. A
+  restored Run notices it is holding no field by its size rather than by a flag, and
+  `test_enemies` steps a saved and a resumed Run side by side to prove the rebuild
+  agrees.
 - **The format is line-oriented text**, `<property> <type-tag> <payload…>`, keyed by
   name rather than by position. Chosen for diffability in a project whose method is
   comparing two states, and because a positional blob cannot report which field it is
