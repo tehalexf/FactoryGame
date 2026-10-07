@@ -544,6 +544,63 @@ Feed it into `hash()`. State that is not hashed is state whose divergence the
 determinism harness cannot see, which quietly weakens the guarantee the whole
 architecture rests on.
 
+**That is the only thing you have to do.** You do not have to remember to save it:
+`sim/run_save.gd` walks the Simulation's own property list and persists every
+script variable it finds, so a new `var` is saved, loaded and round-tripped
+without that file changing. See below.
+
+## Saving and resuming a Run
+
+`sim/run_save.gd` is the whole of it, and its promise is one sentence: **a Run
+written out and read back hashes to the integer it hashed to before.** Because
+`hash()` already covers everything that matters, that single comparison is the
+entire acceptance criterion, and `tests/cases/test_run_save.gd` asserts it over a
+Factory with Items in flight, a part-finished craft, a grid in deficit and a player
+mid-stride.
+
+- **There is no list of fields and no per-field code.** `RunSave` reflects over
+  `Simulation.get_property_list()`. Forgetting to persist new state is therefore
+  not a mistake that can be made — the one `# purity-ok:` line that reflection
+  costs buys that outright. `test_run_save.gd` proves it with a `Simulation`
+  subclass carrying Enemy arrays `RunSave` has never heard of, which round-trip
+  anyway.
+- **Two special cases, named in that file and nowhere else.** The `Definitions`
+  (carried as a digest; content lives in `content/`) and the `DeterministicRng`
+  (whose whole memory is one integer).
+- **The file is a census and the load checks it.** Every property gets a line, and
+  loading compares the file's names against the live Simulation's. A save written
+  before an array existed refuses *by name* rather than resuming with it quietly
+  empty. So does one carrying a property this build no longer has.
+- **The save carries its own state hash and every load re-derives it.** Any failure
+  to round-trip exactly is caught on every load a player ever performs, not only in
+  the suite.
+- **A property in a type the format cannot encode is refused by name**, not
+  silently zeroed. Hold state as parallel integer arrays — which is the convention
+  anyway — or teach `_encode_value` about the type.
+- **The format is line-oriented text**, `<property> <type-tag> <payload…>`, keyed by
+  name rather than by position. Chosen for diffability in a project whose method is
+  comparing two states, and because a positional blob cannot report which field it is
+  missing. The rationale, and the escape hatch if size ever becomes the constraint,
+  are in the file's own header.
+- **Saving is a read.** It takes no action, consumes no RNG draw and leaves the hash
+  alone, so a Run saved mid-flight follows exactly the ticks it would have unsaved.
+- **Rendering state is never saved** because there is none: `WorldView` rebuilds from
+  `query_*` every frame and holds nothing authoritative.
+- **Neither key is an Input Action.** `PlayerController.KEY_SAVE` (F5) and `KEY_LOAD`
+  (F9) are handled in `Main._input` alongside Escape. Saving does nothing to the Run;
+  loading *replaces* the Simulation, which no method on it could do and no replay
+  could reproduce — resuming a Run is the same category of act as constructing one.
+  The full argument is written above `PlayerController.KEY_SAVE`. Contrast
+  `RELOAD_DEFINITIONS`, which is an action because it mutates the Simulation that
+  exists, at a known tick.
+- **A refused load leaves the running Run untouched**, the same rule a failed
+  hot-reload obeys.
+
+Every later ticket should carry a round-trip criterion, and the cheapest way to
+write one is a hash comparison through `RunSave.serialise` / `deserialise` — or
+`DeterminismHarness.verify(recording, restored_sim)`, which takes a replacement
+Simulation for exactly this.
+
 ## The determinism harness
 
 `sim/determinism_harness.gd` records a script of Input Actions, replays it from an
@@ -596,11 +653,12 @@ chain from a mouse to a state hash is.
 - Fixed-point constants are written `Fixed.from_rational(1, 3)`, never as a
   decimal literal. In a *data* file a rate is written in decimal and parsed with
   `Fixed.from_decimal_string`.
-- **Every test method must assert something.** A GDScript runtime error — a call
-  to a method that does not exist, an index out of range — aborts the method on
-  the spot with nothing a test can catch, so the runner counts assertions and
+- **Every test method must assert something.** The runner counts assertions and
   fails a method that made none. If a test's happy path returns early, assert
   explicitly rather than falling off the end.
+- **A method cut off by a runtime error fails, however far it got.** See the
+  runtime-error guard below. A test that triggers one deliberately must claim it
+  with `engine_log.drain()`, which is also the assertion that it happened.
 
 ## Test runner
 
@@ -608,3 +666,44 @@ Zero dependencies — no addons. The spec's first choice was gdUnit4; a
 zero-dependency headless runner was its sanctioned fallback and is what shipped,
 to avoid vendoring an addon into a public repository and to keep full control of
 headless exit codes. There is no JUnit XML output yet; add it when CI needs it.
+
+Two guards stop a method that did not really pass from reporting `ok`. Both exist
+because the suite is the project's only guarantee of determinism, and a test that
+reads green without having run is worse than no test at all.
+
+**A method that asserted nothing fails.** That covers the empty test and the one
+whose only statement aborted.
+
+**A method cut off by a GDScript runtime error fails, naming the engine's own
+error.** This is the harder half. A runtime error — a call to a function that does
+not exist, an index out of range, a division by zero — aborts *only the frame it
+fired in*: the caller resumes at the statement after the call, nothing is raised,
+and every assertion that had already passed stays counted. So the assertion count
+cannot tell a finished method from a severed one, and a method that aborts after
+one passing assertion used to report `ok` with its untested remainder unmentioned.
+
+Nothing in GDScript can catch such an error, so `tests/engine_log.gd` reads the
+engine's *report* of it instead. Godot mirrors its output into
+`user://logs/godot.log` and flushes as it goes, so the file is readable by the
+process writing it; each runtime error lands there prefixed `SCRIPT ERROR: `,
+which `push_error()` (`ERROR: `) and `push_warning()` (`WARNING: `) do not use, so
+a test that deliberately drives production code into reporting an error is
+unaffected. The runner resets the reader before every method and drains it after,
+and records a failure per error — so detection does not depend on the depth of the
+frame that died, and a method that ran to its end records nothing.
+
+Consequences worth knowing:
+
+- `debug/file_logging/enable_file_logging=true` in `project.godot` is load-bearing
+  for the suite, not just for debugging. The runner prints its `Engine log:` line
+  *through* the log and fails the whole suite if the line does not come back,
+  because a guard that has quietly become a no-op is the exact failure it exists
+  to prevent.
+- A test that triggers a runtime error on purpose calls `engine_log.drain()` to
+  claim it — the runner then finds nothing left and the method passes. Drain in
+  the test method's own frame, not the aborted one, which it will reach because
+  the abort killed only the callee.
+- The guard's own tests are `tests/cases/test_runtime_abort_guard.gd`, covering
+  both directions: an abort after a passing assertion must fail, and a method that
+  completes must not. A guard that always fires and one that never fires are
+  equally worthless, so neither case may be dropped.

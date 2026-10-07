@@ -19,12 +19,15 @@ var current_test: String = ""
 ## Set true by fail_fast(); the runner skips the rest of the method.
 var aborted: bool = false
 
-## How many assertions this instance evaluated. The runner requires at least one:
-## a GDScript runtime error — a call to a method that does not exist, an index out
-## of range — aborts the method on the spot without raising anything a test can
-## catch, which would otherwise leave a half-executed method looking like a pass.
-## Counting assertions turns that silence into a failure.
+## How many assertions this instance evaluated. The runner requires at least one,
+## so a method that asserts nothing cannot report `ok`.
 var assertions: int = 0
+
+## The runner's reader of the engine log, shared by every test method in the run.
+## The runner drains it around each method and reports whatever aborted; a test
+## that triggers a runtime error *on purpose* drains it first to claim the error
+## as its own. Null only if a case is instantiated outside the runner.
+var engine_log: TestEngineLog = null
 
 
 ## Override to build state shared by every test method in the case.
@@ -82,6 +85,19 @@ func assert_not_null(value: Variant, message: String = "") -> bool:
 ## Records a failure unconditionally.
 func fail(reason: String) -> bool:
 	return _record(reason, "")
+
+
+## Records one failure per GDScript runtime error the runner saw during this
+## method. Called by the runner after the method returns, however it returned.
+##
+## This is the half-run guard. A runtime error aborts the method where it happens
+## and leaves the assertions that already passed on the books, so an assertion
+## count alone cannot tell a finished method from a severed one — only the
+## engine's report can. An empty list records nothing, so a method that ran to the
+## end is still `ok`.
+func note_runtime_errors(errors: PackedStringArray) -> void:
+	for error: String in errors:
+		_record("aborted by a GDScript runtime error — %s" % error, "")
 
 
 ## Records a failure and stops the current test method.

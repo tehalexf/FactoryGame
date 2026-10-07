@@ -297,3 +297,74 @@ func test_demolishing_takes_a_belt_back_apart_too() -> void:
 	wrecking.demolish_clicked = true
 	sim.step(controller.actions_for_tick(sim, 0, wrecking))
 	assert_eq(sim.query_belt_count(), 0)
+
+
+# ── Saving and resuming a Run ─────────────────────────────────────────────────
+# Smoke coverage for the wiring only. `tests/cases/test_run_save.gd` is where the round
+# trip itself is proved exact; these assert that the Godot layer reaches it, and that the
+# two keys doing so are not Input Actions.
+
+const SMOKE_SAVE_PATH: String = "user://smoke_run.deepfoundry"
+
+
+func _remove_smoke_save() -> void:
+	if FileAccess.file_exists(SMOKE_SAVE_PATH):
+		DirAccess.remove_absolute(SMOKE_SAVE_PATH)
+
+
+func test_the_layer_can_save_a_run_and_resume_it() -> void:
+	_remove_smoke_save()
+	var main: Main = Main.new()
+	for frame: int in range(90):
+		main.advance_frame(1.0 / 60.0)
+	var saved_hash: int = main.simulation().hash()
+
+	assert_eq(main.save_run(SMOKE_SAVE_PATH), "", "saving should not fail")
+	assert_eq(main.simulation().hash(), saved_hash, "and must leave the Run it saved alone")
+
+	for frame: int in range(60):
+		main.advance_frame(1.0 / 60.0)
+	assert_ne(main.simulation().hash(), saved_hash, "the Run moved on after saving")
+
+	assert_eq(main.load_run(SMOKE_SAVE_PATH), "", "resuming should not fail")
+	assert_eq(main.simulation().hash(), saved_hash, "and puts the Run back where it was")
+
+	main.free()
+	_remove_smoke_save()
+
+
+func test_a_run_that_refuses_to_load_leaves_the_running_run_alone() -> void:
+	# The rule a failed hot-reload already obeys: a bad file must never take a Factory
+	# down.
+	var main: Main = Main.new()
+	for frame: int in range(30):
+		main.advance_frame(1.0 / 60.0)
+	var before: int = main.simulation().hash()
+	var sim_before: Simulation = main.simulation()
+
+	var refusal: String = main.load_run("user://a_run_that_was_never_saved.deepfoundry")
+
+	assert_ne(refusal, "", "a missing save must be reported")
+	assert_eq(main.simulation(), sim_before, "and the Run that is running is untouched")
+	assert_eq(main.simulation().hash(), before)
+	main.free()
+
+
+func test_saving_and_resuming_are_not_input_actions() -> void:
+	# Both keys are held in `PlayerController` with the rest of the controls, but neither
+	# may ever become an intent: a save does nothing to the Simulation, and a load
+	# replaces it, which is not something `step` could express.
+	var main: Main = Main.new()
+	var sample: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	var actions: Array = main.controller().actions_for_tick(main.simulation(), 0, sample)
+	for action: InputAction in actions:
+		assert_ne(
+			action.kind,
+			InputAction.Kind.NONE,
+			"no save or load kind exists for the controller to produce"
+		)
+	assert_true(
+		PlayerController.KEY_SAVE != PlayerController.KEY_LOAD,
+		"saving and resuming are two different keys"
+	)
+	main.free()
