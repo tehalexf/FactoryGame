@@ -32,6 +32,10 @@ bash "$convert" \
   --root-bone Root \
   --bone-map tools/assets/bone_maps/quaternius_knight.json
 
+# Machines are generated rather than converted: there is no intake file, the
+# script *is* the asset. See docs/ASSET_PIPELINE.md section 7.
+bash tools/assets/generate_machines.sh
+
 echo
 echo "rebuilt. Summary of each shipping asset:"
 python3 tools/assets/gltf_info.py \

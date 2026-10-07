@@ -1,0 +1,95 @@
+{
+  "_comment": [
+    "The one shared material palette for every procedurally generated Machine.",
+    "Dieselpunk: 1920s-40s heavy industry. Cast iron, welded steel, olive drab",
+    "paint over red-oxide primer, oiled hydraulics, soot and grime. Brass and",
+    "copper appear only as small fittings - this is not Victorian steampunk, and",
+    "a machine that reads as brass has gone wrong.",
+    "",
+    "Declared here rather than in the generator so that visual consistency is a",
+    "fact a test can check: the asset suite asserts that every generated .glb",
+    "uses materials from this file and nothing else, and that the numbers match.",
+    "",
+    "base_color is linear RGBA, which is what both Blender's Principled BSDF and",
+    "glTF's baseColorFactor take, so the value survives export unchanged."
+  ],
+  "materials": [
+    {
+      "name": "CastIron",
+      "_use": "Machine bodies, frames, heavy castings. The default surface.",
+      "base_color": [0.055, 0.058, 0.063, 1.0],
+      "metallic": 1.0,
+      "roughness": 0.62
+    },
+    {
+      "name": "WeldedSteel",
+      "_use": "Plate panels, brackets, catwalks, bolted flanges.",
+      "base_color": [0.14, 0.145, 0.15, 1.0],
+      "metallic": 1.0,
+      "roughness": 0.45
+    },
+    {
+      "name": "OliveDrab",
+      "_use": "Painted housings and cowlings. The silhouette colour.",
+      "base_color": [0.052, 0.058, 0.028, 1.0],
+      "metallic": 0.0,
+      "roughness": 0.58
+    },
+    {
+      "name": "OxideRed",
+      "_use": "Primer showing through where paint has gone, and inner frames.",
+      "base_color": [0.13, 0.035, 0.022, 1.0],
+      "metallic": 0.0,
+      "roughness": 0.7
+    },
+    {
+      "name": "OiledSteel",
+      "_use": "Hydraulic rams, piston rods, shafts. Wet-looking, not shiny.",
+      "base_color": [0.09, 0.09, 0.095, 1.0],
+      "metallic": 1.0,
+      "roughness": 0.18
+    },
+    {
+      "name": "DullBrass",
+      "_use": "Gauge bezels and small fittings only. Used sparingly on purpose.",
+      "base_color": [0.28, 0.19, 0.06, 1.0],
+      "metallic": 1.0,
+      "roughness": 0.38
+    },
+    {
+      "name": "Copper",
+      "_use": "Steam and coolant pipework.",
+      "base_color": [0.35, 0.11, 0.045, 1.0],
+      "metallic": 1.0,
+      "roughness": 0.3
+    },
+    {
+      "name": "Soot",
+      "_use": "Chimney mouths, firebox interiors, grime in recesses.",
+      "base_color": [0.015, 0.014, 0.013, 1.0],
+      "metallic": 0.0,
+      "roughness": 0.95
+    },
+    {
+      "name": "HazardYellow",
+      "_use": "Port collars and edge stripes. Reads a port at a glance.",
+      "base_color": [0.45, 0.3, 0.02, 1.0],
+      "metallic": 0.0,
+      "roughness": 0.55
+    },
+    {
+      "name": "BeltRubber",
+      "_use": "Belt decking.",
+      "base_color": [0.022, 0.022, 0.024, 1.0],
+      "metallic": 0.0,
+      "roughness": 0.85
+    },
+    {
+      "name": "GaugeGlass",
+      "_use": "Gauge and sight-glass faces.",
+      "base_color": [0.55, 0.55, 0.52, 1.0],
+      "metallic": 0.0,
+      "roughness": 0.12
+    }
+  ]
+}
