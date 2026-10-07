@@ -944,3 +944,109 @@ func test_an_empty_magazine_reads_red_from_across_the_factory() -> void:
 		"the HUD says so too, got %s" % view.hud_text()
 	)
 	view.free()
+
+
+## A Run on the starter Map with a Mk2 Miner on its Depth 2 seam, run far enough that the
+## Breach that mine opens has been announced and is part-way through its Telegraph.
+func _sim_with_a_breach_coming() -> Simulation:
+	var sim: Simulation = Simulation.new(9, 1)
+	for index: int in range(sim.query_node_count()):
+		if sim.query_node_depth(index) != 2:
+			continue
+		sim.step([
+			InputAction.build_machine(
+				0,
+				sim.query_definitions().machine_index("miner_mk2"),
+				sim.query_node_tile(index)
+			)
+		])
+		break
+	_run(sim, 3900)
+	return sim
+
+
+func test_the_view_marks_a_breach_that_is_about_to_open() -> void:
+	# A hole that is coming has to be visible on the ground before anything comes out of it,
+	# not only in a line of text: the whole point of the warning is that a player can go and
+	# look at where it will be and put something in the way.
+	var sim: Simulation = _sim_with_a_breach_coming()
+	assert_eq(sim.query_pending_breach_count(), 1, "a Breach is on its way")
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.pending_breach_marker_count(), 1, "and it is marked where it will open")
+	assert_eq(
+		view.breach_marker_count(),
+		sim.query_breach_count(),
+		"the Breaches that already exist are drawn separately, because they are different things"
+	)
+
+	_run(sim, 2700)
+	view.sync(sim)
+	assert_eq(sim.query_breach_count(), 2, "it opened")
+	assert_eq(view.pending_breach_marker_count(), 0, "so the warning marker is gone")
+	assert_eq(view.breach_marker_count(), 2, "and it is a Breach now")
+	view.free()
+
+
+func test_the_hud_raises_a_klaxon_for_a_breach_that_is_about_to_open() -> void:
+	var sim: Simulation = _sim_with_a_breach_coming()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var text: String = view.hud_text()
+	assert_true(text.contains("BREACH OPENING"), "the klaxon is on screen: %s" % text)
+	var tile: Vector3i = sim.query_pending_breach_tile(0)
+	assert_true(
+		text.contains("%d, %d" % [tile.x, tile.z]),
+		"and it says where, because that is what a player has to act on: %s" % text
+	)
+	view.free()
+
+
+func test_the_hud_says_nothing_about_a_breach_that_is_not_coming() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_false(
+		view.hud_text().contains("BREACH OPENING"),
+		"a Run that has dug nothing is not warned about anything"
+	)
+	view.free()
+
+
+func test_the_hud_says_how_close_a_deep_mine_is_to_opening_a_breach() -> void:
+	# Heat's rule applied to the Breach: a consequence a player cannot watch themselves cause
+	# reads as bad luck. So a deep Miner's line carries the count against its threshold, next
+	# to the Machine that is running it up.
+	var sim: Simulation = Simulation.new(9, 1)
+	var seam: Vector3i = Vector3i.ZERO
+	for index: int in range(sim.query_node_count()):
+		if sim.query_node_depth(index) == 2:
+			seam = sim.query_node_tile(index)
+			break
+	sim.step([
+		InputAction.build_machine(0, sim.query_definitions().machine_index("miner_mk2"), seam)
+	])
+	_run(sim, 1000)
+
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var text: String = view.hud_text()
+	assert_true(text.contains("digging"), "the deep Miner's line names what it is doing: %s" % text)
+	assert_true(
+		text.contains("/%d" % sim.query_node_deep_crafts_until_a_breach()),
+		"against the threshold, so the number has a scale: %s" % text
+	)
+
+	var shallow: Simulation = Simulation.new(1, 1)
+	shallow.step([
+		InputAction.build_machine(
+			0, shallow.query_definitions().machine_index("miner_mk1"), shallow.query_node_tile(0)
+		)
+	])
+	_run(shallow, 1000)
+	view.sync(shallow)
+	assert_false(
+		view.hud_text().contains("digging"),
+		"and a Miner on the ore a Run opens on is not digging anything up it should not"
+	)
+	view.free()
