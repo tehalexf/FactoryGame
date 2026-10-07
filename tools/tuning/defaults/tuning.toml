@@ -208,6 +208,27 @@ look_sensitivity_turns_per_1000_pixels = 0.2
 # down on. Change this and the whole sense of scale changes with it.
 eye_height_metres = 1.7
 
+# How wide a player is, as the half-width of the box collision tests them as, in metres.
+# A box rather than a circle because everything it is tested against is a box on a tile
+# grid. Must be under half a tile (1 m), or a player would stand in three tiles at once.
+#
+# 0.4 m against a 2 m tile leaves a 1.2 m gap between two Walls walkable, which is the
+# narrowest corridor a Factory should ask anyone to use. Raise it and doorways tighten;
+# lower it and a player squeezes through a diagonal gap between two Machine corners.
+collision_radius_metres = 0.4
+
+# The tallest thing a player walks straight up onto rather than having to clear, in
+# metres. A kerb on the ground and a mantle in the air — one rule read twice: a surface
+# within this of their feet is a surface they end up standing on.
+#
+# **This is the number the whole Factory's climbability hangs off**, because what a player
+# can reach is this plus `jump_height_metres`. At 0.75 m against a 1.1 m jump they reach
+# 1.85 m, which is: onto a Belt deck (0.9), onto a Smelter (1.5), onto the Nest's terrace
+# (1.7) — and not onto a Boiler (2.2) or over a Wall (2.4), both of which want a Belt or a
+# Machine roof to launch from first. Raising this is how you make the Factory easier to
+# walk over; lowering it below `belt.deck_height_metres` is what keeps a Belt a hop.
+step_up_height_metres = 0.75
+
 # What a player starts a Run carrying, as `item:count`, several separated by `;`. The
 # same form a Recipe's inputs and a Machine's `build_cost` use. Empty opens a Run
 # empty-handed; every Item named must be one some Recipe mentions.
@@ -332,6 +353,18 @@ items_per_second = 4
 # Machine feeding it: a 10-tile Belt buffers 40 Items.
 items_per_tile = 4
 
+# How high a Belt's deck stands off the ground, in metres. A Belt is solid, so this is
+# both the height a player has to clear to get onto a line and the height they walk at
+# once they are on it — and it is the same 900 mm the generated trestle is modelled at.
+#
+# **This number is why a Belt is solid rather than a step-up.** It sits above
+# `player.step_up_height_metres` and below `player.jump_height_metres`, which makes
+# stepping onto a Belt line a deliberate hop: a trestle stays a physical thing you climb
+# rather than a kerb you stop noticing, and a Factory is still not a maze because every
+# Belt in it is one jump high. Lower this below the step-up height and Belts stop
+# registering at all; raise it above the jump height and a Belt line becomes a wall.
+deck_height_metres = 0.9
+
 [machine]
 
 # How many crafts' worth of each input a Machine holds in its input buffer. A Recipe
@@ -349,6 +382,12 @@ input_buffer_crafts = 2
 # has no row in machines.csv, no Recipe and no Power. It is one tile of ground that
 # obstructs Enemies and can be chewed through, and it is the cheapest way to decide
 # where a Wave walks.
+
+# How tall a Wall stands, in metres. Deliberately above `player.jump_height_metres` plus
+# `player.step_up_height_metres`: a Wall is the one structure whose entire purpose is to
+# stop something, so it has to stop a player too or a line of them is a suggestion. Drop
+# this under that sum and a player can hop their own perimeter.
+height_metres = 2.4
 
 # A Wall's hit points. Lower than any Machine on purpose: a Wall is what you would
 # rather lose, which is the whole reason to put one in front of a Smelter.
@@ -426,6 +465,21 @@ baseline_supply_kw = 300
 # the Breach in 12 s, and chews from there. One fed MG Turret turns that into a Run
 # that is still going twenty minutes later, which is the whole of this game's thesis.
 health = 6000
+
+# How high the Nest's crown stands, in metres: the top of the stepped ziggurat, and the
+# one surface on the Map nothing can be built on and nothing can take away. A player
+# comes back to life standing on it, which is the deliberate answer to "where does a
+# respawn put somebody when the thing they respawn at is solid".
+height_metres = 4.2
+
+# How high the Nest's outer terrace stands, in metres — the step the ring of tiles around
+# the crown presents, and the whole of what makes the Nest climbable.
+#
+# 1.7 m is within one jump plus a mantle of the ground (`player.jump_height_metres` plus
+# `player.step_up_height_metres`), so the terrace is reachable on foot and the crown is
+# not: getting the rest of the way up is a Belt or a Machine built against the Nest, which
+# is the factory-game answer to a wall and better than a ladder nobody built.
+terrace_height_metres = 1.7
 
 # How close a player has to stand to the Nest to hand a Delivery over, in metres from the
 # edge of its footprint. Progression is physical (GLOSSARY.md), so handing goods over is a
