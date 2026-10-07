@@ -1,0 +1,4 @@
+# Snapshots the dashboard takes before each write. Yours, not the repository's:
+# a tuning session is hundreds of small files that mean nothing to anybody else.
+history/
+__pycache__/
