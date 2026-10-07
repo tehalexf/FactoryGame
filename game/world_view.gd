@@ -1038,9 +1038,30 @@ func _sync_hud(sim: Simulation) -> void:
 		totals.append("nothing extracted yet")
 	lines.append_array(totals)
 
-	# Machines in trouble first, and only as many as a player can read. A line per Machine
-	# buries a real Factory under its own diagnostics — fifty lines of "running" tell
-	# nobody anything, and they are drawn over the Factory they are describing.
+	# Machines in trouble first, then the hottest, and only as many as a player can read.
+	# A line per Machine buries a real Factory under its own diagnostics — fifty lines of
+	# "running" tell nobody anything, and they are drawn over the Factory they describe.
+	#
+	# A healthy Machine still earns its line when it is one of the hottest, because Heat
+	# is a bet a player can only make knowingly if they can see what is making them hot,
+	# and the Machines making the most Heat are usually the ones in no trouble at all.
+	var hottest: Array[int] = []
+	for index: int in range(sim.query_machine_count()):
+		hottest.append(index)
+	hottest.sort_custom(
+		func(a: int, b: int) -> bool:
+			var rate_a: int = sim.query_machine_heat_per_minute(a)
+			var rate_b: int = sim.query_machine_heat_per_minute(b)
+			if rate_a != rate_b:
+				return rate_a > rate_b
+			return a < b
+	)
+	var is_hot: Dictionary = {}
+	for rank: int in range(mini(MACHINES_LISTED, hottest.size())):
+		var candidate: int = hottest[rank]
+		if sim.query_machine_heat_per_minute(candidate) > 0:
+			is_hot[candidate] = true
+
 	var healthy: int = 0
 	var listed: int = 0
 	for index: int in range(sim.query_machine_count()):
@@ -1056,7 +1077,11 @@ func _sync_hud(sim: Simulation) -> void:
 			state = "throttled"
 		# A Turret is always named, however healthy it looks: "running" and out of
 		# Ammunition are the same word for a Turret, and a dry one costs the Run.
-		if state == "running" and not sim.query_machine_is_turret(index):
+		if (
+			state == "running"
+			and not sim.query_machine_is_turret(index)
+			and not is_hot.has(index)
+		):
 			healthy += 1
 			continue
 		if listed >= MACHINES_LISTED:

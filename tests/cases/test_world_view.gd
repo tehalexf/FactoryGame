@@ -755,9 +755,11 @@ func _sim_with_an_undrawn_machine() -> Simulation:
 		machines,
 		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
 		FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text(),
+		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 	return Simulation.new(1, 1, definitions)
 
