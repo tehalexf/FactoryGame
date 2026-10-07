@@ -218,7 +218,10 @@ func test_the_hud_names_what_is_on_the_build_gun_and_what_is_in_hand() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	assert_true(view.hud_text().contains("build gun: miner_mk1"), view.hud_text())
+	assert_true(
+		view.hud_text().contains("build gun: %s" % sim.query_definitions().machine_ids()[0]),
+		view.hud_text()
+	)
 	assert_true(view.hud_text().contains("iron_plate"), view.hud_text())
 	view.free()
 
@@ -320,6 +323,89 @@ func test_the_hud_names_a_stalled_belt_and_a_starved_machine() -> void:
 		"a Smelter with no Belt must read as starved, got %s" % view.hud_text()
 	)
 	view.free()
+
+
+func test_the_hud_shows_the_power_grids_supply_demand_and_ratio() -> void:
+	# The gauge the Power ticket exists to put on screen. Read off the Simulation every
+	# frame, never remembered, so it cannot disagree with the grid it describes.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), sim.query_node_tile(0)
+		),
+	])
+	sim.step([])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("power 300/120 kW"),
+		"a player must be able to read supply against demand, got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("100%"),
+		"and the ratio the two of them come to, got %s" % view.hud_text()
+	)
+	view.free()
+
+
+func test_the_hud_reads_a_brownout_as_a_fraction_of_the_power_asked_for() -> void:
+	# Three Miners at 120 kW on a 300 kW baseline is five sixths of what the Factory asked
+	# for, and the HUD rounds that to a whole percent for the player.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	var coal_miner: int = sim.query_definitions().machine_index("coal_miner_mk1")
+	sim.step([
+		InputAction.build_machine(0, miner, sim.query_node_tile(0)),
+		InputAction.build_machine(0, miner, sim.query_node_tile(1)),
+		InputAction.build_machine(0, coal_miner, sim.query_node_tile(2)),
+	])
+	sim.step([])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("power 300/360 kW"),
+		"got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("83%"),
+		"five sixths is 83%% of the Power asked for, got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("throttled"),
+		"and every Machine on the short grid must say so, got %s" % view.hud_text()
+	)
+	view.free()
+
+
+func test_a_factory_the_player_builds_really_powers_itself() -> void:
+	# Power has to be visible in the running game and not only in a test. The opening
+	# Factory that used to prove it is gone, so this builds the same chain the way a
+	# player does: a Coal Miner on the Map's coal, a Belt, and the Steam Boiler that
+	# burns what the Belt delivers.
+	var sim: Simulation = Simulation.new(1, 1)
+	var definitions: Definitions = sim.query_definitions()
+	var coal: Vector3i = Vector3i.ZERO
+	for node: int in range(sim.query_node_count()):
+		if sim.query_node_resource(node) == "coal":
+			coal = sim.query_node_tile(node)
+	assert_ne(coal, Vector3i.ZERO, "the starter Map has coal to burn")
+
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("coal_miner_mk1"), coal),
+		InputAction.build_belt(
+			0, Vector3i(coal.x + 2, coal.y, coal.z), Vector3i(coal.x + 3, coal.y, coal.z)
+		),
+		InputAction.build_machine(
+			0,
+			definitions.machine_index("steam_boiler_mk1"),
+			Vector3i(coal.x + 4, coal.y, coal.z)
+		),
+	])
+	for tick: int in range(400):
+		sim.step([])
+
+	assert_eq(sim.query_power_supply_kw(), 900, "the baseline plant and a burning Boiler")
+	assert_false(sim.query_power_is_in_deficit(), "so the Factory is in surplus")
 
 
 func test_a_factory_the_player_builds_really_carries_ore_to_the_smelter() -> void:

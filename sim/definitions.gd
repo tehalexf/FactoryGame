@@ -49,6 +49,7 @@ const MACHINE_COLUMNS: Array = [
 	"footprint_x",
 	"footprint_z",
 	"power_draw_kw",
+	"power_supply_kw",
 	"health",
 	"max_depth",
 	"recipe_id",
@@ -73,6 +74,7 @@ const TUNING_SURVEY_PITCH_DEGREES: String = "survey.pitch_degrees"
 const TUNING_BELT_ITEMS_PER_SECOND: String = "belt.items_per_second"
 const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
 const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
+const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
 
 ## Every problem that makes this set unusable, each naming the file and the row.
 var errors: PackedStringArray = PackedStringArray()
@@ -119,6 +121,12 @@ var belt_items_per_tile: int = 0
 
 ## How many crafts' worth of each input a Machine's input buffer holds.
 var machine_input_buffer_crafts: int = 0
+
+## What the one Power grid supplies before a single generator is built, in whole
+## kilowatts. Whole, because every Power quantity in the Simulation is: the throttle
+## is an exact integer ratio of supply to demand, and a fractional kilowatt would put
+## a rounding decision in the one place that must not have one.
+var power_baseline_supply_kw: int = 0
 
 var _machines: Array = []
 var _machine_ids: PackedStringArray = PackedStringArray()
@@ -335,6 +343,7 @@ func digest() -> int:
 	hasher.feed_int(belt_items_per_second)
 	hasher.feed_int(belt_items_per_tile)
 	hasher.feed_int(machine_input_buffer_crafts)
+	hasher.feed_int(power_baseline_supply_kw)
 
 	# Errors are part of the verdict, not of the content, but a set that failed to
 	# load must never share a digest with one that loaded empty.
@@ -363,8 +372,16 @@ func _read_recipes(table: CsvTable) -> void:
 		_read_item_list(table, row, "inputs", definition, true)
 		_read_item_list(table, row, "outputs", definition, false)
 
-		if definition.output_count() == 0:
-			table.report_row(row, "outputs: a Recipe with no outputs produces nothing")
+		# Deliberately *not* "must have an output". A generator's Recipe is a fuel and a
+		# burn time, and what it produces is Power, which is not an Item — so which of
+		# inputs and outputs a Recipe must fill depends on the Role of the Machine that
+		# runs it, and `_check_machines_against_recipes` is where that is decided. What is
+		# refused here is the only case no Role could rescue: a Recipe that neither
+		# consumes nor produces anything is not a transformation.
+		if definition.input_count() == 0 and definition.output_count() == 0:
+			table.report_row(
+				row, "a Recipe that consumes nothing and produces nothing is not a Recipe"
+			)
 
 		if definition.id.is_empty():
 			continue
@@ -469,6 +486,7 @@ func _read_machines(table: CsvTable) -> void:
 		definition.footprint_x = table.require_int(row, "footprint_x")
 		definition.footprint_z = table.require_int(row, "footprint_z")
 		definition.power_draw_kw = table.require_int(row, "power_draw_kw")
+		definition.power_supply_kw = table.require_int(row, "power_supply_kw")
 		definition.health = table.require_int(row, "health")
 		definition.max_depth = table.require_int(row, "max_depth")
 		definition.recipe_id = table.require_id(row, "recipe_id")
@@ -512,16 +530,40 @@ func _check_machine_values(
 		)
 	if definition.power_draw_kw < 0:
 		table.report_row(row, "power_draw_kw: must not be negative")
+	if definition.power_supply_kw < 0:
+		table.report_row(row, "power_supply_kw: must not be negative")
 	if definition.health < 1:
 		table.report_row(row, "health: a Machine with no health is already destroyed")
 
 	if role == MachineDefinition.Role.MINER:
 		if definition.max_depth < 1:
 			table.report_row(row, "max_depth: a Miner must reach at least Depth 1")
-	elif role == MachineDefinition.Role.CRAFTER:
+	elif role != -1:
 		if definition.max_depth != 0:
 			table.report_row(
 				row, "max_depth: only a Miner reaches a Depth, so this must be 0"
+			)
+
+	# A Machine either feeds the one Power grid or draws from it. Allowing both would
+	# make a generator's own throttle depend on its own output, and the grid stops being
+	# a sum of two columns.
+	if role == MachineDefinition.Role.GENERATOR:
+		if definition.power_supply_kw < 1:
+			table.report_row(
+				row, "power_supply_kw: a generator that supplies no Power is not a generator"
+			)
+		if definition.power_draw_kw != 0:
+			table.report_row(
+				row,
+				(
+					"power_draw_kw: a generator feeds the grid rather than drawing from it,"
+					+ " so this must be 0 — its fuel is its input"
+				)
+			)
+	elif role != -1:
+		if definition.power_supply_kw != 0:
+			table.report_row(
+				row, "power_supply_kw: only a generator supplies Power, so this must be 0"
 			)
 
 
@@ -551,19 +593,48 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 			continue
 
 		var used: RecipeDefinition = recipe_at(definition.recipe_index)
-		if definition.is_miner() and used.input_count() > 0:
+		if definition.is_miner():
+			if used.input_count() > 0:
+				table.report_row(
+					definition.source_row,
+					(
+						'"%s" is a Miner, so its Recipe "%s" must have no inputs — a Miner draws'
+						+ " what it extracts from the ground it stands on, not from a Belt"
+					) % [definition.id, used.id]
+				)
+		elif used.input_count() == 0:
 			table.report_row(
 				definition.source_row,
-				(
-					'"%s" is a Miner, so its Recipe "%s" must have no inputs — a Miner draws'
-					+ " what it extracts from the ground it stands on, not from a Belt"
-				) % [definition.id, used.id]
+				'"%s" is a %s, so its Recipe "%s" must have at least one input'
+				% [
+					definition.id,
+					MachineDefinition.role_name(definition.role),
+					used.id,
+				]
 			)
-		elif not definition.is_miner() and used.input_count() == 0:
+
+		# What a Recipe must *produce* depends on the Role that runs it, which is why it
+		# is checked here rather than against the Recipe table on its own. Power is not an
+		# Item and never will be — there is no fluid and no steam on a Belt (DESIGN.md) —
+		# so a generator's Recipe is a fuel and a burn time and has no output at all.
+		if definition.is_generator():
+			if used.output_count() > 0:
+				table.report_row(
+					definition.source_row,
+					(
+						'"%s" is a generator, so its Recipe "%s" must have no outputs — what it'
+						+ " produces is Power, which is not an Item"
+					) % [definition.id, used.id]
+				)
+		elif used.output_count() == 0:
 			table.report_row(
 				definition.source_row,
-				'"%s" is a crafter, so its Recipe "%s" must have at least one input'
-				% [definition.id, used.id]
+				'"%s" is a %s, so its Recipe "%s" must produce something'
+				% [
+					definition.id,
+					MachineDefinition.role_name(definition.role),
+					used.id,
+				]
 			)
 
 
@@ -581,6 +652,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	belt_items_per_second = tuning.require_fixed(TUNING_BELT_ITEMS_PER_SECOND)
 	belt_items_per_tile = tuning.require_int(TUNING_BELT_ITEMS_PER_TILE)
 	machine_input_buffer_crafts = tuning.require_int(TUNING_MACHINE_INPUT_BUFFER_CRAFTS)
+	power_baseline_supply_kw = tuning.require_int(TUNING_POWER_BASELINE_SUPPLY_KW)
 
 	# A rate or a capacity of zero is not a slow Belt, it is a Belt that cannot work.
 	# Refused by name rather than accepted and puzzled over later.
@@ -624,6 +696,10 @@ func _read_tuning(tuning: TomlDocument) -> void:
 		if machine_input_buffer_crafts < 1:
 			_report_tuning(
 				tuning, TUNING_MACHINE_INPUT_BUFFER_CRAFTS, "must be at least one craft"
+			)
+		if power_baseline_supply_kw < 0:
+			_report_tuning(
+				tuning, TUNING_POWER_BASELINE_SUPPLY_KW, "a grid cannot supply less than nothing"
 			)
 
 	# Checked after every read, so this names exactly the keys nothing asked for.
@@ -681,6 +757,7 @@ func _discard_content() -> void:
 	belt_items_per_second = 0
 	belt_items_per_tile = 0
 	machine_input_buffer_crafts = 0
+	power_baseline_supply_kw = 0
 
 
 static func _read_file(path: String) -> String:

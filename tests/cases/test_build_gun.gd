@@ -11,10 +11,10 @@
 extends TestCase
 
 const MACHINES: String = """\
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore,iron_plate:8
-press_mk1,Press Mk1,crafter,2,3,180,500,0,press_iron_frame,iron_plate:12;iron_ore:4
-free_mk1,Scaffold,crafter,1,1,10,50,0,press_iron_frame,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,iron_plate:8
+press_mk1,Press Mk1,crafter,2,3,180,0,500,0,press_iron_frame,iron_plate:12;iron_ore:4
+free_mk1,Scaffold,crafter,1,1,10,0,50,0,press_iron_frame,
 """
 
 const RECIPES: String = """\
@@ -39,6 +39,8 @@ input_buffer_crafts = 2
 height_metres = 26
 transition_seconds = 0.4
 pitch_degrees = 68
+[power]
+baseline_supply_kw = 300
 """
 
 

@@ -39,12 +39,17 @@ var node_resource: PackedStringArray = PackedStringArray()
 var node_depth: PackedInt64Array = PackedInt64Array()
 
 
-## The Map a Run starts on. Two iron ore Nodes at Depth 1, far enough apart that a
-## Belt between them is a decision rather than a formality.
+## The Map a Run starts on. Two iron ore Nodes and one coal Node, all at Depth 1, far
+## enough apart that a Belt between them is a decision rather than a formality.
+##
+## The coal is what the one Power grid runs on: a Steam Boiler burns Belt-delivered coal,
+## so the Factory's first Power source is also its first logistics problem, and the coal
+## sits far enough east that the fuel line is a line rather than a formality.
 static func starter() -> MapLayout:
 	var layout: MapLayout = MapLayout.new()
 	layout.add_node(Vector3i(4, WorldGrid.GROUND_LAYER, 4), "iron_ore", 1)
 	layout.add_node(Vector3i(-6, WorldGrid.GROUND_LAYER, 10), "iron_ore", 1)
+	layout.add_node(Vector3i(12, WorldGrid.GROUND_LAYER, 4), "coal", 1)
 	layout.sort_nodes()
 	return layout
 

@@ -44,8 +44,8 @@ const STEP_AT_SLOW: int = -274
 const STEP_AT_FAST: int = -410
 
 const MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,
 """
 
 const RECIPES: String = """
@@ -70,6 +70,8 @@ input_buffer_crafts = 2
 height_metres = 26
 transition_seconds = 0.4
 pitch_degrees = 68
+[power]
+baseline_supply_kw = 300
 """
 
 

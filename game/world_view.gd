@@ -294,6 +294,19 @@ func _sync_hud(sim: Simulation) -> void:
 	lines.append("tick %d" % sim.query_tick())
 	lines.append_array(_build_gun_lines(sim))
 
+	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and
+	# the fraction of that it is actually getting. The percentage is rounded for the
+	# player's benefit and that is the only place it is rounded — the Simulation throttles
+	# on the two kilowatt figures themselves, so nothing here can move an Item.
+	lines.append(
+		"power %d/%d kW — %d%%"
+		% [
+			sim.query_power_supply_kw(),
+			sim.query_power_demand_kw(),
+			roundi(Fixed.to_float(sim.query_power_ratio()) * 100.0),
+		]
+	)
+
 	var totals: PackedStringArray = PackedStringArray()
 	for item_id: String in sim.query_definitions().item_ids():
 		var total: int = sim.query_item_total(item_id)
@@ -307,7 +320,13 @@ func _sync_hud(sim: Simulation) -> void:
 		# Starvation is asked of the Simulation rather than guessed from a count that has
 		# stopped moving. A renderer that inferred it would be a second opinion about the
 		# Factory, and the wrong one on the frame they disagreed.
-		var state: String = "starved" if sim.query_machine_is_starved(index) else "running"
+		# Starved and throttled are different diagnoses with different fixes — lay a Belt,
+		# or build a Boiler — so the HUD never collapses them into one word.
+		var state: String = "running"
+		if sim.query_machine_is_starved(index):
+			state = "starved"
+		elif sim.query_machine_is_throttled(index):
+			state = "throttled"
 		lines.append(
 			"%s — %s — in %d, out %d"
 			% [

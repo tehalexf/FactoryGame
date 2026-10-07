@@ -18,13 +18,16 @@
 ## drawing what the queries report — including the camera, which goes where the Simulation
 ## says a player's camera is rather than anywhere this layer decides.
 ##
-## The opening Miner, Belt and Smelter this file used to place are gone. They existed so
+## The opening Miner, Belt, Smelter, Coal Miner and Steam Boiler this file used to place
+## are gone. They existed so
 ## that #4 and #5 had something to look at while nothing could build; now a player builds
 ## it themselves in about ten seconds, which is the ticket. Keeping them as a starting
 ## Factory was the alternative and was rejected for two reasons: a Factory the player did
 ## not place teaches them nothing about the Build Gun, and it would have to be paid for
 ## out of somebody's materials or be a quiet exception to the costs every other build
-## obeys.
+## obeys. The one Power grid #7 added is unaffected: `power.baseline_supply_kw` is what
+## carries a Factory until its first generator, and that is tuning rather than a Factory
+## somebody else built.
 class_name Main
 extends Node
 

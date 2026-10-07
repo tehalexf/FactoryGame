@@ -140,7 +140,11 @@ func test_a_click_builds_whatever_the_build_gun_is_aimed_at() -> void:
 
 	assert_eq(sim.query_machine_count(), 1, "the click placed a Machine")
 	assert_eq(sim.query_machine_tile(0), aimed, "on the tile the gun was pointing at")
-	assert_eq(sim.query_machine_id(0), "miner_mk1", "the one on the Build Gun")
+	assert_eq(
+		sim.query_machine_id(0),
+		sim.query_definitions().machine_ids()[0],
+		"the one a fresh Run opens with on the Build Gun"
+	)
 
 
 func test_a_second_click_on_the_same_spot_builds_nothing_more() -> void:
@@ -177,16 +181,17 @@ func test_the_wheel_steps_through_the_machines_and_wraps() -> void:
 	var count: int = sim.query_definitions().machine_count()
 	assert_true(count >= 2, "the premise of the rest")
 
+	var ids: PackedStringArray = sim.query_definitions().machine_ids()
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.machine_steps = 1
 	sim.step(controller.actions_for_tick(sim, 0, sample))
-	assert_eq(sim.query_player_selected_machine(0), "smelter_mk1")
+	assert_eq(sim.query_player_selected_machine(0), ids[1], "one step is the next by id")
 
 	# A full lap of the list comes back to where it started, rather than running off the
 	# end of the Machine table.
 	for step: int in range(count):
 		sim.step(controller.actions_for_tick(sim, 0, sample))
-	assert_eq(sim.query_player_selected_machine(0), "smelter_mk1", "stepping all the way wraps")
+	assert_eq(sim.query_player_selected_machine(0), ids[1], "stepping all the way wraps")
 
 
 func test_a_demolish_returns_the_materials_the_build_spent() -> void:

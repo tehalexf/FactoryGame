@@ -23,8 +23,8 @@ extends TestCase
 const DIR: String = "user://definition_watcher_test"
 
 const MACHINES: String = """
-id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore,
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,120,0,400,1,mine_iron_ore,
 """
 
 const RECIPES: String = """
@@ -48,6 +48,8 @@ input_buffer_crafts = 2
 height_metres = 26
 transition_seconds = 0.4
 pitch_degrees = 68
+[power]
+baseline_supply_kw = 300
 """
 
 const TUNING: String = """
@@ -138,7 +140,7 @@ func test_adding_a_machine_and_recipe_produces_a_new_definition_set() -> void:
 	)
 	_write(
 		Definitions.MACHINES_FILE,
-		MACHINES + "smelter_mk1,Smelter Mk1,crafter,3,3,180,500,0,smelt_iron_plate,\n"
+		MACHINES + "smelter_mk1,Smelter Mk1,crafter,3,3,180,0,500,0,smelt_iron_plate,\n"
 	)
 
 	var reloaded: Definitions = watcher.check_now()
