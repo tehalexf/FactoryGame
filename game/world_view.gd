@@ -54,12 +54,6 @@ const WALL_WIDTH_FRACTION: float = 0.92
 const WALL_WHOLE: Color = Color(0.30, 0.31, 0.32)
 const WALL_RUINED: Color = Color(0.52, 0.22, 0.17)
 
-## How high the deck of a generated tile of Belt is, in metres, which is where an Item
-## rides. Declared by the `belt_straight` ports in `content/machine_ports.csv`, which the
-## asset suite holds the mesh to; this is presentation only — where an Item *is* is the
-## Simulation's answer, and only how high off the ground it is drawn comes from here.
-const BELT_DECK_METRES: float = 0.9
-
 ## An Item is a small cube sitting on the Belt. Smaller than the 0.5 m an Item occupies
 ## along the run, so a packed Belt reads as a queue of distinct boxes with gaps rather
 ## than as one continuous bar — which is the whole point of drawing them.
@@ -1545,7 +1539,15 @@ func _sync_items(sim: Simulation) -> void:
 	for index: int in range(sim.query_belt_count()):
 		total += sim.query_belt_item_count(index)
 
-	var deck: float = BELT_DECK_METRES if _body(BELT_BODY) != null else BELT_HEIGHT_METRES
+	# How high the deck is comes from the Simulation, because #30 made a Belt solid and
+	# `belt.deck_height_metres` is what a player stands on — an Item riding 10 cm above or
+	# below the surface somebody is walking on would read as a bug. The slab placeholder
+	# keeps its own lower deck, because that *is* a different, shorter object.
+	var deck: float = (
+		Fixed.to_float(sim.query_belt_deck_height_metres())
+		if _body(BELT_BODY) != null
+		else BELT_HEIGHT_METRES
+	)
 	_item_transforms.resize(total * FLOATS_PER_INSTANCE)
 	var instance: int = 0
 	for index: int in range(sim.query_belt_count()):
