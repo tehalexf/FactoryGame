@@ -1,0 +1,37 @@
+# ── Licensed third-party assets — MUST NOT be committed ───────────────────
+# Purchased and license-restricted assets prohibit redistribution. This repo
+# is public. Anything under here is pulled in locally; see docs/ASSETS.md.
+/assets_licensed/
+
+# Godot
+.godot/
+/android/
+*.translation
+export_presets.cfg
+
+# Generated art pipeline output (regenerable; large)
+/tools/aigen/models/
+/tools/aigen/output/
+/tools/comfyui/
+
+# Build artifacts
+/build/
+/bin/
+*.so
+*.dll
+*.dylib
+*.o
+*.obj
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
