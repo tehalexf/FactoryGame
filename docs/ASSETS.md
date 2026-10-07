@@ -70,6 +70,7 @@ reconstructing provenance later is far harder than logging it now.
 | `assets_licensed/shapita/` — Factory Line 86: 86 static low-poly factory models in GLB + FBX, two `.blend` libraries, an offline catalogue, and the companion 86 Godot static prefabs with collision | Shapita, <https://shapita.itch.io> (paid) | **Commercial use yes, redistribution NO** — "may not sell, redistribute, sublicense or give away the source models or modified models as standalone assets, asset packs, templates or downloadable libraries" | **Never.** Quarantined. Its 1 m grid, vertical datums and offset origins are written up in [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
 | `assets_licensed/lukami-ch/` — Lukami Ch. "Low Poly Industrial Pack": 60 industrial props in two shading styles, 122 FBX + 122 GLB + 61 OBJ, one shared texture atlas | Lukami Ch. (paid) | **Commercial use yes, redistribution NO.** Also prohibits ML/generative-AI training or input use, and NFT/blockchain registration | **Never.** Quarantined — [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
 | `assets_licensed/sonniss/` — Sonniss `#GameAudioGDC` GDC 2026 bundle: **347 WAV** across **122 supplier libraries**, 7.5 GB | Sonniss, <https://sonniss.com> (free GDC giveaway) | Royalty-free, perpetual, unlimited projects, no attribution. **NO AI TRAINING OR USAGE.** Redistribution NO | **Never.** Quarantined — [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
+| `assets_licensed/generated/audio/` — the game's hero sound cues, cut from the Sonniss bundle by `tools/assets/convert_audio.sh` | Derived from `assets_licensed/sonniss/` | Inherits Sonniss: use in a shipped game yes, **redistribution NO, AI use NO** | **Never.** A cut from a non-redistributable recording is a derivative of it and is exactly as forbidden as the WAV. Gitignored, outside the shipping tree, loaded at runtime, and every cue has a committed CC0 fallback so a clone without the bundle still makes a noise — `game/sound_bank.gd` |
 | SDXL base 1.0 weights | `stabilityai/stable-diffusion-xl-base-1.0` @ `4621659` | CreativeML Open RAIL++-M | **No** — gitignored under `tools/aigen/models/`, re-downloaded by `setup.sh` |
 
 Every committed character was converted with
@@ -109,7 +110,11 @@ themselves are ours and are safe to commit to a public repo.
   this Agreement for the purpose of training artificial intelligence
   technologies", and may not "use, reproduce, or otherwise leverage" them to
   develop, train or enhance AI. Never feed these files to any model. Not
-  redistributable → `assets_licensed/`.
+  redistributable → `assets_licensed/`. **Wired in** by
+  `tools/assets/convert_audio.sh`, which cuts the game's hero cues into
+  `assets_licensed/generated/audio/` — quarantined output, loaded at runtime,
+  with a committed CC0 fallback per cue. See
+  [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 8.
 - **Lukami Ch.** — royalty-free commercial use, modify freely, sell finished
   projects. May not resell or redistribute the assets or any subset in any
   format; **may not be used "to train, fine-tune, or as input to machine-learning
@@ -123,12 +128,13 @@ themselves are ours and are safe to commit to a public repo.
 - **RgsDev, and the unattributed FPS weapon pack** — purchased, non-redistributable.
   The FPS weapon pack records no vendor anywhere in its zips; that gap is logged
   in [LICENSED_ASSETS.md](LICENSED_ASSETS.md) rather than guessed at.
-  → `assets_licensed/`. These two are the first-person arms, and they are the one
-  asset path whose **output** is also quarantined: `tools/assets/convert_weapons.sh`
-  writes `assets_licensed/generated/gear/*.glb` and the game loads it at runtime,
-  because a converted GLB is a derivative of a non-redistributable asset and is
-  exactly as forbidden as the FBX. A clone without the packs gets placeholder
-  weapons and a game that builds, tests and plays — see
+  → `assets_licensed/`. These two are the first-person arms, and they are **one of
+  the two** asset paths whose **output** is also quarantined — the other is the
+  audio above. `tools/assets/convert_weapons.sh` writes
+  `assets_licensed/generated/gear/*.glb` and the game loads it at runtime, because
+  a converted GLB is a derivative of a non-redistributable asset and is exactly as
+  forbidden as the FBX. A clone without the packs gets placeholder weapons and a
+  game that builds, tests and plays — see
   [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 7.
 - **Synty** — no redistribution. Godot is officially unsupported; FBX source
   requires conversion. → `assets_licensed/`.

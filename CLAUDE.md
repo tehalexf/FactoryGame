@@ -10,6 +10,7 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
+tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 godot --path .                   # run the game
@@ -102,6 +103,48 @@ The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
 float-based.
+
+## Sound
+
+**No diegetic control ships silent.** DESIGN.md is explicit about why — IRON
+NEST's most-praised quality is its sound design and its most-cited criticism is
+that its loop reduces to data entry, and the line between satisfying friction and
+tedium is whether the machine answers you. A lever that clunks is a reward; a
+silent lever is a chore. Audio is load-bearing here, not polish.
+
+Two files, and the same shape the renderer has:
+
+- `game/audio_director.gd` decides **what** makes a noise, by diffing query
+  results against what they said last frame — because a sound is a *change* and a
+  query reports a *condition*. It holds no authoritative state, exactly as
+  `WorldView` holds none; its snapshot is the same category of thing as
+  `TickPump`'s leftover frame time. `cues_for_frame`, `ambience_db` and
+  `sustained_cues` need no audio device, so the whole sound design is asserted
+  headless in `tests/cases/test_game_audio.gd`; `sync` is the only part that
+  touches a player node.
+- `game/sound_bank.gd` decides **which file**, and owns the mix. Two sources: the
+  hero takes cut from the Sonniss bundle into a gitignored directory outside the
+  shipping tree, and the 203 committed CC0 Kenney sounds. **Every cue names both**,
+  so a clone without the bundle gets a Kenney lever rather than a silent one.
+
+Three rules, each with a test:
+
+- **Listening changes nothing.** The director reads queries and writes nothing, so
+  the same Input Action script leaves the same state hash whether anything was
+  listening or not. Sound is presentation; it never reaches the Simulation.
+- **Nothing is chosen at random and nothing is timed by a clock.** Variation is
+  `tick % count`; the cooldowns that stop a Machine under attack buzzing are
+  counted in ticks. Two Runs down the same script sound the same, which is the
+  audio half of the rule `WeaponViewmodel` keeps for animation.
+- **A cue resolves or it is a load error.** Cue names are constants, the catalogue
+  is data, and the asset suite fails if `convert_audio.sh` cuts a cue the game
+  never plays.
+
+The recordings are long source material rather than game SFX, so
+`tools/assets/convert_audio.sh` is the recipe — which recording becomes which cue
+and why — over `tools/assets/wav_to_cue.py`, which measures the in-point rather
+than remembering it. See [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md)
+section 8.
 
 ## The Simulation façade is the only seam
 
