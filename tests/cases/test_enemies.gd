@@ -17,20 +17,37 @@ func _layout() -> MapLayout:
 	return layout
 
 
-## Shipped content with the Wave clock wound forward, so a Wave fits in a test. Every
-## other number is the real file's.
-func _content(overrides: Array = []) -> Definitions:
+## Six Crawlers a Breach, and never any more however hot the Factory gets. Composition is
+## pinned flat here because these tests are about what a Crawler *does*; `test_heat` is
+## where Heat growing a Wave is asserted.
+const SIX_CRAWLERS: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,0,6
+"""
+
+## The same, one Crawler, for the tests that want to watch exactly one of them.
+const ONE_CRAWLER: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,1,0,1
+"""
+
+
+## Shipped content with the Telegraph shortened to half a second, so a called Wave arrives
+## in thirty ticks. Every other number is the real file's — in particular the interval,
+## which stays at its full baseline, so Wave 2 is still two and a half minutes away and
+## these tests are studying one Wave rather than a stream of them.
+func _content(waves: String = SIX_CRAWLERS, overrides: Array = []) -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("first_wave_seconds = 90", "first_wave_seconds = 1")
+	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
 	for pair: PackedStringArray in overrides:
 		tuning = tuning.replace(pair[0], pair[1])
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
 		tuning,
+		waves,
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 
 
@@ -41,8 +58,19 @@ func _read(path: String) -> String:
 	return text
 
 
-func _sim(overrides: Array = []) -> Simulation:
-	return Simulation.new(11, 1, _content(overrides), _layout())
+## A Run with a Wave already called, so it arrives half a second in rather than two and a
+## half minutes in. The lever is the honest way to bring a Wave forward in a test — it is
+## the same code path a player uses, and it leaves the interval alone so Wave 2 stays far
+## enough away to be out of the way.
+func _sim(waves: String = SIX_CRAWLERS, overrides: Array = []) -> Simulation:
+	var sim: Simulation = Simulation.new(11, 1, _content(waves, overrides), _layout())
+	sim.step([InputAction.call_wave_early(0)])
+	return sim
+
+
+## A Run whose Wave is one Crawler, for the tests that watch exactly one.
+func _lone_sim() -> Simulation:
+	return _sim(ONE_CRAWLER)
 
 
 ## Steps until there is at least one Enemy on the Map, and reports how many ticks it took.
@@ -156,7 +184,7 @@ func test_a_crawler_reaches_the_nest() -> void:
 
 
 func test_a_crawler_walks_round_a_machine_in_its_way() -> void:
-	var sim: Simulation = _sim([["crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1"]])
+	var sim: Simulation = _lone_sim()
 	# A 3x3 Smelter squarely across the Breach-to-Nest lane.
 	var smelter: int = sim.query_definitions().machine_index("smelter_mk1")
 	sim.step([InputAction.build_machine(0, smelter, Vector3i(5, WorldGrid.GROUND_LAYER, 0))])
@@ -199,7 +227,7 @@ func test_a_machine_dropped_on_a_crawler_does_not_park_it_for_ever() -> void:
 # ── Biting the Nest ───────────────────────────────────────────────────────────
 
 func test_a_crawler_damages_the_nest_on_contact_and_not_before() -> void:
-	var sim: Simulation = _sim([["crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1"]])
+	var sim: Simulation = _lone_sim()
 	_step_until_spawned(sim)
 	var full: int = sim.query_nest_health()
 
@@ -216,7 +244,7 @@ func test_a_crawler_damages_the_nest_on_contact_and_not_before() -> void:
 
 
 func test_a_crawler_bites_at_the_interval_tuning_states() -> void:
-	var sim: Simulation = _sim([["crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1"]])
+	var sim: Simulation = _lone_sim()
 	while not sim.query_enemy_is_attacking(0):
 		sim.step([])
 	sim.step([])
@@ -230,7 +258,7 @@ func test_a_crawler_bites_at_the_interval_tuning_states() -> void:
 
 
 func test_a_crawler_in_contact_stops_walking() -> void:
-	var sim: Simulation = _sim([["crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1"]])
+	var sim: Simulation = _lone_sim()
 	while not sim.query_enemy_is_attacking(0):
 		sim.step([])
 	var standing: FixedVec2 = sim.query_enemy_position_metres(0)
@@ -241,7 +269,7 @@ func test_a_crawler_in_contact_stops_walking() -> void:
 
 
 func test_a_swarm_chews_faster_than_one_crawler_does() -> void:
-	var one: Simulation = _sim([["crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1"]])
+	var one: Simulation = _lone_sim()
 	var many: Simulation = _sim()
 	for i: int in range(30 * Simulation.TICKS_PER_SECOND):
 		one.step([])
@@ -316,6 +344,8 @@ func test_a_breach_releases_its_crawlers_in_canonical_tile_order() -> void:
 
 	var one: Simulation = Simulation.new(11, 1, _content(), west_first)
 	var two: Simulation = Simulation.new(11, 1, _content(), east_first)
+	one.step([InputAction.call_wave_early(0)])
+	two.step([InputAction.call_wave_early(0)])
 	_step_until_spawned(one)
 	_step_until_spawned(two)
 	assert_eq(one.query_enemy_count(), 2, "one beat releases a Crawler at every Breach")
@@ -367,7 +397,10 @@ func test_determinism_the_fixture_really_did_spawn_and_walk_crawlers() -> void:
 	sim.step([InputAction.build_machine(0, _shipped_index("smelter_mk1"), Vector3i(4, 0, -8))])
 	var moved: int = 0
 	var first_position: FixedVec2 = FixedVec2.zero()
-	for i: int in range(100 * Simulation.TICKS_PER_SECOND):
+	# Past the shipped cold interval, which is `heat.wave_interval_baseline_seconds`. The
+	# Smelter has no Belt feeding it, so it never crafts, so the Factory never heats up and
+	# the first Wave arrives on the full baseline.
+	for i: int in range(160 * Simulation.TICKS_PER_SECOND):
 		sim.step([])
 		if sim.query_enemy_count() > 0:
 			if first_position.x == 0:
@@ -384,11 +417,15 @@ func test_determinism_a_run_that_ends_replays_identically() -> void:
 	# A thin Nest and a fast Wave, so the Run is lost inside the fixture. Content is
 	# passed here rather than read from content/, because the shipped numbers take some
 	# minutes to lose and a fixture should be seconds.
-	var content: Definitions = _content([["health = 6000", "health = 40"]])
+	var content: Definitions = _content(SIX_CRAWLERS, [["health = 6000", "health = 40"]])
 	assert_false(content.has_errors(), content.describe_errors())
 
+	# The lever is what makes the Wave arrive inside the fixture, and it is the honest way
+	# to do it: a called Wave is the same Wave through the same code path, so the replay
+	# covers the lever as well as the Run it ended.
 	var script: InputScript = InputScript.new()
-	script.add_idle_ticks(20 * Simulation.TICKS_PER_SECOND)
+	script.add_tick([InputAction.call_wave_early(0)])
+	script.add_idle_ticks(40 * Simulation.TICKS_PER_SECOND)
 
 	var recording: ReplayRecording = DeterminismHarness.record(script, 9, 1, content)
 	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording)
@@ -398,7 +435,8 @@ func test_determinism_a_run_that_ends_replays_identically() -> void:
 	# replays quietly. The layout the harness builds is the starter Map, so this walks the
 	# same script by hand against the same content.
 	var sim: Simulation = Simulation.new(9, 1, content)
-	for i: int in range(20 * Simulation.TICKS_PER_SECOND):
+	sim.step([InputAction.call_wave_early(0)])
+	for i: int in range(40 * Simulation.TICKS_PER_SECOND):
 		sim.step([])
 	assert_true(sim.query_run_is_over(), "the Nest fell during the fixture")
 	assert_eq(sim.query_wave_number(), 1, "on Wave 1, which is what the report names")
@@ -413,6 +451,7 @@ func _shipped_index(machine_id: String) -> int:
 func test_a_run_with_crawlers_in_flight_saves_and_resumes_identically() -> void:
 	var content: Definitions = _content()
 	var sim: Simulation = Simulation.new(11, 1, content, _layout())
+	sim.step([InputAction.call_wave_early(0)])
 	for i: int in range(5 * Simulation.TICKS_PER_SECOND):
 		sim.step([])
 	assert_true(sim.query_enemy_count() > 1, "a swarm is part-way down the lane")
@@ -436,6 +475,7 @@ func test_a_resumed_run_rebuilds_the_flowfield_rather_than_restoring_it() -> voi
 	var sim: Simulation = Simulation.new(11, 1, content, _layout())
 	var smelter: int = content.machine_index("smelter_mk1")
 	sim.step([InputAction.build_machine(0, smelter, Vector3i(5, WorldGrid.GROUND_LAYER, 0))])
+	sim.step([InputAction.call_wave_early(0)])
 	for i: int in range(5 * Simulation.TICKS_PER_SECOND):
 		sim.step([])
 

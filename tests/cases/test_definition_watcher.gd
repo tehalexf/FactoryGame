@@ -53,11 +53,17 @@ baseline_supply_kw = 300
 [nest]
 health = 6000
 [wave]
-first_wave_seconds = 90
-interval_seconds = 120
-crawlers_in_first_wave = 6
-crawlers_added_per_wave = 4
+telegraph_seconds = 12
 spawn_interval_seconds = 0.5
+call_early_bounty_per_item = 25
+
+[heat]
+per_craft = 2
+per_craft_per_depth = 1
+decay_per_minute = 240
+wave_interval_baseline_seconds = 150
+wave_interval_minimum_seconds = 40
+per_second_sooner = 20
 [enemy]
 crawler_health = 30
 crawler_speed_metres_per_second = 3
@@ -75,16 +81,28 @@ sprint_speed_multiplier = 1.8
 const A_LONG_FRAME: float = 10.0
 
 
+## The shipped Wave composition, inline so the fixture is a complete definition set. A
+## Wave's contents are a table (`content/waves.csv`), and a set with no rows in it is an
+## error rather than a Run that is never attacked.
+const WAVES: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,150,40
+"""
+
+
 func before_each() -> void:
 	DirAccess.make_dir_recursive_absolute(DIR)
 	_write(Definitions.MACHINES_FILE, MACHINES)
 	_write(Definitions.RECIPES_FILE, RECIPES)
 	_write(Definitions.TUNING_FILE, TUNING)
+	_write(Definitions.WAVES_FILE, WAVES)
 
 
 func after_each() -> void:
 	for file_name: String in [
-		Definitions.MACHINES_FILE, Definitions.RECIPES_FILE, Definitions.TUNING_FILE
+		Definitions.MACHINES_FILE,
+		Definitions.RECIPES_FILE,
+		Definitions.TUNING_FILE,
+		Definitions.WAVES_FILE,
 	]:
 		DirAccess.remove_absolute("%s/%s" % [DIR, file_name])
 	DirAccess.remove_absolute(DIR)

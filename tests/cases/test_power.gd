@@ -69,11 +69,17 @@ baseline_supply_kw = 1
 [nest]
 health = 6000
 [wave]
-first_wave_seconds = 90
-interval_seconds = 120
-crawlers_in_first_wave = 6
-crawlers_added_per_wave = 4
+telegraph_seconds = 12
 spawn_interval_seconds = 0.5
+call_early_bounty_per_item = 25
+
+[heat]
+per_craft = 2
+per_craft_per_depth = 1
+decay_per_minute = 240
+wave_interval_baseline_seconds = 150
+wave_interval_minimum_seconds = 40
+per_second_sooner = 20
 [enemy]
 crawler_health = 30
 crawler_speed_metres_per_second = 3
@@ -83,7 +89,15 @@ crawler_attack_interval_seconds = 1
 
 
 func _one_third_content() -> Definitions:
-	return Definitions.parse(THIRD_MACHINES, THIRD_RECIPES, THIRD_TUNING)
+	return Definitions.parse(THIRD_MACHINES, THIRD_RECIPES, THIRD_TUNING, WAVES)
+
+
+## The shipped Wave composition, inline so the fixture is a complete definition set. A
+## Wave's contents are a table (`content/waves.csv`), and a set with no rows in it is an
+## error rather than a Run that is never attacked.
+const WAVES: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,150,40
+"""
 
 
 ## A Factory whose single Miner asks for three times the Power the grid has.
@@ -353,17 +367,24 @@ baseline_supply_kw = %d
 [nest]
 health = 6000
 [wave]
-first_wave_seconds = 90
-interval_seconds = 120
-crawlers_in_first_wave = 6
-crawlers_added_per_wave = 4
+telegraph_seconds = 12
 spawn_interval_seconds = 0.5
+call_early_bounty_per_item = 25
+
+[heat]
+per_craft = 2
+per_craft_per_depth = 1
+decay_per_minute = 240
+wave_interval_baseline_seconds = 150
+wave_interval_minimum_seconds = 40
+per_second_sooner = 20
 [enemy]
 crawler_health = 30
 crawler_speed_metres_per_second = 3
 crawler_damage = 10
 crawler_attack_interval_seconds = 1
-""" % baseline_kw
+""" % baseline_kw,
+		WAVES
 	)
 
 

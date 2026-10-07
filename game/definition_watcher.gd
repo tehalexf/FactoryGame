@@ -96,13 +96,16 @@ func describe_errors() -> String:
 	return "\n".join(errors)
 
 
-## One integer standing for the contents of all three files. A missing file
-## contributes a distinct value, so deleting one counts as a change rather than
-## reading as an unchanged empty string.
+## One integer standing for the contents of every content file. A missing file contributes
+## a distinct value, so deleting one counts as a change rather than reading as an unchanged
+## empty string.
 func _read_content_digest() -> int:
 	var hasher: StateHasher = StateHasher.new()
 	for file_name: String in [
-		Definitions.MACHINES_FILE, Definitions.RECIPES_FILE, Definitions.TUNING_FILE
+		Definitions.MACHINES_FILE,
+		Definitions.RECIPES_FILE,
+		Definitions.TUNING_FILE,
+		Definitions.WAVES_FILE,
 	]:
 		var path: String = "%s/%s" % [directory, file_name]
 		var file: FileAccess = FileAccess.open(path, FileAccess.READ)

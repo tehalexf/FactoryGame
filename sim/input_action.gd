@@ -115,6 +115,18 @@ enum Kind {
 	## and the Items riding a Belt. Demolishing destroys nothing, which is what makes
 	## iterating on a layout cheap (issue #1, user story 7).
 	DEMOLISH = 9,
+	## Pull the lever that calls the next Wave early. args = [].
+	##
+	## No arguments: the lever has one position and the Wave it summons is whatever the
+	## Factory's Heat says the next Wave is. A count or a difficulty would be a second
+	## number to tune and a second thing for a player to be wrong about; the only choice on
+	## offer is *when*, which is the whole of what makes it a throttle.
+	##
+	## An Input Action and not a method, like everything else, so a called Wave has a tick
+	## attached, appears in a recorded script, and in co-op is one player's intent that the
+	## other three see land. Pulled while a Wave is already coming it is refused as a silent
+	## no-op; `Simulation.query_call_wave_early_refusal` is what says why, beforehand.
+	CALL_WAVE_EARLY = 11,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -221,6 +233,12 @@ static func build_machine(
 
 ## Takes apart whatever is standing on a tile. Any tile of a Machine's footprint will
 ## do, and any tile of a Belt's run takes the whole run.
+## Calls the next Wave early for the player who pulled the lever. Carries nothing: the
+## Wave is whatever the Factory's Heat has earned, and the only thing being chosen is when.
+static func call_wave_early(acting_player: int) -> InputAction:
+	return InputAction.new(Kind.CALL_WAVE_EARLY, acting_player)
+
+
 static func demolish(acting_player: int, tile: Vector3i) -> InputAction:
 	return InputAction.new(
 		Kind.DEMOLISH, acting_player, PackedInt64Array([tile.x, tile.y, tile.z])

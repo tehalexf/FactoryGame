@@ -285,6 +285,35 @@ func test_a_belt_key_lays_a_run_along_the_way_the_player_is_looking() -> void:
 	)
 
 
+func test_the_lever_key_calls_the_next_wave_early() -> void:
+	# The lever as a player actually reaches it: a key, through the controller, as an Input
+	# Action. Nothing about the Wave is decided on this side of the boundary.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	assert_false(sim.query_wave_is_telegraphed(), "nothing is coming yet")
+
+	var sample: PlayerController.DeviceSample = _sample()
+	sample.call_wave_clicked = true
+	sim.step(controller.actions_for_tick(sim, 0, sample))
+
+	assert_true(sim.query_wave_was_called_early(), "the lever moved")
+	assert_true(sim.query_wave_is_telegraphed(), "and the warning went up with it")
+
+
+func test_the_lever_key_is_an_edge_so_holding_it_does_not_call_a_wave_a_tick() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var held: InputEventKey = InputEventKey.new()
+	held.keycode = PlayerController.KEY_CALL_WAVE
+	held.pressed = true
+	controller.note_event(held)
+
+	var first: PlayerController.DeviceSample = controller.sample_devices()
+	assert_true(first.call_wave_clicked, "the press was gathered")
+	var second: PlayerController.DeviceSample = controller.sample_devices()
+	assert_false(second.call_wave_clicked, "and spent exactly once")
+
+
 func test_demolishing_takes_a_belt_back_apart_too() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()

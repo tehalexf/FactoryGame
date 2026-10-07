@@ -76,11 +76,17 @@ baseline_supply_kw = 300
 [nest]
 health = 6000
 [wave]
-first_wave_seconds = 90
-interval_seconds = 120
-crawlers_in_first_wave = 6
-crawlers_added_per_wave = 4
+telegraph_seconds = 12
 spawn_interval_seconds = 0.5
+call_early_bounty_per_item = 25
+
+[heat]
+per_craft = 2
+per_craft_per_depth = 1
+decay_per_minute = 240
+wave_interval_baseline_seconds = 150
+wave_interval_minimum_seconds = 40
+per_second_sooner = 20
 [enemy]
 crawler_health = 30
 crawler_speed_metres_per_second = 3
@@ -89,14 +95,24 @@ crawler_attack_interval_seconds = 1
 """
 
 
+## The shipped Wave composition, inline so the fixture is a complete definition set. A
+## Wave's contents are a table (`content/waves.csv`), and a set with no rows in it is an
+## error rather than a Run that is never attacked.
+const WAVES: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,150,40
+"""
+
+
 func _definitions(walk_speed: String) -> Definitions:
 	return Definitions.parse(
 		MACHINES,
 		RECIPES,
 		"[player]\nwalk_speed_metres_per_second = %s\n" % walk_speed + OTHER_TUNING,
+		WAVES,
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 
 
@@ -148,7 +164,7 @@ func test_the_same_definitions_produce_the_same_starting_hash() -> void:
 func test_definitions_that_failed_to_load_are_reported_and_nothing_is_invented() -> void:
 	# A Run must not start on a broken definition set, and the way it refuses is by
 	# saying so rather than by substituting plausible numbers.
-	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n")
+	var broken: Definitions = Definitions.parse("nonsense", RECIPES, "[player]\n", WAVES)
 	var sim: Simulation = Simulation.new(SEED, PLAYERS, broken)
 
 	assert_true(sim.query_definition_errors().size() > 0)
@@ -223,7 +239,9 @@ func test_a_reload_of_a_broken_definition_set_is_refused() -> void:
 	var sim: Simulation = Simulation.new(SEED, PLAYERS, _slow())
 	var before: int = sim.hash()
 
-	var broken: Definitions = Definitions.parse(MACHINES, RECIPES, "[player]\nwalk_speed = oops\n")
+	var broken: Definitions = Definitions.parse(
+		MACHINES, RECIPES, "[player]\nwalk_speed = oops\n", WAVES
+	)
 	sim.step([InputAction.reload_definitions(0, broken)])
 
 	assert_eq(sim.query_definition_digest(), _slow().digest(), "the old definitions stand")

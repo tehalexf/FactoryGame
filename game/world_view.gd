@@ -46,6 +46,10 @@ const VIEWED_PLAYER: int = 0
 ## body, even though the Nest is not a Machine.
 const NEST_MESH: String = "res://assets/machines/nest.glb"
 
+## How many cells the Telegraph's gauge is drawn with. A rising bar of text, because there
+## is no audio yet and a countdown alone does not read as a klaxon.
+const TELEGRAPH_GAUGE_CELLS: int = 20
+
 ## How tall the Nest reads when its mesh cannot be loaded — headless, or before the asset
 ## pipeline has run. The placeholder is a box like a Machine's, only taller, because the
 ## thing the Run is about should be the thing on the skyline.
@@ -486,6 +490,7 @@ func _sync_hud(sim: Simulation) -> void:
 	# whole of the score at this milestone.
 	if sim.query_run_is_over():
 		lines.append("THE NEST HAS FALLEN — reached wave %d" % sim.query_wave_number())
+	lines.append_array(_telegraph_lines(sim))
 	lines.append("tick %d" % sim.query_tick())
 	# What the Run is about, the pressure on it, and what is on the Map. Read out of the
 	# queries every frame, so none of it can be stale.
@@ -499,6 +504,7 @@ func _sync_hud(sim: Simulation) -> void:
 			sim.query_enemy_count(),
 		]
 	)
+	lines.append_array(_heat_lines(sim))
 	lines.append_array(_build_gun_lines(sim))
 
 	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and
@@ -534,13 +540,18 @@ func _sync_hud(sim: Simulation) -> void:
 			state = "starved"
 		elif sim.query_machine_is_throttled(index):
 			state = "throttled"
+		# The Heat this Machine has made and the rate it is making it at, on the Machine's
+		# own line. That is the whole of "Heat's contributors are visible": a player reads
+		# the cause next to the thing that caused it, rather than inferring it from a total.
 		lines.append(
-			"%s — %s — in %d, out %d"
+			"%s — %s — in %d, out %d — heat %d (+%d/min)"
 			% [
 				sim.query_machine_id(index),
 				state,
 				sim.query_machine_input_total(index),
 				sim.query_machine_output_total(index),
+				sim.query_machine_heat_units(index),
+				sim.query_machine_heat_per_minute(index),
 			]
 		)
 
@@ -557,6 +568,83 @@ func _sync_hud(sim: Simulation) -> void:
 		)
 
 	_hud.text = "\n".join(lines)
+
+
+## The Telegraph, as the loudest thing on the HUD.
+##
+## There is no audio yet, so the klaxon GLOSSARY.md describes is this line and the countdown
+## in it. It is first and in capitals for the same reason the Run-over line is: it is the one
+## thing on screen that means *stop laying Belt and go and stand somewhere useful*.
+##
+## The gauge is drawn from `query_telegraph_ticks_served` against `query_telegraph_ticks`,
+## which is a fraction of a warning that has already been served rather than a guess at how
+## long is left — so it fills at the same rate however the Wave was summoned.
+func _telegraph_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	if not sim.query_wave_is_telegraphed():
+		return lines
+
+	var served: int = sim.query_telegraph_ticks_served()
+	var total: int = maxi(sim.query_telegraph_ticks(), 1)
+	var filled: int = mini(served * TELEGRAPH_GAUGE_CELLS / total, TELEGRAPH_GAUGE_CELLS)
+	var gauge: String = (
+		"#".repeat(filled) + ".".repeat(TELEGRAPH_GAUGE_CELLS - filled)
+	)
+	var called: String = " — CALLED" if sim.query_wave_was_called_early() else ""
+	lines.append(
+		"!! WAVE %d INCOMING IN %ds [%s]%s"
+		% [
+			sim.query_wave_number() + 1,
+			(sim.query_ticks_until_next_wave() + Simulation.TICKS_PER_SECOND - 1)
+			/ Simulation.TICKS_PER_SECOND,
+			gauge,
+			called,
+		]
+	)
+	return lines
+
+
+## Heat, what the Factory is doing to it, and whether the lever is available.
+##
+## Three numbers rather than one, because one would not let a player make a decision: the
+## Heat they are carrying, the rate they are adding to it against the rate the Nest hides,
+## and how much sooner that is bringing the next Wave. The last of those is what turns Heat
+## from a score into a warning.
+func _heat_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var interval: int = sim.query_wave_interval_ticks()
+	lines.append(
+		"heat %d — +%d/min, -%d/min — wave gap %ds"
+		% [
+			sim.query_heat(),
+			sim.query_heat_per_minute(),
+			sim.query_heat_decay_per_minute(),
+			interval / Simulation.TICKS_PER_SECOND,
+		]
+	)
+	lines.append("call wave (%s) — %s" % [
+		OS.get_keycode_string(PlayerController.KEY_CALL_WAVE),
+		_call_wave_text(sim.query_call_wave_early_refusal(VIEWED_PLAYER)),
+	])
+	return lines
+
+
+## What to tell a player about the lever. The wording lives here and the rule lives in the
+## Simulation, which is the right way round — the same split `BuildGun.refusal_text` makes.
+func _call_wave_text(refusal: int) -> String:
+	match refusal:
+		Simulation.Refusal.NONE:
+			return "ready"
+		Simulation.Refusal.WAVE_ALREADY_COMING:
+			return "a Wave is already on its way"
+		Simulation.Refusal.WAVE_STILL_ARRIVING:
+			return "this Wave is still coming through"
+		Simulation.Refusal.NO_BREACH:
+			return "nothing can reach this Map"
+		Simulation.Refusal.RUN_IS_OVER:
+			return "the Run is over"
+		_:
+			return "unavailable"
 
 
 ## Points the camera where the Simulation says a player's camera is.

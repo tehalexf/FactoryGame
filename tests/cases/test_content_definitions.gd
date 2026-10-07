@@ -55,11 +55,17 @@ baseline_supply_kw = 300
 [nest]
 health = 6000
 [wave]
-first_wave_seconds = 90
-interval_seconds = 120
-crawlers_in_first_wave = 6
-crawlers_added_per_wave = 4
+telegraph_seconds = 12
 spawn_interval_seconds = 0.5
+call_early_bounty_per_item = 25
+
+[heat]
+per_craft = 2
+per_craft_per_depth = 1
+decay_per_minute = 240
+wave_interval_baseline_seconds = 150
+wave_interval_minimum_seconds = 40
+per_second_sooner = 20
 [enemy]
 crawler_health = 30
 crawler_speed_metres_per_second = 3
@@ -74,8 +80,19 @@ sprint_speed_multiplier = 1.8
 """ + OTHER_TUNING
 
 
-func _parse(machines: String, recipes: String, tuning: String) -> Definitions:
-	return Definitions.parse(machines, recipes, tuning, MACHINES, RECIPES, TUNING)
+## The shipped Wave composition, inline so the fixture is a complete definition set. A
+## Wave's contents are a table (`content/waves.csv`), and a set with no rows in it is an
+## error rather than a Run that is never attacked.
+const WAVES: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,150,40
+"""
+
+
+func _parse(machines: String, recipes: String, tuning: String, waves: String = WAVES) -> Definitions:
+	return Definitions.parse(machines, recipes, tuning, waves, MACHINES, RECIPES, TUNING, WAVES_PATH)
+
+
+const WAVES_PATH: String = "waves.csv"
 
 
 func _good() -> Definitions:
@@ -217,11 +234,197 @@ func test_a_missing_tuning_value_is_an_error_naming_the_key() -> void:
 
 
 func test_a_tuning_key_nothing_reads_is_a_warning_naming_it() -> void:
+	# `[heat]` used to be the section nothing read; it is a real one now, so the key nobody
+	# asked for has to come from a section nobody has written yet.
 	var definitions: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING + "\n[heat]\nleftover = 3\n"
+		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING + "\n[stratagem]\nleftover = 3\n"
 	)
 	assert_false(definitions.has_errors(), "an unread key is misleading, not malformed")
-	assert_true(definitions.describe_warnings().contains("heat.leftover"), definitions.describe_warnings())
+	assert_true(
+		definitions.describe_warnings().contains("stratagem.leftover"),
+		definitions.describe_warnings()
+	)
+
+
+# ── The Wave table ────────────────────────────────────────────────────────────
+# Composition is data (`content/waves.csv`), so adding an Enemy to the Waves is a row. The
+# same loudness rules apply: no defaults, and every mistake names the row.
+
+func test_the_shipped_wave_table_loads_and_opens_at_the_first_wave() -> void:
+	var definitions: Definitions = Definitions.load_from_directory(Definitions.CONTENT_DIR)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_true(definitions.wave_entry_count() >= 1, "a Run has to be attacked by something")
+	var first: WaveEntry = definitions.wave_entry_at(0)
+	assert_eq(first.enemy_kind, EnemyKind.CRAWLER, "Milestone 1 ships Chaff and nothing else")
+	assert_eq(first.min_heat, 0, "so it contributes from the first Wave of a cold Run")
+
+
+func test_a_wave_tier_grows_with_heat_up_to_the_ceiling_the_row_names() -> void:
+	# A worked example off the shipped row: opens at 6, one more every 150 Heat, capped at 40.
+	var definitions: Definitions = Definitions.load_from_directory(Definitions.CONTENT_DIR)
+	var entry: WaveEntry = definitions.wave_entry_at(0)
+	assert_eq(entry.count_at_heat(0), 6, "a cold Factory")
+	assert_eq(entry.count_at_heat(149), 6, "one Heat short of the next Enemy")
+	assert_eq(entry.count_at_heat(150), 7)
+	assert_eq(entry.count_at_heat(1500), 16)
+	assert_eq(entry.count_at_heat(1000000), 40, "max_per_breach, and not one more")
+
+
+func test_a_wave_tier_below_its_threshold_sends_nothing_rather_than_a_minimum() -> void:
+	var entry: WaveEntry = WaveEntry.new()
+	entry.min_heat = 500
+	entry.count_per_breach = 4
+	entry.max_per_breach = 4
+	assert_eq(entry.count_at_heat(499), 0, "a tier that is not unlocked contributes nothing")
+	assert_eq(entry.count_at_heat(500), 4)
+
+
+func test_an_unknown_enemy_kind_names_the_row_and_the_kinds_that_exist() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "mystery,siege_hulk,0,1,0,1\n"
+	)
+	assert_true(definitions.has_errors(), "a kind nothing implements cannot be drawn")
+	var text: String = definitions.describe_errors()
+	assert_true(text.contains("%s:2" % WAVES_PATH), text)
+	assert_true(text.contains("siege_hulk"), text)
+	assert_true(text.contains("crawler"), "the message says what could be written: %s" % text)
+
+
+func test_a_wave_table_with_no_rows_is_an_error_not_a_quiet_run() -> void:
+	# The symptom of an empty table is a Run that is never attacked, which is the hardest
+	# kind of bug to notice — so it is refused outright.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_true(definitions.describe_errors().contains("no rows"), definitions.describe_errors())
+
+
+func test_a_duplicate_wave_tier_id_names_the_row() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "chaff,crawler,0,1,0,1\n"
+		+ "chaff,crawler,100,2,0,2\n"
+	)
+	assert_true(definitions.has_errors())
+	var text: String = definitions.describe_errors()
+	assert_true(text.contains("%s:3" % WAVES_PATH), text)
+	assert_true(text.contains("chaff"), text)
+
+
+func test_a_ceiling_below_the_opening_count_names_the_row() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "chaff,crawler,0,6,0,2\n"
+	)
+	assert_true(definitions.has_errors(), "the ceiling contradicts the opening count")
+	assert_true(
+		definitions.describe_errors().contains("max_per_breach"), definitions.describe_errors()
+	)
+
+
+func test_a_broken_wave_table_leaves_the_set_carrying_nothing_at_all() -> void:
+	# The rule the whole loader obeys: half a definition set is more dangerous than none.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "chaff,nonsense,0,1,0,1\n"
+	)
+	assert_true(definitions.has_errors())
+	assert_eq(definitions.wave_entry_count(), 0, "no Wave tiers")
+	assert_eq(definitions.machine_count(), 0, "and no Machines either")
+
+
+func test_a_missing_wave_file_names_the_path() -> void:
+	var definitions: Definitions = Definitions.load_from_directory("res://content_that_is_not_there")
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains(Definitions.WAVES_FILE),
+		definitions.describe_errors()
+	)
+
+
+func test_an_unknown_wave_tier_reads_as_nothing_rather_than_crashing() -> void:
+	var definitions: Definitions = _good()
+	assert_null(definitions.wave_entry_at(99), "never a plausible-looking default")
+	assert_null(definitions.wave_entry_at(-1))
+
+
+# ── The Heat and schedule tuning ──────────────────────────────────────────────
+
+func test_a_telegraph_of_no_length_is_refused() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING.replace("telegraph_seconds = 12", "telegraph_seconds = 0")
+	)
+	assert_true(definitions.has_errors(), "a Wave with no warning is the ambush to prevent")
+	assert_true(
+		definitions.describe_errors().contains("wave.telegraph_seconds"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_minimum_interval_above_the_baseline_is_refused() -> void:
+	# Heat only ever shortens the gap, so a minimum above the baseline would mean a hot
+	# Factory was hunted *later* — a schedule that contradicts itself.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING.replace("wave_interval_minimum_seconds = 40", "wave_interval_minimum_seconds = 300")
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("heat.wave_interval_minimum_seconds"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_gap_shorter_than_the_telegraph_is_refused() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING.replace("wave_interval_minimum_seconds = 40", "wave_interval_minimum_seconds = 5")
+	)
+	assert_true(definitions.has_errors(), "there would be no quiet tick to read the warning in")
+	assert_true(
+		definitions.describe_errors().contains("wave.telegraph_seconds"),
+		"and the message names the key it is in conflict with: %s" % definitions.describe_errors()
+	)
+
+
+func test_heat_that_buys_no_time_is_refused() -> void:
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING.replace("per_second_sooner = 20", "per_second_sooner = 0")
+	)
+	assert_true(definitions.has_errors(), "Heat that does not drive the schedule is not Heat")
+	assert_true(
+		definitions.describe_errors().contains("heat.per_second_sooner"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_nest_that_hides_nothing_is_a_legal_balance_decision() -> void:
+	# The counterpart: `decay_per_minute = 0` is a Map where Heat only ever climbs, which is
+	# a balance choice rather than a broken file, and the loader must not second-guess it.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING.replace("decay_per_minute = 240", "decay_per_minute = 0")
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	assert_eq(definitions.heat_decay_per_minute, 0)
 
 
 # ── Malformed definitions name the file and the row ───────────────────────────

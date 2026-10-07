@@ -96,10 +96,12 @@ Machines, Recipes and tuning values are **data**, in `content/`:
 ```
 content/machines.csv    one row per Machine
 content/recipes.csv     one row per Recipe
+content/waves.csv       one row per tier of Wave composition
 content/tuning.toml     balance numbers that are not per-Machine or per-Recipe
 ```
 
-**Adding a Machine or a Recipe is a row. It is never a code change.** There is no
+**Adding a Machine, a Recipe or an Enemy tier to the Waves is a row. It is never a
+code change.** There is no
 registry, no enum and no Item table — the set of Items is exactly the set the
 Recipes mention, interned in sorted order. Every column is documented in the
 header comment of the file it belongs to; read that before adding a row.
@@ -123,12 +125,18 @@ the rows from an export. These files are read with `FileAccess`, not `load()`.
 - A tuning key nothing reads is a **warning**, because a file carrying a number
   that does nothing lies to whoever is tuning it.
 
+`Definitions.load_from_directory` reads all four files and `Definitions.parse` takes all
+four sources, in that order. A missing one is an error naming the path, never an empty
+table — and `game/definition_watcher.gd` digests all four, so editing any of them
+hot-reloads.
+
 `sim/csv_table.gd` and `sim/toml_document.gd` are the only parsers. Both are
 hand-rolled: Godot ships no TOML parser, and vendoring one into a public repo is
 out (`docs/ASSETS.md`). The TOML subset is sections, `key = value`, comments,
 integers, decimals, quoted strings, `true`/`false` — and nothing else. Arrays,
 inline tables and dates are valid TOML and are refused by name and line number.
-If you need a fourth data file, reuse `CsvTable` rather than writing a parser.
+If you need a fifth data file, reuse `CsvTable` rather than writing a parser —
+`content/waves.csv` is the worked example of doing exactly that.
 
 Rates are written in decimal because that is how a human reasons about them, and
 cross into fixed point exactly once, through `Fixed.from_decimal_string`, which
@@ -357,10 +365,10 @@ balance.
   is geography rather than the order somebody typed the rows in. A Map with **no**
   Breach has no Waves at all — which is the geography `MapLayout.empty()` gives a test
   that is studying the Factory and not the threat.
-- **The Wave schedule here is a scaffold and says so.** A baseline timer and a count
-  that grows linearly, four keys in `[wave]`. Heat, the Telegraph and the
-  call-Wave-early lever are what will really decide arrival and size; that ticket
-  replaces `_waves()` and the whole `[wave]` section.
+- **The Wave schedule is derived from Heat, not counted down.** See the Heat section
+  below. `content/waves.csv` owns what a Wave is made of, `[heat]` owns when it comes,
+  and `[wave]` owns the three things that are not about Heat — the Telegraph, the spawn
+  trickle, and what the lever pays.
 
 ### Enemies are array entries, never nodes
 
@@ -430,6 +438,89 @@ both say 4x4, and the asset suite's cross-check only covers rows that
 `content/machines.csv` declares — which the Nest never will, because it is not a
 Machine. The art pass should teach the mesh generator to read the footprint from the
 Simulation's constant, the way it reads a Machine's from `machines.csv`.
+
+## Heat, the Wave schedule, the Telegraph and the lever
+
+The mechanic that makes the game a game rather than a sandbox. Without it "infinitely
+scaling" is an idle game — more production is self-justifying and costless. With it every
+new Machine is a bet, because scaling up is simultaneously how a player gets strong and how
+they get hunted (DESIGN.md).
+
+- **Heat is made of completed crafts**, plus a term for the Depth of the Node a Miner is
+  working. Deliberately not Power drawn and not Machines running. Heat has to be something
+  a player can watch themselves cause, or the Waves read as bad luck and the mechanic
+  teaches nothing: a craft is the one event in the Factory that is unambiguously
+  throughput, that a player built the Machine in order to get, and that stops the moment
+  the line starves. Power drawn would have made Heat a second reading of a gauge that
+  already exists and would have charged a slow Recipe with a big draw more than a fast line
+  that produces. A count of Machines running would have punished building rather than
+  producing, and made a starved line exactly as hot as a fed one.
+- **Heat is a whole number of units and there is no fixed point anywhere in it.** This is
+  #7's lesson applied to the one quantity that accumulates for forty hours. The
+  accumulator has two halves: **in**, a craft adds whole units at a discrete event, so
+  there is nothing to round; **out**, the decay is quoted per minute and carried as an
+  integer credit against `TICKS_PER_MINUTE`, exactly as the Power grid carries
+  kilowatt-ticks. Over any window the Factory has shed exactly
+  `floor(ticks * decay_per_minute / TICKS_PER_MINUTE)` — **one floor applied to the total,
+  never one per tick.** `test_heat` asserts that with a decay of one unit a minute, which
+  is 18 of 65536 in 16.16 fixed point and would lose 1% an hour if it were done that way.
+- **The decay is flat, not proportional**, which is a design decision as much as a
+  determinism one. A proportional decay is a per-tick ratio — the shape that drifts — and
+  it would give the Factory an equilibrium Heat, which is the opposite of the point. Flat
+  means Heat measures throughput *in excess of what the Nest can hide*, and that rises
+  without bound as the Factory does. `heat.decay_per_minute = 0` is a legal value: a Map
+  where Heat only climbs is balance, not a broken file.
+- **The interval is derived every tick rather than stored**, so a hot Factory is hunted
+  *sooner* and not merely harder — and sooner *now*. `_wave_elapsed_ticks` counts up and
+  `_wave_interval_ticks()` is a function of current Heat, so switching a line on pulls the
+  countdown towards the player on the tick they switch it on. A stored countdown could only
+  ever have shortened the Wave after next, which teaches nothing. It moves both ways: a
+  Factory that cools gets its breathing room back, which is what makes tearing a line down
+  a real decision.
+- **Every Wave passes through a full Telegraph, and that is a gate rather than a
+  convention.** `_a_wave_is_due` checks `_telegraph_ticks_served` first and
+  unconditionally, so a Wave cannot arrive until the warning has run its tuned length —
+  including one a player called, and including one a sudden Heat spike left *overdue*. That
+  last case is the hard one and the reason the gate is not a courtesy: Heat shortening the
+  interval can put the arrival in the past, and without the gate that would be exactly the
+  ambush DESIGN.md forbids. There is no audio yet, so the klaxon is a capitalised HUD line
+  with a countdown and a gauge that fills.
+- **The lever waives the interval and nothing else.** What it buys the Enemy is nothing at
+  all: a Wave is composed from the Heat the Factory is carrying when it *arrives*, so
+  calling early means it arrives while that Heat is lower than it would have been. What it
+  costs is the breathing room given up. One trade, no second number to tune. It pays
+  `wave.call_early_bounty_per_item` out of the same stock the Build Gun spends — a scaffold
+  in the same sense `player.starting_stock_per_item` is.
+- **A refused pull is a silent no-op whose hash does not move**, and
+  `query_call_wave_early_refusal` is a projection about a pull that has not happened — the
+  same arrangement `query_build_refusal` has, and for the same reason: the reason is on
+  screen before the player commits, which is the only version that leaves the hash alone.
+- **Composition is `content/waves.csv`, and a Wave is every tier the Heat has reached** —
+  not a choice between them. A hot Factory is sent the Chaff it was always getting *and*
+  whatever its Heat has newly unlocked. Each row scales with how far past its threshold the
+  Factory is, up to a `max_per_breach` that is a performance ceiling as much as a balance
+  one: a Run left to cook for forty hours must not try to put a hundred thousand Enemies on
+  the Map. Adding an Enemy to the Waves is a row.
+- **`sim/enemy_kind.gd` is the one place a kind's name and its integer meet.** The table
+  names kinds in words because a table a designer edits cannot be written in enum ordinals;
+  `Simulation.ENEMY_KIND_*` are aliases of those constants rather than a second copy, so
+  the file and the code cannot drift. A name no kind answers to is an error naming the row.
+- **A Wave is composed once, when it arrives**, and the queue is then fixed. Otherwise a
+  player who switched a line off mid-Wave would watch Enemies vanish from the queue.
+- **Heat and its contributors are visible or the mechanic collapses into bad luck.**
+  `query_heat` is the total; `query_machine_heat_units` is each Machine's lifetime
+  contribution, which is hashed state rather than an estimate, and is what a player reads
+  off the Machine they built. `query_heat_per_minute` and
+  `query_machine_heat_per_minute` are **projections** and the Simulation never reads them
+  back — that is where the division lives, in the same sense `query_power_ratio` is where
+  Power's does. Power's duty cycle is deliberately not folded into the rate: the Heat line
+  says what a Machine's Recipe is worth while it runs and the Power line says how often it
+  runs, so each reading stays one fact.
+- **A Map with no Breach freezes the whole Wave clock.** Enemies enter at Breaches and
+  nowhere else, so a countdown that kept running would report a Wave that is never coming.
+  Heat still accumulates, which is what lets a test study Heat without a Wave interrupting.
+- **Building is still never gated**, mid-Wave or otherwise, and `test_heat` asserts it
+  directly so that nobody adds a flag.
 
 ## The player, the Build Gun and Survey View
 

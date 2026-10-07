@@ -442,18 +442,30 @@ func test_a_factory_the_player_builds_really_carries_ore_to_the_smelter() -> voi
 
 # ── The Nest, the Breach and the Enemies ──────────────────────────────────────
 
+## The shipped tuning with the Telegraph shortened to half a second, so a Wave the test
+## calls arrives in thirty ticks. The *interval* is left alone: these fixtures bring their
+## Wave forward with the lever, which is the same code path a player uses, rather than by
+## rewriting a schedule into something the shipped game never runs.
+func _soon(tuning: String) -> String:
+	return tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
+
+
 ## A Run whose first Wave arrives within a second, so a test can see Crawlers.
 func _threatened_sim() -> Simulation:
 	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
 	var definitions: Definitions = Definitions.parse(
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
 		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		tuning.replace("first_wave_seconds = 90", "first_wave_seconds = 1"),
+		_soon(tuning),
+		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
-	return Simulation.new(1, 1, definitions)
+	var sim: Simulation = Simulation.new(1, 1, definitions)
+	sim.step([InputAction.call_wave_early(0)])
+	return sim
 
 
 func test_the_view_draws_the_nest_where_the_simulation_says_it_is() -> void:
@@ -539,21 +551,123 @@ func test_the_hud_reports_the_nest_the_wave_and_the_swarm() -> void:
 	view.free()
 
 
+func test_the_hud_shows_heat_the_rates_behind_it_and_the_gap_it_is_buying() -> void:
+	# The acceptance criterion about Heat being visible. Three numbers rather than one,
+	# because one would not let a player decide anything: what they are carrying, what they
+	# are adding against what the Nest hides, and how much sooner that makes the next Wave.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var iron: int = sim.query_definitions().machine_index("miner_mk1")
+	sim.step([InputAction.build_machine(0, iron, sim.query_node_tile(0))])
+	_run(sim, 3 * Simulation.TICKS_PER_SECOND)
+
+	view.sync(sim)
+	var text: String = view.hud_text()
+	assert_true(text.contains("heat %d" % sim.query_heat()), "the Factory's Heat: %s" % text)
+	assert_true(
+		text.contains("+%d/min, -%d/min" % [
+			sim.query_heat_per_minute(), sim.query_heat_decay_per_minute()
+		]),
+		"what is driving it: %s" % text
+	)
+	assert_true(
+		text.contains(
+			"wave gap %ds" % (sim.query_wave_interval_ticks() / Simulation.TICKS_PER_SECOND)
+		),
+		"and what the Heat is costing in time: %s" % text
+	)
+	view.free()
+
+
+func test_the_hud_names_each_machine_as_a_contributor_to_heat() -> void:
+	# A player who cannot see *which* Machine is making them hot cannot make an informed
+	# bet, so the contribution is on the Machine's own line next to what it is holding.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var iron: int = sim.query_definitions().machine_index("miner_mk1")
+	sim.step([InputAction.build_machine(0, iron, sim.query_node_tile(0))])
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	assert_true(sim.query_machine_heat_units(0) > 0, "the Miner has made some Heat")
+
+	view.sync(sim)
+	var text: String = view.hud_text()
+	assert_true(
+		text.contains("heat %d (+%d/min)" % [
+			sim.query_machine_heat_units(0), sim.query_machine_heat_per_minute(0)
+		]),
+		"the Miner's own contribution and rate: %s" % text
+	)
+	view.free()
+
+
+func test_the_hud_says_nothing_about_a_telegraph_that_is_not_showing() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_false(sim.query_wave_is_telegraphed(), "a cold Run opens with a clear sky")
+	assert_false(
+		view.hud_text().contains("WAVE"),
+		"so there is no warning on screen: %s" % view.hud_text()
+	)
+	view.free()
+
+
+func test_the_hud_raises_a_telegraph_with_a_countdown_and_a_rising_gauge() -> void:
+	# There is no audio yet, so the klaxon GLOSSARY.md describes is this line. It has to
+	# carry enough to act on: which Wave, how long, and a gauge that fills.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	assert_true(sim.query_wave_is_telegraphed(), "the called Wave is being telegraphed")
+
+	view.sync(sim)
+	var opening: String = view.hud_text()
+	assert_true(opening.contains("WAVE 1 INCOMING"), "which Wave, and in capitals: %s" % opening)
+	assert_true(opening.contains("CALLED"), "and that a player asked for it: %s" % opening)
+	assert_true(opening.contains("[" + ".".repeat(20) + "]"), "an empty gauge: %s" % opening)
+
+	_run(sim, sim.query_telegraph_ticks() / 2)
+	view.sync(sim)
+	var halfway: String = view.hud_text()
+	assert_true(halfway.contains("[##########.........."), "half full: %s" % halfway)
+	assert_true(
+		halfway.contains("INCOMING IN 1s") or halfway.contains("INCOMING IN 0s"),
+		"and counting down: %s" % halfway
+	)
+	view.free()
+
+
+func test_the_hud_says_whether_the_lever_can_be_pulled_and_why_not() -> void:
+	# The reason is on screen *before* the player presses the key, exactly as a build
+	# refusal is — which is both better than reporting a silence and the only version that
+	# leaves the hash alone.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.hud_text().contains("call wave (G) — ready"), view.hud_text())
+
+	sim.step([InputAction.call_wave_early(0)])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("a Wave is already on its way"),
+		"and says why once it cannot: %s" % view.hud_text()
+	)
+	view.free()
+
+
 func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
 	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
 	var definitions: Definitions = Definitions.parse(
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
 		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		(
-			tuning
-			. replace("first_wave_seconds = 90", "first_wave_seconds = 1")
-			. replace("health = 6000", "health = 10")
-		),
+		_soon(tuning).replace("health = 6000", "health = 10"),
+		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
+	sim.step([InputAction.call_wave_early(0)])
 	var view: WorldView = WorldView.new()
 	while not sim.query_run_is_over():
 		sim.step([])
