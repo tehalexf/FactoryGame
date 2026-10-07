@@ -2315,7 +2315,6 @@ func _apply_reload_definitions(action: InputAction) -> void:
 	_flowfield_stale = true
 
 
-
 # ── Heat ──────────────────────────────────────────────────────────────────────
 
 ## Records the Heat one completed craft added, to the Factory's total and to the Machine's
