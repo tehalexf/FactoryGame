@@ -47,10 +47,24 @@ const WALL_HEIGHT_METRES: float = 2.4
 ## separate blocks rather than as one extruded slab.
 const WALL_WIDTH_FRACTION: float = 0.92
 
-## A Wall at full health, and one chewed to nothing. The fill between them is how far gone it
-## is, because a Wall's health is the one thing a player needs to read off it at a distance.
-const WALL_WHOLE: Color = Color(0.30, 0.31, 0.32)
-const WALL_RUINED: Color = Color(0.52, 0.22, 0.17)
+## A Wall at full health, and one chewed to nothing — as a **tint on the Wall's own
+## surface** rather than as its colour outright. The fill between them is how far gone it is,
+## because a Wall's health is the one thing a player needs to read off it at a distance.
+##
+## **It used to be a flat mid-grey, and a render showed why that was wrong twice over.** A
+## Wall was the brightest object in frame — a cream slab standing beside Machines the same
+## light rendered as iron — because a MultiMesh's instance colour multiplies the albedo in
+## *linear* space while the palette's surfaces come out around 0.07, and 0.30 is four times
+## that. And it was the one built thing in the game with no surface at all, which is a odd
+## thing for the cheapest and most numerous. Both go away by making the material the
+## palette's own `WeldedSteel` and the instance colour a multiplier on it: a whole Wall is
+## riveted steel, and a chewed one reddens.
+const WALL_WHOLE: Color = Color(1.0, 1.0, 1.0)
+const WALL_RUINED: Color = Color(1.0, 0.26, 0.19)
+
+## The surface a Wall wears. One of the committed palette materials the generated Machine
+## bodies are made of, so a Wall belongs to the same world as the Factory it is protecting.
+const WALL_MATERIAL: String = "res://assets/machines/materials/WeldedSteel.tres"
 
 ## How high the deck of a generated tile of Belt is, in metres, which is where an Item
 ## rides. Declared by the `belt_straight` ports in `content/machine_ports.csv`, which the
@@ -307,6 +321,9 @@ var _hologram_dressing: String = ""
 ## anything, and the reason scale reads at all — a 1.8 m eye height against 2 m tiles
 ## means nothing without a surface to see the tiles on.
 var _ground: MeshInstance3D = null
+## The yard the Factory stands in. Owned here rather than by `Main`, because it is drawn
+## from the same queries everything else here is drawn from and holds no state of its own.
+var _set_dressing: SetDressing = null
 var _sun: DirectionalLight3D = null
 var _fill: DirectionalLight3D = null
 var _environment: WorldEnvironment = null
@@ -321,9 +338,15 @@ var _camera: Camera3D = null
 const HOLOGRAM_ALLOWED: Color = Color(0.35, 0.85, 0.45, 0.45)
 const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
 
-## How far the ground plane extends, in tiles from the origin. The Map's own extent, so
-## a player cannot walk off the edge of what they can see.
-const GROUND_HALF_EXTENT_TILES: int = 64
+## How far the ground plane extends past the **buildable** Map, in tiles. The plane used
+## to stop exactly where the Simulation stops accepting a build, and the consequence was
+## visible from anywhere on the Map: the world ended at a cliff of sky, which is the most
+## placeholder thing a placeholder can do. The apron runs on well past the fence, so what
+## a player sees at the boundary is a boundary with ground beyond it.
+##
+## The grid is not drawn out here — `game/ground.gdshader` paints markings only inside
+## the Map — so there is no question about which part can be built on.
+const GROUND_APRON_TILES: int = 96
 
 ## How many Machines the HUD will name before it starts counting them instead. A line a
 ## Machine is readable at four and is a wall of text over the Factory at fifty, so the
@@ -697,6 +720,30 @@ static func _instance_position(buffer: PackedFloat32Array, instance: int) -> Vec
 	return Vector3(buffer[base + 3], buffer[base + 7], buffer[base + 11])
 
 
+## The same instance as a `Transform3D`, for a MultiMesh that cannot be filled from a
+## `PackedFloat32Array` in one go.
+##
+## **A MultiMesh with `use_colors` has a wider stride than twelve floats** — twelve for the
+## transform and four more for the colour — so assigning a transforms-only array to its
+## `buffer` is refused outright, and every instance stays at the identity. That is what the
+## Walls did: four Walls drawn in a heap at the world origin, with an engine error a frame.
+## The per-instance setters write into the engine's own buffer at whatever stride it is
+## using, so they are the right door for a coloured MultiMesh; this array stays the readable
+## record of what was drawn, because the engine-side copy is invisible to a headless test.
+static func _instance_transform(buffer: PackedFloat32Array, instance: int) -> Transform3D:
+	var base: int = instance * FLOATS_PER_INSTANCE
+	if instance < 0 or base + FLOATS_PER_INSTANCE > buffer.size():
+		return Transform3D.IDENTITY
+	return Transform3D(
+		Basis(
+			Vector3(buffer[base + 0], buffer[base + 4], buffer[base + 8]),
+			Vector3(buffer[base + 1], buffer[base + 5], buffer[base + 9]),
+			Vector3(buffer[base + 2], buffer[base + 6], buffer[base + 10])
+		),
+		Vector3(buffer[base + 3], buffer[base + 7], buffer[base + 11])
+	)
+
+
 # ── Drawing ───────────────────────────────────────────────────────────────────
 
 func _sync_nodes(sim: Simulation) -> void:
@@ -787,7 +834,7 @@ func _dress(instance: MeshInstance3D, id: String, footprint: Vector2i, tile_size
 	)
 	instance.mesh = box
 	var skin: StandardMaterial3D = StandardMaterial3D.new()
-	skin.albedo_color = Color(0.35, 0.37, 0.33)
+	skin.albedo_color = Color(0.10, 0.105, 0.095)
 	skin.roughness = 0.85
 	instance.material_override = skin
 
@@ -1472,9 +1519,14 @@ func _sync_walls(sim: Simulation) -> void:
 			tile_size * WALL_WIDTH_FRACTION, WALL_HEIGHT_METRES, tile_size * WALL_WIDTH_FRACTION
 		)
 		instanced.mesh = block
-		var skin: StandardMaterial3D = StandardMaterial3D.new()
+		# The palette's own plate, tinted per instance by how chewed the Wall is. Duplicated
+		# rather than used directly, because the resource is shared with the Machines and
+		# switching vertex colouring on for a Wall must not switch it on for a Smelter.
+		var plate: StandardMaterial3D = load(WALL_MATERIAL) as StandardMaterial3D
+		var skin: StandardMaterial3D = (
+			plate.duplicate() if plate != null else StandardMaterial3D.new()
+		)
 		skin.vertex_color_use_as_albedo = true
-		skin.roughness = 0.85
 		_wall_meshes.material_override = skin
 		_wall_meshes.multimesh = instanced
 		add_child(_wall_meshes)
@@ -1498,14 +1550,15 @@ func _sync_walls(sim: Simulation) -> void:
 			),
 			0.0
 		)
+		_wall_meshes.multimesh.set_instance_transform(
+			index, _instance_transform(_wall_transforms, index)
+		)
 		_wall_meshes.multimesh.set_instance_color(
 			index,
 			WALL_RUINED.lerp(
 				WALL_WHOLE, clampf(float(sim.query_wall_health(index)) / float(whole), 0.0, 1.0)
 			)
 		)
-	if walls > 0:
-		_wall_meshes.multimesh.buffer = _wall_transforms
 
 
 ## Every Item on every Belt, at the position the Simulation says it is at.
@@ -2544,7 +2597,15 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 ## off it, which is what puts the sheen back on a boiler drum and the olive back on a
 ## housing. The palette was tuned in Blender renders and Blender's lighting is not
 ## Godot's; these numbers are the second half of that tuning.
+##
+## The ground is `game/ground.gdshader` over a plane that runs well past the buildable
+## Map, and the yard standing on it is `SetDressing`. Both were placeholders and both
+## read as placeholders: a Factory on a flat sheet with a grid on it is good models on
+## graph paper, and the world stopping dead at the Map's edge is the clearest possible
+## statement that there is nothing here.
 func _sync_scenery(sim: Simulation) -> void:
+	if _set_dressing != null:
+		_set_dressing.sync(sim)
 	if _ground != null:
 		return
 
@@ -2570,22 +2631,54 @@ func _sync_scenery(sim: Simulation) -> void:
 	# with no environment to mirror, `metallic = 1` is a material with nothing to show.
 	world.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
 	world.ambient_light_sky_contribution = 1.0
-	world.ambient_light_energy = 2.1
+	world.ambient_light_energy = 1.7
 	world.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 
 	# Filmic, because the sky is bright and the Machines are dark and a linear curve
 	# cannot hold both — without it the ground blows out to white while a Smelter stays a
 	# silhouette. The exposure sits a little under one so the ochre keeps its colour.
 	world.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	world.tonemap_exposure = 1.15
+	world.tonemap_exposure = 1.08
 	world.tonemap_white = 2.0
 
 	# Contact shadow in the crevices of a body, which is most of what makes rivets,
 	# gauges and frames read as parts rather than as texture.
+	#
+	# **The radius came down from 0.9 m, and that is what seats a prop on the ground.**
+	# At the old radius a crate darkened the metre of yard around it evenly and did not
+	# darken the centimetre *under* it any more than the rest, so it read as hovering —
+	# the exact complaint. A tighter radius with more detail puts a hard line where a
+	# thing meets the floor, which is what the eye reads as contact. `ssao_detail` is the
+	# half-resolution pass that recovers the fine end a small radius would otherwise lose.
 	world.ssao_enabled = true
-	world.ssao_radius = 0.9
-	world.ssao_intensity = 1.6
-	world.ssao_power = 1.4
+	world.ssao_radius = 0.38
+	world.ssao_intensity = 2.4
+	world.ssao_power = 1.7
+	world.ssao_detail = 1.1
+	world.ssao_horizon = 0.08
+	world.ssao_sharpness = 0.98
+
+	# The lamps in the yard are lit by an emission map and nothing else, and emission
+	# without bloom is a bright texel rather than a light. Threshold high and intensity
+	# low: this is a lamp reading as lit, not a haze over the whole frame.
+	world.glow_enabled = true
+	world.glow_intensity = 0.55
+	world.glow_strength = 1.0
+	world.glow_bloom = 0.04
+	world.glow_hdr_threshold = 1.25
+	world.glow_hdr_scale = 2.4
+	world.glow_blend_mode = Environment.GLOW_BLEND_MODE_SOFTLIGHT
+
+	# **Does the Dieselpunk palette survive to the final image?** Filmic tonemapping and a
+	# bright ochre sky between them desaturate everything that is not already saturated,
+	# and the palette is mostly dark neutrals — cast iron at 0.055, welded steel at 0.14 —
+	# so what came out the far end was grey with an ochre cast over it. A little
+	# saturation and contrast after the tonemap puts the olive back on a housing and the
+	# oxide back on a primer, which is what the palette is for.
+	world.adjustment_enabled = true
+	world.adjustment_saturation = 1.16
+	world.adjustment_contrast = 1.06
+	world.adjustment_brightness = 1.0
 
 	# Smog, so distance reads as distance. The grid otherwise runs to a hard horizon line
 	# and a Factory fifty metres away is as crisp as the one under the player's nose.
@@ -2609,15 +2702,39 @@ func _sync_scenery(sim: Simulation) -> void:
 	# Behind a player's right shoulder as a Run opens — yaw 0 looks down -z — so the face
 	# of a Machine a player is walking towards is the lit face and its shadow falls away
 	# from them. A sun in front of the opening view would make every body a silhouette.
-	_sun.rotation = Vector3(-0.72, 0.66, 0.0)
-	_sun.light_energy = 3.0
-	_sun.light_color = Color(1.0, 0.89, 0.73)
+	#
+	# **A stronger hour.** It sat at 41 degrees, which is afternoon rather than late
+	# afternoon, and 41 degrees throws a shadow about as long as the thing casting it —
+	# long enough to see and not long enough to say anything. At 23 degrees a 3 m Machine
+	# lays seven metres of shadow across the yard, the lit faces go warm and the shaded
+	# ones go to the cool fill, and the time of day becomes something the frame states
+	# rather than something it fails to contradict.
+	_sun.rotation = Vector3(-0.40, 0.66, 0.0)
+	_sun.light_energy = 3.2
+	_sun.light_color = Color(1.0, 0.84, 0.63)
 	_sun.shadow_enabled = true
 	# Not fully black. A Machine in shadow still has to read as that Machine, and a
 	# Factory half of which is unreadable at a glance defeats the point of Survey View.
-	_sun.shadow_opacity = 0.9
-	_sun.directional_shadow_max_distance = 160.0
+	_sun.shadow_opacity = 0.92
+	# **Four splits over 110 m rather than one blend over 160.** A single cascade stretched
+	# across the whole draw distance spends most of its resolution on ground nobody is
+	# looking at, and what that costs is the near end: the shadow a railing throws on the
+	# floor beside it was two texels wide and so was not there. Pulling the far plane in
+	# and weighting the split towards the camera puts the resolution where the Factory is,
+	# which is the half-metre detail that makes a prop sit on the ground.
+	_sun.directional_shadow_mode = DirectionalLight3D.SHADOW_PARALLEL_4_SPLITS
+	_sun.directional_shadow_max_distance = 110.0
+	_sun.directional_shadow_split_1 = 0.045
+	_sun.directional_shadow_split_2 = 0.13
+	_sun.directional_shadow_split_3 = 0.38
 	_sun.directional_shadow_blend_splits = true
+	_sun.directional_shadow_fade_start = 0.92
+	# Peter-panning is the other half of "props hover": too much normal bias and a
+	# shadow detaches from its caster's feet. These are low on purpose, and the pairing
+	# with four tight cascades is what lets them be.
+	_sun.shadow_normal_bias = 0.9
+	_sun.shadow_bias = 0.035
+	_sun.shadow_blur = 0.8
 	add_child(_sun)
 
 	# A cool fill from the opposite side, carrying no shadow. The generated surfaces are
@@ -2633,40 +2750,50 @@ func _sync_scenery(sim: Simulation) -> void:
 	add_child(_fill)
 
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
-	var span: float = float(GROUND_HALF_EXTENT_TILES * 2) * tile_size
+	var build_extent: float = float(sim.query_grid_half_extent_tiles()) * tile_size
+	var span: float = (
+		(float(sim.query_grid_half_extent_tiles() + GROUND_APRON_TILES) * 2.0) * tile_size
+	)
 
 	_ground = MeshInstance3D.new()
 	var plane: PlaneMesh = PlaneMesh.new()
 	plane.size = Vector2(span, span)
+	# The shader paints the grid from the world position, so the plane needs no UVs and
+	# no subdivision — but it does need enough of the frustum not to be culled when a
+	# player stands at one corner of it looking at the other.
 	_ground.mesh = plane
-	var surface: StandardMaterial3D = StandardMaterial3D.new()
-	surface.albedo_texture = _grid_texture()
-	# Dirt, not concrete: rough, unlit by any specular, and dark enough that the Machines
-	# standing on it are the brightest thing in frame.
-	surface.albedo_color = Color(0.60, 0.54, 0.47)
-	surface.roughness = 1.0
-	surface.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
-	# Anisotropic, because the grid runs away to the horizon and nearest-neighbour
-	# filtering turns the far half of it into noise.
-	surface.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
-	# One texture repeat per tile, so what a player sees on the ground is the grid the
-	# Build Gun snaps to rather than an arbitrary pattern.
-	surface.uv1_scale = Vector3(span / tile_size, span / tile_size, 1.0)
-	_ground.material_override = surface
+	_ground.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_ground.material_override = _ground_material(tile_size, build_extent)
 	add_child(_ground)
 
+	_set_dressing = SetDressing.new()
+	_set_dressing.name = "SetDressing"
+	add_child(_set_dressing)
+	_set_dressing.sync(sim)
 
-## A one-tile ground texture: a dark face with a lighter edge, so every 2 m tile boundary
-## is visible. Generated rather than committed, because a committed image would be an
-## asset with a licence and this is a few pixels of information.
-func _grid_texture() -> ImageTexture:
-	var size: int = 16
-	var image: Image = Image.create(size, size, false, Image.FORMAT_RGB8)
-	image.fill(Color(0.33, 0.30, 0.27))
-	for along: int in range(size):
-		image.set_pixel(along, 0, Color(0.42, 0.39, 0.35))
-		image.set_pixel(0, along, Color(0.42, 0.39, 0.35))
-	return ImageTexture.create_from_image(image)
+
+## The ground's material: #20's generated maps blended in world space, with the 2 m grid
+## drawn as markings on top of them.
+##
+## The grid pitch and the Map's extent are **queried, not assumed**. They are the two
+## numbers the shader has to agree with the Simulation about — a grid that does not line
+## up with the tiles is worse than no grid, and an apron that starts in the wrong place
+## tells a player they cannot build where they can.
+func _ground_material(tile_size: float, build_extent: float) -> ShaderMaterial:
+	var surface: ShaderMaterial = ShaderMaterial.new()
+	surface.shader = load("res://game/ground.gdshader") as Shader
+	surface.set_shader_parameter(
+		"concrete", load("res://assets/generated/textures/poured_concrete.png")
+	)
+	surface.set_shader_parameter(
+		"worn", load("res://assets/generated/textures/rust_pitted_steel.png")
+	)
+	surface.set_shader_parameter(
+		"grime", load("res://assets/generated/textures/soot_brick.png")
+	)
+	surface.set_shader_parameter("tile_metres", tile_size)
+	surface.set_shader_parameter("build_extent_metres", build_extent)
+	return surface
 
 
 ## The Build Gun's hologram: the body of the selected Machine, drawn translucent on the

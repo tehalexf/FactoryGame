@@ -317,6 +317,14 @@ project has already made.
   everything rendered washed out, and 31 models had parts floating 5 mm–15 cm
   off their supports. v1.5 is post-fix; the geometry is unchanged from v1.4.
 
+**Wired in, sparingly and only past the Map's edge.** Its 1 m module lines up
+with nothing we have, and its clean modern palette beside our generated Machines
+would read as two art directions — so `tools/assets/convert_props.sh` takes
+exactly two of its models, `72_Shipping_Container` and `75_Yard_Light`, as
+skyline silhouettes beyond the buildable area, retinted and seen through the
+depth fog. Everything nearer the player comes from heyheythere, which is on our
+grid.
+
 ### `lukami-ch/` — Lukami Ch. "Low Poly Industrial Pack" (60 models)
 
 | | |
@@ -350,6 +358,12 @@ Plastic_Barrel, Gas_Cylinder, Jerry_Can, Bulk_Bag, Sack_Pile, Box_Stack,
 Cardboard_Box, Wooden_Crate, Wooden_Pallet, Loaded_Pallet, Stackable_Tote,
 Tote_Stack, Floodlight, Pendant_Lamp, Caution_Barrier, Safety_Cone,
 Fire_Extinguisher, First_Aid_Box.
+
+**Wired in, sparingly.** `tools/assets/convert_props.sh` takes three:
+`Floodlight` — a free-standing mast, which heyheythere has no equivalent of
+because its lights are all wall and ceiling fittings — and `Storage_Silo` and
+`Water_Tank` as skyline past the Map's edge. The `Smooth/GLB/` set, textures
+embedded, nothing to relink.
 
 ### `sonniss/` — Sonniss `#GameAudioGDC` Bundle (GDC 2026)
 
@@ -391,11 +405,68 @@ tree by name — the file names are descriptive and long.
 
 ### `heyheythere/` — Low Poly Industrial Facility
 
-Installed by an earlier ticket; recorded here for completeness. 213 industrial
-props with 22 animated machines as a native Godot addon, 66 MB at
-`assets_licensed/heyheythere/low-poly-industrial-facility/`. Redistribution
-forbidden. Note that it carries its own `project.godot`, which is why Godot
-skipped it even before `assets_licensed/.gdignore` existed.
+| | |
+|---|---|
+| Path | `assets_licensed/heyheythere/low-poly-industrial-facility/` |
+| On disk | 66 MB |
+| Vendor | heyheythere, <https://heyheythere.itch.io/low-poly-industrial-facility> (paid) |
+| Licence | Use in any number of commercial and non-commercial games, **no attribution required**. "You may not sell, share or redistribute the models, textures or scripts themselves." |
+
+**The most useful pack in the quarantine, and the reason is the grid.** Its
+`README.txt` says it in as many words: *"real-world scale (1 unit = 1 metre)"*,
+*"everything snaps to a 2 m grid with 4 m storeys"*. `WorldGrid.TILE_SIZE_METRES`
+is 2 and `STOREY_HEIGHT_METRES` is 4. Nothing has to be scaled, and a prop placed
+at a tile centre is where the pack expects it to be. Contrast Shapita below,
+whose 1 m module lines up with nothing we have.
+
+213 props, in four parallel formats plus a native Godot addon:
+
+* `glb/` — 213 `.glb`, 8.9 MB. **This is the set to convert.** Khronos glTF
+  Blender I/O output, one material named `props`, attributes
+  `POSITION, NORMAL, TEXCOORD_0, COLOR_0` — occlusion is baked into the vertex
+  colours and must be multiplied into the albedo. Each file declares two images
+  by **relative URI**, `../textures/atlas.png` and `../textures/atlas_glow.png`,
+  so a converter has to resolve them relative to the `.glb`'s own directory.
+* `fbx/`, `obj/` — the same 213, which we do not use.
+* `addons/low_poly_industrial_facility/` — a folder of 213 `.tscn` prop scenes
+  over `models/<prop>_model.glb`, plus `props.tres` (a `StandardMaterial3D` over
+  the atlas), `machine.gd`, `icons/` and a `demo/gallery.tscn`. **Not an
+  `EditorPlugin`** — there is no `plugin.cfg` — and the models in it carry *no*
+  `images` array at all, relying on Godot's importer to bind `props` by name on
+  first import, which nothing in the addon actually references. So the addon is a
+  convenient browser rather than the integration path; `glb/` has the real URIs
+  and is what `tools/assets/convert_props.sh` reads.
+* `textures/` — `atlas.png` and `atlas_glow.png`, both 2048², plus 24 seamless
+  128² tiling sources (floors, walls, roof decking, hazard striping).
+* `props.json` — **the picking index**, and the best thing in the pack. Per prop:
+  `name, title, group, place, note, tris, size[3], min[3], max[3]`, the part tree
+  with pivots, and `anims`. 30 props are animated.
+* `icons/` — a 256² PNG per prop. `blender/` — the authoring `.blend`.
+* Its own `project.godot` (Godot 4.3, main scene = the gallery), which is why
+  Godot skipped this directory even before `assets_licensed/.gdignore` existed.
+
+Datums, from `README.txt`, all of which the set dressing relies on rather than
+guessing: a floor or roof piece covers one 2 x 2 m cell with its pivot at the
+cell centre on the floor; a wall is 2 m long and 0.25 m thick, centred on a
+cell edge, facing **+Z in Godot**; a wall-mounted prop sits 0.125 m off the
+wall's line; second-storey pieces go 4 m up at the same points; a workbench top
+is 0.9 m. Measured from the GLBs themselves: pipe sections sit at 3.03 m, pipe
+racks stand 3.37 m, catwalk supports 3.80 m, high-bay lamps hang from 2.83 m.
+
+The 213 by group: 22 walls, 15 openings, 22 animated machines (conveyor, blast
+door, freight lift, roller shutter, fans, levers, valves, breaker boxes, card
+readers), 21 storage (crates, drums, totes, racking, pallets, tyres), 20 pipes,
+19 access (catwalks, railings, ladders, platforms, stairs), 11 floors, 4 roofs,
+11 loading dock, 11 workshop, 9 ducts and cable tray, 9 safety and barriers,
+8 vehicles, 6 frame and structure, 5 office, 5 lights, 5 signs, 5 debris,
+4 tanks.
+
+**Wired in:** `tools/assets/convert_props.sh` takes about fifty of them for the
+yard the Factory stands in — see
+[ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 8 and `game/set_dressing.gd`. The
+output is `assets_licensed/generated/props/`, which is **gitignored and must stay
+that way** for the reason the converted weapons are, and the game runs without
+it.
 
 ## Total
 
