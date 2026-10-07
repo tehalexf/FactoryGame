@@ -59,6 +59,36 @@ const BREACH_HEIGHT_METRES: float = 0.2
 ## chokepoint still reads as a number of individuals.
 const ENEMY_SIZE_METRES: float = 0.9
 
+## The Ammunition gauge floating over every Turret: how wide a full magazine reads, how
+## thick the bar is, and how far above the Turret's roof it hangs.
+##
+## **A Turret's remaining Ammunition has to be readable from a distance** — that is an
+## acceptance criterion of its own, and the reason is triage: mid-Wave a player is looking
+## at six Machines at once from across the Factory and needs to know which one is about to
+## stop shooting, which is not a question a HUD line answers in time. So it is drawn in the
+## world, over the Machine it belongs to, as a bar wide enough to read at thirty metres.
+##
+## Two meshes, not one: a dark backing at full width and a coloured fill scaled to the
+## fraction held. One mesh would make an empty magazine indistinguishable from a Turret with
+## no gauge at all, which is the exact state a player most needs to see.
+const AMMUNITION_GAUGE_WIDTH_METRES: float = 2.6
+const AMMUNITION_GAUGE_HEIGHT_METRES: float = 0.42
+const AMMUNITION_GAUGE_DEPTH_METRES: float = 0.18
+const AMMUNITION_GAUGE_LIFT_METRES: float = 1.1
+
+## The gauge's colours. Green with rounds to spare, amber below half, and the *backing* goes
+## red when the magazine is empty — so a dry Turret reads as a red bar rather than as an
+## absence, and absence of a bar means there is no Turret there.
+const AMMUNITION_FULL: Color = Color(0.36, 0.82, 0.38)
+const AMMUNITION_LOW: Color = Color(0.95, 0.74, 0.16)
+const AMMUNITION_BACKING: Color = Color(0.09, 0.08, 0.08)
+const AMMUNITION_DRY: Color = Color(0.88, 0.17, 0.14)
+
+## Below this fraction of a full magazine the gauge goes amber. Half, because a Turret's
+## input buffer is `machine.input_buffer_crafts` crafts deep and half of that is the point
+## at which a player still has time to go and look at the Belt.
+const AMMUNITION_LOW_FRACTION: float = 0.5
+
 var _machine_meshes: Array[MeshInstance3D] = []
 var _node_meshes: Array[MeshInstance3D] = []
 var _belt_meshes: Array[MeshInstance3D] = []
@@ -90,6 +120,12 @@ var _enemy_transforms: PackedFloat32Array = PackedFloat32Array()
 ## Nest and the Breaches are fixed geography.
 var _nest_mesh: Node3D = null
 var _breach_meshes: Array[MeshInstance3D] = []
+
+## The Ammunition gauge over every Turret: a dark backing bar and the coloured fill in front
+## of it, one pair per Turret. Pools rather than children of a Machine node, because a
+## Machine is not a node here either — it is a box this view rebuilds from the queries.
+var _turret_gauge_backings: Array[MeshInstance3D] = []
+var _turret_gauge_fills: Array[MeshInstance3D] = []
 
 ## The instance transforms handed to the MultiMesh, in its own flat layout: twelve floats
 ## an instance, with the position in slots 3, 7 and 11. Built from the queries every frame
@@ -147,6 +183,7 @@ func sync(sim: Simulation) -> void:
 	_sync_nest(sim)
 	_sync_breaches(sim)
 	_sync_machines(sim)
+	_sync_turret_gauges(sim)
 	_sync_enemies(sim)
 	_sync_belts(sim)
 	_sync_items(sim)
@@ -219,6 +256,37 @@ func machine_placeholder_position(index: int) -> Vector3:
 	return _machine_meshes[index].position
 
 
+## How many Ammunition gauges are on screen. One per Turret and none for anything else.
+func turret_gauge_count() -> int:
+	return _turret_gauge_fills.size()
+
+
+## How wide a Turret's Ammunition gauge is drawn, in metres. `AMMUNITION_GAUGE_WIDTH_METRES`
+## for a full magazine, proportionally less as it empties, and effectively nothing when dry.
+func turret_gauge_width_metres(slot: int) -> float:
+	if slot < 0 or slot >= _turret_gauge_fills.size():
+		return 0.0
+	if not _turret_gauge_fills[slot].visible:
+		return 0.0
+	return (_turret_gauge_fills[slot].mesh as BoxMesh).size.x
+
+
+## What colour a Turret's gauge is reading. The backing, because that is the half that turns
+## red on a dry Turret and is therefore the half that answers "which one has stopped".
+func turret_gauge_backing_colour(slot: int) -> Color:
+	if slot < 0 or slot >= _turret_gauge_backings.size():
+		return Color(0.0, 0.0, 0.0, 0.0)
+	return (_turret_gauge_backings[slot].material_override as StandardMaterial3D).albedo_color
+
+
+## Where a Turret's gauge hangs, in metres. For the smoke test, and so a reviewer can check
+## it is over the Turret rather than over the Factory's centre of mass.
+func turret_gauge_position(slot: int) -> Vector3:
+	if slot < 0 or slot >= _turret_gauge_backings.size():
+		return Vector3.ZERO
+	return _turret_gauge_backings[slot].position
+
+
 ## What the HUD is showing. The Items the Factory is holding, and how many.
 func hud_text() -> String:
 	if _hud == null:
@@ -272,6 +340,103 @@ func _sync_machines(sim: Simulation) -> void:
 			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + MACHINE_HEIGHT_METRES * 0.5,
 			(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
 		)
+
+
+## An Ammunition gauge over every Turret, and over nothing else.
+##
+## The one thing in this view that exists for *triage* rather than for depiction: a player
+## mid-Wave needs to know which Turret is about to stop firing, and they are thirty metres
+## away looking at the whole Factory. So the number is drawn where the Turret is, as a bar
+## whose length is the fraction of a full magazine and whose colour says how worried to be.
+##
+## Both numbers come out of the Simulation on the frame they are drawn, like everything else
+## here. There is no remembered magazine and no interpolation: a Turret that fired this tick
+## has one fewer round and the bar is one round shorter.
+func _sync_turret_gauges(sim: Simulation) -> void:
+	var turrets: PackedInt64Array = PackedInt64Array()
+	for index: int in range(sim.query_machine_count()):
+		if sim.query_machine_is_turret(index):
+			turrets.append(index)
+
+	_resize_pool(
+		_turret_gauge_backings,
+		turrets.size(),
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		AMMUNITION_BACKING
+	)
+	_resize_pool(
+		_turret_gauge_fills,
+		turrets.size(),
+		AMMUNITION_GAUGE_WIDTH_METRES,
+		AMMUNITION_GAUGE_HEIGHT_METRES,
+		AMMUNITION_FULL
+	)
+
+	for slot: int in range(turrets.size()):
+		var index: int = turrets[slot]
+		var held: int = sim.query_turret_ammunition(index)
+		var capacity: int = maxi(sim.query_turret_ammunition_capacity(index), 1)
+		var fraction: float = clampf(float(held) / float(capacity), 0.0, 1.0)
+		var above: Vector3 = (
+			_machine_centre(sim, index)
+			+ Vector3(0.0, MACHINE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0)
+		)
+
+		var backing: BoxMesh = _turret_gauge_backings[slot].mesh
+		backing.size = Vector3(
+			AMMUNITION_GAUGE_WIDTH_METRES,
+			AMMUNITION_GAUGE_HEIGHT_METRES,
+			AMMUNITION_GAUGE_DEPTH_METRES
+		)
+		_turret_gauge_backings[slot].position = above
+		_paint_gauge(
+			_turret_gauge_backings[slot], AMMUNITION_DRY if held == 0 else AMMUNITION_BACKING
+		)
+
+		# The fill grows from the left, so an emptying magazine reads as a bar retreating
+		# rather than as a bar shrinking towards its middle — the same direction every gauge
+		# a player has ever read empties in.
+		var width: float = AMMUNITION_GAUGE_WIDTH_METRES * fraction
+		var fill: BoxMesh = _turret_gauge_fills[slot].mesh
+		fill.size = Vector3(
+			maxf(width, 0.001),
+			AMMUNITION_GAUGE_HEIGHT_METRES,
+			AMMUNITION_GAUGE_DEPTH_METRES * 1.4
+		)
+		_turret_gauge_fills[slot].position = above + Vector3(
+			(width - AMMUNITION_GAUGE_WIDTH_METRES) * 0.5, 0.0, 0.0
+		)
+		_turret_gauge_fills[slot].visible = held > 0
+		_paint_gauge(
+			_turret_gauge_fills[slot],
+			AMMUNITION_LOW if fraction < AMMUNITION_LOW_FRACTION else AMMUNITION_FULL
+		)
+
+
+## Colours a gauge bar, unshaded so it reads the same in the Factory's shadow as it does in
+## the sun. A gauge that a directional light could darken is a gauge a player misreads at
+## the worst moment.
+func _paint_gauge(bar: MeshInstance3D, colour: Color) -> void:
+	var skin: StandardMaterial3D = bar.material_override
+	skin.albedo_color = colour
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+
+
+## The middle of a Machine's footprint at ground level, in metres. The same three queries
+## `_sync_machines` uses to place the box, so a gauge cannot end up over a different Machine.
+func _machine_centre(sim: Simulation, index: int) -> Vector3:
+	var footprint: Vector2i = sim.query_machine_footprint(index)
+	var tile: Vector3i = sim.query_machine_tile(index)
+	var near: FixedVec2 = sim.query_tile_centre_metres(tile)
+	var far: FixedVec2 = sim.query_tile_centre_metres(
+		Vector3i(tile.x + footprint.x - 1, tile.y, tile.z + footprint.y - 1)
+	)
+	return Vector3(
+		(Fixed.to_float(near.x) + Fixed.to_float(far.x)) * 0.5,
+		Fixed.to_float(sim.query_layer_height_metres(tile.y)),
+		(Fixed.to_float(near.z) + Fixed.to_float(far.z)) * 0.5
+	)
 
 
 ## The Nest: one mesh, standing on the middle of its footprint.
@@ -534,7 +699,7 @@ func _sync_hud(sim: Simulation) -> void:
 			state = "starved"
 		elif sim.query_machine_is_throttled(index):
 			state = "throttled"
-		lines.append(
+		var line: String = (
 			"%s — %s — in %d, out %d"
 			% [
 				sim.query_machine_id(index),
@@ -543,6 +708,15 @@ func _sync_hud(sim: Simulation) -> void:
 				sim.query_machine_output_total(index),
 			]
 		)
+		# A Turret's magazine, in words as well as on the gauge over its roof. The gauge is
+		# what a player reads mid-fight; this is what they read afterwards to work out which
+		# Belt could not keep up, and it says DRY in capitals because an empty Turret is the
+		# one Machine state that costs the Run.
+		if sim.query_machine_is_turret(index):
+			var held: int = sim.query_turret_ammunition(index)
+			line += " — ammo %d/%d" % [held, sim.query_turret_ammunition_capacity(index)]
+			line += " — DRY" if held == 0 else " — %d shots" % sim.query_turret_shots_remaining(index)
+		lines.append(line)
 
 	for index: int in range(sim.query_belt_count()):
 		var flow: String = "stalled" if sim.query_belt_is_stalled(index) else "moving"

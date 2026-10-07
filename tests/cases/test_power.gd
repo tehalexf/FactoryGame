@@ -40,8 +40,8 @@ func test_a_factory_within_its_power_runs_at_the_rate_its_recipes_state() -> voi
 # which is the point: the throttle is a duty cycle over whole ticks, never a fraction of
 # one.
 
-const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,mine_iron_ore,
+const THIRD_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,mine_iron_ore,
 """
 
 const THIRD_RECIPES: String = """id,display_name,inputs,outputs,seconds
@@ -319,8 +319,8 @@ func test_a_cut_fuel_line_slows_the_very_miner_that_feeds_it() -> void:
 # except for one number in tuning: a 3 kW baseline against a 3 kW draw is a grid in
 # balance, and a 1 kW baseline against the same draw is a grid supplying a third.
 
-const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,recipe_id,build_cost
-miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,mine_iron_ore,
+const THIN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,recipe_id,build_cost
+miner_mk1,Miner Mk1,miner,2,2,3,0,400,1,0,0,mine_iron_ore,
 """
 
 const THIN_RECIPES: String = """id,display_name,inputs,outputs,seconds

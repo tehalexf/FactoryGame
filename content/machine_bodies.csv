@@ -19,12 +19,12 @@
 # A blank footprint for a Machine that machines.csv does not declare is an
 # error, so a row can never resolve to no footprint at all.
 #
-# miner_mk1, smelter_mk1 and steam_boiler_mk1 are already there: machines.csv
-# declares them, so their footprints are blank here and there is exactly one
-# authority. The rest follow as their Recipes arrive.
+# miner_mk1, smelter_mk1, steam_boiler_mk1 and ammo_press_mk1 are already there:
+# machines.csv declares them, so their footprints are blank here and there is
+# exactly one authority. The rest follow as their Recipes arrive.
 #
-# Known gap: machines.csv also declares coal_miner_mk1, which has no body here and
-# so no generated mesh yet. The Simulation and the placeholder renderer are happy
+# Known gap: machines.csv also declares coal_miner_mk1 and mg_turret_mk1, neither of
+# which has a body here and so neither has a generated mesh yet. The Simulation and the placeholder renderer are happy
 # without one; the art pass is what closes it.
 #
 # Not every body is a Machine. The Nest is the structure the Run is lost with
@@ -47,7 +47,7 @@ press_mk1,press,2,3,2400
 assembler_mk1,assembler,3,3,2600
 steam_boiler_mk1,boiler,,,2200
 generator_mk1,generator,2,2,2400
-ammo_press_mk1,ammo_press,2,3,2400
+ammo_press_mk1,ammo_press,,,2400
 silo_mk1,silo,4,4,3000
 nest,nest,4,4,2800
 belt_straight,belt,1,1,900
