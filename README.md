@@ -14,7 +14,7 @@ the Heat you generate brings the waves in faster. Every expansion is a bet.
 
 | Document | What it is |
 |---|---|
-| [CONTEXT.md](CONTEXT.md) | Domain glossary. The project's vocabulary. Start here. |
+| [GLOSSARY.md](GLOSSARY.md) | Domain glossary. The project's vocabulary. Start here. |
 | [docs/DESIGN.md](docs/DESIGN.md) | The settled design and milestone plan. |
 | [docs/ASSETS.md](docs/ASSETS.md) | Asset sources, licenses, and what must never be committed. |
 | [docs/adr/](docs/adr/) | Architecture decision records. |

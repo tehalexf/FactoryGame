@@ -1,6 +1,6 @@
 # DEEP FOUNDRY — settled design
 
-Vocabulary is defined in [../CONTEXT.md](../CONTEXT.md) and capitalised here.
+Vocabulary is defined in [../GLOSSARY.md](../GLOSSARY.md) and capitalised here.
 This document records *what was decided*. Architecture rationale lives in
 [adr/](adr/).
 
