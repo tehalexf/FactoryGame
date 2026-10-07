@@ -744,7 +744,7 @@ Shipped Map, shipped content, three seeds, measured 2026-10-07:
 | `bare` — builds nothing | 4m22s | 1 | 0 | undefended; the first Wave alone |
 | `competent` — six Machines, one MG on the lane | **27m00s** | 32 | 5526 | **ran dry**, then Breakers took the Factory |
 | `fortified` — a second MG over the Factory itself | **29m15s** | 36 | 6204 | swarmed, with 274 rounds still in it |
-| `hive_sortie` — `competent` after clearing one Hive | **29m37s** | 35 | 5398 | ran dry |
+| `hive_sortie` — `competent` after clearing one Hive | **29m36s** | 35 | 5399 | ran dry |
 
 Six times the Run an undefended Nest gets, and still lost.
 
@@ -1797,7 +1797,7 @@ pillar's whole sentence as one test.
 **#26 measured the cost of shooting, and it is real.** `rifle_picket` is the `competent`
 Factory with a second Belt banking Ammunition at the Nest and a player standing there with a
 Bolt Rifle, drawing a magazine a minute and spending half of each minute on the trigger. It
-**costs the Run 2 minutes 1 second** — 24m59s against 27m00s. The rifle spends rounds at 75 a
+**costs the Run 28 seconds** — 26m32s against 27m00s. The rifle spends rounds at 75 a
 minute where the Ammo Press makes 37, so a player who
 leans on the trigger is bidding against his own Turret for the same Press, exactly as the
 Turrets section's arithmetic says he must. The honest reading stands: **a player who wants to
@@ -2001,9 +2001,11 @@ opinion about that. If they do not, the lever to reach for is `hive.heat_shadow_
   outright.
 
 **The Hives are measured now, and they are worth the walk.** `hive_sortie` is the `competent`
-Factory plus one player who sprints 107 m to the eastern Hive at two minutes in, takes it apart
-in fifteen seconds of wrench, and sprints back. Thirty of the Nest's 240 a minute of decay come
-back permanently, and the Run goes from **27m00s to 29m37s** — two and a half minutes bought
+Factory plus one player who sprints about 104 m to the eastern Hive at two minutes in — east
+along the Nest's latitude and then north-east, round the end of his own Factory, because #30
+made the Smelter solid — takes it apart in fifteen seconds of wrench, and sprints back the same
+way. Thirty of the Nest's 240 a minute of decay come
+back permanently, and the Run goes from **27m00s to 29m36s** — two and a half minutes bought
 with two minutes away from the Factory, which is a thinner margin than it sounds and exactly
 the kind of claim that wanted measuring rather than asserting.
 `test_balance.test_clearing_a_hive_lengthens_a_run` holds it.
@@ -2320,9 +2322,12 @@ it from several methods.
 
 ### The table, measured 2026-10-07
 
-Seeds 7, 11 and 29, identical on all three — see "What the seed can reach", below. **Both
-columns are the same eight scenarios through the same harness**, so the difference between
-them is four numbers in one content file and nothing else.
+Seeds 7, 11 and 29, identical on all three except `rifle_picket`, which now spreads three
+seconds — see "What the seed can reach", below. **Both columns are the same eight scenarios
+through the same harness**, so the difference between them is four numbers in one content file
+and nothing else, with the one exception the *after* column carries that #26 did not: #30's
+collision has landed since, and the two rows whose player walks anywhere were re-measured with
+it. See "What collision cost the two sorties", below.
 
 | Scenario | Before | After | Wave | Peak Heat | What killed it, after |
 |---|---|---|---|---|---|
@@ -2332,8 +2337,8 @@ them is four numbers in one content file and nothing else.
 | `over_producer` — the same plus an unbelted Miner | 10m30s | **19m36s** | 24 | 5691 | ran dry, **27% sooner** than `competent` |
 | `fortified` — a second MG over the Factory | 8m08s | **29m15s** | 36 | 6204 | swarmed, with 274 rounds still in the Factory |
 | `deep_digger` — pays the chain, digs Depth 2 | 8m13s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
-| `hive_sortie` — clears the eastern Hive | 19m13s | **29m37s** | 35 | 5398 | ran dry, 2m37s *later* than `competent` |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | **24m59s** | 29 | 5455 | swarmed, 2m01s sooner than `competent` |
+| `hive_sortie` — clears the eastern Hive | 19m13s | **29m36s** | 35 | 5399 | ran dry, 2m36s *later* than `competent` |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | **26m32s** | 31 | 5433 | ran dry, 28s sooner than `competent` |
 
 **The loop the spec asks for lands.** Build nothing and lose in four minutes. Build the opening
 Factory and get twenty-seven, lost to a pressure with a name. Put the second Turret over the
@@ -2373,6 +2378,42 @@ moved either — some of their comments now carry what was measured, which is th
 having them — and **no code in `sim/` or `game/` changed at all**. The things that wanted
 changing and were not numbers are below.
 
+### What collision cost the two sorties
+
+**#30 made the Factory solid after #26 measured it, and the two rows whose player walks
+anywhere moved.** Recorded here rather than quietly re-measured, because the *reason* is the
+interesting part and the figures above are only evidence while somebody can re-derive them.
+
+`hive_sortie` broke outright. A scenario is a function from tick to Input Actions and cannot
+look at the Simulation, so its walk is open-loop arithmetic: a heading, a held throttle and
+`_sprint_ticks_for` to say when to let go. The straight line from the Nest to the eastern Hive
+passes through the Smelter at (8, 4). What collision does to that walk is not a stop — the
+player slides along the housing and comes out of it pointing somewhere else — so the sortie
+arrived two seconds late, twelve metres short, and spent its thirty seconds of wrench swinging
+at air. The measured consequence was a Run with two Hives still standing, and
+`test_balance.test_clearing_a_hive_lengthens_a_run` caught it.
+
+The fix is the one a player would make: go round. `SORTIE_WAYPOINT` is (24, 0) — east along the
+Nest's own latitude until the Factory is behind him, then north-east to the Hive, and home the
+same way. Both legs are clear ground, which is what keeps the open-loop arithmetic honest. The
+walk is about 104 m rather than 90, and the Run is **29m36s against #26's 29m37s**: one second,
+which is the right size for an answer to "what did a 14 m detour cost". The claim it was
+measuring — clearing a Hive lengthens a Run — is unchanged.
+
+`rifle_picket` was not re-routed and moved much further: **26m32s against 24m59s**, and its
+cause changed from *swarmed* to *ran dry*. Nothing about the scenario changed; it walks to
+(-3, -3) beside the Nest and fires down the lane the Breach feeds, and with the Nest solid the
+player's open-loop overshoot now settles somewhere slightly different, which moves where every
+one of his rounds goes for the rest of the Run. **The claim still holds and its margin is
+thinner**: a rifleman still shortens the Run against `competent`'s 27m00s, by 28 seconds rather
+than by two minutes. That margin is now small enough that it is worth knowing it is the
+assertion in `test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press`, and a later
+Ammunition change could flip it. If it flips, the honest response is the same as #26's: say
+what was measured, not what was expected.
+
+**No balance number was changed to accommodate any of this.** `content/waves.csv` and
+`content/tuning.toml` are exactly as #26 left them.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
@@ -2386,9 +2427,14 @@ exactly that.
 Two consequences worth knowing before anybody quotes a variance:
 
 - **The three seeds in the measurement are a demonstration, not a sample.** There is no
-  distribution to sample until a player opens fire — and `rifle_picket`, which does, is
-  identical across seeds too: at this scale the spread moves where the rounds go without
-  moving how long the Nest stands.
+  distribution to sample until a player opens fire — and `rifle_picket` is the one row that
+  does. #26 measured it identical across all three seeds; with #30's collision in, it is
+  26m32s on seed 7 against 26m29s on seeds 11 and 29. **Three seconds in twenty-six minutes,
+  and only on the row that fires a ranged weapon**, is the claim surviving rather than failing:
+  the spread still moves where the rounds go rather than how long the Nest stands. Every other
+  row is bit-identical across seeds, and
+  `test_balance.test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed` asserts
+  that on `competent`.
 - **`Simulation.hash()` cannot be used as the evidence**, which is a trap worth naming because
   it looks like it should be: the hash feeds `_rng.state`, which is seeded, so two seeds differ
   in hash from tick 0 whether or not a draw is ever taken.
