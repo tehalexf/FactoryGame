@@ -31,7 +31,30 @@ const KEY_STRAFE_RIGHT: Key = KEY_D
 const KEY_SURVEY: Key = KEY_Q
 const KEY_SPRINT: Key = KEY_SHIFT
 const KEY_DEMOLISH: Key = KEY_X
-const KEY_BELT: Key = KEY_B
+
+## Leaving the ground. **Held**, like the throttle: the Simulation consumes and clears the
+## intent every tick, and the absence of it is what re-arms the jump, so a key held through
+## a landing does not bounce (`player.jump_repeats_while_held`).
+const KEY_JUMP: Key = KEY_SPACE
+
+## Swapping between the Build Gun and the weapon. **An edge, and a toggle** — one press is
+## one swap, and holding it must not swap sixty times a second.
+##
+## This is what #15's note said the real answer was: a hand, holding one thing or the other,
+## so that left mouse can place in build mode and fire in combat mode without the two acts
+## fighting over one button. It took `B` off the Belt key, which moved to `KEY_BELT` below,
+## and it retired `KEY_PLACE` (E) altogether.
+##
+## **It is not a mode in the gating sense.** Nothing in the Simulation consults it — not a
+## refusal, not the build path, not `_fight`. What it decides is which Input Action this
+## file produces from a click and which object `WorldView` draws in the player's hands.
+## Switching is instant, unlimited, and works mid-Wave, mid-burst and in Survey View
+## (GLOSSARY.md, DESIGN.md).
+const KEY_BUILD_MODE: Key = KEY_B
+
+## Laying a Belt. **Moved off `B`**, which is now the holster, and it belongs here anyway:
+## Belt routing is a build act and lives in build mode, which is where this key is read.
+const KEY_BELT: Key = KEY_C
 
 ## One tile of Wall on the aimed tile. An edge, like the Belt key: one press is one Wall.
 ##
@@ -47,20 +70,6 @@ const KEY_WALL: Key = KEY_V
 ## act of stopping, which is why the intent is only sent while the key is down — the
 ## Simulation clears it every tick and a player who walks away stops mending.
 const KEY_REPAIR: Key = KEY_R
-
-## Placing a Machine. **Moved off the left mouse button**, which became the trigger when
-## there was something to pull it with.
-##
-## Not a happy binding and not a permanent one. The real answer is a hand — a holster that
-## puts either the Build Gun or a weapon in front of the player — and DESIGN.md already
-## says where the Gear and Recipe interfaces go: a menu. Until that ticket, a key, because
-## the alternative was making the two acts fight over one button and the first thing a
-## player would discover is that shooting builds a Smelter.
-##
-## It is deliberately *not* a mode: nothing in the Simulation asks whether building is
-## allowed, and the Build Gun still works mid-Wave, mid-burst and in Survey View
-## (GLOSSARY.md, DESIGN.md).
-const KEY_PLACE: Key = KEY_E
 
 ## Picking a Downed teammate up. **Held**, like the wrench, and for the same reason: a
 ## revive is restoration over time and what it costs the rescuer is standing still in the
@@ -119,7 +128,13 @@ const KEY_DELIVER: Key = KEY_F
 ## the one amount a player actually wants, which is what the Build Gun is already holding.
 ## A different UI — a counter with a row per Item — would send the same intent with different
 ## numbers, and the Simulation would not know the difference.
-const KEY_WITHDRAW: Key = KEY_T
+##
+## **Moved off `T`, which is the revive key.** `T` was bound to both from the moment this
+## key landed, so pressing it next to a Downed teammate withdrew *and* revived — a latent
+## collision #29 found and this merge fixes, because #29 retired `KEY_PLACE` (E) and left a
+## key free next to `KEY_DELIVER`. Withdrawing and delivering are the same act in opposite
+## directions, so `E` and `F` are the pair that belong together.
+const KEY_WITHDRAW: Key = KEY_E
 
 ## The Silo's dial, and the designator.
 ##
@@ -135,8 +150,15 @@ const KEY_WITHDRAW: Key = KEY_T
 ## shows and `KEY_LOAD_SILO` sends. The cycles hold no state here — where each one is comes
 ## out of `query_player_dial_*` and what is in it comes out of the definition set, which is
 ## the arrangement the Machine wheel and the Gear slots already have.
+##
+## **The charge counter moved off `C`, which is now the Belt key.** #29 took `B` for the
+## holster and moved the Belt to `C`, which collided with this; the Belt stays, because the
+## bottom row `X` `C` `V` `B` — demolish, Belt, Wall, holster — is the build cluster and
+## pulling one key out of the middle of it would be the worse trade. `K` is free and sits
+## next to `KEY_LOAD_SILO` (`L`), so the counter and the commit are now under the same
+## finger, which is the pairing that actually gets used: wind the count, then load.
 const KEY_SILO_SHELL: Key = KEY_Z
-const KEY_SILO_CHARGES: Key = KEY_C
+const KEY_SILO_CHARGES: Key = KEY_K
 
 ## Committing the dial into the Silo the player is standing at. **An edge, and the one
 ## irreversible act a player can perform**: there is no unload intent, and a Silo already
@@ -189,15 +211,18 @@ const KEY_LOAD: Key = KEY_F9
 ## enough that a line is a few presses rather than a dozen, short enough to aim.
 const BELT_RUN_TILES: int = 4
 
-## Primary fires, secondary rotates the hologram. The primary was the place button until
-## there was a weapon to put on it; see `KEY_PLACE`.
+## **The primary button does both, and which one it does is what build mode decides.** In
+## build mode a click places what is on the Build Gun; in combat mode holding it fires.
+## That is what the player asked for, and it is why there is a holster key at all — #15 put
+## the trigger here and shoved placing onto `E`, which its own author called ugly.
 ##
-## **Held, not an edge**, unlike every other mouse action here: a weapon with an interval
-## between shots fires as often as that interval allows for as long as the trigger is down,
-## so automatic fire is the absence of letting go rather than a second control. Polled in
-## `sample_devices` rather than gathered from events, for that reason — an edge counted
-## between frames is a click, and a trigger is not a click.
-const BUTTON_FIRE: MouseButton = MOUSE_BUTTON_LEFT
+## It is read *both* ways, every tick, because the two acts want different readings and the
+## polling must not know which mode anybody is in: **an edge** (gathered from events, in
+## `note_event`) because one click is one Machine, and **a held state** (polled, in
+## `sample_devices`) because a weapon fires as often as its interval allows for as long as
+## the trigger is down. Which of the two becomes an Input Action is decided in
+## `actions_for_tick`, where the Simulation is there to be asked.
+const BUTTON_PRIMARY: MouseButton = MOUSE_BUTTON_LEFT
 const BUTTON_ROTATE: MouseButton = MOUSE_BUTTON_RIGHT
 
 
@@ -214,9 +239,18 @@ class DeviceSample extends RefCounted:
 	var mouse_motion: Vector2 = Vector2.ZERO
 	## Whether Survey View is being held down this tick.
 	var survey_held: bool = false
+	## Both readings of the sprint key, because which one matters is
+	## `player.sprint_is_toggle`: the held state for a hold, the rising edge for a toggle.
+	## Sampling both keeps `sample_devices` free of the setting.
 	var sprint_held: bool = false
+	var sprint_clicked: bool = false
+	## Whether the jump key is down this tick. Held, not an edge: the Simulation needs to
+	## know "still holding it", because the absence of the intent is what re-arms a jump.
+	var jump_held: bool = false
 	## Edges, not held states: one click is one Machine, not one a tick.
 	var place_clicked: bool = false
+	## One press is one swap of what is in the player's hands.
+	var build_mode_clicked: bool = false
 	var demolish_clicked: bool = false
 	var belt_clicked: bool = false
 	var call_wave_clicked: bool = false
@@ -253,6 +287,8 @@ var _unsent_mouse_motion: Vector2 = Vector2.ZERO
 var _unsent_rotate_steps: int = 0
 var _unsent_machine_steps: int = 0
 var _place_clicked: bool = false
+var _build_mode_clicked: bool = false
+var _sprint_clicked: bool = false
 var _demolish_clicked: bool = false
 var _belt_clicked: bool = false
 var _call_wave_clicked: bool = false
@@ -264,6 +300,11 @@ var _slot_cycled: int = -1
 var _silo_shell_cycled: bool = false
 var _silo_charges_cycled: bool = false
 var _load_silo_clicked: bool = false
+
+## Whether a toggled sprint is currently latched on. Only read when
+## `player.sprint_is_toggle` is true; see `_sprinting`, which is where the whole argument
+## for this living here rather than in the Simulation is written.
+var _sprint_latched: bool = false
 
 
 # ── Gathering device events ───────────────────────────────────────────────────
@@ -280,6 +321,10 @@ func note_event(event: InputEvent) -> void:
 		if not button.pressed:
 			return
 		match button.button_index:
+			BUTTON_PRIMARY:
+				# The *edge*. The held reading of the same button is polled in
+				# `sample_devices`; which one becomes an intent is build mode's business.
+				_place_clicked = true
 			BUTTON_ROTATE:
 				_unsent_rotate_steps += 1
 			MOUSE_BUTTON_WHEEL_UP:
@@ -303,8 +348,10 @@ func note_event(event: InputEvent) -> void:
 				_withdraw_clicked = true
 			elif key.keycode == KEY_WALL:
 				_wall_clicked = true
-			elif key.keycode == KEY_PLACE:
-				_place_clicked = true
+			elif key.keycode == KEY_BUILD_MODE:
+				_build_mode_clicked = true
+			elif key.keycode == KEY_SPRINT:
+				_sprint_clicked = true
 			elif key.keycode == KEY_SILO_SHELL:
 				_silo_shell_cycled = true
 			elif key.keycode == KEY_SILO_CHARGES:
@@ -336,14 +383,19 @@ func sample_devices() -> DeviceSample:
 	sample.sprint_held = Input.is_key_pressed(KEY_SPRINT)
 	sample.repair_held = Input.is_key_pressed(KEY_REPAIR)
 	sample.revive_held = Input.is_key_pressed(KEY_REVIVE)
+	sample.jump_held = Input.is_key_pressed(KEY_JUMP)
 	# Polled rather than gathered from events, because it is a held state and not a click.
-	sample.fire_held = Input.is_mouse_button_pressed(BUTTON_FIRE)
+	# The *edge* of the same button is gathered in `note_event`; build mode decides which
+	# of the two readings becomes an Input Action, and this function does not know.
+	sample.fire_held = Input.is_mouse_button_pressed(BUTTON_PRIMARY)
 	sample.paint_held = Input.is_key_pressed(KEY_PAINT)
 
 	sample.mouse_motion = _unsent_mouse_motion
 	sample.rotate_steps = _unsent_rotate_steps
 	sample.machine_steps = _unsent_machine_steps
 	sample.place_clicked = _place_clicked
+	sample.build_mode_clicked = _build_mode_clicked
+	sample.sprint_clicked = _sprint_clicked
 	sample.demolish_clicked = _demolish_clicked
 	sample.belt_clicked = _belt_clicked
 	sample.call_wave_clicked = _call_wave_clicked
@@ -360,6 +412,8 @@ func sample_devices() -> DeviceSample:
 	_unsent_rotate_steps = 0
 	_unsent_machine_steps = 0
 	_place_clicked = false
+	_build_mode_clicked = false
+	_sprint_clicked = false
 	_demolish_clicked = false
 	_belt_clicked = false
 	_call_wave_clicked = false
@@ -391,6 +445,14 @@ func sample_devices() -> DeviceSample:
 func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> Array:
 	var actions: Array = []
 
+	# The holster comes first, and the rest of this function routes by the mode the player
+	# will be in once it has applied — the same rule that puts `select_machine` before
+	# `build_machine` and makes a scroll-and-click place what the player scrolled to.
+	var in_build_mode: bool = sim.query_player_is_in_build_mode(player_id)
+	if sample.build_mode_clicked:
+		in_build_mode = not in_build_mode
+		actions.append(InputAction.set_build_mode(player_id, in_build_mode))
+
 	if sample.mouse_motion != Vector2.ZERO:
 		actions.append(
 			InputAction.look(
@@ -408,7 +470,11 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	if sample.rotate_steps != 0:
 		actions.append(InputAction.rotate_build(player_id, sample.rotate_steps))
 
-	if sample.place_clicked:
+	# **The four build acts, routed by what is in the player's hands.** A click with the
+	# Build Gun out places; the same click with the weapon out fires, further down. Nothing
+	# is being *forbidden* here and the Simulation has no opinion on any of it — this is one
+	# button producing one of two intents, which is the whole of what build mode is.
+	if sample.place_clicked and in_build_mode:
 		# The rotation the player will be holding once this tick's rotate has applied,
 		# so rotating and placing in the same tick places the Machine they can see.
 		var rotation: int = WorldGrid.wrap_rotation(
@@ -423,7 +489,7 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			)
 		)
 
-	if sample.belt_clicked:
+	if sample.belt_clicked and in_build_mode:
 		var entry: Vector3i = BuildGun.aimed_tile(sim, player_id)
 		# The direction comes from the yaw the *Simulation* is holding, rounded to the
 		# nearest of the grid's four, so there is no second opinion about which way the
@@ -435,10 +501,10 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			InputAction.build_belt(player_id, entry, entry + step * (BELT_RUN_TILES - 1))
 		)
 
-	if sample.wall_clicked:
+	if sample.wall_clicked and in_build_mode:
 		actions.append(InputAction.build_wall(player_id, BuildGun.aimed_tile(sim, player_id)))
 
-	if sample.demolish_clicked:
+	if sample.demolish_clicked and in_build_mode:
 		actions.append(InputAction.demolish(player_id, BuildGun.aimed_tile(sim, player_id)))
 
 	# Sent every tick the key is down and never on the edge, because the Simulation consumes
@@ -470,7 +536,10 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# know, and the weapon's own interval is what decides how often that becomes a shot.
 	# Sent whatever the Simulation would make of it, exactly as a misaimed build intent is —
 	# the HUD reads `query_fire_refusal`, so a player reads `DRY` rather than guessing.
-	if sample.fire_held:
+	# The other half of the primary button. Held rather than an edge, because a weapon fires
+	# as often as its interval allows for as long as the trigger is down — so the two
+	# readings of one button are genuinely different readings and not one with a filter on.
+	if sample.fire_held and not in_build_mode:
 		actions.append(InputAction.fire(player_id))
 
 	# The dial before the load, so a player who winds and commits in one tick commits what
@@ -547,12 +616,48 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			)
 		)
 
+	# Sent only while the key is down, like `MOVE`, because the Simulation consumes and
+	# clears the intent every tick — and because the *absence* of it is what re-arms the
+	# jump, so a key held through a landing does not bounce.
+	if sample.jump_held:
+		actions.append(InputAction.jump(player_id, true))
+
 	# Sent every tick rather than on the edges, because the Simulation counts ticks of
 	# transition and "still held" is the thing it needs to know.
 	actions.append(InputAction.survey_view(player_id, sample.survey_held))
-	actions.append(InputAction.sprint(player_id, sample.sprint_held))
+	actions.append(InputAction.sprint(player_id, _sprinting(sim, player_id, sample)))
 
 	return actions
+
+
+## Whether to tell the Simulation this player is sprinting, under whichever reading of the
+## sprint key `player.sprint_is_toggle` asks for.
+##
+## **Toggle-versus-hold is an interpretation of a device, so it belongs here**, next to the
+## mouse buffer, and not in the Simulation. What crosses the boundary is the same intent
+## either way — "this player is sprinting" — so the Simulation keeps knowing only the fact
+## the movement code needs, and a replay reproduces either reading identically because what
+## was recorded is the resulting intent and not the keypress.
+##
+## The latch is the one piece of remembered state in this file besides the device buffer,
+## and it is the same category of thing: a reading on its way in, not a fact about the
+## world. **The Simulation stays the authority on what is true** — the latch is sent every
+## tick and never consulted about anything.
+##
+## A latched sprint does **not** survive going down: the latch is cleared whenever the
+## Simulation says this player is not on their feet, so a player comes back at the Nest
+## walking. The alternative — respawning already at a run because of a key pressed before
+## you died — is a control the player did not give.
+func _sprinting(sim: Simulation, player_id: int, sample: DeviceSample) -> bool:
+	if not sim.query_definitions().player_sprint_is_toggle:
+		_sprint_latched = false
+		return sample.sprint_held
+
+	if not sim.query_player_is_alive(player_id):
+		_sprint_latched = false
+	elif sample.sprint_clicked:
+		_sprint_latched = not _sprint_latched
+	return _sprint_latched
 
 
 ## The Gear index of the next component to fit into a slot, -1 to empty it, or **-2** when

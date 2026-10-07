@@ -348,6 +348,101 @@ var _player_pitch: PackedInt64Array = PackedInt64Array()
 var _player_velocity_x: PackedInt64Array = PackedInt64Array()
 var _player_velocity_z: PackedInt64Array = PackedInt64Array()
 
+## How high each player is off the ground, in fixed-point metres, and how fast they are
+## rising or falling, in fixed-point metres per second.
+##
+## **Jumping is Simulation state, not a renderer trick**, for exactly the reason yaw and
+## velocity are: where a player is standing decides what they can reach, what can reach
+## them and where a round leaves from, so a height the camera invented would be a second
+## opinion about the world. Both are hashed and both replay.
+##
+## Building is still flat (DESIGN.md) and there is no collision against anything but the
+## ground, so this is a height above layer 0 and nothing else — a player jumping next to a
+## Smelter passes through where the Smelter's roof would be. That is the honest limit of
+## what #29 shipped, and it is a separate ticket from making movement feel like weight.
+var _player_y: PackedInt64Array = PackedInt64Array()
+var _player_velocity_y: PackedInt64Array = PackedInt64Array()
+
+## Whether each player's jump key has been released since it last launched them.
+##
+## **Hashed, unlike the jump intent itself**, because it is what makes a jump a *press*:
+## `player.jump_repeats_while_held` is false by default, so holding the key through a
+## landing must not launch again, and "has it been let go of" is a fact that outlives the
+## tick. Re-armed by the absence of the intent, which is the same way a `MOVE` throttle
+## stops.
+var _player_jump_armed: PackedInt64Array = PackedInt64Array()
+
+## Whether each player asked to jump this tick.
+##
+## **Per tick and deliberately not hashed**, exactly like the walking throttle: `_walk`
+## consumes it and clears it before the tick ends, so it is zero at every point a hash is
+## taken, and sending no `JUMP` is how a player lets go of the key.
+var _player_jump_held: PackedInt64Array = PackedInt64Array()
+
+## The tick each player last landed on (-1 for never) and how fast they were falling when
+## they did, in fixed-point metres per second.
+##
+## The *tick* rather than a countdown, which is the arrangement `_player_life_since_tick`
+## already uses and for the same reasons: how long ago a landing was is arithmetic over two
+## numbers that are hashed anyway, there is no second timer to keep in step, and a landing
+## that happened this tick is zero ticks old. Two things read it — the settle that takes
+## some of a player's ground acceleration away while they gather themselves, and the camera
+## dip, which is scaled by the impact speed so that stepping off a kerb barely registers.
+var _player_landing_tick: PackedInt64Array = PackedInt64Array()
+var _player_landing_speed: PackedInt64Array = PackedInt64Array()
+
+## How far into a sprint each player is, counted in ticks of
+## `player.sprint_ramp_seconds`.
+##
+## **This is the whole of "sprint is a gait change rather than a multiplier".** One number
+## ramps the speed a player is reaching for, widens the field of view and deepens the bob,
+## so what a player feels when they start running is a change of gear rather than a figure
+## going up. Ticks rather than a fixed-point fraction, for the reason the Survey View lift
+## is counted in ticks: the ramp then takes exactly the tuned number of ticks with nothing
+## rounding away at either end, and one caught halfway resumes from where it got to.
+var _player_sprint_ticks: PackedInt64Array = PackedInt64Array()
+
+## How far through their current stride each player is, in fixed-point turns in
+## [0, Fixed.TURN).
+##
+## **Driven by distance travelled, not by a clock**, which is what makes the bob a *step*
+## rather than a wobble: a player walking slowly bobs slowly, a sprinting one bobs fast, and
+## a player standing still does not bob at all — none of which falls out of a timer. One
+## stride is `player.bob_stride_metres` of ground covered.
+##
+## In the Simulation rather than in the renderer, which #29 left as an open choice. The
+## argument for here is the one Survey View's transition already makes: it is state (a
+## player caught mid-stride is in a different state from one caught on the beat), the
+## Simulation already owns the camera, and putting it here is what makes the bob's size
+## hot-reloadable tuning and makes it replay exactly. It is hashed. **What it is not is
+## part of the aim**: the bob comes out of its own `query_player_view_*` projections, which
+## only the renderer reads, so a shot still leaves from eye height and a hologram still
+## snaps to the tile the player is pointing at rather than to the one their footfall
+## nudged it onto.
+var _player_step_phase: PackedInt64Array = PackedInt64Array()
+
+## Whether each player has the Build Gun in their hands rather than their weapon, and the
+## tick they last swapped on (-1 for never).
+##
+## **This is not a mode in the gating sense, and nothing in the Simulation reads it.** Not
+## one refusal consults it, not `_fight`, not `_apply_build_machine` — grep for it and the
+## only callers are the three queries below. Building is never gated (GLOSSARY.md,
+## DESIGN.md: the Build Gun is available at all times, including mid-Wave) and #29 did not
+## change that; what this flag decides is which Input Action `game/player_controller.gd`
+## produces from a left click, and which object `WorldView` draws in front of the camera.
+## Switching is instant, unlimited, and works mid-Wave and mid-burst.
+##
+## It is Simulation state anyway, for three reasons that have nothing to do with
+## permission: what somebody is holding is a fact about them in the same way their wallet
+## is, a recorded replay has to reproduce a swap or the clicks after it mean something
+## different, and in co-op what the other three are holding is worth drawing.
+##
+## The tick rather than a countdown, the arrangement `_player_life_since_tick` and
+## `_player_landing_tick` both use: how far through the holster a swap is, is arithmetic
+## over two numbers that are hashed anyway.
+var _player_build_mode: PackedInt64Array = PackedInt64Array()
+var _player_mode_since_tick: PackedInt64Array = PackedInt64Array()
+
 ## The throttle each player asked for this tick, in their own frame: forward and
 ## strafe, each in [-ONE, ONE].
 ##
@@ -1263,6 +1358,34 @@ func _init(
 	_player_velocity_z.resize(players)
 	_player_velocity_x.fill(0)
 	_player_velocity_z.fill(0)
+	_player_y.resize(players)
+	_player_velocity_y.resize(players)
+	_player_y.fill(0)
+	_player_velocity_y.fill(0)
+	_player_jump_armed.resize(players)
+	_player_jump_held.resize(players)
+	# Armed, so the first press of the Run jumps. A player who has never touched the key
+	# has certainly let go of it.
+	_player_jump_armed.fill(1)
+	_player_jump_held.fill(0)
+	_player_landing_tick.resize(players)
+	_player_landing_speed.resize(players)
+	# Never landed, which is different from landed on tick 0: a Run must not open with a
+	# camera dip nobody earned.
+	_player_landing_tick.fill(-1)
+	_player_landing_speed.fill(0)
+	_player_sprint_ticks.resize(players)
+	_player_sprint_ticks.fill(0)
+	_player_step_phase.resize(players)
+	_player_step_phase.fill(0)
+	_player_build_mode.resize(players)
+	# A Run opens with the Build Gun out, because the first thing a Run asks of a player is
+	# a Factory. The weapon is one keypress away and nothing is gated either way.
+	_player_build_mode.fill(1)
+	_player_mode_since_tick.resize(players)
+	# Never swapped, which is different from swapped on tick 0: a Run must not open with a
+	# holster animation playing for something nobody put away.
+	_player_mode_since_tick.fill(-1)
 	_player_intent_forward.resize(players)
 	_player_intent_strafe.resize(players)
 	_player_intent_forward.fill(0)
@@ -1442,6 +1565,10 @@ func _apply(action: InputAction) -> void:
 			_apply_survey_view(action)
 		InputAction.Kind.SPRINT:
 			_player_sprint_held[action.player_id] = 1 if action.sprint_is_held() else 0
+		InputAction.Kind.JUMP:
+			_apply_jump(action)
+		InputAction.Kind.SET_BUILD_MODE:
+			_apply_set_build_mode(action)
 		InputAction.Kind.SELECT_MACHINE:
 			_apply_select_machine(action)
 		InputAction.Kind.ROTATE_BUILD:
@@ -1517,6 +1644,36 @@ func _apply_look(action: InputAction) -> void:
 	)
 
 
+## Records that a player is holding the jump key. Leaving the ground is `_walk`'s job, one
+## tick at a time, so two intents arriving in one tick cannot launch a player twice.
+func _apply_jump(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	_player_jump_held[action.player_id] = 1 if action.jump_is_held() else 0
+
+
+## Puts the Build Gun or the weapon in a player's hands.
+##
+## **Never refused and never gated**, including while a swap is already in progress, while
+## a Wave is on the Map and while the trigger is down — the act is instant and the holster
+## is only how long the model takes to move. A player who is already holding what they asked
+## for is a no-op whose hash does not move, so leaning on the key does not restart the
+## animation a dozen times a second.
+##
+## Not even `_player_can_act` is consulted, which is deliberate. Being Downed is a refusal
+## for every intent that changes the world; what is in a player's hands changes nothing
+## about the world, and a dead player's holster is drawn by the same query that draws a
+## living one's.
+func _apply_set_build_mode(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	var wanted: int = 1 if action.build_mode_is_wanted() else 0
+	if _player_build_mode[action.player_id] == wanted:
+		return
+	_player_build_mode[action.player_id] = wanted
+	_player_mode_since_tick[action.player_id] = _tick
+
+
 ## Records whether a player is holding Survey View. Moving the camera is `_survey`'s
 ## job, one tick at a time, so holding the key for n ticks always buys n ticks of lift
 ## however many times the intent arrives.
@@ -1537,18 +1694,29 @@ func _look_turns(pixels: int) -> int:
 
 # ── Walking ───────────────────────────────────────────────────────────────────
 
-## Moves every player one tick towards the throttle they asked for.
+## Moves every player one tick towards the throttle they asked for, and one tick further
+## through whatever vertical arc they are on.
 ##
-## Three steps, in this order: turn the throttle into a world-space velocity the
-## player wants, move the velocity they *have* towards it by one tick of
-## acceleration, then integrate position. Acceleration rather than an instant change
-## is what gives a 1.8 m person weight, and the same figure decelerates them, so
-## letting go of the keys is a stop rather than a freeze.
+## Four steps, in this order: advance the sprint ramp, resolve the jump and gravity, turn
+## the throttle into a world-space velocity the player wants, then move the velocity they
+## *have* towards it by one tick of whichever acceleration applies and integrate position.
+##
+## **The accelerations are plural, and that is the point of #29.** A single figure for
+## starting and stopping is the commonest cause of a first-person game feeling weightless,
+## because a body leans into a start and slides into a stop. There are four of them —
+## ground start, ground stop, air start, air stop — plus a fifth case, the landing settle,
+## which takes a tuned fraction of the ground figures away for a tuned moment after a
+## player touches down, so that arriving is something that happens over time rather than
+## on one frame.
 func _walk() -> void:
 	var speed: int = _definitions.player_walk_speed
-	var acceleration: int = Fixed.div(
-		_definitions.player_walk_acceleration, Fixed.from_int(TICKS_PER_SECOND)
+	var gravity_per_tick: int = Fixed.div(
+		_definitions.player_gravity, Fixed.from_int(TICKS_PER_SECOND)
 	)
+	var impulse: int = _jump_impulse()
+	var repeats: bool = _definitions.player_jump_repeats_while_held
+	var sprint_span: int = _sprint_ramp_ticks()
+	var settle_span: int = _seconds_in_ticks(_definitions.player_land_settle_seconds)
 
 	for player_id: int in range(query_player_count()):
 		# A Downed player is immobilised (GLOSSARY.md) and a dead one is not on the Map at
@@ -1565,27 +1733,86 @@ func _walk() -> void:
 		):
 			_player_velocity_x[player_id] = 0
 			_player_velocity_z[player_id] = 0
+			_player_velocity_y[player_id] = 0
+			_player_y[player_id] = 0
+			_player_sprint_ticks[player_id] = 0
 			_player_intent_forward[player_id] = 0
 			_player_intent_strafe[player_id] = 0
+			_player_jump_held[player_id] = 0
 			continue
 
-		# Sprinting scales the speed a player is reaching for, not their acceleration, so
-		# a sprint ramps up over the same time a walk does rather than snapping.
-		var player_speed: int = speed
-		if _player_sprint_held[player_id] != 0:
-			player_speed = Fixed.mul(speed, _definitions.player_sprint_multiplier)
+		# The sprint ramp, advanced before anything reads it, so holding the key for n
+		# ticks always buys n ticks of gait however many times the intent arrives.
+		var sprinting: bool = _player_sprint_held[player_id] != 0
+		_player_sprint_ticks[player_id] = clampi(
+			_player_sprint_ticks[player_id] + (1 if sprinting else -1), 0, sprint_span
+		)
+		var sprint_blend: int = _sprint_blend(player_id)
+
+		# ── Up and down ──
+		#
+		# Resolved before the horizontal half, because whether a player is on the ground
+		# is what decides which acceleration the horizontal half uses, and a player who
+		# leaves the ground this tick is in the air for this tick's horizontal step.
+		var wants_jump: bool = _player_jump_held[player_id] != 0
+		var grounded: bool = (
+			_player_y[player_id] == 0 and _player_velocity_y[player_id] == 0
+		)
+		if grounded and wants_jump and (repeats or _player_jump_armed[player_id] != 0):
+			_player_velocity_y[player_id] = impulse
+			_player_jump_armed[player_id] = 0
+			grounded = false
+		# Re-armed by the absence of the intent, which is what makes a jump a press: the
+		# key has to come up before it can go down again.
+		if not wants_jump:
+			_player_jump_armed[player_id] = 1
+
+		if not grounded:
+			_player_velocity_y[player_id] -= gravity_per_tick
+			_player_y[player_id] += Fixed.div(
+				_player_velocity_y[player_id], Fixed.from_int(TICKS_PER_SECOND)
+			)
+			if _player_y[player_id] <= 0:
+				_player_y[player_id] = 0
+				# The tick and the impact speed, for the settle and for the camera dip.
+				# Recorded only on the way *down*, so a jump that launched and landed
+				# inside one tick does not claim to have arrived from nowhere.
+				if _player_velocity_y[player_id] < 0:
+					_player_landing_tick[player_id] = _tick
+					_player_landing_speed[player_id] = -_player_velocity_y[player_id]
+				_player_velocity_y[player_id] = 0
+				grounded = true
+
+		# ── Along the ground ──
+		#
+		# Sprinting scales the speed a player is reaching for rather than their
+		# acceleration, and it does it through the *ramp* rather than all at once, so
+		# changing gear takes `player.sprint_ramp_seconds` and the speed, the field of
+		# view and the bob all arrive together.
+		var player_speed: int = Fixed.mul(
+			speed,
+			Fixed.lerp_fixed(
+				Fixed.ONE, _definitions.player_sprint_multiplier, sprint_blend
+			)
+		)
 		var wanted: FixedVec2 = _wanted_velocity(player_id, player_speed)
 
 		var gap_x: int = wanted.x - _player_velocity_x[player_id]
 		var gap_z: int = wanted.z - _player_velocity_z[player_id]
 		var gap: int = _length(gap_x, gap_z)
+		var acceleration: int = _horizontal_acceleration(
+			player_id,
+			grounded,
+			_player_intent_forward[player_id] != 0 or _player_intent_strafe[player_id] != 0,
+			settle_span
+		)
 
 		if gap <= acceleration:
 			# Close enough to land on it exactly. Without this a player would jitter
 			# around full speed forever, one acceleration step either side of it.
 			_player_velocity_x[player_id] = wanted.x
 			_player_velocity_z[player_id] = wanted.z
-		else:
+		elif acceleration > 0:
 			_player_velocity_x[player_id] += Fixed.div(Fixed.mul(gap_x, acceleration), gap)
 			_player_velocity_z[player_id] += Fixed.div(Fixed.mul(gap_z, acceleration), gap)
 
@@ -1595,11 +1822,130 @@ func _walk() -> void:
 		_player_z[player_id] += Fixed.div(
 			_player_velocity_z[player_id], Fixed.from_int(TICKS_PER_SECOND)
 		)
+		_advance_step_phase(player_id)
 
 		# Consumed. A throttle has to be re-asserted every tick, so standing still is
-		# the absence of an intent rather than an intent of its own.
+		# the absence of an intent rather than an intent of its own — and the same is true
+		# of the jump key, whose absence is what re-arms it.
 		_player_intent_forward[player_id] = 0
 		_player_intent_strafe[player_id] = 0
+		_player_jump_held[player_id] = 0
+
+
+## Advances a player's stride by the ground they covered this tick.
+##
+## A player in the air covers no stride, because they are not taking steps. The phase
+## wraps, so it stays bounded over a forty-hour Run rather than growing until it loses
+## precision — the same reason yaw wraps.
+func _advance_step_phase(player_id: int) -> void:
+	if _player_y[player_id] != 0 or _player_velocity_y[player_id] != 0:
+		return
+	var travelled: int = Fixed.div(
+		_length(_player_velocity_x[player_id], _player_velocity_z[player_id]),
+		Fixed.from_int(TICKS_PER_SECOND)
+	)
+	if travelled == 0:
+		return
+	_player_step_phase[player_id] = Fixed.wrap_turns(
+		_player_step_phase[player_id] + Fixed.div(travelled, _definitions.player_bob_stride)
+	)
+
+
+## The upward velocity a standing jump leaves the ground at, in fixed-point metres per
+## second: the one that reaches `player.jump_height_metres` under
+## `player.gravity_metres_per_second_squared`.
+##
+## Derived rather than tuned, because a tuner thinks in how high they clear. `v = √(2gh)`,
+## with the one `Fixed.sqrt` floored like every other lossy operation — so a jump arrives a
+## hair under its nominal apex, which is also true of the once-a-tick integration below it
+## and is why `test_movement_weight` asserts the apex within a tolerance rather than exactly.
+func _jump_impulse() -> int:
+	return Fixed.sqrt(
+		Fixed.mul(
+			Fixed.from_int(2),
+			Fixed.mul(_definitions.player_gravity, _definitions.player_jump_height)
+		)
+	)
+
+
+## How hard a player changes horizontal velocity this tick, in fixed-point metres per
+## second — one tick's worth, not a rate.
+##
+## **Four figures and a fifth case, and every one of them is a feel number in
+## `content/tuning.toml`.** Which applies is a question about two facts: whether the player
+## is on the ground, and whether they are asking to go somewhere.
+##
+## - **Asking, on the ground** — `walk_acceleration`. A body leaning into a start.
+## - **Not asking, on the ground** — `walk_deceleration`, deliberately lower, so letting go
+##   is a slide and not a freeze. This one number is the single loudest difference between
+##   feeling like a person and feeling like a camera.
+## - **In the air** — `air_acceleration` and `air_deceleration`, both far lower, which is
+##   this project's air-control decision written as two numbers rather than as a fraction.
+##   See the comment on the keys.
+## - **Just landed** — whichever ground figure applies, scaled by
+##   `land_settle_acceleration_percent` for `land_settle_seconds`, so a landing settles
+##   rather than restoring full authority on the first frame after it.
+func _horizontal_acceleration(
+	player_id: int, grounded: bool, asking: bool, settle_span: int
+) -> int:
+	var rate: int = 0
+	if grounded:
+		rate = (
+			_definitions.player_walk_acceleration
+			if asking
+			else _definitions.player_walk_deceleration
+		)
+		if settle_span > 0 and _ticks_since_landing(player_id) < settle_span:
+			# One floor applied once, to the result — there is no accumulator here, so
+			# unlike the Power credit there is nothing for it to drift.
+			rate = Fixed.div(
+				Fixed.mul(
+					rate, Fixed.from_int(_definitions.player_land_settle_acceleration_percent)
+				),
+				Fixed.from_int(100)
+			)
+	else:
+		rate = (
+			_definitions.player_air_acceleration
+			if asking
+			else _definitions.player_air_deceleration
+		)
+	return Fixed.div(rate, Fixed.from_int(TICKS_PER_SECOND))
+
+
+## How many ticks ago a player landed, or a number larger than any window that asks —
+## because a player who has never landed is not settling and is not dipping.
+func _ticks_since_landing(player_id: int) -> int:
+	if _player_landing_tick[player_id] < 0:
+		return 0x3FFFFFFF
+	return _tick - _player_landing_tick[player_id]
+
+
+## A duration in fixed-point seconds as a whole number of ticks, rounded rather than
+## floored — a duration is a feel number, so 0.18 s should mean the 11 ticks a tuner
+## intends rather than the 10 flooring would give. Zero stays zero, which is how every
+## window in this section is switched off.
+func _seconds_in_ticks(seconds: int) -> int:
+	if seconds <= 0:
+		return 0
+	return maxi(
+		Fixed.round_to_int(Fixed.mul(seconds, Fixed.from_int(TICKS_PER_SECOND))), 1
+	)
+
+
+## How many ticks the sprint ramp takes. At least one, because a zero-tick ramp is a
+## divide by nothing — `sprint_ramp_seconds = 0` therefore means "one tick", which is the
+## snap it used to be.
+func _sprint_ramp_ticks() -> int:
+	return maxi(_seconds_in_ticks(_definitions.player_sprint_ramp_seconds), 1)
+
+
+## How far into the sprint gait a player is, eased, in [0, Fixed.ONE]. The one number that
+## ramps the speed, widens the field of view and deepens the bob.
+func _sprint_blend(player_id: int) -> int:
+	var span: int = _sprint_ramp_ticks()
+	var progress: int = clampi(_player_sprint_ticks[player_id], 0, span)
+	return Fixed.smoothstep_fixed(Fixed.div(Fixed.from_int(progress), Fixed.from_int(span)))
 
 
 ## The world-space velocity a player's throttle asks for, in fixed-point metres per
@@ -3794,7 +4140,12 @@ func _shot_target(
 ) -> Vector2i:
 	var from_x: int = _player_x[player_id]
 	var from_z: int = _player_z[player_id]
-	var eye: int = _definitions.player_eye_height
+	# Eye height above the ground the player is *standing on*, plus however far off it they
+	# currently are. A jumping player really is shooting downwards at the swarm, and an
+	# origin that ignored the jump would have made the one new way to change your elevation
+	# a lie about where a round comes from. Survey View is still excluded, because the
+	# camera is not where a shot leaves from (see the Gear section of CLAUDE.md).
+	var eye: int = _definitions.player_eye_height + _player_y[player_id]
 
 	var best_what: int = HIT_NOTHING
 	var best_which: int = -1
@@ -6632,6 +6983,21 @@ func hash() -> int:
 	hasher.feed_ints(_player_pitch)
 	hasher.feed_ints(_player_velocity_x)
 	hasher.feed_ints(_player_velocity_z)
+	# Where a player is vertically, and the arc they are on. A player in the air is in a
+	# different state from one standing on the same tile, so a jump that did not reach the
+	# hash would be a jump the determinism harness could not see diverge.
+	hasher.feed_ints(_player_y)
+	hasher.feed_ints(_player_velocity_y)
+	hasher.feed_ints(_player_jump_armed)
+	hasher.feed_ints(_player_landing_tick)
+	hasher.feed_ints(_player_landing_speed)
+	hasher.feed_ints(_player_sprint_ticks)
+	hasher.feed_ints(_player_step_phase)
+	# What is in each player's hands. Hashed because a recorded replay has to reproduce a
+	# swap — the clicks after one mean something different otherwise — and not because
+	# anything consults it for permission. See `_player_build_mode`.
+	hasher.feed_ints(_player_build_mode)
+	hasher.feed_ints(_player_mode_since_tick)
 	hasher.feed_ints(_player_survey_held)
 	hasher.feed_ints(_player_sprint_held)
 	hasher.feed_ints(_player_survey_ticks)
@@ -6922,6 +7288,258 @@ func query_player_velocity(player_id: int) -> FixedVec2:
 
 
 ## How much of an Item a player is carrying. 0 for one they have none of.
+## How high a player is off the ground, in fixed-point metres. Zero with both feet down.
+func query_player_height_metres(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_y[player_id]
+
+
+## How fast a player is rising (positive) or falling (negative), in fixed-point metres per
+## second.
+func query_player_vertical_velocity(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_velocity_y[player_id]
+
+
+## Whether a player has both feet on the ground. The single fact the four accelerations and
+## the stride both branch on, so nothing infers it a second way.
+func query_player_is_grounded(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	return _player_y[player_id] == 0 and _player_velocity_y[player_id] == 0
+
+
+## How far into the sprint gait a player is, in [0, Fixed.ONE]. For a HUD, and for the
+## renderer's own sway — the speed, the field of view and the bob already have it.
+func query_player_sprint_blend(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _sprint_blend(player_id)
+
+
+# ── What the camera does about all of that ────────────────────────────────────
+#
+# **Five projections the renderer reads and the Simulation never does.** That separation is
+# the load-bearing part: `query_player_camera_height_metres` and
+# `query_player_camera_pitch_turns` are the *aim* — a shot leaves along them and a
+# hologram snaps to the tile they point at — and these are the cosmetic response laid on
+# top. Folding a bob into the aim would mean a footfall moved where a round went and which
+# tile a Build Gun was hovering, which is a bug wearing polish as a disguise.
+#
+# They are derived from state the Simulation already hashes (velocity, the step phase, the
+# landing tick, the sprint ramp), so all of it replays exactly and all of its sizes are
+# hot-reloadable tuning. Every one of them returns 0 when its tuning key is 0.
+
+## How far a player's view has risen or fallen within their current stride, in fixed-point
+## metres. Positive is up.
+##
+## Two dips per stride, because a walk falls on each foot. Scaled by how fast the player is
+## actually moving and by how far into the sprint gait they are, so it fades in and out with
+## the gait rather than switching on — and a player in mid-air has no stride at all.
+func query_player_view_bob_vertical_metres(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return Fixed.mul(
+		Fixed.mul(_definitions.player_bob_vertical, _bob_strength(player_id)),
+		Fixed.sin_turns(_player_step_phase[player_id] * 2)
+	)
+
+
+## How far a player's view has swung side to side within their current stride, in
+## fixed-point metres. Positive is to their right, and it runs at *half* the vertical
+## frequency because a walk sways once per pair of steps.
+func query_player_view_bob_lateral_metres(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return Fixed.mul(
+		Fixed.mul(_definitions.player_bob_lateral, _bob_strength(player_id)),
+		Fixed.sin_turns(_player_step_phase[player_id])
+	)
+
+
+## How far a landing has pushed a player's view down and not yet let it back up, in
+## fixed-point metres. A positive magnitude: the renderer subtracts it.
+##
+## **Scaled by how hard they actually hit**, against
+## `player.land_dip_reference_speed_metres_per_second`, so stepping off a kerb barely
+## registers and a long drop does. It eases out with `Fixed.smoothstep_fixed` over
+## `player.land_dip_seconds`, which is what makes a landing *settle* rather than snap back.
+func query_player_view_dip_metres(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	var span: int = _seconds_in_ticks(_definitions.player_land_dip_seconds)
+	if span == 0 or _definitions.player_land_dip_metres == 0:
+		return 0
+	var since: int = _ticks_since_landing(player_id)
+	if since >= span:
+		return 0
+	var strength: int = Fixed.clamp_fixed(
+		Fixed.div(
+			_player_landing_speed[player_id], _definitions.player_land_dip_reference_speed
+		),
+		0,
+		Fixed.ONE
+	)
+	var left: int = Fixed.ONE - Fixed.smoothstep_fixed(
+		Fixed.div(Fixed.from_int(since), Fixed.from_int(span))
+	)
+	return Fixed.mul(Fixed.mul(_definitions.player_land_dip_metres, strength), left)
+
+
+## How far a player's view is banked, in fixed-point turns, from the sideways travel they
+## are carrying. Positive banks to their right.
+##
+## Lean under acceleration is the third of the three camera cues and the cheapest: it needs
+## no state at all, because the sideways component of a velocity that is already hashed is
+## exactly the quantity a body leans against.
+func query_player_view_roll_turns(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _degrees_to_turns(
+		Fixed.mul(_definitions.player_lean_roll_degrees, _lateral_speed(player_id))
+	)
+
+
+## How far a player's view has pitched from leaning into their own forward travel, in
+## fixed-point turns. Negative is nose-down, which is what running forward does.
+##
+## **Added by the renderer and not by `query_player_camera_pitch_turns`**, for the reason
+## the bob is separate: this must not move where a round goes. Contrast the recoil kick,
+## which is *in* that query precisely because it does.
+func query_player_view_lean_pitch_turns(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return -_degrees_to_turns(
+		Fixed.mul(_definitions.player_lean_pitch_degrees, _forward_speed(player_id))
+	)
+
+
+## The camera's field of view in fixed-point degrees: the tuned figure, widened by the
+## whole of `player.sprint_field_of_view_add_degrees` as the sprint gait comes in.
+func query_player_field_of_view_degrees(player_id: int) -> int:
+	if not _is_player(player_id):
+		return _definitions.player_field_of_view_degrees
+	return _definitions.player_field_of_view_degrees + Fixed.mul(
+		_definitions.player_sprint_field_of_view_add_degrees, _sprint_blend(player_id)
+	)
+
+
+## How much of the bob applies right now, in [0, Fixed.ONE]: zero standing still, zero in
+## the air, and rising with speed up to a little over one at a full sprint.
+##
+## Speed-driven rather than clamped at one, because `player.bob_sprint_multiplier` is how a
+## sprint bobs harder than a walk — the third of the three gait cues.
+func _bob_strength(player_id: int) -> int:
+	if _player_y[player_id] != 0 or _player_velocity_y[player_id] != 0:
+		return 0
+	var speed: int = _length(_player_velocity_x[player_id], _player_velocity_z[player_id])
+	var fraction: int = Fixed.clamp_fixed(
+		Fixed.div(speed, _definitions.player_walk_speed), 0, Fixed.ONE
+	)
+	return Fixed.mul(
+		fraction,
+		Fixed.lerp_fixed(
+			Fixed.ONE, _definitions.player_bob_sprint_multiplier, _sprint_blend(player_id)
+		)
+	)
+
+
+## How fast a player is travelling to their own right, in fixed-point metres per second.
+## Negative is to their left. The player's frame, from the yaw the Simulation is holding —
+## the same basis `_wanted_velocity` builds a throttle in, so there is one convention.
+func _lateral_speed(player_id: int) -> int:
+	var yaw: int = _player_yaw[player_id]
+	return (
+		Fixed.mul(_player_velocity_x[player_id], Fixed.cos_turns(yaw))
+		- Fixed.mul(_player_velocity_z[player_id], Fixed.sin_turns(yaw))
+	)
+
+
+## How fast a player is travelling forwards, in fixed-point metres per second. Negative is
+## backwards.
+func _forward_speed(player_id: int) -> int:
+	var yaw: int = _player_yaw[player_id]
+	return (
+		Fixed.mul(_player_velocity_x[player_id], -Fixed.sin_turns(yaw))
+		+ Fixed.mul(_player_velocity_z[player_id], -Fixed.cos_turns(yaw))
+	)
+
+
+## An angle in fixed-point degrees as fixed-point turns. Degrees in the tuning file because
+## that is how a human reasons about an angle; turns everywhere else because radians need
+## PI and PI is a float.
+func _degrees_to_turns(degrees: int) -> int:
+	return Fixed.div(degrees, Fixed.from_int(DEGREES_PER_TURN))
+
+
+# ── What is in a player's hands ───────────────────────────────────────────────
+
+## Whether a player has the Build Gun out rather than their weapon.
+##
+## **Read by `game/player_controller.gd` to decide what a left click means, and by nothing
+## in the Simulation.** Building is never gated and neither is firing; this is input
+## routing and a holster animation, not a restriction. See `_player_build_mode`.
+func query_player_is_in_build_mode(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	return _player_build_mode[player_id] != 0
+
+
+## How far the thing in a player's hands is out of frame, in [0, Fixed.ONE] — 0 at rest, 1
+## at the midpoint of a swap.
+##
+## One number for both halves of the swap, because a holster is symmetric: the old object
+## goes down over the first half and the new one comes up over the second, and a renderer
+## only needs to know how far out and which object (`query_player_held_is_build_gun`). Eased
+## with `Fixed.smoothstep_fixed`, so a swap starts and finishes gently rather than
+## snatching.
+##
+## **`game/` does not read this.** It landed before #28's view model did, and #28 brought
+## `holster` and `draw` as first-class animation roles timed off the clip lengths of the
+## model actually on screen — so `WorldView` hands the Build Gun's id to `WeaponViewmodel`
+## and the shape of the swap is the animator's. This stays because it is the Simulation's own
+## authoritative answer, hashable state behind it, pinned by `test_movement_weight.gd` and
+## the only answer available to anything that is not that renderer — a co-op client's HUD, a
+## replay viewer, a second camera.
+func query_player_holster_blend(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	var span: int = _seconds_in_ticks(_definitions.player_holster_seconds)
+	if span == 0 or _player_mode_since_tick[player_id] < 0:
+		return 0
+	var since: int = _tick - _player_mode_since_tick[player_id]
+	if since < 0 or since >= span:
+		return 0
+	var through: int = Fixed.div(Fixed.from_int(since), Fixed.from_int(span))
+	# A triangle: up to full at the midpoint, back down to nothing at the end.
+	return Fixed.smoothstep_fixed(Fixed.ONE - absi(Fixed.mul(Fixed.from_int(2), through) - Fixed.ONE))
+
+
+## Which object is actually *in frame* right now — which is not the same question as which
+## mode the player is in, for the first half of a swap.
+##
+## The mode changes on the tick the key is pressed, because nothing is gated; the object in
+## frame is still the old one until the swap reaches its midpoint and the new one starts
+## coming up, which is what makes a holster read as putting one thing away and drawing
+## another rather than as one thing morphing.
+##
+## **`game/` does not read this either** — see `query_player_holster_blend` for why, and for
+## why it is still here.
+func query_player_held_is_build_gun(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	var wanted: bool = _player_build_mode[player_id] != 0
+	var span: int = _seconds_in_ticks(_definitions.player_holster_seconds)
+	if span == 0 or _player_mode_since_tick[player_id] < 0:
+		return wanted
+	var since: int = _tick - _player_mode_since_tick[player_id]
+	if since < 0 or since * 2 >= span:
+		return wanted
+	return not wanted
+
+
 func query_player_item(player_id: int, item_id: String) -> int:
 	if not _is_player(player_id):
 		return 0
@@ -6996,8 +7614,13 @@ func query_player_survey_blend(player_id: int) -> int:
 func query_player_camera_height_metres(player_id: int) -> int:
 	if not _is_player(player_id):
 		return 0
+	# The jump is in here and the bob is not, and that is the whole of the split: how high
+	# a player is standing is a fact about the world that the aim must honour, where a bob
+	# is a cosmetic response the renderer lays on top. See `query_player_view_bob_*`.
 	return Fixed.lerp_fixed(
-		_definitions.player_eye_height, _definitions.survey_height, _survey_blend(player_id)
+		_definitions.player_eye_height + _player_y[player_id],
+		_definitions.survey_height,
+		_survey_blend(player_id)
 	)
 
 

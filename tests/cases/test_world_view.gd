@@ -1447,17 +1447,23 @@ func test_the_hud_names_a_damaged_machine_and_counts_damaged_walls() -> void:
 
 
 # ── The weapon in frame ───────────────────────────────────────────────────────
-# A placeholder, and deliberately so — see the note above `WEAPON_BODY_DIRECTORY` in
-# `game/world_view.gd`. What is worth asserting is that every number it moves by comes out
-# of the Simulation, because that is the property the purchased arms will inherit when
-# somebody wires them in: the model follows the Run, never the other way round.
+# The model itself is `game/weapon_viewmodel.gd` and `tests/cases/test_weapon_viewmodel.gd`
+# is where its clips and its model swaps are asserted. What is worth asserting here is that
+# every number `WorldView` moves it by comes out of the Simulation: the model follows the
+# Run, never the other way round.
 
 func test_the_weapon_is_in_frame_and_follows_the_run() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 
-	view.sync(sim)
-	assert_true(view.weapon_is_visible(), "a Run opens holding `player.starting_weapon`")
+	# A Run opens with the Build Gun out, so the weapon has to be asked for — and the swap
+	# has to finish, because the model in frame is still the old one until it has been put
+	# away. The holster and the draw are clips, so wait for the carriage rather than for a
+	# tick count.
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_true(_settled(sim, view), "the holster and the draw finish")
+	assert_true(view.weapon_is_visible(), "the weapon is drawn once the holster is done")
+	assert_eq(view.weapon_model_id(), sim.query_player_weapon(0), "and it is the weapon")
 	var standing: Vector3 = view.weapon_offset()
 
 	# Walking sways it, and the sway is read off `query_player_velocity` rather than off a
@@ -1479,10 +1485,60 @@ func test_the_weapon_drops_out_of_frame_while_the_player_is_down() -> void:
 	# A weapon still in frame while bleeding out reads as a bug rather than as a state.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
-	view.sync(sim)
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_true(_settled(sim, view), "the weapon is out")
 	assert_true(view.weapon_is_visible())
 	assert_true(sim.query_player_is_alive(0), "and the player is on their feet to start with")
 	view.free()
+
+
+func test_the_build_gun_and_the_weapon_swap_places_rather_than_popping() -> void:
+	# The holster, which is what makes left mouse able to place *and* fire: one object goes
+	# down, the other comes up, and the model in frame is the one *going away* for exactly
+	# as long as putting it away takes.
+	#
+	# **It goes through the same seam a weapon change does.** `WorldView._sync_weapon` reads
+	# `query_player_is_in_build_mode` and hands `WeaponViewmodel` the Build Gun's id; the
+	# `holster`, the model swap and the `draw` are `WeaponAnimator`'s, which is why the waits
+	# here are "until it settles" rather than a count of ticks — see
+	# `tests/cases/test_weapon_viewmodel.gd`.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+
+	view.sync(sim)
+	assert_true(view.weapon_is_visible(), "a Run opens with something in hand")
+	assert_eq(
+		view.weapon_model_id(),
+		WorldView.BUILD_GUN_HELD_ID,
+		"and it is the Build Gun, because a Run opens in build mode"
+	)
+	assert_true(_settled(sim, view), "the opening draw finishes")
+
+	# The tick the key goes down the mode has already changed and the model has not: the
+	# Build Gun is the thing being put away, and you cannot holster a thing you have already
+	# swapped out.
+	sim.step([InputAction.set_build_mode(0, false)])
+	view.sync(sim)
+	assert_false(sim.query_player_is_in_build_mode(0), "the mode flips instantly")
+	assert_eq(view.weapon_clip_role(), WeaponAnimator.HOLSTER, "and the Build Gun goes down")
+	assert_eq(view.weapon_model_id(), WorldView.BUILD_GUN_HELD_ID, "still the thing going away")
+
+	# Then they have changed over, and the weapon is what came up.
+	assert_true(_settled(sim, view), "the swap finishes")
+	assert_eq(view.weapon_model_id(), sim.query_player_weapon(0), "and the weapon is drawn")
+	view.free()
+
+
+## Steps until the thing in frame is being carried rather than drawn or stowed, and reports
+## whether it got there. Bounded, because a test that hangs is worse than one that fails.
+func _settled(sim: Simulation, view: WorldView) -> bool:
+	for tick: int in range(600):
+		sim.step([])
+		view.sync(sim)
+		var role: String = view.weapon_clip_role()
+		if role == WeaponAnimator.IDLE or role == WeaponAnimator.WALK:
+			return true
+	return false
 
 
 func test_the_weapon_does_not_grow_the_scene_tree_as_the_run_goes_on() -> void:
@@ -1493,7 +1549,11 @@ func test_the_weapon_does_not_grow_the_scene_tree_as_the_run_goes_on() -> void:
 	view.sync(sim)
 	var before: int = _descendants(view)
 	for tick: int in range(120):
-		sim.step([InputAction.fire(0)])
+		# Swapping hands every other tick too, which is the thing most likely to build a
+		# node per swap if somebody ever writes it that way.
+		sim.step([
+			InputAction.fire(0), InputAction.set_build_mode(0, tick % 2 == 0)
+		])
 		view.sync(sim)
 	assert_eq(_descendants(view), before, "a hundred and twenty swings add not one node")
 	view.free()

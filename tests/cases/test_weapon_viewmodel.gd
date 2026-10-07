@@ -302,7 +302,10 @@ func test_the_weapon_directory_is_outside_the_shipping_tree() -> void:
 func test_a_clone_with_no_converted_models_still_puts_a_weapon_in_frame() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
-	view.sync(sim)
+	# A Run opens with the Build Gun in hand (#29), so the weapon has to be asked for and
+	# the swap has to finish before the weapon is the model in frame.
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_true(_settle(sim, view), "the weapon is out")
 
 	if view.weapon_has_model():
 		# This machine has the purchased packs converted. The claim this test makes
@@ -354,8 +357,11 @@ func test_a_weapon_change_in_a_real_run_holsters_and_draws() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	var opening: String = sim.query_player_weapon(0)
-	view.sync(sim)
-	assert_true(_settle(sim, view), "the Run's opening draw finishes")
+	# Out of build mode first: a Run opens holding the Build Gun (#29), and a weapon change
+	# while the Build Gun is in frame changes nothing the player can see.
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_true(_settle(sim, view), "the Run's opening draw and the holster finish")
+	assert_eq(view.weapon_model_id(), opening, "the weapon is the thing in frame")
 
 	var other: String = "drum_autocannon" if opening != "drum_autocannon" else "bolt_rifle"
 	sim.step([
@@ -387,16 +393,21 @@ func _settle(sim: Simulation, view: WorldView) -> bool:
 # ── Anything in the hands, not only a weapon ──────────────────────────────────
 
 func test_the_view_model_will_hold_whatever_it_is_handed() -> void:
-	# The thing in a player's hands is about to stop being only their weapon: a
-	# holster that swaps between a weapon and the Build Gun is one field of
-	# `Facts` rather than a second view model, and the holster, the model swap and
-	# the draw come for free because `draw` and `holster` are first-class roles
-	# here rather than a special case.
+	# The thing in a player's hands is not only their weapon: #29's holster swaps
+	# between a weapon and the Build Gun, and it is one field of `Facts` rather
+	# than a second view model — the holster, the model swap and the draw come for
+	# free because `draw` and `holster` are first-class roles here rather than a
+	# special case. `WorldView._sync_weapon` is the production caller; this is the
+	# seam itself, asserted directly and with the same id.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 	var viewmodel: WeaponViewmodel = view.weapon_viewmodel()
-	assert_true(_settle(sim, view), "the Run's opening draw finishes")
+	# Out of build mode, so the thing in frame is the weapon: `WorldView._sync_weapon` is
+	# itself a caller of this seam now and hands over the Build Gun's id in build mode, so
+	# handing it that same id here would be handing it what it already has.
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_true(_settle(sim, view), "the Run's opening draw and the holster finish")
 
 	var facts: WeaponAnimator.Facts = viewmodel.held_facts(sim, 0)
 	var weapon: String = facts.weapon

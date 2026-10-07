@@ -133,6 +133,46 @@ const TUNING_PLAYER_RESPAWN_SECONDS: String = "player.respawn_delay_seconds"
 const TUNING_PLAYER_REVIVE_SECONDS: String = "player.revive_seconds"
 const TUNING_PLAYER_REVIVE_REACH: String = "player.revive_reach_metres"
 const TUNING_PLAYER_STARTING_WEAPON: String = "player.starting_weapon"
+
+# Weight: the feel of a body being moved rather than a camera being translated (#29).
+# Every one of these is a number nobody can pick without playing, which is why all of
+# them are here rather than in `sim/`.
+const TUNING_PLAYER_JUMP_HEIGHT: String = "player.jump_height_metres"
+const TUNING_PLAYER_GRAVITY: String = "player.gravity_metres_per_second_squared"
+const TUNING_PLAYER_JUMP_REPEATS: String = "player.jump_repeats_while_held"
+const TUNING_PLAYER_WALK_DECELERATION: String = (
+	"player.walk_deceleration_metres_per_second_squared"
+)
+const TUNING_PLAYER_AIR_ACCELERATION: String = (
+	"player.air_acceleration_metres_per_second_squared"
+)
+const TUNING_PLAYER_AIR_DECELERATION: String = (
+	"player.air_deceleration_metres_per_second_squared"
+)
+const TUNING_PLAYER_LAND_SETTLE_SECONDS: String = "player.land_settle_seconds"
+const TUNING_PLAYER_LAND_SETTLE_PERCENT: String = "player.land_settle_acceleration_percent"
+const TUNING_PLAYER_SPRINT_RAMP_SECONDS: String = "player.sprint_ramp_seconds"
+const TUNING_PLAYER_SPRINT_IS_TOGGLE: String = "player.sprint_is_toggle"
+const TUNING_PLAYER_BOB_VERTICAL: String = "player.bob_vertical_metres"
+const TUNING_PLAYER_BOB_LATERAL: String = "player.bob_lateral_metres"
+const TUNING_PLAYER_BOB_STRIDE: String = "player.bob_stride_metres"
+const TUNING_PLAYER_BOB_SPRINT_MULTIPLIER: String = "player.bob_sprint_multiplier"
+const TUNING_PLAYER_LAND_DIP_METRES: String = "player.land_dip_metres"
+const TUNING_PLAYER_LAND_DIP_SECONDS: String = "player.land_dip_seconds"
+const TUNING_PLAYER_LAND_DIP_REFERENCE_SPEED: String = (
+	"player.land_dip_reference_speed_metres_per_second"
+)
+const TUNING_PLAYER_LEAN_ROLL_DEGREES: String = (
+	"player.lean_roll_degrees_per_metre_per_second"
+)
+const TUNING_PLAYER_LEAN_PITCH_DEGREES: String = (
+	"player.lean_pitch_degrees_per_metre_per_second"
+)
+const TUNING_PLAYER_FIELD_OF_VIEW: String = "player.field_of_view_degrees"
+const TUNING_PLAYER_SPRINT_FIELD_OF_VIEW_ADD: String = (
+	"player.sprint_field_of_view_add_degrees"
+)
+const TUNING_PLAYER_HOLSTER_SECONDS: String = "player.holster_seconds"
 const TUNING_GEAR_ENEMY_HIT_RADIUS: String = "gear.enemy_hit_radius_metres"
 const TUNING_GEAR_ENEMY_HIT_HEIGHT: String = "gear.enemy_hit_height_metres"
 const TUNING_GEAR_VIEW_KICK_DEGREES: String = "gear.view_kick_degrees_per_shot"
@@ -209,8 +249,93 @@ var player_walk_speed: int = 0
 var player_sprint_multiplier: int = 0
 
 ## How hard a player accelerates towards the walking speed, in fixed-point metres
-## per second squared. The same figure decelerates them when they let go.
+## per second squared. **Starting only** — letting go is
+## `player_walk_deceleration`, which is a smaller number, because a body leans into a
+## start and slides into a stop and one figure for both is what made movement read as
+## a camera being translated (#29).
 var player_walk_acceleration: int = 0
+
+## How hard a player on the ground sheds speed when they stop asking for it, in
+## fixed-point metres per second squared. Deliberately lower than the acceleration: an
+## instantaneous halt on key release is the loudest creative-mode tell there is.
+var player_walk_deceleration: int = 0
+
+## The same two figures in the air, in fixed-point metres per second squared. Both much
+## smaller than their ground counterparts, which is the whole of this project's answer to
+## air control: a jump commits you to roughly the trajectory you left the ground on.
+var player_air_acceleration: int = 0
+var player_air_deceleration: int = 0
+
+## The apex of a standing jump, in fixed-point metres, and the gravity that brings it back
+## down, in fixed-point metres per second squared.
+##
+## The *height* is tuned and the impulse is derived from it, rather than the other way
+## round, because a tuner thinks in how high they clear and not in metres per second — and
+## because that keeps raising gravity a change to how *heavy* a jump feels instead of a
+## change to whether a player can still get over a Belt.
+var player_jump_height: int = 0
+var player_gravity: int = 0
+
+## Whether holding the jump key through a landing launches again. False ships: a jump is a
+## press. Bunny-hopping on a held key is the arcade reading of the control.
+var player_jump_repeats_while_held: bool = false
+
+## How long a landing takes to settle, in fixed-point seconds, and what fraction of normal
+## ground acceleration a player has while it does, as a whole percentage. A landing that
+## restored full control on the first frame reads as a camera touching down.
+var player_land_settle_seconds: int = 0
+var player_land_settle_acceleration_percent: int = 0
+
+## How long a sprint takes to wind up and down, in fixed-point seconds.
+##
+## **This is what makes sprint a gait rather than a multiplier**: one blend ramps the speed,
+## widens the field of view and deepens the bob together, so the change a player feels is a
+## change of gear and not a number going up.
+var player_sprint_ramp_seconds: int = 0
+
+## Whether the sprint key is a toggle (press once to run, press again to stop) or a hold.
+##
+## **Read by `game/player_controller.gd` and by nothing in the Simulation**, which is the
+## point: toggle-versus-hold is an interpretation of a device, so the Simulation keeps
+## knowing only whether a player *is* sprinting and a replay reproduces either reading
+## identically. It lives in `content/tuning.toml` because this project has no settings menu
+## yet; see the note above the key in that file.
+var player_sprint_is_toggle: bool = false
+
+## The camera's response to all of the above, which does more for perceived weight than the
+## physics does — and is also the easiest thing to overdo into motion sickness. Every one of
+## these is **zero-legal**: writing 0 turns that response off outright.
+##
+## Step-driven bob: how far the view rises and falls and swings side to side over one
+## stride, in fixed-point metres, how long a stride is, in fixed-point metres, and how much
+## of all that a full sprint adds.
+var player_bob_vertical: int = 0
+var player_bob_lateral: int = 0
+var player_bob_stride: int = 0
+var player_bob_sprint_multiplier: int = 0
+
+## The landing dip: how far the view drops on a landing at the reference impact speed, in
+## fixed-point metres, how long it takes to come back, in fixed-point seconds, and the
+## impact speed that counts as a full-strength landing, in fixed-point metres per second.
+var player_land_dip_metres: int = 0
+var player_land_dip_seconds: int = 0
+var player_land_dip_reference_speed: int = 0
+
+## Lean under acceleration: degrees of camera roll per metre per second of sideways travel,
+## and degrees of camera pitch per metre per second of forward travel.
+var player_lean_roll_degrees: int = 0
+var player_lean_pitch_degrees: int = 0
+
+## The camera's field of view in fixed-point degrees, and how many degrees a full sprint
+## adds to it. The second half of sprint reading as a gait.
+var player_field_of_view_degrees: int = 0
+var player_sprint_field_of_view_add_degrees: int = 0
+
+## How long swapping between the Build Gun and a weapon takes, in fixed-point seconds.
+##
+## **A holster animation and nothing more.** The mode itself switches on the tick the intent
+## lands, so nothing is ever gated by a swap in progress — see `_player_build_mode`.
+var player_holster_seconds: int = 0
 
 ## How far a player turns per 1000 pixels of mouse travel, in fixed-point turns.
 ## The Simulation applies this to the pixel count an Input Action carries, so the
@@ -976,6 +1101,32 @@ func digest() -> int:
 	hasher.feed_int(player_walk_speed)
 	hasher.feed_int(player_sprint_multiplier)
 	hasher.feed_int(player_walk_acceleration)
+	hasher.feed_int(player_walk_deceleration)
+	hasher.feed_int(player_air_acceleration)
+	hasher.feed_int(player_air_deceleration)
+	hasher.feed_int(player_jump_height)
+	hasher.feed_int(player_gravity)
+	hasher.feed_bool(player_jump_repeats_while_held)
+	hasher.feed_int(player_land_settle_seconds)
+	hasher.feed_int(player_land_settle_acceleration_percent)
+	hasher.feed_int(player_sprint_ramp_seconds)
+	# A control preference rather than a balance number, and it reaches the digest anyway.
+	# A Run played on a toggle and a Run played on a hold are not the same Run, and the
+	# digest check is what refuses a replay recorded under the other reading rather than
+	# letting it diverge — see the key's own note in `content/tuning.toml`.
+	hasher.feed_bool(player_sprint_is_toggle)
+	hasher.feed_int(player_bob_vertical)
+	hasher.feed_int(player_bob_lateral)
+	hasher.feed_int(player_bob_stride)
+	hasher.feed_int(player_bob_sprint_multiplier)
+	hasher.feed_int(player_land_dip_metres)
+	hasher.feed_int(player_land_dip_seconds)
+	hasher.feed_int(player_land_dip_reference_speed)
+	hasher.feed_int(player_lean_roll_degrees)
+	hasher.feed_int(player_lean_pitch_degrees)
+	hasher.feed_int(player_field_of_view_degrees)
+	hasher.feed_int(player_sprint_field_of_view_add_degrees)
+	hasher.feed_int(player_holster_seconds)
 	hasher.feed_int(player_look_sensitivity)
 	hasher.feed_int(player_eye_height)
 	hasher.feed_int(player_starting_stock_items.size())
@@ -2042,6 +2193,34 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	player_walk_speed = tuning.require_fixed(TUNING_PLAYER_WALK_SPEED)
 	player_sprint_multiplier = tuning.require_fixed(TUNING_PLAYER_SPRINT_MULTIPLIER)
 	player_walk_acceleration = tuning.require_fixed(TUNING_PLAYER_WALK_ACCELERATION)
+	player_walk_deceleration = tuning.require_fixed(TUNING_PLAYER_WALK_DECELERATION)
+	player_air_acceleration = tuning.require_fixed(TUNING_PLAYER_AIR_ACCELERATION)
+	player_air_deceleration = tuning.require_fixed(TUNING_PLAYER_AIR_DECELERATION)
+	player_jump_height = tuning.require_fixed(TUNING_PLAYER_JUMP_HEIGHT)
+	player_gravity = tuning.require_fixed(TUNING_PLAYER_GRAVITY)
+	player_jump_repeats_while_held = tuning.require_bool(TUNING_PLAYER_JUMP_REPEATS)
+	player_land_settle_seconds = tuning.require_fixed(TUNING_PLAYER_LAND_SETTLE_SECONDS)
+	player_land_settle_acceleration_percent = tuning.require_int(
+		TUNING_PLAYER_LAND_SETTLE_PERCENT
+	)
+	player_sprint_ramp_seconds = tuning.require_fixed(TUNING_PLAYER_SPRINT_RAMP_SECONDS)
+	player_sprint_is_toggle = tuning.require_bool(TUNING_PLAYER_SPRINT_IS_TOGGLE)
+	player_bob_vertical = tuning.require_fixed(TUNING_PLAYER_BOB_VERTICAL)
+	player_bob_lateral = tuning.require_fixed(TUNING_PLAYER_BOB_LATERAL)
+	player_bob_stride = tuning.require_fixed(TUNING_PLAYER_BOB_STRIDE)
+	player_bob_sprint_multiplier = tuning.require_fixed(TUNING_PLAYER_BOB_SPRINT_MULTIPLIER)
+	player_land_dip_metres = tuning.require_fixed(TUNING_PLAYER_LAND_DIP_METRES)
+	player_land_dip_seconds = tuning.require_fixed(TUNING_PLAYER_LAND_DIP_SECONDS)
+	player_land_dip_reference_speed = tuning.require_fixed(
+		TUNING_PLAYER_LAND_DIP_REFERENCE_SPEED
+	)
+	player_lean_roll_degrees = tuning.require_fixed(TUNING_PLAYER_LEAN_ROLL_DEGREES)
+	player_lean_pitch_degrees = tuning.require_fixed(TUNING_PLAYER_LEAN_PITCH_DEGREES)
+	player_field_of_view_degrees = tuning.require_fixed(TUNING_PLAYER_FIELD_OF_VIEW)
+	player_sprint_field_of_view_add_degrees = tuning.require_fixed(
+		TUNING_PLAYER_SPRINT_FIELD_OF_VIEW_ADD
+	)
+	player_holster_seconds = tuning.require_fixed(TUNING_PLAYER_HOLSTER_SECONDS)
 	player_look_sensitivity = tuning.require_fixed(TUNING_PLAYER_LOOK_SENSITIVITY)
 	player_eye_height = tuning.require_fixed(TUNING_PLAYER_EYE_HEIGHT)
 	_read_starting_stock(tuning)
@@ -2129,6 +2308,84 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				tuning,
 				TUNING_PLAYER_WALK_ACCELERATION,
 				"a player who cannot accelerate never starts walking"
+			)
+		if player_walk_deceleration <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_WALK_DECELERATION,
+				"a player who cannot decelerate never stops walking"
+			)
+		if player_air_acceleration < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_AIR_ACCELERATION, "air control cannot be negative"
+			)
+		if player_air_deceleration < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_AIR_DECELERATION, "air drag cannot be negative"
+			)
+		if player_jump_height < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_JUMP_HEIGHT, "a jump cannot clear a negative height"
+			)
+		if player_gravity <= 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_GRAVITY, "a jump that never comes down is not a jump"
+			)
+		if player_land_settle_seconds < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_LAND_SETTLE_SECONDS, "a landing cannot settle backwards"
+			)
+		if player_land_settle_acceleration_percent < 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_LAND_SETTLE_PERCENT,
+				"a settling player cannot accelerate backwards"
+			)
+		if player_sprint_ramp_seconds < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_SPRINT_RAMP_SECONDS, "a gait cannot change in negative time"
+			)
+		# The camera-response keys are all zero-legal — zero is "off", which is a setting
+		# somebody prone to motion sickness is entitled to — so only negatives are refused.
+		if player_bob_vertical < 0 or player_bob_lateral < 0:
+			_report_tuning(tuning, TUNING_PLAYER_BOB_VERTICAL, "bob cannot be negative; 0 is off")
+		if player_bob_stride <= 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_BOB_STRIDE, "a stride of nothing is a division by nothing"
+			)
+		if player_bob_sprint_multiplier < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_BOB_SPRINT_MULTIPLIER, "cannot be negative"
+			)
+		if player_land_dip_metres < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_LAND_DIP_METRES, "a dip cannot be negative; 0 is off"
+			)
+		if player_land_dip_seconds < 0:
+			_report_tuning(tuning, TUNING_PLAYER_LAND_DIP_SECONDS, "cannot be negative")
+		if player_land_dip_reference_speed <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_LAND_DIP_REFERENCE_SPEED,
+				"the reference impact speed is a divisor and cannot be zero"
+			)
+		if player_lean_roll_degrees < 0 or player_lean_pitch_degrees < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_LEAN_ROLL_DEGREES, "lean cannot be negative; 0 is off"
+			)
+		if player_field_of_view_degrees <= 0 or player_field_of_view_degrees >= Fixed.from_int(180):
+			_report_tuning(
+				tuning, TUNING_PLAYER_FIELD_OF_VIEW, "must be more than 0 and less than 180 degrees"
+			)
+		if player_sprint_field_of_view_add_degrees < 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_SPRINT_FIELD_OF_VIEW_ADD,
+				"a sprint widens the view or leaves it alone; 0 is off"
+			)
+		if player_holster_seconds < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_HOLSTER_SECONDS, "a swap cannot take negative time"
 			)
 		if player_look_sensitivity <= 0:
 			_report_tuning(
@@ -2662,6 +2919,28 @@ func _discard_content() -> void:
 	player_walk_speed = 0
 	player_sprint_multiplier = 0
 	player_walk_acceleration = 0
+	player_walk_deceleration = 0
+	player_air_acceleration = 0
+	player_air_deceleration = 0
+	player_jump_height = 0
+	player_gravity = 0
+	player_jump_repeats_while_held = false
+	player_land_settle_seconds = 0
+	player_land_settle_acceleration_percent = 0
+	player_sprint_ramp_seconds = 0
+	player_sprint_is_toggle = false
+	player_bob_vertical = 0
+	player_bob_lateral = 0
+	player_bob_stride = 0
+	player_bob_sprint_multiplier = 0
+	player_land_dip_metres = 0
+	player_land_dip_seconds = 0
+	player_land_dip_reference_speed = 0
+	player_lean_roll_degrees = 0
+	player_lean_pitch_degrees = 0
+	player_field_of_view_degrees = 0
+	player_sprint_field_of_view_add_degrees = 0
+	player_holster_seconds = 0
 	player_look_sensitivity = 0
 	player_eye_height = 0
 	player_starting_stock_items.clear()
