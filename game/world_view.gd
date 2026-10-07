@@ -92,6 +92,10 @@ const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
 ## a player cannot walk off the edge of what they can see.
 const GROUND_HALF_EXTENT_TILES: int = 64
 
+## How long each arm of the crosshair is, in pixels. Small: it marks where the Build Gun
+## points without becoming a thing a player looks at instead of the Factory.
+const CROSSHAIR_ARM_PIXELS: float = 13.0
+
 
 ## Redraws everything from the Simulation's queries. Called once a frame; cheap
 ## enough at Milestone 1 scale that it rebuilds rather than diffs, and the shape it
@@ -288,6 +292,7 @@ func _sync_hud(sim: Simulation) -> void:
 		_hud_layer = CanvasLayer.new()
 		_hud = Label.new()
 		_hud_layer.add_child(_hud)
+		_hud_layer.add_child(_crosshair())
 		add_child(_hud_layer)
 
 	var lines: PackedStringArray = PackedStringArray()
@@ -392,6 +397,27 @@ func camera_rotation() -> Vector3:
 	if _camera == null:
 		return Vector3.ZERO
 	return _camera.rotation
+
+
+## A small cross at the centre of the screen.
+##
+## Decoration in the sense that nothing reads it, and load-bearing in the sense that the
+## Build Gun aims down the middle of the view: without a mark there, a player placing a
+## Machine is guessing where the gun points.
+func _crosshair() -> Control:
+	var mark: Control = Control.new()
+	mark.set_anchors_preset(Control.PRESET_CENTER)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	for arm: Vector2 in [Vector2(CROSSHAIR_ARM_PIXELS, 1.0), Vector2(1.0, CROSSHAIR_ARM_PIXELS)]:
+		var bar: ColorRect = ColorRect.new()
+		bar.color = Color(0.95, 0.95, 0.92, 0.75)
+		bar.size = arm
+		bar.position = -arm * 0.5
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.add_child(bar)
+
+	return mark
 
 
 ## What the Build Gun is holding, and why it would refuse.
