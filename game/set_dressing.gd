@@ -846,11 +846,11 @@ func _stand_in_for(kind: String) -> Array:
 	var built: Array = [null, null]
 	match kind:
 		"clutter":
-			built = [_box(Vector3(0.95, 0.8, 0.95), 0.4), _material("OxideRed")]
+			built = [_box(Vector3(0.95, 0.8, 0.95), 0.4), _material("CastIron")]
 		"stain":
 			built = [_box(Vector3(1.7, 0.02, 1.7), 0.01), _material("Soot")]
 		"yard_gear":
-			built = [_box(Vector3(1.7, 1.1, 0.9), 0.55), _material("CastIron")]
+			built = [_box(Vector3(1.7, 1.1, 0.9), 0.55), _material("OxideRed")]
 		"pipe_leg":
 			built = [_box(Vector3(0.3, 3.3, 0.3), 1.65), _material("WeldedSteel")]
 		"pipe_span":
