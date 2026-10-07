@@ -87,12 +87,14 @@ func _content(waves: String = ONE_HULK, overrides: Array = []) -> Definitions:
 		waves,
 		DELIVERIES,
 		_read("res://content/gear.csv"),
+		_read("res://content/stratagems.csv"),
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 
 
@@ -223,7 +225,7 @@ func test_content_whose_turret_could_reach_the_stand_off_is_refused_by_name() ->
 	# one. A Cannon Turret that outranged the Hulk would quietly turn the one threat the Factory
 	# cannot answer into one it can, and that is an edit somebody would make without noticing.
 	var machines: String = _read("res://content/machines.csv")
-	machines += "zz_siege_cannon_mk1,Siege Cannon,turret,2,2,90,0,350,0,40,80,0,fire_mg,\n"
+	machines += "zz_siege_cannon_mk1,Siege Cannon,turret,2,2,90,0,350,0,40,80,0,0,fire_mg,\n"
 	var definitions: Definitions = Definitions.parse(
 		machines,
 		_read("res://content/recipes.csv"),
@@ -231,12 +233,14 @@ func test_content_whose_turret_could_reach_the_stand_off_is_refused_by_name() ->
 		_read("res://content/waves.csv"),
 		_read("res://content/deliveries.csv"),
 		_read("res://content/gear.csv"),
+		_read("res://content/stratagems.csv"),
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
 	)
 	assert_true(definitions.has_errors(), "a Turret that outranges the boss is a content error")
 	var text: String = definitions.describe_errors()

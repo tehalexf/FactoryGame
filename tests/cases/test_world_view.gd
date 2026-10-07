@@ -592,12 +592,18 @@ func _besieged_sim() -> Simulation:
 		+ "siege_hulks,siege_hulk,0,1,0,1\n",
 		DELIVERIES,
 		GEAR,
+		STRATAGEMS,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
 		"waves.csv",
 		"deliveries.csv",
-		"gear.csv"
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_true(
+		not definitions.has_errors(),
+		"the besieged fixture's content must load: %s" % definitions.describe_errors()
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
