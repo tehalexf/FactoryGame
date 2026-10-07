@@ -224,6 +224,21 @@ func uses_purchased_props() -> bool:
 	return false
 
 
+## Whether the purchased props' shared atlas resolved, so the yard is textured
+## rather than vertex-coloured.
+##
+## The companion to `uses_purchased_props`, and it is a *separate* question from
+## it: the meshes come out of GLB files and the atlas out of two PNGs, by two
+## different loaders, and one of those routes can fail while the other does not —
+## which is exactly what an exported build did until `_runtime_texture` stopped
+## globalising its path. A yard built out of purchased props wearing no texture is
+## the degraded build this is here to make visible, so `tools/release/`'s
+## verification pass asserts this and not only the meshes.
+func uses_purchased_atlas() -> bool:
+	var material: StandardMaterial3D = _purchased_material()
+	return material.albedo_texture != null and material.emission_texture != null
+
+
 ## How many distinct meshes the yard is drawn from — which is also, near enough,
 ## its draw call count, because each is one MultiMesh.
 func group_count() -> int:
@@ -814,16 +829,23 @@ func _purchased_material() -> StandardMaterial3D:
 
 ## Load a PNG from the gitignored prop directory. `load()` cannot: the importer
 ## never saw these files, because Godot is kept out of the quarantine entirely.
+##
+## **`Image.load_from_file`, not `Image.load` on a globalised path.** The earlier
+## form took `ProjectSettings.globalize_path(path)` on the reasoning that the
+## quarantine is a directory beside the game rather than something inside the
+## pack. A release is where that stops being true: `tools/release/` bundles these
+## two atlases *into* the PCK, because the licence permits use in a shipped game
+## and forbids shipping the assets loose for extraction — so the atlas is at
+## `res://…` and nowhere on the filesystem, `globalize_path` names a file that does
+## not exist, and every purchased prop in the exported build renders untextured
+## while this function returns null and nothing says a word. `load_from_file` goes
+## through `FileAccess`, which resolves a packed path and a loose one alike.
 func _runtime_texture(file_name: String) -> Texture2D:
 	var path: String = PROP_DIRECTORY + file_name
 	if not FileAccess.file_exists(path):
 		return null
-	var image: Image = Image.new()
-	# `Image.load` wants a path on the filesystem. `res://` resolves for it while the
-	# project is running from a directory and does not once it is packed, and this
-	# directory is outside the pack either way — so the path is globalised, which is the
-	# honest form of what is being asked for: a file beside the game rather than in it.
-	if image.load(ProjectSettings.globalize_path(path)) != OK:
+	var image: Image = Image.load_from_file(path)
+	if image == null:
 		push_warning("set dressing could not read %s" % path)
 		return null
 	image.generate_mipmaps()

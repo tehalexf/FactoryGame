@@ -76,6 +76,24 @@ func test_a_prop_the_packs_do_not_supply_is_drawn_as_a_stand_in() -> void:
 	dressing.free()
 
 
+func test_the_shared_atlas_resolves_exactly_when_the_purchased_props_do() -> void:
+	# Two separate loaders: the props come out of GLB files through `GLTFDocument`
+	# and the atlas out of two PNGs through `Image`, so one can fail while the other
+	# does not — and that is not hypothetical. In an exported build the atlas was
+	# reached with `ProjectSettings.globalize_path`, which names a file on disk, and
+	# the PCK is not a disk: the whole yard came up in purchased geometry wearing no
+	# texture at all, and nothing said a word. `tools/release/` verifies this in the
+	# shipped pack; this is the same claim where a clone can see it.
+	var sim: Simulation = Simulation.new(1, 1)
+	var dressing: SetDressing = _dressed(sim)
+	assert_eq(
+		dressing.uses_purchased_atlas(),
+		dressing.uses_purchased_props(),
+		"the atlas and the props are present together or absent together"
+	)
+	dressing.free()
+
+
 # ── It is decoration, and the Simulation never hears about it ─────────────────
 
 func test_drawing_the_yard_does_not_move_the_state_hash() -> void:
