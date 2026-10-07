@@ -248,9 +248,12 @@ arrays, never as an object per Item.
   that file and the mesh markers that match it, declaring an exact edge and tile for each
   port. The Simulation accepts a Belt against *any* footprint edge tile, which is looser.
   It still cannot adopt the file: the table describes eleven Machine bodies and
-  `content/machines.csv` defines four, so loading it under its own documented rule
-  ("machine_id must name a row in machines.csv") would still fail the whole content
-  load. The ticket that brings the remaining Machines into `machines.csv` should make
+  `content/machines.csv` defines six — #10 added the Ammo Press and the MG Turret, leaving
+  `press_mk1`, `assembler_mk1`, `generator_mk1` and `silo_mk1` undeclared — so loading it
+  under its own documented rule ("machine_id must name a row in machines.csv") would still
+  fail the whole content load. The Turret also has no row *there*, so the Belt that feeds
+  it docks against any footprint edge for now. The ticket that brings the remaining
+  Machines into `machines.csv` should make
   `Definitions` read the ports table and tighten `_load_from_port` and `_hand_off` to the
   declared edge, tile and direction — one declaration, not two.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
