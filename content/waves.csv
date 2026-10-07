@@ -1,0 +1,36 @@
+# DEEP FOUNDRY — Wave composition.
+#
+# What a Wave is made of, as a function of Heat. One row per kind of Enemy a Wave can
+# contain; adding an Enemy to the Waves is a row here and never a code change. Edit
+# this file while the game is running and the change applies when you save it.
+#
+# A Wave's composition is **every row whose `min_heat` the Factory has reached**, so
+# this table is read as a set of tiers rather than as a choice between them: a hot
+# Factory is sent the Chaff it was always getting *and* whatever the Heat has newly
+# unlocked. Each row contributes its own count, scaled by how far past its threshold
+# the Factory is, and Enemies are released in row order (sorted by id), so which kind
+# comes out of a Breach first is a property of the table rather than of the order
+# somebody typed the rows in.
+#
+# Columns:
+#   id              Identifier. Lowercase letters, digits and _ only. Sorting by this
+#                   fixes the release order, so it reaches the state hash.
+#   enemy_kind      Which Enemy this row sends. The kinds that exist are the ones the
+#                   Simulation implements — `crawler` is the only one Milestone 1
+#                   ships — and a name that is not one of them is an error naming the
+#                   row, never a silently empty Wave.
+#   min_heat        The Heat at which this row starts contributing. 0 means from the
+#                   first Wave of a cold Run.
+#   count_per_breach  How many of this Enemy each Breach releases at `min_heat`. Per
+#                   Breach, not per Wave: deep mining opens new Breaches, so a Map
+#                   with more ways in is attacked through all of them.
+#   heat_per_extra  How much further Heat buys one more of this Enemy per Breach. 0
+#                   means the count never grows — a tier that is a fixed garnish
+#                   rather than a swarm.
+#   max_per_breach  The most of this Enemy one Breach will ever release in one Wave.
+#                   This is a performance ceiling as much as a balance one: a Run
+#                   left to cook for forty hours must not try to put a hundred
+#                   thousand Enemies on the Map.
+#
+id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,150,40

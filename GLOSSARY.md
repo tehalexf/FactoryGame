@@ -83,8 +83,11 @@ size are driven by a baseline timer modified by Heat. A Wave may be called early
 by the players for a reward.
 
 **Heat** — The scalar that measures how much attention the players have drawn.
-Raised by production throughput and by mining at greater Depth. Drives Wave
-frequency and size. Makes scaling up a deliberate risk rather than a free gain.
+Raised by production throughput — specifically by each completed craft — and by
+mining at greater Depth. Shed at a flat rate, so Heat is throughput in excess of
+what the Nest can hide and climbs without bound as the Factory grows. Drives both
+Wave frequency and Wave size, so a hot Factory is hunted sooner *and* harder.
+Makes scaling up a deliberate risk rather than a free gain.
 
 **Enemy** — A hostile unit. Two tiers: a small number of full-fidelity enemies
 that constitute the actual threat, and a large number of weak Chaff that
@@ -102,7 +105,9 @@ than players. The reason Machine mortality is felt rather than merely true.
 range. Cannot be answered by defenses; the players must go out and kill it.
 
 **Telegraph** — The warning that precedes a Wave: klaxon, rising gauges, dust on
-the horizon. Waves are never silent, and building is never disabled.
+the horizon. Waves are never silent, and building is never disabled. No Wave
+arrives before its Telegraph has run its full length — including one the players
+called early, and including one that a sudden rise in Heat left overdue.
 
 **Downed** — A player at zero health, immobilised and bleeding out, revivable by
 a teammate. Failing that, they die and respawn at the Nest after a delay. Death

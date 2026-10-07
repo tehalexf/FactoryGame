@@ -33,6 +33,14 @@ const KEY_SPRINT: Key = KEY_SHIFT
 const KEY_DEMOLISH: Key = KEY_X
 const KEY_BELT: Key = KEY_B
 
+## The lever that calls the next Wave early (GLOSSARY.md, DESIGN.md).
+##
+## A key for now, and a diegetic lever on the Nest when the art pass gets there — DESIGN.md
+## is explicit that each diegetic control needs its hero sound, and this one needs the
+## klaxon that goes with it. It is an edge rather than a held state because pulling a lever
+## is one act; holding it down must not call a Wave a tick.
+const KEY_CALL_WAVE: Key = KEY_G
+
 ## Saving and resuming a Run. Gathered here with the rest so the rebinding ticket has
 ## one file to change, but deliberately **not** read by `sample_devices` and never
 ## turned into an Input Action — `Main._input` handles them where it handles Escape.
@@ -87,6 +95,7 @@ class DeviceSample extends RefCounted:
 	var place_clicked: bool = false
 	var demolish_clicked: bool = false
 	var belt_clicked: bool = false
+	var call_wave_clicked: bool = false
 	## Signed quarter turns of hologram rotation asked for this tick.
 	var rotate_steps: int = 0
 	## Signed steps through the Machine list, from the mouse wheel.
@@ -101,6 +110,7 @@ var _unsent_machine_steps: int = 0
 var _place_clicked: bool = false
 var _demolish_clicked: bool = false
 var _belt_clicked: bool = false
+var _call_wave_clicked: bool = false
 
 
 # ── Gathering device events ───────────────────────────────────────────────────
@@ -134,6 +144,8 @@ func note_event(event: InputEvent) -> void:
 				_demolish_clicked = true
 			elif key.keycode == KEY_BELT:
 				_belt_clicked = true
+			elif key.keycode == KEY_CALL_WAVE:
+				_call_wave_clicked = true
 
 
 ## Reads the devices for one tick and drains the buffer, so nothing is spent twice.
@@ -160,6 +172,7 @@ func sample_devices() -> DeviceSample:
 	sample.place_clicked = _place_clicked
 	sample.demolish_clicked = _demolish_clicked
 	sample.belt_clicked = _belt_clicked
+	sample.call_wave_clicked = _call_wave_clicked
 
 	_unsent_mouse_motion = Vector2.ZERO
 	_unsent_rotate_steps = 0
@@ -167,6 +180,7 @@ func sample_devices() -> DeviceSample:
 	_place_clicked = false
 	_demolish_clicked = false
 	_belt_clicked = false
+	_call_wave_clicked = false
 
 	return sample
 
@@ -233,6 +247,12 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 
 	if sample.demolish_clicked:
 		actions.append(InputAction.demolish(player_id, BuildGun.aimed_tile(sim, player_id)))
+
+	# Sent whatever the Simulation would make of it, exactly as a misaimed build intent is.
+	# Whether the lever moves is the Simulation's decision and not this layer's; the HUD
+	# reads `query_call_wave_early_refusal` so a player knows before they press it.
+	if sample.call_wave_clicked:
+		actions.append(InputAction.call_wave_early(player_id))
 
 	if sample.forward != 0.0 or sample.strafe != 0.0:
 		actions.append(

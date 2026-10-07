@@ -103,6 +103,20 @@ func _session() -> Array:
 	laying.belt_clicked = true
 	ticks.append(laying)
 
+	# Decide you are ready and pull the lever. A called Wave belongs in the strongest
+	# fixture in the suite: it is the one intent that changes *when* the Run gets harder, so
+	# a drift in it would be a drift in the whole schedule.
+	var calling: PlayerController.DeviceSample = _sample()
+	calling.call_wave_clicked = true
+	ticks.append(calling)
+
+	# Pull it again a tick later, while the Telegraph it just started is running. Refused,
+	# and a refusal belongs in the fixture for the reason a refused build does: it has to be
+	# a no-op that replays like any other tick.
+	var calling_again: PlayerController.DeviceSample = _sample()
+	calling_again.call_wave_clicked = true
+	ticks.append(calling_again)
+
 	for tick: int in range(120):
 		ticks.append(_sample())
 

@@ -133,31 +133,92 @@ health = 6000
 
 [wave]
 
-# Wave scheduling, in its thinnest possible form: a baseline timer and a count that
-# grows. Heat is what will really drive arrival and size (GLOSSARY.md, DESIGN.md),
-# along with the Telegraph and the call-early lever, and the ticket that adds Heat
-# replaces every key in this section. Until then these exist so that a Breach has
-# something to obey.
+# Wave scheduling. **Heat decides when and how much** (GLOSSARY.md, DESIGN.md); these
+# three numbers are the parts of a Wave that are not about Heat — the warning in front
+# of it, the rate it trickles out at, and what calling one early pays. The composition
+# itself is `content/waves.csv`, because a Wave's contents are a table rather than a
+# number, and the `[heat]` section below is what turns throughput into arrival time.
 
-# How long after a Run starts the first Wave arrives, in seconds. Long enough to get
-# an opening line running and see it work before anything comes for it.
-first_wave_seconds = 90
+# How long the Telegraph runs before a Wave arrives, in seconds.
+#
+# Load-bearing rather than decorative: no Wave may arrive until it has been telegraphed
+# for this long, including one a player called early and including one that a sudden
+# Heat spike pulled forward. The core loop must never ambush the player (DESIGN.md), so
+# this is a floor on the warning rather than a target for it. Twelve seconds is long
+# enough to walk back from a Belt and get behind the defences, short enough that the
+# klaxon is a jolt rather than an inconvenience.
+telegraph_seconds = 12
 
-# How long between Waves after the first, in seconds.
-interval_seconds = 120
-
-# How many Crawlers the first Wave sends through each Breach.
-crawlers_in_first_wave = 6
-
-# How many more Crawlers each subsequent Wave sends through each Breach. Linear and
-# unbounded, so a Run that is never defended is eventually lost — "infinitely
-# scaling" (GLOSSARY.md) in its crudest form until Heat shapes it.
-crawlers_added_per_wave = 4
-
-# How long between one Crawler of a Wave emerging from a Breach and the next, in
-# seconds. A Wave trickles out rather than appearing as a stack of Enemies on one
-# tile, which is both legible and what makes a chokepoint work.
+# How long between one Enemy of a Wave emerging from a Breach and the next, in seconds.
+# A Wave trickles out rather than appearing as a stack of Enemies on one tile, which is
+# both legible and what makes a chokepoint work.
 spawn_interval_seconds = 0.5
+
+# What calling a Wave early pays, as a count of every Item granted to the player who
+# pulled the lever. The reward for confidence, and the reason a group argues about
+# whether they are ready: a called Wave is the same Wave, arriving while the Factory is
+# still cooler than it would have been, in exchange for the materials to meet it.
+#
+# A scaffold in the same sense `player.starting_stock_per_item` is: Delivery progression
+# (DESIGN.md, milestone 5) is what will really decide what a reward looks like. Until
+# then materials are the thing a player actually wants mid-Run, and granting them uses
+# the same stock the Build Gun spends, so a bounty is immediately spendable on defence.
+call_early_bounty_per_item = 25
+
+[heat]
+
+# Heat: the scalar that measures how much attention the Factory has drawn (GLOSSARY.md),
+# and the counter-pressure that makes scaling up a bet rather than a free gain
+# (DESIGN.md). Everything here is a whole number of **heat units**, because Heat
+# accumulates continuously across a forty-hour Run and a fixed-point quantity added up
+# every tick would shed a fraction each time and silently drift. One unit in, one unit
+# out, and the sub-unit remainder of the decay is carried as an integer — the same shape
+# the Power duty cycle uses, and for the same reason.
+
+# How much Heat one completed craft adds.
+#
+# **Completed crafts are what Heat is made of**, deliberately: a craft is the one event
+# in the Factory that is unambiguously throughput, that a player watches happen, and
+# that they caused by choosing to build the Machine that did it. Power drawn would have
+# made Heat a second reading of a gauge that already exists; a count of Machines running
+# would punish building rather than producing, and would make a starved line as hot as a
+# fed one.
+per_craft = 2
+
+# How much more Heat a craft adds per tier of Depth the Resource came from. Deeper ore
+# is louder (GLOSSARY.md), so a Depth 3 Node costs three units a craft on top of
+# `per_craft`. Only a Miner has a Depth; a crafter's Recipe adds `per_craft` flat.
+per_craft_per_depth = 1
+
+# How much Heat the Nest sheds per minute of game time, flat.
+#
+# Flat rather than proportional, and that is a determinism decision as much as a design
+# one. A proportional decay is a fixed-point ratio applied every tick — exactly the
+# shape that drifts over a long Run — and it would also give the Factory an equilibrium
+# Heat, which is the opposite of what this game is about. A flat drain means Heat
+# measures *throughput in excess of what the Nest can hide*, and that rises without
+# bound as the Factory does, which is "infinitely scaling" (GLOSSARY.md) made of
+# integers. 240 a minute is about two Miners' worth, so the opening line is free and the
+# third Machine is the first bet.
+decay_per_minute = 240
+
+# How long between Waves on a cold Factory, in seconds. Also how long the first Wave of
+# a Run is away, because a Run opens cold — one number rather than two that have to be
+# kept in a sensible relationship with each other.
+wave_interval_baseline_seconds = 150
+
+# The shortest the interval between Waves ever gets, in seconds. The ceiling on how
+# quickly Heat can hunt a Factory; past it, more Heat buys the Enemy more Enemies
+# instead of less time (see `content/waves.csv`).
+wave_interval_minimum_seconds = 40
+
+# How much Heat shaves one second off the interval between Waves. With the baseline and
+# the minimum above, 2200 Heat is where the interval bottoms out.
+#
+# This is the number that makes a hot Factory hunted *sooner* and not merely harder, and
+# it bites immediately: the countdown is derived from the Heat the Factory is carrying
+# right now, so a player who switches on a new line watches the clock jump towards them.
+per_second_sooner = 20
 
 [enemy]
 

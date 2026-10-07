@@ -12,22 +12,47 @@ func _layout() -> MapLayout:
 	return layout
 
 
+## A Wave of two Crawlers a Breach, and never any more however hot the Factory gets. The
+## schedule under test here is the clock and the Telegraph, so the composition is pinned
+## flat — `test_heat` is where Heat growing a Wave is asserted.
+const TWO_CRAWLERS: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,2,0,2
+"""
+
+
 ## Shipped content with the Wave clock wound forward and the Nest made of paper, so a
 ## whole Run fits in a few hundred ticks. Everything else is the real file.
-func _quick_content(nest_health: int = 40) -> Definitions:
+##
+## All three schedule keys move together: `Definitions` refuses a Telegraph longer than
+## the minimum interval and a minimum interval above the baseline, because a schedule that
+## contradicts itself is content somebody broke rather than a fixture.
+## `interval` is the gap between Waves in seconds, as text, and both schedule keys take it
+## together: `Definitions` refuses a minimum interval above the baseline, because a schedule
+## that contradicts itself is content somebody broke rather than a fixture. Pass "1" for a
+## stream of Waves and the shipped "150" for exactly one.
+func _quick_content(nest_health: int = 40, interval: String = "1") -> Definitions:
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
 		(
 			_read("res://content/tuning.toml")
-			. replace("first_wave_seconds = 90", "first_wave_seconds = 1")
-			. replace("crawlers_in_first_wave = 6", "crawlers_in_first_wave = 2")
+			. replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
+			. replace(
+				"wave_interval_baseline_seconds = 150",
+				"wave_interval_baseline_seconds = %s" % interval
+			)
+			. replace(
+				"wave_interval_minimum_seconds = 40",
+				"wave_interval_minimum_seconds = %s" % interval
+			)
 			. replace("spawn_interval_seconds = 0.5", "spawn_interval_seconds = 0.2")
 			. replace("health = 6000", "health = %d" % nest_health)
 		),
+		TWO_CRAWLERS,
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 
 
@@ -40,6 +65,15 @@ func _read(path: String) -> String:
 
 func _quick_sim(nest_health: int = 40) -> Simulation:
 	return Simulation.new(3, 1, _quick_content(nest_health), _layout())
+
+
+## A Run on the shipped interval with one Wave already called, so exactly one Wave ever
+## arrives and the Wave the Run-over report names is unambiguous. The lever is the honest
+## way to bring a Wave forward in a test: it is the same code path a player uses.
+func _one_wave_sim(nest_health: int = 40) -> Simulation:
+	var sim: Simulation = Simulation.new(3, 1, _quick_content(nest_health, "150"), _layout())
+	sim.step([InputAction.call_wave_early(0)])
+	return sim
 
 
 # ── The Nest ──────────────────────────────────────────────────────────────────
@@ -137,8 +171,8 @@ func test_a_run_opens_before_the_first_wave_with_a_countdown_to_it() -> void:
 	assert_eq(sim.query_wave_number(), 0, "no Wave has arrived yet")
 	assert_eq(
 		sim.query_ticks_until_next_wave(),
-		90 * Simulation.TICKS_PER_SECOND,
-		"wave.first_wave_seconds, in ticks"
+		150 * Simulation.TICKS_PER_SECOND,
+		"a Run opens cold, so the first Wave is a whole baseline interval away"
 	)
 	assert_eq(sim.query_enemy_count(), 0, "and no Enemies are on the Map")
 
@@ -163,12 +197,13 @@ func test_a_map_with_no_breach_never_sees_a_wave() -> void:
 	assert_eq(sim.query_enemy_count(), 0)
 
 
-func test_each_wave_sends_more_crawlers_than_the_last() -> void:
+func test_a_cold_factory_is_sent_the_same_wave_every_time() -> void:
+	# The counterpart to `test_heat`'s escalation, and the half that makes it mean
+	# something: a Wave grows because the Factory got hotter, **not** because time passed.
+	# A Run with no Machines at all is attacked by the same two Crawlers for ever.
 	var sim: Simulation = _quick_sim(1000000)
 	var first: int = 0
 	var second: int = 0
-	# Wave 1 arrives after a second; Wave 2 two minutes later. Counted by watching the
-	# Wave number change rather than by predicting a tick.
 	for i: int in range(3 * 60 * Simulation.TICKS_PER_SECOND):
 		var before: int = sim.query_enemy_count()
 		sim.step([])
@@ -177,12 +212,9 @@ func test_each_wave_sends_more_crawlers_than_the_last() -> void:
 				first += 1
 			elif sim.query_wave_number() == 2:
 				second += 1
-	assert_eq(first, 2, "the tuned crawlers_in_first_wave")
-	assert_eq(
-		second,
-		2 + 4,
-		"plus crawlers_added_per_wave — Waves escalate without bound (GLOSSARY.md)"
-	)
+	assert_eq(sim.query_heat(), 0, "nothing was ever produced")
+	assert_eq(first, 2, "the tuned count_per_breach")
+	assert_eq(second, 2, "and Wave 2 is the same Wave, because the Factory is the same")
 
 
 # ── Losing the Run ────────────────────────────────────────────────────────────
@@ -213,7 +245,7 @@ func test_crawlers_chew_the_nest_down_and_the_run_ends() -> void:
 
 
 func test_the_run_over_condition_names_the_wave_reached() -> void:
-	var sim: Simulation = _quick_sim(40)
+	var sim: Simulation = _one_wave_sim(40)
 	while not sim.query_run_is_over():
 		sim.step([])
 	assert_eq(

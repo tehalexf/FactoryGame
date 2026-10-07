@@ -19,20 +19,21 @@ func _layout() -> MapLayout:
 	return layout
 
 
-## Shipped content with the Wave clock wound forward, so a Wave fits in a test. Every
-## other number is the real file's.
+## The shipped content, exactly as the game ships it. Nothing here steps a Wave, so there is
+## no schedule to wind forward.
 func _content(overrides: Array = []) -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("first_wave_seconds = 90", "first_wave_seconds = 1")
 	for pair: PackedStringArray in overrides:
 		tuning = tuning.replace(pair[0], pair[1])
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
 		tuning,
+		_read("res://content/waves.csv"),
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 
 
@@ -63,19 +64,48 @@ fire_mg,Fire MG,ammunition:1,,0.25
 """
 
 
-## The same tuning the game ships, with the first Wave wound forward to ten seconds — long
-## enough for the Belt to prime the Turret first — and cut to one Crawler, because most of
-## what is asserted below is about one Turret and one Enemy. A test that wants a swarm asks
-## for one by overriding the count back.
-func _ammo_content(overrides: Array = []) -> Definitions:
+## A Wave of one Crawler a Breach, and never any more however hot the Factory gets. Most of
+## what is asserted below is about one Turret and one Enemy; a test that wants a swarm asks
+## for `FOUR_CRAWLERS` instead. Pinned flat rather than left to grow with Heat, because the
+## subject here is the Turret and not the schedule.
+const ONE_CRAWLER: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,1,0,1
+"""
+
+const FOUR_CRAWLERS: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,4,0,4
+"""
+
+
+## The same tuning the game ships, with the Telegraph stretched to ten seconds — long enough
+## for the Belt to prime the Turret before the Wave a test called arrives.
+##
+## The gap between Waves is left at the shipped baseline and the Wave is brought forward with
+## the lever instead, which is both the same code path a player uses and what keeps Wave 2
+## two and a half minutes out of the way of a test about one Turret.
+func _ammo_content(overrides: Array = [], waves: String = ONE_CRAWLER) -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("first_wave_seconds = 90", "first_wave_seconds = 10")
-	tuning = tuning.replace("crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1")
+	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
 	for pair: PackedStringArray in overrides:
 		tuning = tuning.replace(pair[0], pair[1])
 	return Definitions.parse(
-		AMMO_MACHINES, AMMO_RECIPES, tuning, "machines.csv", "recipes.csv", "tuning.toml"
+		AMMO_MACHINES,
+		AMMO_RECIPES,
+		tuning,
+		waves,
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml",
+		"waves.csv"
 	)
+
+
+## A Run on the Ammunition Map with a Wave already called, so it arrives ten seconds in
+## rather than two and a half minutes in.
+func _ammo_sim(overrides: Array = [], waves: String = ONE_CRAWLER) -> Simulation:
+	var sim: Simulation = Simulation.new(5, 1, _ammo_content(overrides, waves), _ammo_layout())
+	sim.step([InputAction.call_wave_early(0)])
+	return sim
 
 
 ## A Map with an Ammunition seam beside the Crawlers' lane, so a Turret standing in the
@@ -162,7 +192,7 @@ func test_an_mg_turret_is_a_machine_that_consumes_ammunition() -> void:
 # ── Acquiring and firing ──────────────────────────────────────────────────────
 
 func test_a_fed_turret_kills_a_crawler_that_walks_into_range() -> void:
-	var sim: Simulation = Simulation.new(5, 1, _ammo_content(), _ammo_layout())
+	var sim: Simulation = _ammo_sim()
 	_fed_turret(sim)
 	assert_true(sim.query_machine_is_turret(0), "index 0 is the Turret")
 	_step_until_loaded(sim)
@@ -191,7 +221,7 @@ func test_a_fed_turret_kills_a_crawler_that_walks_into_range() -> void:
 func test_a_turret_without_ammunition_does_not_fire() -> void:
 	# The whole point of the ticket: defence costs continuous production, so a Turret that
 	# was built and walked away from is an ornament.
-	var sim: Simulation = Simulation.new(5, 1, _ammo_content(), _ammo_layout())
+	var sim: Simulation = _ammo_sim()
 	var definitions: Definitions = sim.query_definitions()
 	sim.step([
 		InputAction.build_machine(
@@ -212,7 +242,7 @@ func test_a_turret_without_ammunition_does_not_fire() -> void:
 
 
 func test_a_turret_does_not_fire_at_an_enemy_beyond_its_reach() -> void:
-	var sim: Simulation = Simulation.new(5, 1, _ammo_content(), _ammo_layout())
+	var sim: Simulation = _ammo_sim()
 	_fed_turret(sim)
 	_step_until_loaded(sim)
 
@@ -231,7 +261,7 @@ func test_a_turret_does_not_fire_at_an_enemy_beyond_its_reach() -> void:
 
 
 func test_a_turret_acquires_at_the_range_its_row_declares() -> void:
-	var sim: Simulation = Simulation.new(5, 1, _ammo_content(), _ammo_layout())
+	var sim: Simulation = _ammo_sim()
 	_fed_turret(sim)
 	_step_until_loaded(sim)
 	assert_eq(
@@ -264,10 +294,9 @@ func test_a_turret_keeps_shooting_at_the_crawler_it_was_shooting_at() -> void:
 	# would still look right, and one holding an *index* would silently switch to a different
 	# Crawler every time one died. So what is asserted is that the serial never goes
 	# backwards and that each one is held for the whole three shots it takes to kill it.
-	var sim: Simulation = Simulation.new(5, 1, _ammo_content([
-		["crawlers_in_first_wave = 1", "crawlers_in_first_wave = 4"],
-		["crawler_health = 30", "crawler_health = 90"],
-	]), _ammo_layout())
+	var sim: Simulation = _ammo_sim(
+		[PackedStringArray(["crawler_health = 30", "crawler_health = 90"])], FOUR_CRAWLERS
+	)
 	_fed_turret(sim)
 	_step_until_loaded(sim)
 
@@ -298,13 +327,16 @@ func test_a_turret_with_nothing_in_reach_is_not_on_the_power_grid() -> void:
 	var content: Definitions = Definitions.parse(
 		AMMO_MACHINES.replace("mg_turret_mk1,MG Turret Mk1,turret,2,2,0,0", "mg_turret_mk1,MG Turret Mk1,turret,2,2,90,0"),
 		AMMO_RECIPES,
-		_read("res://content/tuning.toml").replace("first_wave_seconds = 90", "first_wave_seconds = 10").replace("crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1"),
+		_read("res://content/tuning.toml").replace("telegraph_seconds = 12", "telegraph_seconds = 10"),
+		ONE_CRAWLER,
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
+	sim.step([InputAction.call_wave_early(0)])
 	_fed_turret(sim)
 	_step_until_loaded(sim)
 	sim.step([])
@@ -343,6 +375,11 @@ func _gap_metres(sim: Simulation, machine: int, enemy: int) -> int:
 ## coal line runs east from the Node at (12,4) into a Boiler that pays for all of it; and the
 ## Ammunition travels the long way round to a Turret standing in the Crawlers' lane.
 const TURRET_TILE: Vector3i = Vector3i(2, 0, -7)
+## How far into the Run the dry fixture cuts the Turret's supply line. Just past tick 8479,
+## which is when this Factory's Turret first fires — the Wave it is shooting at arrived at
+## 8217, pulled in from 9000 by the Heat the Factory made producing the Ammunition.
+const DRY_CUT_TICK: int = 8520
+
 const LAST_BELT_TILE: Vector3i = Vector3i(1, 0, -6)
 
 
@@ -407,10 +444,13 @@ func test_an_ammo_press_feeds_a_turret_by_belt_and_it_holds_the_lane() -> void:
 	if not assert_true(turret != -1, "the Turret is standing"):
 		return
 
-	# Long enough for the first Wave, which the shipped tuning puts at 90 seconds.
+	# Long enough for the first Wave and the far side of it. **This Factory brings its own
+	# Wave forward**: six working Machines raise Heat, Heat shortens the gap, and the Wave
+	# lands at tick 8217 rather than at the 9000 a cold Factory would wait. That is #12's
+	# mechanic acting on #10's arithmetic, and the comparison below is where it shows.
 	var fired: int = 0
 	var highest_magazine: int = 0
-	for i: int in range(140 * Simulation.TICKS_PER_SECOND):
+	for i: int in range(180 * Simulation.TICKS_PER_SECOND):
 		var before: int = sim.query_turret_last_shot_tick(turret)
 		sim.step([])
 		if sim.query_turret_last_shot_tick(turret) != before:
@@ -433,12 +473,16 @@ func test_an_ammo_press_feeds_a_turret_by_belt_and_it_holds_the_lane() -> void:
 
 
 func test_an_undefended_nest_loses_the_wave_the_same_factory_holds() -> void:
-	# The comparison the ticket is for. Identical content, identical Map, identical hundred
-	# and forty seconds — the only difference is whether a Turret was fed.
+	# The comparison the ticket is for. Identical content, identical Map, identical three
+	# minutes — the only difference is whether a Turret was fed.
+	#
+	# The defended Factory is attacked **earlier** than the bare one, at tick 8217 against
+	# 9000, because producing is what raised its Heat. That is the bet the whole game is
+	# about: the Factory that can hold a Wave is also the Factory that summons it sooner.
 	var defended: Simulation = Simulation.new(7, 1, null, MapLayout.starter())
 	var bare: Simulation = Simulation.new(7, 1, null, MapLayout.starter())
 	_competent_factory(defended)
-	for i: int in range(140 * Simulation.TICKS_PER_SECOND):
+	for i: int in range(180 * Simulation.TICKS_PER_SECOND):
 		defended.step([])
 		bare.step([])
 
@@ -468,8 +512,8 @@ func _cannon_content() -> Definitions:
 		_read("res://content/recipes.csv") + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n"
 	)
 	return Definitions.parse(
-		machines, recipes, _read("res://content/tuning.toml"),
-		"machines.csv", "recipes.csv", "tuning.toml"
+		machines, recipes, _read("res://content/tuning.toml"), _read("res://content/waves.csv"),
+		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv"
 	)
 
 
@@ -495,19 +539,21 @@ func test_a_cannon_turret_fires_further_and_harder_with_no_code_that_knows_about
 	# acquires at its own reach, spends its own two rounds a shot, and kills with its own
 	# damage — all of it through the same `_craft` the MG and a Smelter go through.
 	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("first_wave_seconds = 90", "first_wave_seconds = 10")
-	tuning = tuning.replace("crawlers_in_first_wave = 6", "crawlers_in_first_wave = 1")
+	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
 	var content: Definitions = Definitions.parse(
 		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,0,0,500,0,14,80,fire_cannon,\n",
 		AMMO_RECIPES + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n",
 		tuning,
+		ONE_CRAWLER,
 		"machines.csv",
 		"recipes.csv",
-		"tuning.toml"
+		"tuning.toml",
+		"waves.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
+	sim.step([InputAction.call_wave_early(0)])
 	var ground: int = WorldGrid.GROUND_LAYER
 	sim.step([
 		InputAction.build_machine(0, content.machine_index("cannon_turret_mk1"), Vector3i(8, ground, 0)),
@@ -554,8 +600,9 @@ func test_determinism_a_turret_firing_and_killing_crawlers_replays_identically()
 	var script: InputScript = InputScript.new()
 	script.add_tick(_factory_machines(definitions))
 	script.add_tick(_factory_belts())
-	# Past the shipped 90-second first Wave and out the far side of it.
-	script.add_idle_ticks(140 * Simulation.TICKS_PER_SECOND)
+	# Past the first Wave — which this Factory's own Heat pulls in to tick 8217 — and out the
+	# far side of it.
+	script.add_idle_ticks(180 * Simulation.TICKS_PER_SECOND)
 
 	var recording: ReplayRecording = DeterminismHarness.record(script, 7, 1)
 	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording)
@@ -570,14 +617,22 @@ func test_determinism_the_firing_fixture_really_did_kill_crawlers() -> void:
 	var turret: int = _turret_index(sim)
 	var killed: int = 0
 	var seen: int = 0
-	for i: int in range(140 * Simulation.TICKS_PER_SECOND):
+	for i: int in range(180 * Simulation.TICKS_PER_SECOND):
 		var before: int = sim.query_enemy_count()
 		sim.step([])
 		seen = maxi(seen, sim.query_enemy_count())
 		if sim.query_enemy_count() < before:
 			killed += before - sim.query_enemy_count()
 	assert_eq(sim.query_wave_number(), 1, "the shipped first Wave arrived")
-	assert_eq(killed, 6, "and the Turret shot all six of its Crawlers")
+	# Seven rather than the six a *cold* Factory earns, and the extra one is the whole point
+	# of #12: `content/waves.csv` buys the Enemy one more Crawler a Breach every 150 Heat, and
+	# this Factory made enough producing the Ammunition it is defending itself with. The
+	# Turret still killed every one of them.
+	assert_eq(killed, 7, "and the Turret shot every Crawler the Wave sent")
+	assert_true(
+		killed > 6,
+		"a Factory that produces is sent more than a Factory that does not: %d" % killed
+	)
 	assert_true(seen > 0, "there were Crawlers on the Map to shoot at")
 	assert_true(
 		sim.query_turret_last_shot_tick(turret) > 0,
@@ -590,10 +645,11 @@ func test_determinism_a_turret_running_dry_mid_wave_replays_identically() -> voi
 	var script: InputScript = InputScript.new()
 	script.add_tick(_factory_machines(definitions))
 	script.add_tick(_factory_belts())
-	# Five seconds into the Wave the last Belt into the Turret is taken up, so the Turret
-	# fires off what it is holding and then stops with Crawlers still walking at it. One
-	# Input Action, which is what makes "it ran dry" a thing a replay can reproduce exactly.
-	script.add_idle_ticks(95 * Simulation.TICKS_PER_SECOND - 2)
+	# Just after the Turret opens fire — it first shoots on tick 8479 — the last Belt into it
+	# is taken up, so it spends what it is holding and then stops with Crawlers still walking
+	# at it. One Input Action, which is what makes "it ran dry" a thing a replay can
+	# reproduce exactly.
+	script.add_idle_ticks(DRY_CUT_TICK)
 	script.add_tick([InputAction.demolish(0, LAST_BELT_TILE)])
 	script.add_idle_ticks(45 * Simulation.TICKS_PER_SECOND)
 
@@ -606,7 +662,7 @@ func test_determinism_the_dry_fixture_really_did_run_dry_with_crawlers_still_com
 	var sim: Simulation = Simulation.new(7, 1, null, MapLayout.starter())
 	_competent_factory(sim)
 	var turret: int = _turret_index(sim)
-	for i: int in range(95 * Simulation.TICKS_PER_SECOND - 2):
+	for i: int in range(DRY_CUT_TICK):
 		sim.step([])
 	assert_true(sim.query_turret_ammunition(turret) > 0, "supplied, and shooting")
 	var shots_before: int = sim.query_turret_last_shot_tick(turret)
@@ -630,7 +686,7 @@ func test_determinism_the_dry_fixture_really_did_run_dry_with_crawlers_still_com
 # ── State, saved and hashed ───────────────────────────────────────────────────
 
 func test_a_turret_mid_fight_is_part_of_the_state_hash() -> void:
-	var sim: Simulation = Simulation.new(5, 1, _ammo_content(), _ammo_layout())
+	var sim: Simulation = _ammo_sim()
 	_fed_turret(sim)
 	_step_until_loaded(sim)
 	_step_until_aimed(sim)
@@ -643,6 +699,7 @@ func test_a_turret_mid_fight_is_part_of_the_state_hash() -> void:
 func test_a_run_with_a_turret_mid_fight_saves_and_resumes_identically() -> void:
 	var content: Definitions = _ammo_content()
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
+	sim.step([InputAction.call_wave_early(0)])
 	_fed_turret(sim)
 	_step_until_loaded(sim)
 	_step_until_aimed(sim)

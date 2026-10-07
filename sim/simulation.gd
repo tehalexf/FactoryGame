@@ -35,6 +35,12 @@ extends RefCounted
 ## tuning files are converted with this.
 const TICKS_PER_SECOND: int = 60
 
+## Ticks in a minute of game time. Heat's decay is quoted per minute because that is the
+## span a human reasons about a Factory over, and the conversion has to be exact: the
+## decay is carried as an integer credit against this number rather than as a per-tick
+## fraction, so nothing is shed and nothing drifts over a forty-hour Run.
+const TICKS_PER_MINUTE: int = TICKS_PER_SECOND * 60
+
 ## How far from level a player may pitch the view, in fixed-point turns. 0.24 of a
 ## turn is 86.4 degrees — not quite the vertical, so the horizon never vanishes
 ## entirely and the view cannot roll over the top.
@@ -59,9 +65,12 @@ const FIELD_TILES: int = FIELD_WIDTH_TILES * FIELD_WIDTH_TILES
 ## `test_flowfield` asserts the two orders agree by following the field a tile at a time.
 const FIELD_STEPS: Array = [1, FIELD_WIDTH_TILES, -1, -FIELD_WIDTH_TILES]
 
-## The one Enemy kind Milestone 1 ships. Held as an integer in `_enemy_kind` so the
+## The one Enemy kind Milestone 1 ships. An **alias** of `EnemyKind.CRAWLER` rather than a
+## second copy of the number: `content/waves.csv` names kinds in words, `EnemyKind` is
+## where a name and its integer meet, and a second authority here would be the one that
+## drifted. Held as an integer in `_enemy_kind` so the
 ## Breaker and the Siege Hulk join the same arrays rather than getting their own.
-const ENEMY_KIND_CRAWLER: int = 0
+const ENEMY_KIND_CRAWLER: int = EnemyKind.CRAWLER
 
 ## Degrees in one whole turn. Angles are turns everywhere inside the Simulation; the
 ## tuning file is allowed degrees because that is how a human reasons about a tilt.
@@ -90,6 +99,20 @@ enum Refusal {
 	MISSING_MATERIALS = 4,
 	## Nothing to demolish on that tile.
 	NOTHING_THERE = 5,
+	## The lever was pulled while the Wave it would call is already on its way — the
+	## Telegraph is running, so there is nothing left to bring forward.
+	WAVE_ALREADY_COMING = 6,
+	## The lever was pulled while the current Wave is still coming out of the Breaches.
+	## Calling then would stack two Waves on one Telegraph, which is the ambush the
+	## Telegraph exists to prevent.
+	WAVE_STILL_ARRIVING = 7,
+	## There is nowhere for a Wave to enter. A Map with no Breach has no Waves at all,
+	## so there is no Wave to call.
+	NO_BREACH = 8,
+	## The Run is over. Nothing is called after the Nest has fallen.
+	RUN_IS_OVER = 9,
+	## The intent names a player this Run does not have.
+	NO_SUCH_PLAYER = 10,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -225,18 +248,74 @@ var _breach_tile_x: PackedInt64Array = PackedInt64Array()
 var _breach_tile_y: PackedInt64Array = PackedInt64Array()
 var _breach_tile_z: PackedInt64Array = PackedInt64Array()
 
-## Which Wave the Run has reached, the ticks until the next one arrives, how many
-## Crawlers each Breach still has to release from the current one, and the ticks until
-## the next one crawls out.
+## Heat: the scalar that measures how much attention the Factory has drawn
+## (GLOSSARY.md), and the thing that makes scaling up a bet rather than a free gain.
 ##
-## Deliberately the thinnest possible schedule: a baseline timer and a count that
-## grows. Heat is what will really drive arrival and size, along with the Telegraph and
-## the call-early lever, and that ticket replaces all four of these along with the
-## `[wave]` section of the tuning file. What matters here is only that a Breach has
-## something to obey and that the Wave reached is a number the Run-over report can name.
+## **A whole number of heat units, and there is no fixed point anywhere in it.** That is
+## the central decision of this whole mechanic and it is a determinism decision. Heat
+## accumulates continuously across a forty-hour Run, so it is exposed to exactly the
+## failure #7 eliminated from Power throttling: a per-tick fixed-point ratio sheds up to
+## 2⁻¹⁶ every tick and silently drifts, and a Run that drifted would be a Run whose Waves
+## arrived at different times on two clients.
+##
+## The accumulator's shape, in two halves:
+##
+## * **In, event-driven.** A completed craft adds a whole number of units, once, at the
+##   moment it completes. Crafts are discrete, so this is integer addition and there is
+##   nothing to round.
+## * **Out, a duty cycle over whole ticks.** The decay is quoted per minute, which is not
+##   a whole number of units per tick, so the sub-unit remainder is carried in
+##   `_heat_decay_credit` exactly as the Power grid carries kilowatt-ticks: every tick
+##   banks `heat.decay_per_minute` credit, and every whole `TICKS_PER_MINUTE` of credit
+##   spends one unit of Heat. Over any window the Factory has shed exactly
+##   `floor(ticks * decay_per_minute / TICKS_PER_MINUTE)` units — **one floor applied to
+##   the total, never one per tick.**
+##
+## Credit does not survive the Factory going cold, for the reason Power credit does not
+## survive demand falling: a Nest that has nothing to hide cannot bank the shedding and
+## spend it on a later spike.
+var _heat: int = 0
+var _heat_decay_credit: int = 0
+
+## Which Wave the Run has reached, how long it is since the last one, how long the
+## Telegraph in front of the next one has been showing, and whether a player has called
+## it early.
+##
+## The schedule is **derived from Heat rather than counted down**, which is what makes a
+## hot Factory hunted sooner and not merely harder: `_wave_interval_ticks` is a function
+## of the Heat the Factory is carrying *right now*, so switching on a new line pulls the
+## countdown towards the player on the tick they switch it on. A stored countdown could
+## only ever have shortened the Wave after next, which teaches nothing.
 var _wave_number: int = 0
-var _ticks_until_next_wave: int = 0
-var _wave_spawns_remaining: int = 0
+var _wave_elapsed_ticks: int = 0
+
+## How many consecutive ticks the Telegraph has been showing. Reset the moment it stops,
+## so a Factory that cooled back down loses its warning rather than banking it.
+##
+## Load-bearing rather than cosmetic: a Wave is not due until this has reached the tuned
+## Telegraph length, whatever the interval says and whatever a player called. That is the
+## single mechanism behind "the core loop never ambushes the player" (DESIGN.md) — a Heat
+## spike cannot pull a Wave out of a clear sky, because the spike shortens the interval
+## and the Telegraph still has to run.
+var _telegraph_ticks_served: int = 0
+
+## 1 once a player has pulled the call-early lever and until that Wave arrives. An
+## integer rather than a bool because every other held flag in this file is one and
+## because `RunSave` encodes integers.
+var _wave_called_early: int = 0
+
+## The current Wave's release queue: one entry per Enemy each Breach has still to let
+## out, as `EnemyKind` integers, and how far through it the Breaches have got.
+##
+## Composed once when the Wave arrives, out of `content/waves.csv` against the Heat at
+## that moment, so a Wave is a fact about how hot the Factory was when it was summoned
+## rather than something that keeps re-deciding itself while it spawns. A cursor rather
+## than popping the front, because popping a `PackedInt64Array` from the front is O(n)
+## and a hot Factory's queue is long.
+var _wave_queue_kind: PackedInt64Array = PackedInt64Array()
+var _wave_queue_cursor: int = 0
+
+## Ticks until the next Enemy of the current Wave crawls out of its Breach.
 var _ticks_until_next_spawn: int = 0
 
 ## The tick the Run ended on, or -1 while it is still running.
@@ -335,6 +414,17 @@ var _machine_built_tick: PackedInt64Array = PackedInt64Array()
 ## fixed-point fraction: a craft takes a whole number of ticks, so counting them is
 ## exact and no rounding accumulates over a 40-hour Run.
 var _machine_progress_ticks: PackedInt64Array = PackedInt64Array()
+
+## How much Heat each Machine has added over its whole life, in heat units.
+##
+## The answer to "what is making me hot", and the reason it is a stock rather than a rate:
+## a rate has to be averaged over a window, and a window is either short enough to be
+## noise or long enough to be a different Factory. A lifetime total is exact integer state,
+## it is hashed, it round-trips, and it is attributable — a player reads it off the
+## Machine they built and knows what that decision cost them. The instantaneous rate is
+## available too, as a projection (`query_machine_heat_per_minute`), which is where a
+## division belongs: in a gauge the Simulation never reads back.
+var _machine_heat_units: PackedInt64Array = PackedInt64Array()
 
 ## What each Machine is holding, as one sorted `PackedStringArray` of Item ids and
 ## one matching `PackedInt64Array` of counts per Machine. Item *ids*, not interned
@@ -507,10 +597,6 @@ func _init(
 	_breach_tile_y = layout.breach_tile_y.duplicate()
 	_breach_tile_z = layout.breach_tile_z.duplicate()
 
-	# The first Wave is on the clock from tick 0, so the Telegraph a later ticket adds has
-	# a countdown to read rather than a schedule to invent.
-	_ticks_until_next_wave = _seconds_to_ticks(_definitions.wave_first_seconds)
-
 	var players: int = maxi(player_count, 1)
 	_player_x.resize(players)
 	_player_z.resize(players)
@@ -582,6 +668,7 @@ func step(actions: Array) -> void:
 	_power()
 	_extract()
 	_craft()
+	_heat_bleeds()
 	_waves()
 	_enemies()
 
@@ -615,6 +702,8 @@ func _apply(action: InputAction) -> void:
 			_apply_rotate_build(action)
 		InputAction.Kind.DEMOLISH:
 			_apply_demolish(action)
+		InputAction.Kind.CALL_WAVE_EARLY:
+			_apply_call_wave_early(action)
 
 
 ## Records the throttle a player asked for this tick. Applying it is `_walk`'s job,
@@ -1246,6 +1335,7 @@ func _extract() -> void:
 		while _machine_progress_ticks[index] >= required:
 			_machine_progress_ticks[index] -= required
 			_deposit_outputs(index, recipe)
+			_note_a_craft(index, definition)
 
 
 # ── Crafting ──────────────────────────────────────────────────────────────────
@@ -1289,6 +1379,7 @@ func _craft() -> void:
 			_machine_progress_ticks[index] -= required
 			_consume_inputs(index, recipe)
 			_deposit_outputs(index, recipe)
+			_note_a_craft(index, definition)
 			# A Turret's Recipe has no outputs to deposit, so this is the whole of what a
 			# completed craft does for one: the shot is the output. The round was consumed
 			# the line above, which is what makes a Turret that fired a Turret with one
@@ -1745,6 +1836,7 @@ func _apply_build_machine(action: InputAction) -> void:
 	_machine_tile_z.append(tile.z)
 	_machine_built_tick.append(_tick)
 	_machine_progress_ticks.append(0)
+	_machine_heat_units.append(0)
 	_machine_buffer_items.append(PackedStringArray())
 	_machine_buffer_counts.append(PackedInt64Array())
 	_machine_input_items.append(PackedStringArray())
@@ -1901,6 +1993,7 @@ func _remove_machine(index: int) -> void:
 	_machine_tile_z.remove_at(index)
 	_machine_built_tick.remove_at(index)
 	_machine_progress_ticks.remove_at(index)
+	_machine_heat_units.remove_at(index)
 	_machine_buffer_items.remove_at(index)
 	_machine_buffer_counts.remove_at(index)
 	_machine_input_items.remove_at(index)
@@ -2049,68 +2142,295 @@ func _apply_reload_definitions(action: InputAction) -> void:
 
 
 
+# ── Heat ──────────────────────────────────────────────────────────────────────
+
+## Records the Heat one completed craft added, to the Factory's total and to the Machine's
+## own.
+##
+## **Completed crafts are what Heat is made of.** The alternatives were Power drawn and
+## Machines running, and both were rejected for the same reason: Heat has to be something
+## a player can watch themselves cause, or the mechanic teaches nothing and the Waves read
+## as bad luck. A craft is the one event in the Factory that is unambiguously throughput —
+## it is the thing a player built the Machine in order to get, it happens visibly, and it
+## stops the moment the line starves. Power drawn would have made Heat a second reading of
+## a gauge that already exists, and would have charged a slow Recipe with a big draw more
+## than a fast line that actually produces. A count of Machines running would have punished
+## building rather than producing, and made a starved line exactly as hot as a fed one.
+##
+## Depth is the second term, because deeper ore is louder (GLOSSARY.md). Only a Miner has
+## one — a crafter pays the flat rate.
+##
+## Integer addition at a discrete event, which is the whole reason this cannot drift.
+func _note_a_craft(index: int, definition: MachineDefinition) -> void:
+	var units: int = _definitions.heat_per_craft
+	if definition.is_miner():
+		var node_index: int = _node_under_machine(index, definition)
+		if node_index != -1:
+			units += _definitions.heat_per_craft_per_depth * _node_depth[node_index]
+	if units <= 0:
+		return
+	_heat += units
+	_machine_heat_units[index] += units
+
+
+## Sheds the Heat the Nest can hide, once per tick.
+##
+## A **duty cycle over whole ticks**, not a fraction of one. The decay is quoted per
+## minute and a minute is `TICKS_PER_MINUTE` ticks, so a tick's worth is not a whole unit:
+## every tick banks `heat.decay_per_minute` of credit and every whole `TICKS_PER_MINUTE`
+## of credit spends one unit, with the remainder carried in an integer. Over any window
+## the Factory has shed exactly `floor(ticks * decay_per_minute / TICKS_PER_MINUTE)` units
+## — one floor applied once to the total, never once per tick. This is #7's lesson applied
+## to the one quantity in the game that accumulates for forty hours: there is no fixed
+## point in the mechanism at all, so there is nothing for it to lose.
+##
+## The drain is flat rather than proportional, which is a design decision as much as a
+## determinism one. A proportional decay would be a per-tick ratio — the exact shape that
+## drifts — and it would give the Factory an equilibrium Heat, which is the opposite of
+## what this game is about. Flat means Heat measures throughput *in excess of what the
+## Nest can hide*, and that rises without bound as the Factory does.
+##
+## Credit does not survive the Factory going cold: a Nest with nothing to hide cannot bank
+## the shedding and spend it on a later spike, the same rule Power credit obeys.
+func _heat_bleeds() -> void:
+	if _heat <= 0:
+		_heat = 0
+		_heat_decay_credit = 0
+		return
+
+	_heat_decay_credit += _definitions.heat_decay_per_minute
+	@warning_ignore("integer_division")
+	var shed: int = _heat_decay_credit / TICKS_PER_MINUTE
+	if shed > 0:
+		_heat_decay_credit -= shed * TICKS_PER_MINUTE
+		_heat = maxi(_heat - shed, 0)
+	if _heat <= 0:
+		_heat = 0
+		_heat_decay_credit = 0
+
+
 # ── The Nest, the Breaches and the Waves ──────────────────────────
 
-## Runs the Wave clock and lets Crawlers out of the Breaches.
+## Runs the Wave schedule: the Telegraph, the arrival, and the Breaches letting Enemies out.
 ##
-## Deliberately the thinnest schedule that makes a Breach do something: a timer arrives,
-## a count is set, and the Breaches trickle that many Crawlers out one every
-## `wave.spawn_interval_seconds`. Heat, the Telegraph and the call-early lever are what
-## will really decide when and how much (GLOSSARY.md, DESIGN.md), and that ticket
-## replaces this function wholesale.
+## Three things happen here in a fixed order, and the order is the argument:
 ##
-## A Map with no Breach has no Waves at all. Enemies enter the Map at Breaches and
-## nowhere else, so geography with nowhere to enter is geography nothing attacks — which
-## is also what lets a test studying the Factory ask for a Map without the threat.
+## 1. **Time passes.** `_wave_elapsed_ticks` counts up rather than a stored countdown
+##    counting down, because the interval it is measured against is a function of the
+##    Factory's Heat *right now*. Switching on a new line therefore pulls the next Wave
+##    towards the player on the tick they switch it on, which is the lesson the whole
+##    mechanic exists to teach; a stored countdown could only ever have shortened the Wave
+##    after next.
+## 2. **The Telegraph runs.** It shows while the Wave is within `wave.telegraph_seconds`,
+##    and it is counted, and a Wave is not due until the count is full. That is the one
+##    mechanism behind "the core loop never ambushes the player" — not a convention every
+##    caller has to remember, but a gate every Wave passes through, including a called one
+##    and including one a Heat spike pulled forward.
+## 3. **Enemies trickle out**, one per Breach per `wave.spawn_interval_seconds`, out of a
+##    queue composed from `content/waves.csv` at the moment the Wave arrived.
+##
+## A Map with no Breach has no Waves at all, and here that means the whole clock is
+## frozen: Enemies enter at Breaches and nowhere else, so geography with nowhere to enter
+## is geography nothing attacks, and a countdown that kept running would report a Wave
+## that is never coming. Heat still accumulates — a Factory is as loud as it is wherever
+## it is standing — which is what lets a test study Heat without a Wave interrupting.
 func _waves() -> void:
 	if query_run_is_over() or query_breach_count() == 0:
 		return
 
-	if _ticks_until_next_wave > 0:
-		_ticks_until_next_wave -= 1
-	if _ticks_until_next_wave == 0:
-		_wave_number += 1
-		_wave_spawns_remaining = maxi(
-			_definitions.wave_first_crawlers
-			+ (_wave_number - 1) * _definitions.wave_crawlers_added,
-			0
-		)
-		_ticks_until_next_wave = maxi(_seconds_to_ticks(_definitions.wave_interval_seconds), 1)
-		_ticks_until_next_spawn = 0
+	_wave_elapsed_ticks += 1
 
-	if _wave_spawns_remaining <= 0:
+	if _telegraph_is_showing():
+		_telegraph_ticks_served += 1
+	else:
+		_telegraph_ticks_served = 0
+
+	if _a_wave_is_due():
+		_begin_a_wave()
+
+	_release_from_the_breaches()
+
+
+## How long the gap between Waves is at the Factory's current Heat, in whole ticks.
+##
+## The baseline, less a second for every `heat.per_second_sooner` units of Heat, floored at
+## `heat.wave_interval_minimum_seconds`. Derived on demand rather than stored, so it tracks
+## Heat tick by tick in both directions — a Factory that cools gets its breathing room
+## back, which is what makes tearing a line down a real decision rather than a sunk cost.
+##
+## One integer division per call and no accumulation, so nothing here can drift. It is
+## recomputed rather than carried precisely *because* a carried value would have to be
+## adjusted every tick, and a per-tick adjustment is the shape this file refuses.
+func _wave_interval_ticks() -> int:
+	var baseline: int = _seconds_to_ticks(_definitions.heat_wave_interval_baseline_seconds)
+	var minimum: int = maxi(_seconds_to_ticks(_definitions.heat_wave_interval_minimum_seconds), 1)
+	var sooner: int = _definitions.heat_per_second_sooner
+	var seconds_cut: int = 0
+	if sooner > 0:
+		@warning_ignore("integer_division")
+		seconds_cut = _heat / sooner
+	return maxi(baseline - seconds_cut * TICKS_PER_SECOND, minimum)
+
+
+## How long the Telegraph runs, in whole ticks. At least one: a Telegraph of no length is
+## the ambush it exists to prevent, and `Definitions` refuses a tuning value that would
+## produce one, so this floor is the belt to that braces.
+func _telegraph_ticks() -> int:
+	return maxi(_seconds_to_ticks(_definitions.wave_telegraph_seconds), 1)
+
+
+## Whether the warning is up this tick. Either the Wave is close enough on the clock, or a
+## player called it — a called Wave telegraphs from the moment the lever is pulled, which
+## is what makes the lever a *throttle* rather than a surprise the caller inflicts on
+## everyone else standing in the Factory.
+func _telegraph_is_showing() -> bool:
+	if _wave_called_early == 1:
+		return true
+	return _wave_interval_ticks() - _wave_elapsed_ticks <= _telegraph_ticks()
+
+
+## Whether a Wave arrives this tick.
+##
+## The Telegraph is checked **first and unconditionally**, so there is exactly one way a
+## Wave can arrive and it goes through the warning. A called Wave waives the interval and
+## nothing else; a Heat spike shortens the interval and nothing else.
+func _a_wave_is_due() -> bool:
+	if _telegraph_ticks_served < _telegraph_ticks():
+		return false
+	if _wave_called_early == 1:
+		return true
+	return _wave_elapsed_ticks >= _wave_interval_ticks()
+
+
+## Composes the Wave that has just arrived and clears the clock for the next one.
+##
+## The composition is read out of `content/waves.csv` against the Heat at this moment and
+## then fixed, so a Wave is a fact about how hot the Factory was when it was summoned
+## rather than something that keeps re-deciding itself while it spawns. Every tier the
+## Factory has reached contributes — a hot Factory is sent the Chaff it was always getting
+## *and* whatever its Heat has newly unlocked — in table order, which is sorted by id and
+## therefore a property of the table rather than of authoring order.
+func _begin_a_wave() -> void:
+	_wave_number += 1
+	_wave_elapsed_ticks = 0
+	_telegraph_ticks_served = 0
+	_wave_called_early = 0
+	_ticks_until_next_spawn = 0
+
+	_wave_queue_kind = PackedInt64Array()
+	_wave_queue_cursor = 0
+	for index: int in range(_definitions.wave_entry_count()):
+		var entry: WaveEntry = _definitions.wave_entry_at(index)
+		if entry == null:
+			continue
+		for i: int in range(entry.count_at_heat(_heat)):
+			_wave_queue_kind.append(entry.enemy_kind)
+
+
+## Lets the next Enemy of the current Wave out of every Breach.
+##
+## One per Breach, walked in the canonical tile order `MapLayout` sorted them into.
+## Geography rather than authoring order, so two clients spawn the same Enemies in the
+## same sequence and the serials they carry agree.
+func _release_from_the_breaches() -> void:
+	if _wave_queue_cursor >= _wave_queue_kind.size():
 		return
 	if _ticks_until_next_spawn > 0:
 		_ticks_until_next_spawn -= 1
 		return
 
-	# One Crawler out of every Breach, walked in the canonical tile order `MapLayout`
-	# sorted them into. Geography rather than authoring order, so two clients spawn the
-	# same Enemies in the same sequence and the serials they carry agree.
+	var kind: int = _wave_queue_kind[_wave_queue_cursor]
 	for index: int in range(query_breach_count()):
-		_spawn_crawler(query_breach_tile(index))
-	_wave_spawns_remaining -= 1
+		_spawn_enemy(kind, query_breach_tile(index))
+	_wave_queue_cursor += 1
 	# One short of the interval, for the reason a bite cooldown is: this tick is the first
-	# of the gap, so a Crawler emerges every `wave.spawn_interval_seconds` exactly.
+	# of the gap, so an Enemy emerges every `wave.spawn_interval_seconds` exactly.
 	_ticks_until_next_spawn = maxi(
 		_seconds_to_ticks(_definitions.wave_spawn_interval_seconds) - 1, 0
 	)
 
 
-## Puts one Crawler on the Map at the centre of a tile.
+## Calls the next Wave early, and pays the player who called it.
+##
+## The lever: a throttle for a group that thinks it is ready, and the reason a co-op team
+## argues productively about whether it is. What it buys the Enemy is nothing at all — a
+## Wave is composed from the Heat the Factory is carrying when it *arrives*, and calling
+## early means it arrives while that Heat is still lower than it would have been. What it
+## costs the player is the breathing room they gave up. That is the whole trade, and it is
+## legible without a second number to tune.
+##
+## The Telegraph is not waived. A called Wave arrives exactly `wave.telegraph_seconds`
+## later and not one tick sooner, which is what keeps the lever from being a way for one
+## player to ambush four.
+##
+## Refused as a **silent no-op whose hash does not move**, the same rule a misaimed build
+## obeys: `query_call_wave_early_refusal` is what tells a player why, before they pull it.
+func _apply_call_wave_early(action: InputAction) -> void:
+	if _call_wave_early_refusal(action.player_id) != Refusal.NONE:
+		return
+
+	_wave_called_early = 1
+	# Served from zero, so the full Telegraph runs from the moment the lever moves rather
+	# than crediting whatever warning happened to be up already.
+	_telegraph_ticks_served = 0
+
+	var bounty: int = _definitions.wave_call_early_bounty
+	if bounty > 0:
+		for item_id: String in _definitions.item_ids():
+			_give_to_player(action.player_id, item_id, bounty)
+
+
+## Why the lever would refuse, or `Refusal.NONE`. A pure projection about a pull that has
+## not happened, so a HUD can grey the lever out and say why rather than reporting a
+## silence after the fact.
+func _call_wave_early_refusal(player_id: int) -> int:
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	if query_breach_count() == 0:
+		return Refusal.NO_BREACH
+	if player_id < 0 or player_id >= query_player_count():
+		return Refusal.NO_SUCH_PLAYER
+	if _wave_queue_cursor < _wave_queue_kind.size():
+		return Refusal.WAVE_STILL_ARRIVING
+	if _wave_called_early == 1 or _telegraph_is_showing():
+		return Refusal.WAVE_ALREADY_COMING
+	return Refusal.NONE
+
+
+## Puts one Enemy of the given kind on the Map at the centre of a tile.
 ##
 ## Appends, always, which is the whole of why Enemy iteration order is deterministic: the
 ## arrays are in ascending serial order by construction and nothing reorders them.
-func _spawn_crawler(tile: Vector3i) -> void:
+##
+## Takes the kind rather than assuming it, because the Wave table names kinds and
+## Milestone 1 shipping exactly one of them is a content fact rather than a structural one.
+## A kind with no tuned health would arrive with none and die on its first tick, so an
+## unknown kind is refused here as well as at load time — `_enemy_health_for` is the one
+## place a kind becomes a number of hit points.
+func _spawn_enemy(kind: int, tile: Vector3i) -> void:
+	var health: int = _enemy_health_for(kind)
+	if health <= 0:
+		return
 	var centre: FixedVec2 = WorldGrid.tile_centre_metres(tile)
 	_enemy_serial.append(_next_enemy_serial)
-	_enemy_kind.append(ENEMY_KIND_CRAWLER)
+	_enemy_kind.append(kind)
 	_enemy_x.append(centre.x)
 	_enemy_z.append(centre.z)
-	_enemy_health.append(_definitions.crawler_health)
+	_enemy_health.append(health)
 	_enemy_spawn_tick.append(_tick)
 	_enemy_attack_cooldown.append(0)
 	_next_enemy_serial += 1
+
+
+## The hit points an Enemy of a kind arrives with, or 0 for a kind that does not exist.
+## One `match` rather than a column in the Wave table, because health is a property of the
+## Enemy and the Wave table says how many of them come, not what they are.
+func _enemy_health_for(kind: int) -> int:
+	match kind:
+		EnemyKind.CRAWLER:
+			return _definitions.crawler_health
+		_:
+			return 0
 
 
 ## Moves every Enemy one tick along the shared flowfield, and lets the ones in contact
@@ -2459,9 +2779,14 @@ func hash() -> int:
 	hasher.feed_ints(_breach_tile_z)
 	# The Wave clock, and whether the Run is over. Every one of these decides what the next
 	# tick does, so none of them may sit outside the hash.
+	hasher.feed_int(_heat)
+	hasher.feed_int(_heat_decay_credit)
 	hasher.feed_int(_wave_number)
-	hasher.feed_int(_ticks_until_next_wave)
-	hasher.feed_int(_wave_spawns_remaining)
+	hasher.feed_int(_wave_elapsed_ticks)
+	hasher.feed_int(_telegraph_ticks_served)
+	hasher.feed_int(_wave_called_early)
+	hasher.feed_ints(_wave_queue_kind)
+	hasher.feed_int(_wave_queue_cursor)
 	hasher.feed_int(_ticks_until_next_spawn)
 	hasher.feed_int(_run_over_tick)
 	# Every Enemy on the Map, in index order — which is ascending spawn serial, the one
@@ -2484,6 +2809,7 @@ func hash() -> int:
 	hasher.feed_ints(_machine_tile_z)
 	hasher.feed_ints(_machine_rotation)
 	hasher.feed_ints(_machine_built_tick)
+	hasher.feed_ints(_machine_heat_units)
 	hasher.feed_ints(_machine_progress_ticks)
 	# What every Turret is shooting at, and when it last fired. The serial rather than an
 	# index, which is the whole point of holding one: a hash over indices would agree between
@@ -3056,16 +3382,161 @@ func query_wave_number() -> int:
 	return _wave_number
 
 
-## How many ticks until the next Wave arrives. What the Telegraph a later ticket adds will
-## count down.
+## How many ticks must still pass before the next Wave arrives. 0 once the Run is over.
+##
+## The honest answer rather than the clock's: the **later** of what the interval has left
+## and what the Telegraph has left, because both have to be satisfied and a Wave arrives
+## when the slower of them does. A player reading this is reading the number the Simulation
+## will actually act on, which is the only version worth putting on a HUD.
+##
+## It moves with Heat, in both directions and immediately. That is the point: a player who
+## switches on a new line watches this jump towards them, and that is how the bet is made
+## legible before it is lost.
 func query_ticks_until_next_wave() -> int:
-	return _ticks_until_next_wave
+	if query_run_is_over():
+		return 0
+	var telegraph_left: int = maxi(_telegraph_ticks() - _telegraph_ticks_served, 0)
+	if _wave_called_early == 1:
+		return telegraph_left
+	return maxi(maxi(_wave_interval_ticks() - _wave_elapsed_ticks, 0), telegraph_left)
 
 
-## How many Crawlers the current Wave has still to send through each Breach. 0 between
+## How long the gap between Waves currently is, in ticks. The baseline shortened by Heat.
+## Read beside `query_ticks_until_next_wave` so a gauge can show the countdown as a
+## fraction of the gap it is counting down through.
+func query_wave_interval_ticks() -> int:
+	return _wave_interval_ticks()
+
+
+## How many Enemies the current Wave has still to send through each Breach. 0 between
 ## Waves.
 func query_wave_spawns_remaining() -> int:
-	return _wave_spawns_remaining
+	return maxi(_wave_queue_kind.size() - _wave_queue_cursor, 0)
+
+
+## How many Enemies of each kind the current Wave still owes each Breach, by `EnemyKind`.
+## What a HUD draws the shape of an incoming Wave from.
+func query_wave_spawns_remaining_of_kind(kind: int) -> int:
+	var remaining: int = 0
+	for index: int in range(_wave_queue_cursor, _wave_queue_kind.size()):
+		if _wave_queue_kind[index] == kind:
+			remaining += 1
+	return remaining
+
+
+# ── The Telegraph ─────────────────────────────────────────────────────────────
+
+## Whether the Telegraph is showing: a Wave is coming and the warning is up.
+##
+## True for at least `wave.telegraph_seconds` before **every** Wave, without exception —
+## a Wave the clock brought, a Wave a Heat spike pulled forward, and a Wave a player
+## called. That is an invariant of `_a_wave_is_due` rather than a convention, which is what
+## makes "the core loop never ambushes the player" (DESIGN.md) a property of the code
+## instead of a promise about it.
+func query_wave_is_telegraphed() -> bool:
+	if query_run_is_over() or query_breach_count() == 0:
+		return false
+	return _telegraph_is_showing()
+
+
+## How many ticks the Telegraph has been showing, and how long it runs for in total. The
+## two numbers a rising gauge is drawn from; there is no audio yet, so the klaxon
+## GLOSSARY.md describes is a HUD warning and this is what fills it.
+func query_telegraph_ticks_served() -> int:
+	return _telegraph_ticks_served
+
+
+func query_telegraph_ticks() -> int:
+	return _telegraph_ticks()
+
+
+## Whether the Wave now being telegraphed was called by a player rather than by the clock.
+## Worth drawing: a called Wave is a decision somebody in the Factory made, and in co-op
+## the other three deserve to know it was made rather than merely that a Wave is coming.
+func query_wave_was_called_early() -> bool:
+	return _wave_called_early == 1
+
+
+## Why pulling the call-early lever would be refused, or `Refusal.NONE`.
+##
+## A projection about a pull that has not happened, exactly like `query_build_refusal`: the
+## reason is on screen *before* the player commits, which is both better than reporting a
+## silence afterwards and the only version that leaves the hash alone.
+func query_call_wave_early_refusal(player_id: int) -> int:
+	return _call_wave_early_refusal(player_id)
+
+
+# ── Heat ──────────────────────────────────────────────────────────────────────
+
+## The Factory's Heat, in whole heat units.
+##
+## The number that makes every new Machine a bet: it rises with throughput, it drives when
+## the next Wave arrives and what is in it, and it is on the HUD so the bet is informed.
+## An integer, with no fixed point behind it anywhere — see `_heat_bleeds`.
+func query_heat() -> int:
+	return _heat
+
+
+## How much Heat the Factory is shedding per minute, in heat units. The other half of the
+## reading: Heat on its own says how loud the Factory is, and this says how much of that it
+## is getting away with.
+func query_heat_decay_per_minute() -> int:
+	return _definitions.heat_decay_per_minute
+
+
+## How much Heat the Factory is currently generating per minute, in heat units — the sum of
+## every Machine that is producing right now.
+##
+## A projection, and the Simulation never reads it back. It is where the division lives, in
+## the same sense `query_power_ratio` is: the Simulation accrues Heat a whole craft at a
+## time and this turns that into a rate for a gauge, so the flooring here cannot reach the
+## state hash or move a single unit of Heat.
+func query_heat_per_minute() -> int:
+	var total: int = 0
+	for index: int in range(query_machine_count()):
+		total += query_machine_heat_per_minute(index)
+	return total
+
+
+## How much Heat one Machine has added over its whole life, in heat units.
+##
+## The contributor reading, and the reason a player can make an informed bet rather than
+## feeling unlucky: this says which Machine made them hot, in a number that is exact state
+## rather than an estimate. A demolished Machine takes its total with it, because the
+## Factory it was part of is not the Factory that is standing.
+func query_machine_heat_units(index: int) -> int:
+	if index < 0 or index >= _machine_heat_units.size():
+		return 0
+	return _machine_heat_units[index]
+
+
+## How much Heat one Machine is adding per minute at this moment, in heat units. 0 for a
+## Machine that is not producing — starved, newly built, or stopped by a brownout — because
+## a Machine that is not producing is not making the Factory loud.
+##
+## A projection like `query_heat_per_minute`, floored, and never read back by the
+## Simulation. Power's duty cycle is deliberately *not* folded in: this reports what the
+## Machine's Recipe is worth while it runs, and the Power gauge reports how often it is
+## running, so the two readings stay one fact each.
+func query_machine_heat_per_minute(index: int) -> int:
+	if index < 0 or index >= query_machine_count():
+		return 0
+	var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+	if definition == null or not _machine_would_work(index, definition):
+		return 0
+	if not _power_allows(definition):
+		return 0
+	var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
+	if recipe == null:
+		return 0
+	var per_craft: int = _definitions.heat_per_craft
+	if definition.is_miner():
+		var node_index: int = _node_under_machine(index, definition)
+		if node_index != -1:
+			per_craft += _definitions.heat_per_craft_per_depth * _node_depth[node_index]
+	@warning_ignore("integer_division")
+	var rate: int = per_craft * TICKS_PER_MINUTE / _ticks_per_craft(recipe)
+	return rate
 
 
 ## Whether the Run has ended. True from the tick the Nest fell, and never false again.

@@ -45,11 +45,17 @@ baseline_supply_kw = 300
 [nest]
 health = 6000
 [wave]
-first_wave_seconds = 90
-interval_seconds = 120
-crawlers_in_first_wave = 6
-crawlers_added_per_wave = 4
+telegraph_seconds = 12
 spawn_interval_seconds = 0.5
+call_early_bounty_per_item = 25
+
+[heat]
+per_craft = 2
+per_craft_per_depth = 1
+decay_per_minute = 240
+wave_interval_baseline_seconds = 150
+wave_interval_minimum_seconds = 40
+per_second_sooner = 20
 [enemy]
 crawler_health = 30
 crawler_speed_metres_per_second = 3
@@ -62,9 +68,17 @@ crawler_attack_interval_seconds = 1
 func _looking_sim(players: int = 1) -> Simulation:
 	var machines: String = FileAccess.get_file_as_string("res://content/machines.csv")
 	var recipes: String = FileAccess.get_file_as_string("res://content/recipes.csv")
-	var definitions: Definitions = Definitions.parse(machines, recipes, LOOK_TUNING)
+	var definitions: Definitions = Definitions.parse(machines, recipes, LOOK_TUNING, WAVES)
 	assert_true(definitions.errors.is_empty(), "the look fixture's content must load")
 	return Simulation.new(0, players, definitions)
+
+## The shipped Wave composition, inline so the fixture is a complete definition set. A
+## Wave's contents are a table (`content/waves.csv`), and a set with no rows in it is an
+## error rather than a Run that is never attacked.
+const WAVES: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,150,40
+"""
+
 
 func _step_many(sim: Simulation, actions: Array, ticks: int) -> void:
 	for tick: int in range(ticks):

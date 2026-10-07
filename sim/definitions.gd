@@ -41,6 +41,7 @@ const CONTENT_DIR: String = "res://content"
 const MACHINES_FILE: String = "machines.csv"
 const RECIPES_FILE: String = "recipes.csv"
 const TUNING_FILE: String = "tuning.toml"
+const WAVES_FILE: String = "waves.csv"
 
 const MACHINE_COLUMNS: Array = [
 	"id",
@@ -59,6 +60,15 @@ const MACHINE_COLUMNS: Array = [
 ]
 
 const RECIPE_COLUMNS: Array = ["id", "display_name", "inputs", "outputs", "seconds"]
+
+const WAVE_COLUMNS: Array = [
+	"id",
+	"enemy_kind",
+	"min_heat",
+	"count_per_breach",
+	"heat_per_extra",
+	"max_per_breach",
+]
 
 ## Tuning keys the Simulation reads. Each must be present.
 const TUNING_PLAYER_SPRINT_MULTIPLIER: String = "player.sprint_speed_multiplier"
@@ -79,11 +89,15 @@ const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
 const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
 const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
 const TUNING_NEST_HEALTH: String = "nest.health"
-const TUNING_WAVE_FIRST_SECONDS: String = "wave.first_wave_seconds"
-const TUNING_WAVE_INTERVAL_SECONDS: String = "wave.interval_seconds"
-const TUNING_WAVE_FIRST_CRAWLERS: String = "wave.crawlers_in_first_wave"
-const TUNING_WAVE_CRAWLERS_ADDED: String = "wave.crawlers_added_per_wave"
+const TUNING_WAVE_TELEGRAPH_SECONDS: String = "wave.telegraph_seconds"
 const TUNING_WAVE_SPAWN_INTERVAL_SECONDS: String = "wave.spawn_interval_seconds"
+const TUNING_WAVE_CALL_EARLY_BOUNTY: String = "wave.call_early_bounty_per_item"
+const TUNING_HEAT_PER_CRAFT: String = "heat.per_craft"
+const TUNING_HEAT_PER_CRAFT_PER_DEPTH: String = "heat.per_craft_per_depth"
+const TUNING_HEAT_DECAY_PER_MINUTE: String = "heat.decay_per_minute"
+const TUNING_HEAT_WAVE_INTERVAL_BASELINE: String = "heat.wave_interval_baseline_seconds"
+const TUNING_HEAT_WAVE_INTERVAL_MINIMUM: String = "heat.wave_interval_minimum_seconds"
+const TUNING_HEAT_PER_SECOND_SOONER: String = "heat.per_second_sooner"
 const TUNING_CRAWLER_HEALTH: String = "enemy.crawler_health"
 const TUNING_CRAWLER_SPEED: String = "enemy.crawler_speed_metres_per_second"
 const TUNING_CRAWLER_DAMAGE: String = "enemy.crawler_damage"
@@ -133,21 +147,39 @@ var survey_pitch_degrees: int = 0
 ## it. Whole points rather than fixed point: damage is counted in them.
 var nest_health: int = 0
 
-## How long after a Run starts the first Wave arrives, in fixed-point seconds.
-var wave_first_seconds: int = 0
+## How long the Telegraph runs in front of a Wave, in fixed-point seconds. A floor on
+## the warning rather than a target for it: no Wave arrives before it has been
+## telegraphed this long, including one called early.
+var wave_telegraph_seconds: int = 0
 
-## How long between Waves after the first, in fixed-point seconds.
-var wave_interval_seconds: int = 0
-
-## How many Crawlers the first Wave sends through each Breach.
-var wave_first_crawlers: int = 0
-
-## How many more Crawlers each subsequent Wave sends through each Breach.
-var wave_crawlers_added: int = 0
-
-## How long between one Crawler of a Wave emerging and the next, in fixed-point
-## seconds.
+## How long between one Enemy of a Wave emerging and the next, in fixed-point seconds.
 var wave_spawn_interval_seconds: int = 0
+
+## How many of every Item calling a Wave early grants the player who pulled the lever.
+var wave_call_early_bounty: int = 0
+
+## How much Heat one completed craft adds, in whole heat units. Heat is made of crafts
+## because a craft is the one event in the Factory that is unambiguously throughput and
+## that a player watched themselves cause.
+var heat_per_craft: int = 0
+
+## How much more Heat a craft adds per tier of Depth the Resource came from.
+var heat_per_craft_per_depth: int = 0
+
+## How much Heat the Nest sheds per minute, in whole heat units. Flat rather than
+## proportional: a proportional decay is a per-tick ratio, which is the shape that drifts
+## over a forty-hour Run, and it would give the Factory an equilibrium Heat.
+var heat_decay_per_minute: int = 0
+
+## How long between Waves on a cold Factory, in fixed-point seconds. Also how far away
+## the first Wave of a Run is, because a Run opens cold.
+var heat_wave_interval_baseline_seconds: int = 0
+
+## The shortest the interval between Waves ever gets, in fixed-point seconds.
+var heat_wave_interval_minimum_seconds: int = 0
+
+## How much Heat shaves one second off the interval between Waves.
+var heat_per_second_sooner: int = 0
 
 ## A Crawler's hit points.
 var crawler_health: int = 0
@@ -183,6 +215,7 @@ var _machine_ids: PackedStringArray = PackedStringArray()
 var _recipes: Array = []
 var _recipe_ids: PackedStringArray = PackedStringArray()
 var _item_ids: PackedStringArray = PackedStringArray()
+var _waves: Array = []
 
 
 # ── Loading ───────────────────────────────────────────────────────────────────
@@ -191,7 +224,7 @@ var _item_ids: PackedStringArray = PackedStringArray()
 ## error naming the path, never an empty table.
 static func load_from_directory(dir_path: String) -> Definitions:
 	var missing: PackedStringArray = PackedStringArray()
-	for file_name: String in [MACHINES_FILE, RECIPES_FILE, TUNING_FILE]:
+	for file_name: String in [MACHINES_FILE, RECIPES_FILE, TUNING_FILE, WAVES_FILE]:
 		var path: String = "%s/%s" % [dir_path, file_name]
 		if not FileAccess.file_exists(path):
 			missing.append(path)
@@ -205,14 +238,17 @@ static func load_from_directory(dir_path: String) -> Definitions:
 	var machines: String = _read_file("%s/%s" % [dir_path, MACHINES_FILE])
 	var recipes: String = _read_file("%s/%s" % [dir_path, RECIPES_FILE])
 	var tuning: String = _read_file("%s/%s" % [dir_path, TUNING_FILE])
+	var waves: String = _read_file("%s/%s" % [dir_path, WAVES_FILE])
 
 	var definitions: Definitions = parse(
 		machines,
 		recipes,
 		tuning,
+		waves,
 		"%s/%s" % [dir_path, MACHINES_FILE],
 		"%s/%s" % [dir_path, RECIPES_FILE],
-		"%s/%s" % [dir_path, TUNING_FILE]
+		"%s/%s" % [dir_path, TUNING_FILE],
+		"%s/%s" % [dir_path, WAVES_FILE]
 	)
 	return definitions
 
@@ -224,27 +260,32 @@ static func parse(
 	machines_source: String,
 	recipes_source: String,
 	tuning_source: String,
+	waves_source: String,
 	machines_path: String = MACHINES_FILE,
 	recipes_path: String = RECIPES_FILE,
-	tuning_path: String = TUNING_FILE
+	tuning_path: String = TUNING_FILE,
+	waves_path: String = WAVES_FILE
 ) -> Definitions:
 	var definitions: Definitions = Definitions.new()
 
 	var machines: CsvTable = CsvTable.parse(machines_source, machines_path, PackedStringArray(MACHINE_COLUMNS))
 	var recipes: CsvTable = CsvTable.parse(recipes_source, recipes_path, PackedStringArray(RECIPE_COLUMNS))
 	var tuning: TomlDocument = TomlDocument.parse(tuning_source, tuning_path)
+	var waves: CsvTable = CsvTable.parse(waves_source, waves_path, PackedStringArray(WAVE_COLUMNS))
 
 	definitions._read_recipes(recipes)
 	definitions._intern_items()
 	definitions._read_machines(machines)
 	definitions._check_machines_against_recipes(machines)
 	definitions._read_tuning(tuning)
+	definitions._read_waves(waves)
 
-	# Errors are gathered in file order — machines, then Recipes, then tuning — so
-	# the report reads like a list of things to go and fix.
+	# Errors are gathered in file order — machines, then Recipes, then tuning, then the
+	# Wave table — so the report reads like a list of things to go and fix.
 	definitions.errors.append_array(machines.errors)
 	definitions.errors.append_array(recipes.errors)
 	definitions.errors.append_array(tuning.errors)
+	definitions.errors.append_array(waves.errors)
 
 	if definitions.has_errors():
 		definitions._discard_content()
@@ -355,6 +396,21 @@ func item_id(index: int) -> String:
 	return _item_ids[index]
 
 
+# ── Wave composition ──────────────────────────────────────────────────────────
+# The tiers a Wave is composed from, sorted by id. Index order is therefore the order
+# Enemies are released in, and it is a property of the table rather than of the order
+# somebody typed the rows in — which matters because that order reaches the state hash.
+
+func wave_entry_count() -> int:
+	return _waves.size()
+
+
+func wave_entry_at(index: int) -> WaveEntry:
+	if index < 0 or index >= _waves.size():
+		return null
+	return _waves[index]
+
+
 # ── Hashing ───────────────────────────────────────────────────────────────────
 
 ## Reduces the whole definition set to one integer.
@@ -382,6 +438,10 @@ func digest() -> int:
 	for definition: MachineDefinition in _machines:
 		definition.feed_into(hasher)
 
+	hasher.feed_int(_waves.size())
+	for entry: WaveEntry in _waves:
+		entry.feed_into(hasher)
+
 	hasher.feed_int(player_walk_speed)
 	hasher.feed_int(player_sprint_multiplier)
 	hasher.feed_int(player_walk_acceleration)
@@ -396,11 +456,15 @@ func digest() -> int:
 	hasher.feed_int(machine_input_buffer_crafts)
 	hasher.feed_int(power_baseline_supply_kw)
 	hasher.feed_int(nest_health)
-	hasher.feed_int(wave_first_seconds)
-	hasher.feed_int(wave_interval_seconds)
-	hasher.feed_int(wave_first_crawlers)
-	hasher.feed_int(wave_crawlers_added)
+	hasher.feed_int(wave_telegraph_seconds)
 	hasher.feed_int(wave_spawn_interval_seconds)
+	hasher.feed_int(wave_call_early_bounty)
+	hasher.feed_int(heat_per_craft)
+	hasher.feed_int(heat_per_craft_per_depth)
+	hasher.feed_int(heat_decay_per_minute)
+	hasher.feed_int(heat_wave_interval_baseline_seconds)
+	hasher.feed_int(heat_wave_interval_minimum_seconds)
+	hasher.feed_int(heat_per_second_sooner)
 	hasher.feed_int(crawler_health)
 	hasher.feed_int(crawler_speed)
 	hasher.feed_int(crawler_damage)
@@ -726,6 +790,82 @@ func _check_machines_against_recipes(table: CsvTable) -> void:
 			)
 
 
+# ── Reading the Wave table ────────────────────────────────────────────────────
+
+## Reads `content/waves.csv`: the tiers a Wave is composed from.
+##
+## An empty table is an **error**, not a quiet Run with no Waves. A Map with no Breach
+## has no Waves because there is nowhere to enter — that is geography, and a legitimate
+## thing for a Map to be. A Wave table with no rows is a content file somebody broke, and
+## the symptom would be a Run that is never attacked, which is the hardest kind of bug to
+## notice.
+func _read_waves(table: CsvTable) -> void:
+	for row: int in range(table.row_count()):
+		var entry: WaveEntry = WaveEntry.new()
+		entry.source_row = row
+		entry.id = table.require_id(row, "id")
+		entry.min_heat = table.require_int(row, "min_heat")
+		entry.count_per_breach = table.require_int(row, "count_per_breach")
+		entry.heat_per_extra = table.require_int(row, "heat_per_extra")
+		entry.max_per_breach = table.require_int(row, "max_per_breach")
+
+		var kind_name: String = table.value(row, "enemy_kind")
+		entry.enemy_kind = EnemyKind.index_of(kind_name)
+		if entry.enemy_kind == -1:
+			table.report_row(
+				row,
+				'enemy_kind: "%s" is not an Enemy the Simulation implements — it is one of %s'
+				% [kind_name, EnemyKind.every_name()]
+			)
+
+		_check_wave_values(table, row, entry)
+
+		if entry.id.is_empty():
+			continue
+		if _wave_id_taken(entry.id):
+			table.report_row(row, 'id: "%s" is already defined' % entry.id)
+			continue
+
+		_waves.append(entry)
+
+	_sort_waves()
+
+	if table.row_count() == 0 and not table.has_errors():
+		table.report_row(
+			-1,
+			(
+				"the table has no rows — a Wave composed of nothing would make a Run that is"
+				+ " never attacked, which is the hardest kind of bug to notice"
+			)
+		)
+
+
+func _check_wave_values(table: CsvTable, row: int, entry: WaveEntry) -> void:
+	if entry.min_heat < 0:
+		table.report_row(row, "min_heat: Heat never goes below zero, so neither can a threshold")
+	if entry.count_per_breach < 1:
+		table.report_row(
+			row, "count_per_breach: a tier that sends nothing at its own threshold sends nothing"
+		)
+	if entry.heat_per_extra < 0:
+		table.report_row(row, "heat_per_extra: Heat buys more Enemies, never fewer")
+	if entry.max_per_breach < entry.count_per_breach:
+		table.report_row(
+			row,
+			(
+				"max_per_breach: must be at least count_per_breach (%d), or the ceiling"
+				+ " contradicts the opening count"
+			) % entry.count_per_breach
+		)
+
+
+func _wave_id_taken(id: String) -> bool:
+	for entry: WaveEntry in _waves:
+		if entry.id == id:
+			return true
+	return false
+
+
 # ── Reading the tuning file ───────────────────────────────────────────────────
 
 func _read_tuning(tuning: TomlDocument) -> void:
@@ -743,11 +883,15 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	machine_input_buffer_crafts = tuning.require_int(TUNING_MACHINE_INPUT_BUFFER_CRAFTS)
 	power_baseline_supply_kw = tuning.require_int(TUNING_POWER_BASELINE_SUPPLY_KW)
 	nest_health = tuning.require_int(TUNING_NEST_HEALTH)
-	wave_first_seconds = tuning.require_fixed(TUNING_WAVE_FIRST_SECONDS)
-	wave_interval_seconds = tuning.require_fixed(TUNING_WAVE_INTERVAL_SECONDS)
-	wave_first_crawlers = tuning.require_int(TUNING_WAVE_FIRST_CRAWLERS)
-	wave_crawlers_added = tuning.require_int(TUNING_WAVE_CRAWLERS_ADDED)
+	wave_telegraph_seconds = tuning.require_fixed(TUNING_WAVE_TELEGRAPH_SECONDS)
 	wave_spawn_interval_seconds = tuning.require_fixed(TUNING_WAVE_SPAWN_INTERVAL_SECONDS)
+	wave_call_early_bounty = tuning.require_int(TUNING_WAVE_CALL_EARLY_BOUNTY)
+	heat_per_craft = tuning.require_int(TUNING_HEAT_PER_CRAFT)
+	heat_per_craft_per_depth = tuning.require_int(TUNING_HEAT_PER_CRAFT_PER_DEPTH)
+	heat_decay_per_minute = tuning.require_int(TUNING_HEAT_DECAY_PER_MINUTE)
+	heat_wave_interval_baseline_seconds = tuning.require_fixed(TUNING_HEAT_WAVE_INTERVAL_BASELINE)
+	heat_wave_interval_minimum_seconds = tuning.require_fixed(TUNING_HEAT_WAVE_INTERVAL_MINIMUM)
+	heat_per_second_sooner = tuning.require_int(TUNING_HEAT_PER_SECOND_SOONER)
 	crawler_health = tuning.require_int(TUNING_CRAWLER_HEALTH)
 	crawler_speed = tuning.require_fixed(TUNING_CRAWLER_SPEED)
 	crawler_damage = tuning.require_int(TUNING_CRAWLER_DAMAGE)
@@ -808,17 +952,65 @@ func _read_tuning(tuning: TomlDocument) -> void:
 			_report_tuning(
 				tuning, TUNING_NEST_HEALTH, "a Nest that starts destroyed ends the Run at tick 0"
 			)
-		if wave_first_seconds < 0:
-			_report_tuning(tuning, TUNING_WAVE_FIRST_SECONDS, "a Wave cannot arrive in the past")
-		if wave_interval_seconds <= 0:
+		if wave_telegraph_seconds <= 0:
 			_report_tuning(
-				tuning, TUNING_WAVE_INTERVAL_SECONDS, "Waves with no gap are one endless Wave"
+				tuning,
+				TUNING_WAVE_TELEGRAPH_SECONDS,
+				"a Wave with no Telegraph is the ambush the core loop must never be"
 			)
-		if wave_first_crawlers < 0:
-			_report_tuning(tuning, TUNING_WAVE_FIRST_CRAWLERS, "a Wave cannot send fewer than none")
-		if wave_crawlers_added < 0:
+		if wave_call_early_bounty < 0:
 			_report_tuning(
-				tuning, TUNING_WAVE_CRAWLERS_ADDED, "Waves escalate without bound, never backwards"
+				tuning,
+				TUNING_WAVE_CALL_EARLY_BOUNTY,
+				"a reward that takes materials away is a penalty"
+			)
+		if heat_per_craft < 0:
+			_report_tuning(
+				tuning, TUNING_HEAT_PER_CRAFT, "producing cannot make a Factory quieter"
+			)
+		if heat_per_craft_per_depth < 0:
+			_report_tuning(
+				tuning, TUNING_HEAT_PER_CRAFT_PER_DEPTH, "deeper ore is louder, never quieter"
+			)
+		if heat_decay_per_minute < 0:
+			_report_tuning(
+				tuning, TUNING_HEAT_DECAY_PER_MINUTE, "Heat cannot bleed upward on its own"
+			)
+		if heat_wave_interval_baseline_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_HEAT_WAVE_INTERVAL_BASELINE,
+				"Waves with no gap are one endless Wave"
+			)
+		if heat_wave_interval_minimum_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_HEAT_WAVE_INTERVAL_MINIMUM,
+				"Waves with no gap are one endless Wave"
+			)
+		if heat_wave_interval_minimum_seconds > heat_wave_interval_baseline_seconds:
+			_report_tuning(
+				tuning,
+				TUNING_HEAT_WAVE_INTERVAL_MINIMUM,
+				(
+					"must not exceed %s — Heat shortens the interval, so a minimum above the"
+					+ " baseline would make a hot Factory hunted later"
+				) % TUNING_HEAT_WAVE_INTERVAL_BASELINE
+			)
+		if heat_wave_interval_minimum_seconds < wave_telegraph_seconds:
+			_report_tuning(
+				tuning,
+				TUNING_HEAT_WAVE_INTERVAL_MINIMUM,
+				(
+					"must be at least %s — a gap shorter than the Telegraph would leave no"
+					+ " quiet tick for a player to read the warning in"
+				) % TUNING_WAVE_TELEGRAPH_SECONDS
+			)
+		if heat_per_second_sooner <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_HEAT_PER_SECOND_SOONER,
+				"Heat that buys no time is Heat that does not drive the schedule"
 			)
 		if wave_spawn_interval_seconds <= 0:
 			_report_tuning(
@@ -875,6 +1067,10 @@ func _sort_recipes() -> void:
 		_recipe_ids.append(definition.id)
 
 
+func _sort_waves() -> void:
+	_waves.sort_custom(func(a: WaveEntry, b: WaveEntry) -> bool: return a.id < b.id)
+
+
 ## Throws away everything a broken load managed to read. Half a definition set is
 ## more dangerous than none, because it looks usable.
 func _discard_content() -> void:
@@ -883,6 +1079,7 @@ func _discard_content() -> void:
 	_recipes.clear()
 	_recipe_ids.clear()
 	_item_ids.clear()
+	_waves.clear()
 	player_walk_speed = 0
 	player_sprint_multiplier = 0
 	player_walk_acceleration = 0
@@ -897,11 +1094,15 @@ func _discard_content() -> void:
 	machine_input_buffer_crafts = 0
 	power_baseline_supply_kw = 0
 	nest_health = 0
-	wave_first_seconds = 0
-	wave_interval_seconds = 0
-	wave_first_crawlers = 0
-	wave_crawlers_added = 0
+	wave_telegraph_seconds = 0
 	wave_spawn_interval_seconds = 0
+	wave_call_early_bounty = 0
+	heat_per_craft = 0
+	heat_per_craft_per_depth = 0
+	heat_decay_per_minute = 0
+	heat_wave_interval_baseline_seconds = 0
+	heat_wave_interval_minimum_seconds = 0
+	heat_per_second_sooner = 0
 	crawler_health = 0
 	crawler_speed = 0
 	crawler_damage = 0
