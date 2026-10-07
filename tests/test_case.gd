@@ -19,6 +19,13 @@ var current_test: String = ""
 ## Set true by fail_fast(); the runner skips the rest of the method.
 var aborted: bool = false
 
+## How many assertions this instance evaluated. The runner requires at least one:
+## a GDScript runtime error — a call to a method that does not exist, an index out
+## of range — aborts the method on the spot without raising anything a test can
+## catch, which would otherwise leave a half-executed method looking like a pass.
+## Counting assertions turns that silence into a failure.
+var assertions: int = 0
+
 
 ## Override to build state shared by every test method in the case.
 func before_each() -> void:
@@ -32,36 +39,42 @@ func after_each() -> void:
 
 func assert_eq(actual: Variant, expected: Variant, message: String = "") -> bool:
 	if _values_equal(actual, expected):
+		_counted()
 		return true
 	return _record("expected %s, got %s" % [_show(expected), _show(actual)], message)
 
 
 func assert_ne(actual: Variant, forbidden: Variant, message: String = "") -> bool:
 	if not _values_equal(actual, forbidden):
+		_counted()
 		return true
 	return _record("expected a value other than %s" % _show(forbidden), message)
 
 
 func assert_true(value: bool, message: String = "") -> bool:
 	if value:
+		_counted()
 		return true
 	return _record("expected true, got false", message)
 
 
 func assert_false(value: bool, message: String = "") -> bool:
 	if not value:
+		_counted()
 		return true
 	return _record("expected false, got true", message)
 
 
 func assert_null(value: Variant, message: String = "") -> bool:
 	if value == null:
+		_counted()
 		return true
 	return _record("expected null, got %s" % _show(value), message)
 
 
 func assert_not_null(value: Variant, message: String = "") -> bool:
 	if value != null:
+		_counted()
 		return true
 	return _record("expected a value, got null", message)
 
@@ -77,7 +90,13 @@ func fail_fast(reason: String) -> bool:
 	return _record(reason, "")
 
 
+## Called by every assertion, whatever its verdict.
+func _counted() -> void:
+	assertions += 1
+
+
 func _record(detail: String, message: String) -> bool:
+	assertions += 1
 	var text: String = detail
 	if message != "":
 		text = "%s — %s" % [message, detail]

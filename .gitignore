@@ -35,3 +35,9 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# aigen venv (created by tools/aigen/setup.sh on top of the system torch)
+/tools/aigen/.venv/
+
+# Agent worktrees — never part of the repo
+.claude/worktrees/

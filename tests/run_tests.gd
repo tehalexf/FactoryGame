@@ -110,6 +110,13 @@ func _run_method(script: GDScript, case_name: String, method_name: String, label
 		test_case.call(method_name)
 	test_case.after_each()
 
+	# A method that asserted nothing is not a passing method. GDScript aborts a
+	# function outright on a runtime error — a call to a method that does not
+	# exist, an index out of range — with nothing a test can catch, so without
+	# this a half-executed method would be reported green.
+	if test_case.assertions == 0 and test_case.failures.is_empty():
+		test_case.fail("the test method asserted nothing; it was empty or aborted early")
+
 	if test_case.failures.is_empty():
 		_passed += 1
 		print("  ok    %s" % label)

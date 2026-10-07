@@ -283,33 +283,29 @@ class RegeneratingFromTheDeclaration(unittest.TestCase):
         would do it rather than by calling a function."""
         import tempfile
         with tempfile.TemporaryDirectory() as work:
+            # press_mk1 is a body whose footprint content/machines.csv does not
+            # declare yet, so the body table is its authority and editing it is
+            # the whole change. (A Machine the Simulation *has* declared is
+            # widened there instead; machines.csv always wins.)
             table = (REPO / "content" / "machine_bodies.csv").read_text()
-            widened = table.replace("miner_mk1,miner,2,2,", "miner_mk1,miner,4,2,")
+            widened = table.replace("press_mk1,press,2,3,", "press_mk1,press,4,3,")
             self.assertNotEqual(widened, table, "the test's edit matched nothing")
             bodies_csv = Path(work) / "machine_bodies.csv"
             bodies_csv.write_text(widened)
-            # No machines.csv, so the edited body table is the only authority —
-            # which is what a developer changing a footprint ahead of the gameplay
-            # tables is doing.
-            empty_machines = Path(work) / "machines.csv"
-            empty_machines.write_text(
-                "id,display_name,role,footprint_x,footprint_z,"
-                "power_draw_kw,health,max_depth,recipe_id\n")
             subprocess.run(
                 ["bash", str(REPO / "tools" / "assets" / "generate_machines.sh"),
                  "--output-dir", work,
                  "--bodies-csv", str(bodies_csv),
-                 "--machines-csv", str(empty_machines),
-                 "--only", "miner_mk1"],
+                 "--only", "press_mk1"],
                 check=True, cwd=REPO, capture_output=True, text=True, timeout=300)
-            doc = gltf_info.read_gltf_json(Path(work) / "miner_mk1.glb")
+            doc = gltf_info.read_gltf_json(Path(work) / "press_mk1.glb")
             low, high = gltf_info.position_extents(doc)
             self.assertAlmostEqual((high[0] - low[0]) * 1000.0, 8000, delta=TOLERANCE_MM)
-            self.assertAlmostEqual((high[2] - low[2]) * 1000.0, 4000, delta=TOLERANCE_MM)
-            # And the port moved with it: the south edge is now 4 tiles long, so
-            # tile 1's centre is at -4000 + 1.5 * 2000 = -1000 mm.
+            self.assertAlmostEqual((high[2] - low[2]) * 1000.0, 6000, delta=TOLERANCE_MM)
+            # And the ports moved with it: the north edge is now 4 tiles long, so
+            # tile 0's centre is at -4000 + 0.5 * 2000 = -3000 mm.
             self.assertAlmostEqual(
-                node_translation_mm(doc, "Port_output_ore")[0], -1000, delta=TOLERANCE_MM)
+                node_translation_mm(doc, "Port_input_ingot")[0], -3000, delta=TOLERANCE_MM)
 
 
 if __name__ == "__main__":

@@ -58,6 +58,18 @@ func feed_ints(values: PackedInt64Array) -> StateHasher:
 	return self
 
 
+## Feeds a string: its length in bytes first, then the UTF-8 bytes. The length
+## goes in for the same reason it does for arrays — without it, feeding "ab" then
+## "c" would be indistinguishable from "a" then "bc", and two different sets of
+## content definitions would hash alike.
+func feed_text(value: String) -> StateHasher:
+	var bytes: PackedByteArray = value.to_utf8_buffer()
+	feed_int(bytes.size())
+	for byte_value: int in bytes:
+		_absorb(byte_value)
+	return self
+
+
 ## The combined digest. A pure read — it can be called repeatedly and more state
 ## can be fed afterwards.
 ##

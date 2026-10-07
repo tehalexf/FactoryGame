@@ -1,0 +1,5 @@
+Godot's resource importer must leave this directory alone. Without this file it
+claims every .csv here as a translation table, warns about it on every import,
+and strips the source rows from an export. These files are read with FileAccess
+by sim/definitions.gd, not loaded as resources. Godot only checks that this file
+exists; its contents are ignored, so this explanation is free.

@@ -1,0 +1,85 @@
+## One Machine, as defined by one row of `content/machines.csv`.
+##
+## A Machine is a discrete building that consumes inputs and produces outputs per a
+## Recipe, and is mortal (GLOSSARY.md). This holds what the file says about it and
+## nothing the Simulation decides at runtime — no inventory, no health remaining,
+## no position. Those belong to the Machine *instances* a later ticket adds; this
+## is the definition they are built from, shared by every instance and never
+## mutated.
+##
+## Immutable once loaded. Hot-reload replaces the whole definition set rather than
+## editing one of these in place, which is what lets a definition be handed out by
+## reference without a copy.
+class_name MachineDefinition
+extends RefCounted
+
+## What a Machine does with its Recipe.
+enum Role {
+	## Extracts a Resource from the Node it stands on. Its Recipe has no inputs,
+	## because the Node is the input.
+	MINER = 0,
+	## Consumes Belt-fed inputs. Its Recipe has at least one.
+	CRAFTER = 1,
+}
+
+## Spelling of each Role in the file, indexed by the enum value.
+const ROLE_NAMES: Array = ["miner", "crafter"]
+
+## Largest footprint DESIGN.md allows, in tiles on the 2 m grid.
+const MAX_FOOTPRINT_TILES: int = 4
+
+var id: String = ""
+var display_name: String = ""
+var role: Role = Role.CRAFTER
+
+## Tiles occupied on the 2 m grid.
+var footprint_x: int = 0
+var footprint_z: int = 0
+
+## Demand on the one Power grid while running.
+var power_draw_kw: int = 0
+
+## Hit points before destruction.
+var health: int = 0
+
+## Deepest Node tier this Machine reaches. 0 for anything that is not a Miner.
+var max_depth: int = 0
+
+## The Recipe this Machine runs, by id and — once the set is loaded — by index.
+var recipe_id: String = ""
+var recipe_index: int = -1
+
+## Which row of the file this came from. Reporting only, and deliberately not
+## hashed: moving a row must not change the Simulation.
+var source_row: int = -1
+
+
+## The spelling of a Role in the file, or "" for an unknown value.
+static func role_name(value: Role) -> String:
+	if value < 0 or value >= ROLE_NAMES.size():
+		return ""
+	return ROLE_NAMES[value]
+
+
+## Parses a Role, or -1 when the text names no Role.
+static func parse_role(text: String) -> int:
+	return ROLE_NAMES.find(text)
+
+
+func is_miner() -> bool:
+	return role == Role.MINER
+
+
+## Feeds this definition into a hash, in a fixed order. `recipe_id` goes in rather
+## than `recipe_index` so the digest describes what the file says, not how the
+## loader happened to number things.
+func feed_into(hasher: StateHasher) -> void:
+	hasher.feed_text(id)
+	hasher.feed_text(display_name)
+	hasher.feed_int(role)
+	hasher.feed_int(footprint_x)
+	hasher.feed_int(footprint_z)
+	hasher.feed_int(power_draw_kw)
+	hasher.feed_int(health)
+	hasher.feed_int(max_depth)
+	hasher.feed_text(recipe_id)

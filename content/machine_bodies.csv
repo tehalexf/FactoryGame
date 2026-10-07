@@ -19,6 +19,10 @@
 # A blank footprint for a Machine that machines.csv does not declare is an
 # error, so a row can never resolve to no footprint at all.
 #
+# miner_mk1 and smelter_mk1 are already there: machines.csv declares them, so
+# their footprints are blank here and there is exactly one authority. The rest
+# follow as their Recipes arrive.
+#
 # Not every body is a Machine. The Nest is the structure the Run is lost with
 # and a Belt is the logistics primitive; neither runs a Recipe, so neither
 # belongs in machines.csv, and their footprints are declared only here.
@@ -33,8 +37,8 @@
 #                 For a Belt it is the deck height, which must equal the Belt
 #                 port height in machine_ports.csv.
 machine_id,body,footprint_x,footprint_z,body_height_mm
-miner_mk1,miner,2,2,2100
-smelter_mk1,smelter,3,3,3300
+miner_mk1,miner,,,2100
+smelter_mk1,smelter,,,3300
 press_mk1,press,2,3,2400
 assembler_mk1,assembler,3,3,2600
 steam_boiler_mk1,boiler,3,2,2200

@@ -156,16 +156,26 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
 
     HEADER = ("id,display_name,role,footprint_x,footprint_z,"
               "power_draw_kw,health,max_depth,recipe_id\n")
+    BODIES = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
+              "miner_mk1,miner,2,2,2100\n"
+              "nest,nest,4,4,2800\n")
+    PORTS = ("machine_id,port_id,direction,edge,tile,height_mm\n"
+             "miner_mk1,ore,output,south,1,900\n"
+             "nest,delivery,input,south,1,900\n")
 
     def simulation_says(self, rows: str) -> str:
         return self.HEADER + rows
+
+    def load(self, machines_rows: str, bodies: str | None = None):
+        return machine_specs.load(bodies_source=bodies or self.BODIES,
+                                  ports_source=self.PORTS,
+                                  machines_source=self.simulation_says(machines_rows))
 
     def test_the_simulations_footprint_wins_over_the_body_tables(self):
         """A disagreement is an error, not a silent override, so nobody gets to
         find out later which file the generator happened to prefer."""
         with self.assertRaises(machine_specs.DeclarationError) as caught:
-            machine_specs.load(machines_source=self.simulation_says(
-                "miner_mk1,Miner Mk1,miner,3,3,120,400,1,mine_iron_ore\n"))
+            self.load("miner_mk1,Miner Mk1,miner,3,3,120,400,1,mine_iron_ore\n")
         message = str(caught.exception)
         self.assertIn("machines.csv", message)
         self.assertIn("machine_bodies.csv", message)
@@ -174,8 +184,7 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
         self.assertIn("2x2", message)
 
     def test_an_agreeing_footprint_is_marked_as_checked(self):
-        machines = machine_specs.load(machines_source=self.simulation_says(
-            "miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore\n"))
+        machines = self.load("miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore\n")
         miner = machine_specs.by_id(machines, "miner_mk1")
         self.assertTrue(miner.footprint_from_simulation)
         self.assertEqual((miner.footprint_x, miner.footprint_z), (2, 2))
@@ -210,9 +219,16 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
 
 
 class TheShippedTables(unittest.TestCase):
+    def test_at_least_one_footprint_is_the_simulations_own(self):
+        """The mechanism is live, not merely available. If this ever reads zero,
+        the mesh pipeline has stopped being checked against the Simulation at
+        all and every other agreement test below is passing vacuously."""
+        checked = [m for m in machine_specs.load() if m.footprint_from_simulation]
+        self.assertTrue(checked,
+                        "no generated Machine's footprint comes from content/machines.csv")
+
     def test_agree_with_the_simulations_machine_table_as_far_as_it_goes(self):
-        """Loading the real files is the check. It passes vacuously while
-        `content/machines.csv` is absent and tightens by itself as gameplay
+        """Loading the real files is the check. It tightens by itself as gameplay
         tickets add rows — which is the point: nobody has to remember to come
         back and connect the two."""
         declared = machine_specs.simulation_footprints()

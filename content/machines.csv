@@ -1,0 +1,29 @@
+# DEEP FOUNDRY — Machine definitions.
+#
+# Adding a Machine means adding a row here. No code changes, no registry to
+# update. Edit this file while the game is running and the change applies when
+# you save it.
+#
+# Columns:
+#   id              Identifier. Lowercase letters, digits and _ only. Save files
+#                   and Recipes refer to Machines by this, so renaming one is a
+#                   breaking change; adding one is not.
+#   display_name    What the player sees.
+#   role            miner   — extracts a Resource from a Node it is placed on.
+#                             Its Recipe must have no inputs; the Node is the
+#                             input.
+#                   crafter — consumes Belt-fed inputs. Its Recipe must have at
+#                             least one input.
+#   footprint_x     Tiles occupied, on the 2 m grid. DESIGN.md caps Machines at
+#   footprint_z     4x4; Belts are 1x1.
+#   power_draw_kw   Demand on the one Power grid when running. Shortfall
+#                   throttles rather than stops (DESIGN.md).
+#   health          Machines are mortal. Hit points before destruction.
+#   max_depth       Deepest Node tier this Machine can reach. 0 for anything
+#                   that is not a Miner — greater Depth is more valuable ore,
+#                   more Power and more Heat.
+#   recipe_id       The Recipe in recipes.csv this Machine runs. Must exist.
+#
+id,display_name,role,footprint_x,footprint_z,power_draw_kw,health,max_depth,recipe_id
+miner_mk1,Miner Mk1,miner,2,2,120,400,1,mine_iron_ore
+smelter_mk1,Smelter Mk1,crafter,3,3,180,500,0,smelt_iron_plate

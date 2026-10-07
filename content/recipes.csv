@@ -1,0 +1,22 @@
+# DEEP FOUNDRY — Recipe definitions.
+#
+# A Recipe is a declarative input→output transformation with a rate (GLOSSARY.md),
+# defined as data and never as code. Adding one means adding a row here.
+#
+# Columns:
+#   id              Identifier. Machines refer to Recipes by this.
+#   display_name    What the player sees.
+#   inputs          Items consumed per craft, as `item:count`, several separated
+#                   by `;`. Empty for a Miner's Recipe — a Node is its input.
+#   outputs         Items produced per craft, same form. Never empty.
+#   seconds         How long one craft takes, in seconds of game time. Written in
+#                   decimal because that is how a human reasons about a rate;
+#                   parsed to an exact fixed-point quantity, never a float.
+#
+# Item ids are not declared anywhere else. The set of Items is exactly the set
+# mentioned in this file, interned in sorted order, so introducing an Item means
+# naming it in a Recipe and nothing more.
+#
+id,display_name,inputs,outputs,seconds
+mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
+smelt_iron_plate,Smelt Iron Plate,iron_ore:2,iron_plate:1,3.2

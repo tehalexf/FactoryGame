@@ -12,6 +12,19 @@ extends RefCounted
 var world_seed: int = 0
 var player_count: int = 1
 
+## The content definitions the Run was made under, or null for "whatever is in
+## content/ at replay time". Null is the right default for a fixture: it makes the
+## replay read the files again, so a content change that would alter the Run is
+## caught by the digest check below instead of passing unnoticed.
+var definitions: Definitions = null
+
+## Digest of the definition set the recording was made under. `verify` compares the
+## replaying Simulation's definitions against this before it compares a single tick,
+## so a recording can never appear to pass against content it was not recorded under
+## — and a mismatch is reported as a mismatch, not as a tick divergence that sends
+## someone hunting through the wrong code.
+var definitions_digest: int = 0
+
 ## What was done, tick by tick.
 var input_script: InputScript = null
 
