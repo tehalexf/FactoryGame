@@ -20,9 +20,15 @@ extends RefCounted
 enum Kind {
 	## Does nothing. Useful as an explicit "this player sent no intent this tick".
 	NONE = 0,
-	## Movement intent. args = [intent_x, intent_z], fixed-point, each clamped to
-	## [-ONE, ONE]. A direction and throttle, not a destination — the Simulation
-	## owns speed, so a client cannot move faster by sending a larger number.
+	## Movement intent. args = [forward, strafe], fixed-point, each clamped to
+	## [-ONE, ONE]. A throttle in the player's *own* frame, not a destination and not
+	## a world-space direction: the Simulation owns the walking speed, so a client
+	## cannot move faster by sending a larger number, and it owns the yaw the throttle
+	## is rotated by, so a client cannot walk somewhere other than where the
+	## Simulation says it is facing.
+	##
+	## Per tick. Sending no `MOVE` is how a player stands still, so an idle tick is a
+	## tick spent slowing down rather than one spent coasting on a stale throttle.
 	MOVE = 1,
 	## Replace the Simulation's content definitions. args = [digest of the new set].
 	## The set itself travels in `payload`.
@@ -53,7 +59,38 @@ enum Kind {
 	## `content/machines.csv`: it is not a Machine (GLOSSARY.md keeps the two apart),
 	## it runs no Recipe, and its one tier's rating lives in `content/tuning.toml`.
 	BUILD_BELT = 4,
+	## Mouse look. args = [pixels right, pixels down], fixed-point counts of pixels
+	## of mouse travel.
+	##
+	## Pixels, not an angle: the mouse is the one genuinely continuous device the game
+	## reads, and the sensitivity that turns its travel into an angle is a tuning value
+	## the Simulation owns — the same arrangement as `MOVE`, where the intent is a
+	## throttle and the speed belongs to the Simulation. A client therefore cannot turn
+	## faster by sending a bigger number, and the angle a player is facing is
+	## authoritative state rather than something the camera remembers.
+	##
+	## The float-to-fixed crossing happens before this is constructed, in
+	## `game/input_quantiser.gd`, which is the only place in the project where a float
+	## device reading becomes a Simulation quantity.
+	LOOK = 5,
+	## Hold or release Survey View. args = [1 while held, 0 once released].
+	##
+	## Held rather than toggled, and sent every tick it is held, so the camera's
+	## position is a function of how long the key has been down rather than of a latch
+	## somebody has to remember to clear. It is state in the Simulation because the
+	## *transition* is: a lift caught halfway is a different state from one at either
+	## end, and the camera is told where to be rather than deciding.
+	##
+	## This is not a build mode. Building works identically at either height
+	## (DESIGN.md, GLOSSARY.md), and nothing in the Simulation consults it to decide
+	## whether an intent is allowed.
+	SURVEY_VIEW = 6,
 }
+
+## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
+## than any real frame produces at any sensitivity, and finite, which is what matters:
+## an unbounded intent is an unbounded turn.
+const MAX_LOOK_PIXELS: int = 10000 * Fixed.ONE
 
 var kind: Kind = Kind.NONE
 var player_id: int = 0
@@ -77,14 +114,38 @@ static func none(acting_player: int = 0) -> InputAction:
 	return InputAction.new(Kind.NONE, acting_player)
 
 
-static func move(acting_player: int, intent_x: int, intent_z: int) -> InputAction:
+## Walks a player. `forward` is positive towards whatever they are looking at and
+## `strafe` is positive to their right; both are throttles clamped to full.
+static func move(acting_player: int, forward: int, strafe: int) -> InputAction:
 	return InputAction.new(
 		Kind.MOVE,
 		acting_player,
 		PackedInt64Array([
-			Fixed.clamp_fixed(intent_x, -Fixed.ONE, Fixed.ONE),
-			Fixed.clamp_fixed(intent_z, -Fixed.ONE, Fixed.ONE),
+			Fixed.clamp_fixed(forward, -Fixed.ONE, Fixed.ONE),
+			Fixed.clamp_fixed(strafe, -Fixed.ONE, Fixed.ONE),
 		])
+	)
+
+
+## Turns the view by a count of pixels of mouse travel: `pixels_right` turns the
+## player clockwise, `pixels_down` pitches the view downward. Both are fixed-point,
+## and both are clamped to a sane sweep so a malformed or hostile intent cannot spin
+## the view arbitrarily far in one tick.
+static func look(acting_player: int, pixels_right: int, pixels_down: int) -> InputAction:
+	return InputAction.new(
+		Kind.LOOK,
+		acting_player,
+		PackedInt64Array([
+			Fixed.clamp_fixed(pixels_right, -MAX_LOOK_PIXELS, MAX_LOOK_PIXELS),
+			Fixed.clamp_fixed(pixels_down, -MAX_LOOK_PIXELS, MAX_LOOK_PIXELS),
+		])
+	)
+
+
+## Holds or releases Survey View for a player. Sent every tick the key is held.
+static func survey_view(acting_player: int, held: bool) -> InputAction:
+	return InputAction.new(
+		Kind.SURVEY_VIEW, acting_player, PackedInt64Array([1 if held else 0])
 	)
 
 
@@ -158,13 +219,30 @@ func declared_digest() -> int:
 	return _arg(0)
 
 
-## Fixed-point movement intent along x. Zero for any other kind.
-func move_intent_x() -> int:
+## Whether a `SURVEY_VIEW` action is holding the camera up or letting it down.
+func survey_is_held() -> bool:
+	return _arg(0) != 0
+
+
+## Pixels of rightward mouse travel a `LOOK` action carries, fixed-point.
+func look_pixels_right() -> int:
 	return _arg(0)
 
 
-## Fixed-point movement intent along z. Zero for any other kind.
-func move_intent_z() -> int:
+## Pixels of downward mouse travel a `LOOK` action carries, fixed-point.
+func look_pixels_down() -> int:
+	return _arg(1)
+
+
+## Fixed-point forward throttle, positive towards what the player is looking at.
+## Zero for any other kind.
+func move_intent_forward() -> int:
+	return _arg(0)
+
+
+## Fixed-point strafe throttle, positive to the player's right. Zero for any other
+## kind.
+func move_intent_strafe() -> int:
 	return _arg(1)
 
 

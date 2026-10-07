@@ -161,11 +161,111 @@ static func lerp_fixed(a: int, b: int, t: int) -> int:
 	return a + mul(b - a, t)
 
 
+## Smooth interpolation of `t` in [0, ONE]: flat at both ends, steepest in the
+## middle. The classic `t² (3 - 2t)`, in fixed point.
+##
+## Where a plain `lerp_fixed` makes a camera transition start and stop abruptly, this
+## makes it ease in and out, which is the difference between a lift that feels like a
+## camera move and one that feels like a glitch. Symmetric, so halfway through the
+## time is exactly halfway through the distance.
+static func smoothstep_fixed(t: int) -> int:
+	var clamped: int = clamp_fixed(t, 0, ONE)
+	return mul(mul(clamped, clamped), from_int(3) - mul(from_int(2), clamped))
+
+
 ## Constrains a value to [low, high]. Named `clamp_fixed` for the same reason as
 ## `lerp_fixed` — these are plain integers, so `clampi` would also work, but a
 ## single vocabulary for Simulation quantities is worth more than brevity.
 static func clamp_fixed(value: int, low: int, high: int) -> int:
 	return mini(maxi(value, low), high)
+
+
+# ── Angles and trigonometry ───────────────────────────────────────────────────
+# Angles are measured in **turns**, not radians: one full revolution is `TURN`,
+# which is `ONE`. Radians would need PI, and PI is a float — banned inside the
+# Simulation, and not exactly representable anyway. Turns also make the values a
+# reader can check by eye exact: a quarter turn is 16384 and nothing else.
+#
+# Sine comes from a quarter-wave table of 65 samples with linear interpolation
+# between them. Integer-only, so it is bit-identical on every machine, which is
+# the whole reason a lookup table is preferred here to any series expansion in
+# floating point. The quadrant boundaries are exact; everything between them is
+# within `SIN_TOLERANCE` of the true value, which at a 4 m/s walking speed is an
+# error of under a millimetre per second.
+
+## One full revolution.
+const TURN: int = ONE
+
+## A quarter of a revolution — 90 degrees.
+const QUARTER_TURN: int = ONE >> 2
+
+## How far `sin_turns` and `cos_turns` may be from the true value, in fixed-point
+## units. Stated rather than discovered, so a change to the table has to either
+## keep this promise or change it deliberately.
+const SIN_TOLERANCE: int = 8
+
+## Angle between adjacent samples of the quarter-wave table.
+const SIN_TABLE_STEP: int = QUARTER_TURN / (SIN_TABLE_SAMPLES - 1)
+
+## How many samples the quarter-wave table holds, counting both ends.
+const SIN_TABLE_SAMPLES: int = 65
+
+## sin(k / 256 of a turn) for k = 0 to 64, scaled by ONE and rounded to nearest.
+## A quarter wave is enough: the other three quadrants are reflections of it.
+const SIN_TABLE: Array = [
+	0, 1608, 3216, 4821, 6424, 8022, 9616, 11204,
+	12785, 14359, 15924, 17479, 19024, 20557, 22078, 23586,
+	25080, 26558, 28020, 29466, 30893, 32303, 33692, 35062,
+	36410, 37736, 39040, 40320, 41576, 42806, 44011, 45190,
+	46341, 47464, 48559, 49624, 50660, 51665, 52639, 53581,
+	54491, 55368, 56212, 57022, 57798, 58538, 59244, 59914,
+	60547, 61145, 61705, 62228, 62714, 63162, 63572, 63944,
+	64277, 64571, 64827, 65043, 65220, 65358, 65457, 65516,
+	65536,
+]
+
+
+## Reduces an angle to [0, TURN). Yaw accumulates without bound as a player keeps
+## turning, so every angle has to be reducible; flooring makes the reduction
+## sign-independent, so turning left past north lands on the same angle as turning
+## right past it.
+static func wrap_turns(angle: int) -> int:
+	return angle - floor_div(angle, TURN) * TURN
+
+
+## Sine of an angle in turns.
+static func sin_turns(angle: int) -> int:
+	var reduced: int = wrap_turns(angle)
+	var quadrant: int = reduced / QUARTER_TURN
+	var into: int = reduced % QUARTER_TURN
+
+	match quadrant:
+		0:
+			return _quarter_wave(into)
+		1:
+			return _quarter_wave(QUARTER_TURN - into)
+		2:
+			return -_quarter_wave(into)
+		_:
+			return -_quarter_wave(QUARTER_TURN - into)
+
+
+## Cosine of an angle in turns. Sine a quarter turn ahead, so there is one table
+## and one interpolation rule rather than two that could disagree.
+static func cos_turns(angle: int) -> int:
+	return sin_turns(angle + QUARTER_TURN)
+
+
+## The quarter wave at `into` turns, where `into` is in [0, QUARTER_TURN].
+## Linearly interpolated between the two nearest samples.
+static func _quarter_wave(into: int) -> int:
+	var sample: int = into / SIN_TABLE_STEP
+	if sample >= SIN_TABLE_SAMPLES - 1:
+		return ONE
+	var remainder: int = into % SIN_TABLE_STEP
+	var low: int = SIN_TABLE[sample]
+	var high: int = SIN_TABLE[sample + 1]
+	return low + floor_div((high - low) * remainder, SIN_TABLE_STEP)
 
 
 # ── The rendering boundary ────────────────────────────────────────────────────

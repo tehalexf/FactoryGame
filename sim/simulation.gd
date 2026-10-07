@@ -35,6 +35,19 @@ extends RefCounted
 ## tuning files are converted with this.
 const TICKS_PER_SECOND: int = 60
 
+## How far from level a player may pitch the view, in fixed-point turns. 0.24 of a
+## turn is 86.4 degrees — not quite the vertical, so the horizon never vanishes
+## entirely and the view cannot roll over the top.
+const MAX_PITCH_TURNS: int = Fixed.ONE * 24 / 100
+
+## How many pixels of mouse travel the tuned look sensitivity is quoted per. A
+## thousand, so the tuning file carries a number around 0.4 rather than 0.0004.
+const LOOK_PIXEL_UNIT: int = 1000
+
+## Degrees in one whole turn. Angles are turns everywhere inside the Simulation; the
+## tuning file is allowed degrees because that is how a human reasons about a tilt.
+const DEGREES_PER_TURN: int = 360
+
 # Note what is *not* a constant here any more: how fast a player walks. That lives
 # in content/tuning.toml, because it is a balance number and balance numbers belong
 # to whoever is tuning the game, not to whoever is editing code.
@@ -60,6 +73,53 @@ var _definition_generation: int = 0
 ## Player positions in fixed-point metres, indexed by player id.
 var _player_x: PackedInt64Array = PackedInt64Array()
 var _player_z: PackedInt64Array = PackedInt64Array()
+
+## Where each player is looking, in fixed-point *turns* — one whole revolution is
+## `Fixed.TURN`. Yaw wraps; pitch clamps just short of the vertical.
+##
+## This is authoritative Simulation state rather than a property of a camera, and
+## that is the load-bearing decision of the whole first-person layer. The camera is
+## told where to point by a query; it never decides. A controller that accumulated
+## its own yaw would be holding authoritative state, the Build Gun's aim would be
+## derived from a float, and the first thing to diverge in co-op would be where
+## everybody is pointing.
+var _player_yaw: PackedInt64Array = PackedInt64Array()
+var _player_pitch: PackedInt64Array = PackedInt64Array()
+
+## How fast each player is moving, in fixed-point metres per second. State, not a
+## derived quantity: a player who let go of the keys a moment ago is still sliding,
+## and that slide is what makes a 1.8 m person feel like a person rather than a
+## cursor. The rate it converges on the throttle is `player.walk_acceleration…` in
+## `content/tuning.toml`.
+var _player_velocity_x: PackedInt64Array = PackedInt64Array()
+var _player_velocity_z: PackedInt64Array = PackedInt64Array()
+
+## The throttle each player asked for this tick, in their own frame: forward and
+## strafe, each in [-ONE, ONE].
+##
+## Deliberately *per tick* and deliberately not hashed. `_walk` consumes it and
+## clears it before the tick ends, so it is zero at every point a hash is taken, and
+## sending no `MOVE` is how a player stands still — which means an idle tick in a
+## recorded script is a tick spent slowing down rather than one spent coasting on a
+## throttle nobody is holding any more.
+var _player_intent_forward: PackedInt64Array = PackedInt64Array()
+var _player_intent_strafe: PackedInt64Array = PackedInt64Array()
+
+## Whether each player is holding Survey View down this tick, and how many ticks of
+## the transition they have accumulated.
+##
+## Ticks rather than a fixed-point fraction, for the reason craft progress is counted
+## in ticks: the lift then takes exactly the tuned number of ticks, with nothing
+## rounding away at either end, and a lift interrupted halfway resumes from where it
+## actually got to. The easing is applied on the way out, in the query, so the stored
+## progress stays linear and reversible.
+##
+## In the Simulation rather than in the camera because the transition is state — a
+## half-raised camera is a different state from one at either end — and because that
+## is what lets its height and duration be tuned in `content/tuning.toml` while the
+## game is running. Finding out whether a lift feels good means trying several.
+var _player_survey_held: PackedInt64Array = PackedInt64Array()
+var _player_survey_ticks: PackedInt64Array = PackedInt64Array()
 
 ## The Map's Nodes, as parallel arrays in the canonical order `MapLayout` sorted
 ## them into. None of this changes during a Run: a Node is inexhaustible (DESIGN.md),
@@ -197,6 +257,22 @@ func _init(
 	_player_z.resize(players)
 	_player_x.fill(0)
 	_player_z.fill(0)
+	_player_yaw.resize(players)
+	_player_pitch.resize(players)
+	_player_yaw.fill(0)
+	_player_pitch.fill(0)
+	_player_velocity_x.resize(players)
+	_player_velocity_z.resize(players)
+	_player_velocity_x.fill(0)
+	_player_velocity_z.fill(0)
+	_player_intent_forward.resize(players)
+	_player_intent_strafe.resize(players)
+	_player_intent_forward.fill(0)
+	_player_intent_strafe.fill(0)
+	_player_survey_held.resize(players)
+	_player_survey_ticks.resize(players)
+	_player_survey_held.fill(0)
+	_player_survey_ticks.fill(0)
 
 
 # ── Advancing ─────────────────────────────────────────────────────────────────
@@ -214,6 +290,8 @@ func step(actions: Array) -> void:
 	for action: InputAction in actions:
 		_apply(action)
 
+	_walk()
+	_survey()
 	_transport()
 	_extract()
 	_craft()
@@ -236,21 +314,191 @@ func _apply(action: InputAction) -> void:
 			_apply_build_machine(action)
 		InputAction.Kind.BUILD_BELT:
 			_apply_build_belt(action)
+		InputAction.Kind.LOOK:
+			_apply_look(action)
+		InputAction.Kind.SURVEY_VIEW:
+			_apply_survey_view(action)
 
 
+## Records the throttle a player asked for this tick. Applying it is `_walk`'s job,
+## one tick at a time, so that two intents arriving in one tick cannot double a
+## player's acceleration and so that the throttle is read exactly once per tick.
+##
+## Intent is a direction and throttle in the player's own frame — forward and strafe
+## — not a destination and not a world-space direction. The Simulation owns the
+## speed, so a malformed or hostile client cannot move faster by sending a bigger
+## number, and it owns the *yaw*, so a client cannot walk somewhere other than where
+## the Simulation says it is looking either.
 func _apply_move(action: InputAction) -> void:
 	if not _is_player(action.player_id):
 		return
 
-	# Intent is a direction and throttle; the Simulation owns the speed, so a
-	# malformed or hostile client cannot move faster by sending a bigger number. The
-	# speed itself comes from tuning, so it is a number in a file rather than a
-	# number in this line.
-	var step_size: int = Fixed.div(
-		_definitions.player_walk_speed, Fixed.from_int(TICKS_PER_SECOND)
+	_player_intent_forward[action.player_id] = action.move_intent_forward()
+	_player_intent_strafe[action.player_id] = action.move_intent_strafe()
+
+
+## Turns the view.
+##
+## The intent is a count of pixels of mouse travel; the sensitivity that converts it
+## into an angle comes from tuning, so a client cannot turn faster by sending a
+## larger number and the feel of the mouse is a number in a file.
+##
+## Yaw wraps, because a player keeps turning and an angle that grew without bound
+## would eventually lose precision. Pitch clamps just short of straight up and
+## straight down: rolling over the vertical would leave a player facing backwards
+## with no idea how they got there.
+func _apply_look(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+
+	var yaw_delta: int = _look_turns(action.look_pixels_right())
+	var pitch_delta: int = _look_turns(action.look_pixels_down())
+
+	# Right is a *decrease* in yaw: a positive rotation about Godot's +y axis turns
+	# left. Down is a decrease in pitch, so the sign of each matches the sign of the
+	# mouse travel a player intuits.
+	_player_yaw[action.player_id] = Fixed.wrap_turns(_player_yaw[action.player_id] - yaw_delta)
+	_player_pitch[action.player_id] = Fixed.clamp_fixed(
+		_player_pitch[action.player_id] - pitch_delta, -MAX_PITCH_TURNS, MAX_PITCH_TURNS
 	)
-	_player_x[action.player_id] += Fixed.mul(action.move_intent_x(), step_size)
-	_player_z[action.player_id] += Fixed.mul(action.move_intent_z(), step_size)
+
+
+## Records whether a player is holding Survey View. Moving the camera is `_survey`'s
+## job, one tick at a time, so holding the key for n ticks always buys n ticks of lift
+## however many times the intent arrives.
+func _apply_survey_view(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	_player_survey_held[action.player_id] = 1 if action.survey_is_held() else 0
+
+
+## How far a count of pixels of mouse travel turns the view, in fixed-point turns.
+## One division by a thousand and one multiplication by the tuned sensitivity, both
+## floored like every other lossy fixed-point operation.
+func _look_turns(pixels: int) -> int:
+	return Fixed.mul(
+		_definitions.player_look_sensitivity, Fixed.div(pixels, Fixed.from_int(LOOK_PIXEL_UNIT))
+	)
+
+
+# ── Walking ───────────────────────────────────────────────────────────────────
+
+## Moves every player one tick towards the throttle they asked for.
+##
+## Three steps, in this order: turn the throttle into a world-space velocity the
+## player wants, move the velocity they *have* towards it by one tick of
+## acceleration, then integrate position. Acceleration rather than an instant change
+## is what gives a 1.8 m person weight, and the same figure decelerates them, so
+## letting go of the keys is a stop rather than a freeze.
+func _walk() -> void:
+	var speed: int = _definitions.player_walk_speed
+	var acceleration: int = Fixed.div(
+		_definitions.player_walk_acceleration, Fixed.from_int(TICKS_PER_SECOND)
+	)
+
+	for player_id: int in range(query_player_count()):
+		var wanted: FixedVec2 = _wanted_velocity(player_id, speed)
+
+		var gap_x: int = wanted.x - _player_velocity_x[player_id]
+		var gap_z: int = wanted.z - _player_velocity_z[player_id]
+		var gap: int = _length(gap_x, gap_z)
+
+		if gap <= acceleration:
+			# Close enough to land on it exactly. Without this a player would jitter
+			# around full speed forever, one acceleration step either side of it.
+			_player_velocity_x[player_id] = wanted.x
+			_player_velocity_z[player_id] = wanted.z
+		else:
+			_player_velocity_x[player_id] += Fixed.div(Fixed.mul(gap_x, acceleration), gap)
+			_player_velocity_z[player_id] += Fixed.div(Fixed.mul(gap_z, acceleration), gap)
+
+		_player_x[player_id] += Fixed.div(
+			_player_velocity_x[player_id], Fixed.from_int(TICKS_PER_SECOND)
+		)
+		_player_z[player_id] += Fixed.div(
+			_player_velocity_z[player_id], Fixed.from_int(TICKS_PER_SECOND)
+		)
+
+		# Consumed. A throttle has to be re-asserted every tick, so standing still is
+		# the absence of an intent rather than an intent of its own.
+		_player_intent_forward[player_id] = 0
+		_player_intent_strafe[player_id] = 0
+
+
+## The world-space velocity a player's throttle asks for, in fixed-point metres per
+## second. The throttle is rotated by the yaw the Simulation is holding, and
+## normalised first if it is longer than full — forward and strafe at once is a
+## throttle of root two, and taking that literally would make the diagonal 41%
+## faster, which is the oldest bug in first-person movement.
+func _wanted_velocity(player_id: int, speed: int) -> FixedVec2:
+	var forward: int = _player_intent_forward[player_id]
+	var strafe: int = _player_intent_strafe[player_id]
+
+	var throttle: int = _length(forward, strafe)
+	if throttle == 0:
+		return FixedVec2.zero()
+	if throttle > Fixed.ONE:
+		forward = Fixed.div(forward, throttle)
+		strafe = Fixed.div(strafe, throttle)
+
+	# Godot's convention, so the renderer needs no second opinion: at yaw 0 forward
+	# is -z and right is +x, and a positive yaw rotates both to the left.
+	var yaw: int = _player_yaw[player_id]
+	var sine: int = Fixed.sin_turns(yaw)
+	var cosine: int = Fixed.cos_turns(yaw)
+
+	return FixedVec2.new(
+		Fixed.mul(Fixed.mul(forward, -sine) + Fixed.mul(strafe, cosine), speed),
+		Fixed.mul(Fixed.mul(forward, -cosine) + Fixed.mul(strafe, -sine), speed)
+	)
+
+
+## The tuned Survey View tilt, converted from degrees to turns. Degrees in the file
+## because that is how a human reasons about an angle; turns everywhere else because
+## radians would need a float.
+func _survey_pitch_turns() -> int:
+	return Fixed.div(_definitions.survey_pitch_degrees, Fixed.from_int(DEGREES_PER_TURN))
+
+
+## The length of a fixed-point vector on the horizontal plane.
+func _length(x: int, z: int) -> int:
+	return Fixed.sqrt(Fixed.mul(x, x) + Fixed.mul(z, z))
+
+
+# ── Survey View ───────────────────────────────────────────────────────────────
+
+## Advances every player's Survey View transition by one tick: up while the key is
+## held, down once it is released.
+##
+## Symmetric and reversible. Letting go halfway up comes back down from where the
+## camera actually got to rather than restarting, which is what stops a quick tap
+## reading as a jolt.
+func _survey() -> void:
+	var span: int = _survey_transition_ticks()
+	for player_id: int in range(query_player_count()):
+		var progress: int = _player_survey_ticks[player_id]
+		progress += 1 if _player_survey_held[player_id] != 0 else -1
+		_player_survey_ticks[player_id] = clampi(progress, 0, span)
+
+
+## How many ticks the Survey View lift takes, from the tuned duration. Rounded rather
+## than floored — a duration is a feel number, so 0.4 s should mean the 24 ticks a
+## tuner intends rather than the 23 flooring would give — and never less than one,
+## because a zero-tick transition is a divide by nothing.
+func _survey_transition_ticks() -> int:
+	return maxi(
+		Fixed.round_to_int(
+			Fixed.mul(_definitions.survey_transition_seconds, Fixed.from_int(TICKS_PER_SECOND))
+		),
+		1
+	)
+
+
+## How far through the Survey View transition a player is, eased, in [0, Fixed.ONE].
+func _survey_blend(player_id: int) -> int:
+	var span: int = _survey_transition_ticks()
+	var progress: int = clampi(_player_survey_ticks[player_id], 0, span)
+	return Fixed.smoothstep_fixed(Fixed.div(Fixed.from_int(progress), Fixed.from_int(span)))
 
 
 # ── Transport ─────────────────────────────────────────────────────────────────
@@ -967,6 +1215,12 @@ func hash() -> int:
 	hasher.feed_int(_rng.state)
 	hasher.feed_ints(_player_x)
 	hasher.feed_ints(_player_z)
+	hasher.feed_ints(_player_yaw)
+	hasher.feed_ints(_player_pitch)
+	hasher.feed_ints(_player_velocity_x)
+	hasher.feed_ints(_player_velocity_z)
+	hasher.feed_ints(_player_survey_held)
+	hasher.feed_ints(_player_survey_ticks)
 	# The definitions are state. A Run using different content is in a different
 	# state even before its first tick, and a Run that reloaded mid-flight is in a
 	# different state from one that did not.
@@ -1049,6 +1303,74 @@ func query_player_position(player_id: int) -> FixedVec2:
 	if not _is_player(player_id):
 		return FixedVec2.zero()
 	return FixedVec2.new(_player_x[player_id], _player_z[player_id])
+
+
+## How fast a player is moving, in fixed-point metres per second. Non-zero for a
+## while after they let go of the keys, because they are still slowing down.
+func query_player_velocity(player_id: int) -> FixedVec2:
+	if not _is_player(player_id):
+		return FixedVec2.zero()
+	return FixedVec2.new(_player_velocity_x[player_id], _player_velocity_z[player_id])
+
+
+## Whether a player is holding Survey View. True the moment the key goes down, even
+## though the camera takes the tuned transition to arrive.
+func query_player_is_surveying(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	return _player_survey_held[player_id] != 0
+
+
+## How far through the Survey View transition a player is, in fixed point: 0 at eye
+## level, Fixed.ONE fully raised, eased so the ends are gentle.
+func query_player_survey_blend(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _survey_blend(player_id)
+
+
+## How high a player's camera is off the ground, in fixed-point metres. Eye height on
+## foot, the tuned Survey View height fully raised, and somewhere between during the
+## transition.
+func query_player_camera_height_metres(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return Fixed.lerp_fixed(
+		_definitions.player_eye_height, _definitions.survey_height, _survey_blend(player_id)
+	)
+
+
+## Where a player's camera is pointing, in fixed-point turns from level. The player's
+## own pitch on foot, tilted down to the tuned Survey View angle as the camera rises.
+func query_player_camera_pitch_turns(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return Fixed.lerp_fixed(
+		_player_pitch[player_id], -_survey_pitch_turns(), _survey_blend(player_id)
+	)
+
+
+## Where a player's camera stands on the horizontal plane, in fixed-point metres.
+## The player's own position, in Survey View as on foot: the camera rises straight up
+## and tilts, so a player can walk the Factory while reading it from above.
+func query_player_camera_ground_metres(player_id: int) -> FixedVec2:
+	return query_player_position(player_id)
+
+
+## Which way a player is facing, in fixed-point turns in [0, Fixed.TURN). 0 looks
+## down -z, which is Godot's forward, and the value increases turning left.
+func query_player_yaw_turns(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_yaw[player_id]
+
+
+## How far from level a player is looking, in fixed-point turns. Positive is up, and
+## the magnitude never exceeds `MAX_PITCH_TURNS`.
+func query_player_pitch_turns(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_pitch[player_id]
 
 
 ## The content definitions this Run is using.

@@ -37,11 +37,18 @@ mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 ## present or the set does not load, so the tests below that vary one key carry the rest
 ## of them unchanged rather than each restating the whole file.
 const OTHER_TUNING: String = """
+walk_acceleration_metres_per_second_squared = 24
+look_sensitivity_turns_per_1000_pixels = 0.4
+eye_height_metres = 1.7
 [belt]
 items_per_second = 4
 items_per_tile = 4
 [machine]
 input_buffer_crafts = 2
+[survey]
+height_metres = 26
+transition_seconds = 0.4
+pitch_degrees = 68
 """
 
 const GOOD_TUNING: String = """

@@ -244,3 +244,93 @@ func test_decimal_strings_are_recognised_before_they_are_parsed() -> void:
 	assert_false(Fixed.is_decimal_string(".5"))
 	assert_false(Fixed.is_decimal_string("-"))
 	assert_false(Fixed.is_decimal_string("1 5"))
+
+
+# ── Smooth interpolation ──────────────────────────────────────────────────────
+
+func test_smoothstep_is_flat_at_both_ends_and_half_in_the_middle() -> void:
+	assert_eq(Fixed.smoothstep_fixed(0), 0)
+	assert_eq(Fixed.smoothstep_fixed(Fixed.ONE), Fixed.ONE)
+	assert_eq(Fixed.smoothstep_fixed(Fixed.HALF), Fixed.HALF, "symmetric about the middle")
+
+
+func test_smoothstep_starts_slower_than_a_straight_line() -> void:
+	# At a quarter of the way through, t²(3 - 2t) is 0.0625 × 2.5 = 0.15625, which is
+	# 10240 in 16 fractional bits — well short of the 16384 a straight line gives.
+	assert_eq(Fixed.smoothstep_fixed(Fixed.QUARTER_TURN), 10240)
+
+
+func test_smoothstep_clamps_outside_its_range() -> void:
+	assert_eq(Fixed.smoothstep_fixed(-Fixed.ONE), 0, "nothing before the start")
+	assert_eq(Fixed.smoothstep_fixed(Fixed.from_int(4)), Fixed.ONE, "nothing after the end")
+
+
+# ── Trigonometry ──────────────────────────────────────────────────────────────
+# Angles are measured in *turns*, so one full revolution is Fixed.ONE and the
+# quadrant boundaries are exact values a reader can check by eye. Expected values
+# come from the mathematics, not from the table: sin(0) is 0, sin(quarter turn) is
+# 1, sin(eighth turn) is the square root of a half.
+
+func test_a_turn_is_one_whole_revolution() -> void:
+	assert_eq(Fixed.TURN, Fixed.ONE, "a full revolution is 1.0 turns")
+	assert_eq(Fixed.QUARTER_TURN, 16384, "a quarter of 65536")
+
+
+func test_sine_is_exact_at_the_quadrant_boundaries() -> void:
+	assert_eq(Fixed.sin_turns(0), 0)
+	assert_eq(Fixed.sin_turns(Fixed.QUARTER_TURN), Fixed.ONE, "sin 90 degrees is 1")
+	assert_eq(Fixed.sin_turns(Fixed.HALF), 0, "sin 180 degrees is 0")
+	assert_eq(Fixed.sin_turns(3 * Fixed.QUARTER_TURN), -Fixed.ONE, "sin 270 degrees is -1")
+
+
+func test_cosine_is_exact_at_the_quadrant_boundaries() -> void:
+	assert_eq(Fixed.cos_turns(0), Fixed.ONE)
+	assert_eq(Fixed.cos_turns(Fixed.QUARTER_TURN), 0)
+	assert_eq(Fixed.cos_turns(Fixed.HALF), -Fixed.ONE)
+	assert_eq(Fixed.cos_turns(3 * Fixed.QUARTER_TURN), 0)
+
+
+func test_sine_of_an_eighth_turn_is_the_root_of_a_half() -> void:
+	# sin 45 degrees is 0.7071067811..., which is 46341 in 16 fractional bits.
+	assert_eq(Fixed.sin_turns(Fixed.ONE / 8), 46341)
+	assert_eq(Fixed.cos_turns(Fixed.ONE / 8), 46341, "at 45 degrees the two agree")
+
+
+func test_sine_is_accurate_between_the_sampled_angles() -> void:
+	# A twelfth of a turn is 30 degrees, where sine is exactly a half. The angle
+	# falls between two table entries, so this is the interpolation being measured
+	# rather than a stored value being read back.
+	var thirty_degrees: int = Fixed.ONE / 12
+	assert_true(
+		absi(Fixed.sin_turns(thirty_degrees) - Fixed.HALF) <= Fixed.SIN_TOLERANCE,
+		"sin 30 degrees should be 0.5, got %d" % Fixed.sin_turns(thirty_degrees)
+	)
+	# And 60 degrees, where it is 0.8660254... = 56755.
+	assert_true(
+		absi(Fixed.sin_turns(Fixed.ONE / 6) - 56755) <= Fixed.SIN_TOLERANCE,
+		"sin 60 degrees should be 56755, got %d" % Fixed.sin_turns(Fixed.ONE / 6)
+	)
+
+
+func test_angles_wrap_so_a_player_may_spin_forever() -> void:
+	# Yaw accumulates without bound as a player turns, so every angle has to be
+	# reducible. Three and a quarter turns is a quarter turn.
+	assert_eq(Fixed.sin_turns(3 * Fixed.TURN + Fixed.QUARTER_TURN), Fixed.ONE)
+	assert_eq(Fixed.sin_turns(-Fixed.QUARTER_TURN), -Fixed.ONE, "and backwards too")
+	assert_eq(Fixed.wrap_turns(3 * Fixed.TURN + Fixed.QUARTER_TURN), Fixed.QUARTER_TURN)
+	assert_eq(Fixed.wrap_turns(-Fixed.QUARTER_TURN), 3 * Fixed.QUARTER_TURN)
+
+
+func test_the_facing_vector_stays_very_nearly_unit_length() -> void:
+	# Walking speed is the length of this vector times the tuned speed, so a
+	# facing that is short in some directions would make a player faster when
+	# facing north than when facing north-east. Checked at an awkward angle.
+	var angle: int = Fixed.ONE / 7
+	var length: int = Fixed.sqrt(
+		Fixed.mul(Fixed.sin_turns(angle), Fixed.sin_turns(angle))
+		+ Fixed.mul(Fixed.cos_turns(angle), Fixed.cos_turns(angle))
+	)
+	assert_true(
+		absi(length - Fixed.ONE) <= Fixed.SIN_TOLERANCE,
+		"expected unit length, got %d" % length
+	)

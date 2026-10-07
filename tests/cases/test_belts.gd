@@ -316,11 +316,18 @@ smelt_iron_plate,Smelt Iron Plate,iron_ore:2,iron_plate:1,3.2
 
 const FAST_TUNING: String = """[player]
 walk_speed_metres_per_second = 4
+walk_acceleration_metres_per_second_squared = 24
+look_sensitivity_turns_per_1000_pixels = 0.4
+eye_height_metres = 1.7
 [belt]
 items_per_second = 4
 items_per_tile = 4
 [machine]
 input_buffer_crafts = 2
+[survey]
+height_metres = 26
+transition_seconds = 0.4
+pitch_degrees = 68
 """
 
 
