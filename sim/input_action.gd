@@ -34,6 +34,14 @@ enum Kind {
 	## digest earns its place — every client reloads its own copy of the files, and a
 	## client whose copy hashes differently can refuse instead of desyncing silently.
 	RELOAD_DEFINITIONS = 2,
+	## Build a Machine. args = [machine definition index, tile x, tile y, tile z].
+	##
+	## The Machine travels as an index into the definition set's sorted Machine ids
+	## rather than as a string, because an intent on the wire is integers; the
+	## Simulation resolves it to an id at the moment it builds, and holds the id
+	## afterwards so a hot-reload that renumbers the table cannot renumber a Factory
+	## that is already standing.
+	BUILD_MACHINE = 3,
 }
 
 var kind: Kind = Kind.NONE
@@ -81,6 +89,27 @@ static func reload_definitions(acting_player: int, definitions: Definitions) -> 
 	)
 	action.payload = definitions
 	return action
+
+
+## Builds a Machine at a tile. The tile is the footprint's anchor, and the footprint
+## grows along +x and +z from it by whatever `content/machines.csv` says — that file
+## is the only authority for a footprint.
+static func build_machine(acting_player: int, machine_index: int, tile: Vector3i) -> InputAction:
+	return InputAction.new(
+		Kind.BUILD_MACHINE,
+		acting_player,
+		PackedInt64Array([machine_index, tile.x, tile.y, tile.z])
+	)
+
+
+## The Machine definition index a `BUILD_MACHINE` action names.
+func build_machine_index() -> int:
+	return _arg(0)
+
+
+## The tile a `BUILD_MACHINE` action anchors its footprint at.
+func build_tile() -> Vector3i:
+	return Vector3i(_arg(1), _arg(2), _arg(3))
 
 
 ## The definition set a `RELOAD_DEFINITIONS` action carries, or null.
