@@ -1200,6 +1200,14 @@ inside anything, because a move into something too tall is refused. So
   who went down on a Smelter roof stays on the roof, for the same reason a corpse does not
   slide two metres.
 
+**Open: a roof is not cover.** An Enemy's reach is compared horizontally — `_bite` subtracts
+positions on two axes and has never heard of `_player_y` — so a Crawler on the ground can
+still bite a player standing on a 2.2 m Boiler. That is the conservative default rather than
+the considered one: the alternative is a free safe spot on top of every Machine in the
+Factory, which would quietly undo the keystone loop, and the right fix is a deliberate
+decision about how high is out of reach rather than an accident of which axes a subtraction
+happens to use.
+
 ### Build mode is a hand, not a gate
 
 `B` holsters the Build Gun and draws the weapon, or the other way round. **Left click

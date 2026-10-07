@@ -48,10 +48,13 @@ func _walk_to(sim: Simulation, x: int, z: int) -> void:
 		var here: FixedVec2 = sim.query_player_position(0)
 		var gap_x: int = x - here.x
 		var gap_z: int = z - here.z
-		if absi(gap_x) <= Fixed.from_decimal_string("0.05") and absi(gap_z) <= Fixed.from_decimal_string("0.05"):
+		var close_enough: int = Fixed.from_decimal_string("0.05")
+		if absi(gap_x) <= close_enough and absi(gap_z) <= close_enough:
 			return
 		# +x is strafe at yaw 0; -z is forward at yaw 0.
-		var strafe: int = Fixed.clamp_fixed(Fixed.mul(gap_x, Fixed.from_int(4)), -Fixed.ONE, Fixed.ONE)
+		var strafe: int = Fixed.clamp_fixed(
+			Fixed.mul(gap_x, Fixed.from_int(4)), -Fixed.ONE, Fixed.ONE
+		)
 		var forward: int = Fixed.clamp_fixed(
 			Fixed.mul(-gap_z, Fixed.from_int(4)), -Fixed.ONE, Fixed.ONE
 		)
