@@ -136,6 +136,16 @@ themselves are ours and are safe to commit to a public repo.
   forbidden as the FBX. A clone without the packs gets placeholder weapons and a
   game that builds, tests and plays — see
   [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 7.
+- **heyheythere, Shapita, Lukami Ch.** — the three industrial prop packs are the
+  *second* asset path whose **output** is quarantined, and for the same reason:
+  `tools/assets/convert_props.sh` writes `assets_licensed/generated/props/*.glb`
+  and `game/set_dressing.gd` loads it at runtime, because a converted GLB is a
+  derivative of a non-redistributable asset. A clone without the packs gets a
+  yard built out of self-authored stand-ins wearing the committed Machine
+  palette, and a game that builds, tests and looks like a place — see
+  [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 8. heyheythere is on a **2 m
+  grid at 1 unit to the metre**, which is `WorldGrid`'s, which is why it is the
+  one the yard is mostly made of.
 - **Synty** — no redistribution. Godot is officially unsupported; FBX source
   requires conversion. → `assets_licensed/`.
 - **Quaternius, KayKit, Kenney** — CC0. Safe to commit, no attribution required.
