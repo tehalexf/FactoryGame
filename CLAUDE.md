@@ -224,9 +224,10 @@ what lets a client whose own files hash differently refuse instead of desyncing.
   from `content/machines.csv` and from nowhere else** — the Simulation, the
   renderer and the Blender mesh generator all read those same two columns, and a
   second copy would drift on the first balance change.
-- `sim/map_layout.gd` is the Map's geography: where the Nodes are, what Resource
-  each yields, what Depth tier it sits at, where the Nest stands and where the
-  Breaches are. Deliberately *not* in `content/` —
+- `sim/map_layout.gd` is the Map's **starting** geography: where the Nodes are, what
+  Resource each yields, what Depth tier it sits at, where the Nest stands and where the
+  Breaches a Run *opens* with are. Where the Breaches are **now** is Simulation state,
+  because deep mining opens more — see the Depth section. Deliberately *not* in `content/` —
   those files are definitions and hot-reloadable, and moving a Node under a
   Factory that is standing on it is a different Map, not a balance change.
 - **Nodes never deplete.** There is no quantity on a Node and nothing subtracts
@@ -392,12 +393,15 @@ balance.
   what the Run-over report names — and a later ticket that lets a Nest be repaired
   cannot un-end a Run. Waves stop and Enemies stop; the Factory is deliberately not
   gated, because there is no build mode anywhere in this project.
-- **A Breach is fixed and known in advance**, which is the whole deal GLOSSARY.md
-  strikes: it is fortifiable, and it could not be if it moved. `MapLayout` sorts them
-  into tile order, and Enemies are released in that order, so which Breach goes first
-  is geography rather than the order somebody typed the rows in. A Map with **no**
-  Breach has no Waves at all — which is the geography `MapLayout.empty()` gives a test
-  that is studying the Factory and not the threat.
+- **A Breach never moves, and every Breach is known in advance**, which is the whole deal
+  GLOSSARY.md strikes: it is fortifiable, and it could not be if it moved. The *set* does
+  grow — deep mining opens more, telegraphed first, see the Depth section — but a Breach
+  that exists is a Breach that stays where it is. `MapLayout.tile_precedes` is the one
+  definition of the order they are held in, and Enemies are released in that order, so which
+  Breach goes first is geography rather than the order somebody typed the rows in *or the
+  order a player happened to dig in*. A Map with **no** Breach has no Waves at all — which
+  is the geography `MapLayout.empty()` gives a test that is studying the Factory and not the
+  threat.
 - **The Wave schedule is derived from Heat, not counted down.** See the Heat section
   below. `content/waves.csv` owns what a Wave is made of, `[heat]` owns when it comes,
   and `[wave]` owns the three things that are not about Heat — the Telegraph, the spawn
@@ -662,6 +666,94 @@ they get hunted (DESIGN.md).
   Heat still accumulates, which is what lets a test study Heat without a Wave interrupting.
 - **Building is still never gated**, mid-Wave or otherwise, and `test_heat` asserts it
   directly so that nobody adds a flag.
+
+## Depth, and the Breach greed opens
+
+The mechanic that makes growth a *decision about the Map* rather than a decision about a
+number. Deeper ore is richer, needs a better Miner, draws more Power and raises more Heat —
+all of which a player could read as an upgrade with a price tag. What makes Depth different
+is that extracting at it **rearranges the geography they have to defend**: a new Breach opens
+near the mine. Reaching for better ore buys ground it did not ask for.
+
+- **A Node's Depth is geography and a Miner's reach is data.** `MapLayout` carries the tier
+  each Node sits at; `max_depth` in `content/machines.csv` is the whole of a Miner's tier, so
+  `miner_mk2` and `miner_mk3` differ from `miner_mk1` in that column, their draw, their
+  Recipe and their build cost — **and in nothing named anywhere in `sim/`**. A Mk4 is a row,
+  exactly as a Cannon Turret is.
+- **A Miner over ore it cannot reach is starved**, not halted and not throttled. One clause
+  in `_machine_has_its_inputs` buys all three consequences at once, because
+  `_machine_would_work` is the single predicate behind what the grid bills, what advances and
+  what a query calls starved: the Miner draws nothing, banks nothing, and the HUD already
+  says why. The same treatment a Miner on bare rock gets, for the same reason — a Machine
+  doing nothing must be visibly doing nothing.
+- **Power scales with the Machine, not with a flat surcharge.** `depth.draw_percent_per_depth`
+  adds that percentage of a Miner's own quoted draw per tier past the first, so the cost of
+  depth lands proportionally on a small Mk1 and a big Mk3 alike. Recomputed every tick from
+  two integers in `_depth_adjusted_draw_kw` with **one floor applied to the result** — there
+  is no accumulator here, so unlike the Power credit and the Heat decay there is nothing to
+  drift. `query_machine_power_draw_kw` reports the very figure `_read_the_grid` totals, so a
+  deep mine's brownout and the number explaining it are one fact.
+- **Heat's Depth term is #12's and there is exactly one of it.** `heat.per_craft_per_depth`
+  already charges a craft for the tier it came out of. A second surcharge added here would
+  have made the gauge disagree with the arithmetic a player can do in their head, which is
+  the entire value of Heat being made of countable crafts. `test_depth` asserts the existing
+  term rather than duplicating it.
+- **Sustained extraction opens the Breach, counted per Node.** `_node_deep_crafts` counts
+  crafts at `depth.breach_tier` or deeper against the *Node*, not the Miner — the hole in the
+  ground is what did it, so demolishing the Miner and rebuilding is not a way to reset the
+  count, and the Breach is attributable to the mine a player chose to open. One Node opens at
+  most **one** Breach ever (`_node_breach_opened`), which is what bounds the mechanic: a
+  forty-hour Run cannot ring itself with a hundred holes. The cap being per Node rather than
+  per Run is what keeps the *second* deep mine a real decision too.
+- **A new Breach is telegraphed before it first spawns, and that is a gate.** It is announced
+  into `_pending_breach_*` and only joins the Map once `depth.breach_telegraph_seconds` have
+  been served — longer than a Wave's Telegraph, because the answer to a new Breach is a
+  Turret and a Belt rather than standing somewhere different. A pending Breach does not spend
+  its first tick of warning on the tick it was announced, which is why
+  `_pending_breach_announced_tick` is held: the rule is explicit rather than an artefact of
+  where `_breaches_open` sits in `step`. `WorldView` marks the tile on the ground in a
+  *different* colour and shape from a real Breach — "a hole is about to appear here" and
+  "there is a hole here" ask for different things — and the HUD raises a klaxon that names
+  the tile, because unlike a Wave the only useful response is to go and look somewhere new.
+- **Where it opens is arithmetic, never an RNG draw.** The first valid tile on the ring
+  `depth.breach_offset_tiles` out from the Node, walked in canonical tile order, which in
+  practice is the ring's north-west corner. Predictable twice over: a Breach is only
+  fortifiable if a player can plan for it, and geography that consumed an RNG draw would make
+  *which* Breach you got depend on how many draws the Run had spent. The ring widens by up to
+  `RING_SEARCH_WIDENING` if every tile is taken, and a Map with nowhere to put one simply
+  does not get one — that is geography, not an error.
+- **The flowfield is not rebuilt, and that is the point rather than an omission.** The field
+  is a pure function of the Map's ground and the Machines on it; a Breach is neither, because
+  it does not obstruct and is not a destination. Every ground tile already has a direction and
+  a distance, so the tile a new Breach opens on is already routed and an Enemy out of it
+  steers by the same shared field. `_breaches_open` therefore never touches
+  `_flowfield_stale`, and `test_depth` asserts that every tile sampled routes exactly as it
+  did before the opening.
+
+### The determinism trap, and where the line between Map and Simulation sits
+
+`MapLayout` sorts Breaches into tile order and `_release_from_the_breaches` walks them in
+index order, so Enemy release order — and therefore which serial belongs to which Crawler —
+is geography. **Appending a runtime Breach would quietly change that to "the order a player
+dug in"**, and two clients whose Miners completed a craft in a different order would then
+disagree about which Crawler is which. `_insert_breach` is the only way anything joins that
+array and it inserts at the position `MapLayout.tile_precedes` names, so the invariant holds
+by construction. `test_depth` asserts the array is still ascending afterwards, and that
+digging two mines in the opposite order produces the same Map — both of those fail if the
+insert is changed to an append.
+
+The line between the two owners is drawn at *starting* versus *live*:
+
+- **`MapLayout` owns the opening geography and the canonical order.** It is authored, it is
+  not hot-reloadable, and it is identical for every Run on this Map. It gained a static
+  `tile_precedes` — the single definition of tile order, now used by Node sorting, Breach
+  sorting and the Simulation's insert, so there is one comparator rather than three.
+- **The Simulation owns the live Breach set and everything that produced it.**
+  `_breach_tile_*` was already copied out of `MapLayout` and hashed (#9 made it an array
+  deliberately), so no state *moved* — what changed is that the array is no longer constant
+  through a Run. `_node_deep_crafts`, `_node_breach_opened` and the five `_pending_breach_*`
+  arrays joined it. All of them are hashed; none of them needed a line in `sim/run_save.gd`,
+  which reflects over the property list.
 
 ## The player, the Build Gun and Survey View
 

@@ -34,6 +34,25 @@ extends RefCounted
 ## because moving the thing a Run is defending is a different Map.
 const NEST_FOOTPRINT_TILES: int = 4
 
+
+## Whether one tile comes before another in the Map's canonical order: layer, then x, then
+## z. **The single authority for that order**, and the reason it is a static on this class
+## rather than a method on either of its callers.
+##
+## Nodes and Breaches are both sorted by it, and the Simulation inserts a Breach that deep
+## mining opened at the position it names — which is the whole of how a runtime Breach keeps
+## the ordering discipline a starting Breach has. Enemies are released in Breach order, so
+## if that order were ever "the order they appeared" rather than geography, which Breach
+## went first would be a function of *when a player dug* and two clients that dug in a
+## different order would release Enemies in a different sequence. One comparator, used by
+## everything that orders tiles, is what makes that impossible rather than merely unlikely.
+static func tile_precedes(a: Vector3i, b: Vector3i) -> bool:
+	if a.y != b.y:
+		return a.y < b.y
+	if a.x != b.x:
+		return a.x < b.x
+	return a.z < b.z
+
 ## Tile each Node sits on, as parallel coordinate arrays. One tile per Node; a
 ## Miner covers it with its footprint.
 var node_tile_x: PackedInt64Array = PackedInt64Array()
@@ -71,8 +90,17 @@ var breach_tile_y: PackedInt64Array = PackedInt64Array()
 var breach_tile_z: PackedInt64Array = PackedInt64Array()
 
 
-## The Map a Run starts on. Two iron ore Nodes and one coal Node, all at Depth 1, far
-## enough apart that a Belt between them is a decision rather than a formality.
+## The Map a Run starts on. Three Nodes at Depth 1 — two iron ore and one coal — and two
+## deeper seams of iron out to the east, far enough apart that a Belt between them is a
+## decision rather than a formality.
+##
+## The shallow ore is finite in *number*, which is what makes Depth a real lever rather than
+## a curiosity: a Factory that wants to grow past three Nodes has to reach for the Depth 2
+## seam at (22, 10) or the Depth 3 one at (30, -14), and reaching costs a higher-tier Miner,
+## more Power, more Heat and a new Breach six tiles north-west of whichever one it digs. The
+## Depth 2 seam's hole opens at (16, 4) — squarely in the eastern ground the opening Factory
+## wants — so greed rearranges the Map a player has already laid out rather than adding a
+## threat somewhere they were not using.
 ##
 ## The coal is what the one Power grid runs on: a Steam Boiler burns Belt-delivered coal,
 ## so the Factory's first Power source is also its first logistics problem, and the coal
@@ -87,6 +115,8 @@ static func starter() -> MapLayout:
 	layout.add_node(Vector3i(4, WorldGrid.GROUND_LAYER, 4), "iron_ore", 1)
 	layout.add_node(Vector3i(-6, WorldGrid.GROUND_LAYER, 10), "iron_ore", 1)
 	layout.add_node(Vector3i(12, WorldGrid.GROUND_LAYER, 4), "coal", 1)
+	layout.add_node(Vector3i(22, WorldGrid.GROUND_LAYER, 10), "iron_ore", 2)
+	layout.add_node(Vector3i(30, WorldGrid.GROUND_LAYER, -14), "iron_ore", 3)
 	layout.sort_nodes()
 	layout.nest_tile = Vector3i(-6, WorldGrid.GROUND_LAYER, -6)
 	layout.add_breach(Vector3i(16, WorldGrid.GROUND_LAYER, -6))
@@ -144,11 +174,7 @@ func sort_breaches() -> void:
 
 
 func _breach_precedes(a: int, b: int) -> bool:
-	if breach_tile_y[a] != breach_tile_y[b]:
-		return breach_tile_y[a] < breach_tile_y[b]
-	if breach_tile_x[a] != breach_tile_x[b]:
-		return breach_tile_x[a] < breach_tile_x[b]
-	return breach_tile_z[a] < breach_tile_z[b]
+	return tile_precedes(breach_tile(a), breach_tile(b))
 
 
 func add_node(tile: Vector3i, resource_id: String, depth: int) -> void:
@@ -189,8 +215,4 @@ func sort_nodes() -> void:
 
 
 func _precedes(a: int, b: int) -> bool:
-	if node_tile_y[a] != node_tile_y[b]:
-		return node_tile_y[a] < node_tile_y[b]
-	if node_tile_x[a] != node_tile_x[b]:
-		return node_tile_x[a] < node_tile_x[b]
-	return node_tile_z[a] < node_tile_z[b]
+	return tile_precedes(node_tile(a), node_tile(b))
