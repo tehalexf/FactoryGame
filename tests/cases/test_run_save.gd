@@ -26,7 +26,7 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_ore:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -40,6 +40,7 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -370,7 +371,7 @@ func test_a_save_made_under_different_content_definitions_is_refused() -> void:
 	# somewhere useful.
 	var sim: Simulation = Simulation.new(1, 1)
 	var other_content: Definitions = Definitions.parse(
-		ALTERED_MACHINES, ALTERED_RECIPES, ALTERED_TUNING, WAVES
+		ALTERED_MACHINES, ALTERED_RECIPES, ALTERED_TUNING, WAVES, DELIVERIES
 	)
 
 	var loaded: RunSave.Load = RunSave.deserialise(RunSave.serialise(sim), other_content)
@@ -527,3 +528,12 @@ func test_an_item_id_with_awkward_characters_survives_the_round_trip() -> void:
 		var encoded: String = RunSave.encode_text(original)
 		assert_false(encoded.contains(" "), "an encoded token must not contain a separator")
 		assert_eq(RunSave.decode_text(encoded), original, "round trip of %s" % [original])
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
+"""

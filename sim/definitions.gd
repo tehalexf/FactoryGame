@@ -42,6 +42,7 @@ const MACHINES_FILE: String = "machines.csv"
 const RECIPES_FILE: String = "recipes.csv"
 const TUNING_FILE: String = "tuning.toml"
 const WAVES_FILE: String = "waves.csv"
+const DELIVERIES_FILE: String = "deliveries.csv"
 
 const MACHINE_COLUMNS: Array = [
 	"id",
@@ -70,6 +71,16 @@ const WAVE_COLUMNS: Array = [
 	"max_per_breach",
 ]
 
+const DELIVERY_COLUMNS: Array = [
+	"id",
+	"display_name",
+	"min_depth",
+	"goods",
+	"unlocks_machines",
+	"unlocks_gear",
+	"unlocks_stratagems",
+]
+
 ## Tuning keys the Simulation reads. Each must be present.
 const TUNING_PLAYER_SPRINT_MULTIPLIER: String = "player.sprint_speed_multiplier"
 const TUNING_PLAYER_WALK_SPEED: String = "player.walk_speed_metres_per_second"
@@ -80,7 +91,7 @@ const TUNING_PLAYER_LOOK_SENSITIVITY: String = (
 	"player.look_sensitivity_turns_per_1000_pixels"
 )
 const TUNING_PLAYER_EYE_HEIGHT: String = "player.eye_height_metres"
-const TUNING_PLAYER_STARTING_STOCK: String = "player.starting_stock_per_item"
+const TUNING_PLAYER_STARTING_STOCK: String = "player.starting_stock"
 const TUNING_SURVEY_HEIGHT: String = "survey.height_metres"
 const TUNING_SURVEY_TRANSITION_SECONDS: String = "survey.transition_seconds"
 const TUNING_SURVEY_PITCH_DEGREES: String = "survey.pitch_degrees"
@@ -89,6 +100,7 @@ const TUNING_BELT_ITEMS_PER_TILE: String = "belt.items_per_tile"
 const TUNING_MACHINE_INPUT_BUFFER_CRAFTS: String = "machine.input_buffer_crafts"
 const TUNING_POWER_BASELINE_SUPPLY_KW: String = "power.baseline_supply_kw"
 const TUNING_NEST_HEALTH: String = "nest.health"
+const TUNING_NEST_DELIVERY_REACH: String = "nest.delivery_reach_metres"
 const TUNING_WAVE_TELEGRAPH_SECONDS: String = "wave.telegraph_seconds"
 const TUNING_WAVE_SPAWN_INTERVAL_SECONDS: String = "wave.spawn_interval_seconds"
 const TUNING_WAVE_CALL_EARLY_BOUNTY: String = "wave.call_early_bounty_per_item"
@@ -130,9 +142,19 @@ var player_look_sensitivity: int = 0
 ## How high a player's eyes are off the ground, in fixed-point metres.
 var player_eye_height: int = 0
 
-## How many of each Item a player starts a Run carrying. A scaffold until Delivery
-## progression decides where materials come from (DESIGN.md, milestone 5).
-var player_starting_stock: int = 0
+## What a player starts a Run carrying, as parallel Item ids and counts.
+##
+## An explicit bill rather than a count of everything, which is what it used to be —
+## `player.starting_stock_per_item` granted 200 of every Item in the game and said in its
+## own comment that it was a scaffold for Delivery progression to replace. It is replaced:
+## a Run now opens with exactly the materials for its opening line, and everything past
+## that is unlocked at the Nest.
+##
+## Written in the same `item:count` form a Recipe's inputs and a Machine's `build_cost`
+## use, and parsed by the same function, so there is one answer to what well-formed means.
+## Empty is legal and means a Run opens empty-handed.
+var player_starting_stock_items: PackedStringArray = PackedStringArray()
+var player_starting_stock_counts: PackedInt64Array = PackedInt64Array()
 
 ## How high the Survey View camera rises to, in fixed-point metres.
 var survey_height: int = 0
@@ -146,6 +168,10 @@ var survey_pitch_degrees: int = 0
 ## The Nest's hit points. The Run ends when these reach zero, and nothing else ends
 ## it. Whole points rather than fixed point: damage is counted in them.
 var nest_health: int = 0
+
+## How close a player stands to the Nest's footprint to hand a Delivery over, in
+## fixed-point metres.
+var nest_delivery_reach: int = 0
 
 ## How long the Telegraph runs in front of a Wave, in fixed-point seconds. A floor on
 ## the warning rather than a target for it: no Wave arrives before it has been
@@ -216,6 +242,7 @@ var _recipes: Array = []
 var _recipe_ids: PackedStringArray = PackedStringArray()
 var _item_ids: PackedStringArray = PackedStringArray()
 var _waves: Array = []
+var _deliveries: Array = []
 
 
 # ── Loading ───────────────────────────────────────────────────────────────────
@@ -224,7 +251,9 @@ var _waves: Array = []
 ## error naming the path, never an empty table.
 static func load_from_directory(dir_path: String) -> Definitions:
 	var missing: PackedStringArray = PackedStringArray()
-	for file_name: String in [MACHINES_FILE, RECIPES_FILE, TUNING_FILE, WAVES_FILE]:
+	for file_name: String in [
+		MACHINES_FILE, RECIPES_FILE, TUNING_FILE, WAVES_FILE, DELIVERIES_FILE
+	]:
 		var path: String = "%s/%s" % [dir_path, file_name]
 		if not FileAccess.file_exists(path):
 			missing.append(path)
@@ -239,16 +268,19 @@ static func load_from_directory(dir_path: String) -> Definitions:
 	var recipes: String = _read_file("%s/%s" % [dir_path, RECIPES_FILE])
 	var tuning: String = _read_file("%s/%s" % [dir_path, TUNING_FILE])
 	var waves: String = _read_file("%s/%s" % [dir_path, WAVES_FILE])
+	var deliveries: String = _read_file("%s/%s" % [dir_path, DELIVERIES_FILE])
 
 	var definitions: Definitions = parse(
 		machines,
 		recipes,
 		tuning,
 		waves,
+		deliveries,
 		"%s/%s" % [dir_path, MACHINES_FILE],
 		"%s/%s" % [dir_path, RECIPES_FILE],
 		"%s/%s" % [dir_path, TUNING_FILE],
-		"%s/%s" % [dir_path, WAVES_FILE]
+		"%s/%s" % [dir_path, WAVES_FILE],
+		"%s/%s" % [dir_path, DELIVERIES_FILE]
 	)
 	return definitions
 
@@ -261,10 +293,12 @@ static func parse(
 	recipes_source: String,
 	tuning_source: String,
 	waves_source: String,
+	deliveries_source: String,
 	machines_path: String = MACHINES_FILE,
 	recipes_path: String = RECIPES_FILE,
 	tuning_path: String = TUNING_FILE,
-	waves_path: String = WAVES_FILE
+	waves_path: String = WAVES_FILE,
+	deliveries_path: String = DELIVERIES_FILE
 ) -> Definitions:
 	var definitions: Definitions = Definitions.new()
 
@@ -272,6 +306,9 @@ static func parse(
 	var recipes: CsvTable = CsvTable.parse(recipes_source, recipes_path, PackedStringArray(RECIPE_COLUMNS))
 	var tuning: TomlDocument = TomlDocument.parse(tuning_source, tuning_path)
 	var waves: CsvTable = CsvTable.parse(waves_source, waves_path, PackedStringArray(WAVE_COLUMNS))
+	var deliveries: CsvTable = CsvTable.parse(
+		deliveries_source, deliveries_path, PackedStringArray(DELIVERY_COLUMNS)
+	)
 
 	definitions._read_recipes(recipes)
 	definitions._intern_items()
@@ -279,13 +316,16 @@ static func parse(
 	definitions._check_machines_against_recipes(machines)
 	definitions._read_tuning(tuning)
 	definitions._read_waves(waves)
+	definitions._read_deliveries(deliveries)
 
 	# Errors are gathered in file order — machines, then Recipes, then tuning, then the
-	# Wave table — so the report reads like a list of things to go and fix.
+	# Wave table, then the Delivery table — so the report reads like a list of things to
+	# go and fix.
 	definitions.errors.append_array(machines.errors)
 	definitions.errors.append_array(recipes.errors)
 	definitions.errors.append_array(tuning.errors)
 	definitions.errors.append_array(waves.errors)
+	definitions.errors.append_array(deliveries.errors)
 
 	if definitions.has_errors():
 		definitions._discard_content()
@@ -411,6 +451,45 @@ func wave_entry_at(index: int) -> WaveEntry:
 	return _waves[index]
 
 
+# ── Deliveries ────────────────────────────────────────────────────────────────
+# The tiers of progression, sorted by id. Index order is the order the chain is walked
+# in, so it is a property of the table rather than of the order somebody typed the rows
+# in — and it reaches the state hash, which is why it may not depend on row order.
+
+func delivery_count() -> int:
+	return _deliveries.size()
+
+
+func delivery_at(index: int) -> DeliveryDefinition:
+	if index < 0 or index >= _deliveries.size():
+		return null
+	return _deliveries[index]
+
+
+func delivery_index(id: String) -> int:
+	for index: int in range(_deliveries.size()):
+		if _deliveries[index].id == id:
+			return index
+	return -1
+
+
+func delivery(id: String) -> DeliveryDefinition:
+	return delivery_at(delivery_index(id))
+
+
+## Whether some Delivery tier is what unlocks a Machine — which is the same question as
+## whether that Machine starts a Run locked.
+##
+## The one authority on it. There is no `locked` column in `machines.csv`, because the
+## Machines a Run opens with are exactly the ones no tier names, and a second copy of
+## that fact would fall out of step the first time a tier moved.
+func locks_machine(machine_id: String) -> bool:
+	for definition: DeliveryDefinition in _deliveries:
+		if definition.unlocks_machine(machine_id):
+			return true
+	return false
+
+
 # ── Hashing ───────────────────────────────────────────────────────────────────
 
 ## Reduces the whole definition set to one integer.
@@ -442,12 +521,19 @@ func digest() -> int:
 	for entry: WaveEntry in _waves:
 		entry.feed_into(hasher)
 
+	hasher.feed_int(_deliveries.size())
+	for definition: DeliveryDefinition in _deliveries:
+		definition.feed_into(hasher)
+
 	hasher.feed_int(player_walk_speed)
 	hasher.feed_int(player_sprint_multiplier)
 	hasher.feed_int(player_walk_acceleration)
 	hasher.feed_int(player_look_sensitivity)
 	hasher.feed_int(player_eye_height)
-	hasher.feed_int(player_starting_stock)
+	hasher.feed_int(player_starting_stock_items.size())
+	for slot: int in range(player_starting_stock_items.size()):
+		hasher.feed_text(player_starting_stock_items[slot])
+		hasher.feed_int(player_starting_stock_counts[slot])
 	hasher.feed_int(survey_height)
 	hasher.feed_int(survey_transition_seconds)
 	hasher.feed_int(survey_pitch_degrees)
@@ -456,6 +542,7 @@ func digest() -> int:
 	hasher.feed_int(machine_input_buffer_crafts)
 	hasher.feed_int(power_baseline_supply_kw)
 	hasher.feed_int(nest_health)
+	hasher.feed_int(nest_delivery_reach)
 	hasher.feed_int(wave_telegraph_seconds)
 	hasher.feed_int(wave_spawn_interval_seconds)
 	hasher.feed_int(wave_call_early_bounty)
@@ -859,6 +946,156 @@ func _check_wave_values(table: CsvTable, row: int, entry: WaveEntry) -> void:
 		)
 
 
+# ── Reading the Delivery table ─────────────────────────────────────────────────
+
+## Reads `content/deliveries.csv`: the tiers of progression.
+##
+## An empty table is an **error**, for the reason an empty Wave table is: the symptom
+## would be a Run with no progression at all, and the shipped file existing but having
+## been emptied is a file somebody broke rather than a sandbox somebody chose.
+##
+## Read after the Machines and after the Items are interned, because every goods entry
+## has to name an Item some Recipe mentions and every unlock has to name a Machine that
+## exists — a tier promising a Machine the content does not define is content somebody
+## broke, not a tier that unlocks nothing.
+func _read_deliveries(table: CsvTable) -> void:
+	for row: int in range(table.row_count()):
+		var definition: DeliveryDefinition = DeliveryDefinition.new()
+		definition.source_row = row
+		definition.id = table.require_id(row, "id")
+		definition.display_name = table.value(row, "display_name")
+		definition.min_depth = table.require_int(row, "min_depth")
+
+		var goods: Array = _parse_item_list(table, row, "goods")
+		definition.set_goods(goods[0], goods[1])
+
+		definition.unlocks_machines = _read_id_list(table, row, "unlocks_machines")
+		definition.unlocks_gear = _read_id_list(table, row, "unlocks_gear")
+		definition.unlocks_stratagems = _read_id_list(table, row, "unlocks_stratagems")
+
+		_check_delivery_values(table, row, definition)
+
+		if definition.id.is_empty():
+			continue
+		if _delivery_id_taken(definition.id):
+			table.report_row(row, 'id: "%s" is already defined' % definition.id)
+			continue
+
+		_deliveries.append(definition)
+
+	_sort_deliveries()
+	_check_delivery_chain(table)
+
+	if table.row_count() == 0 and not table.has_errors():
+		table.report_row(
+			-1,
+			(
+				"the table has no rows — a Run with no Delivery tiers has no progression at"
+				+ " all, and the Nest is where progression happens"
+			)
+		)
+
+
+## Reads a `;`-separated list of identifiers, reporting every malformed entry against the
+## row it came from. An empty field is an empty list, which is legal for all three unlock
+## columns on their own — `_check_delivery_values` is what refuses a row where all three
+## are empty.
+func _read_id_list(table: CsvTable, row: int, column: String) -> PackedStringArray:
+	var ids: PackedStringArray = PackedStringArray()
+	var text: String = table.value(row, column).strip_edges()
+	if text.is_empty():
+		return ids
+	for entry: String in text.split(";"):
+		var id: String = entry.strip_edges()
+		if not CsvTable.is_identifier(id):
+			table.report_row(row, '%s: "%s" is not a valid id' % [column, id])
+			continue
+		if ids.has(id):
+			table.report_row(row, '%s: "%s" appears twice' % [column, id])
+			continue
+		ids.append(id)
+	return ids
+
+
+func _check_delivery_values(table: CsvTable, row: int, definition: DeliveryDefinition) -> void:
+	if definition.min_depth < 1:
+		table.report_row(
+			row,
+			(
+				"min_depth: a tier is gated on how deep the Factory is mining, and the"
+				+ " shallowest Depth there is sits at 1"
+			)
+		)
+	if definition.goods_items.is_empty():
+		table.report_row(
+			row, "goods: a Delivery that costs nothing is not progression — name what the Nest wants"
+		)
+	for item: String in definition.goods_items:
+		if _item_ids.find(item) == -1:
+			table.report_row(
+				row,
+				(
+					'goods: "%s" is not an Item any Recipe mentions, so nothing in the Factory'
+					+ " could ever make one"
+				) % item
+			)
+	for machine_id: String in definition.unlocks_machines:
+		if _machine_ids.find(machine_id) == -1:
+			table.report_row(
+				row, 'unlocks_machines: "%s" is not a Machine in machines.csv' % machine_id
+			)
+	if (
+		definition.unlocks_machines.is_empty()
+		and definition.unlocks_gear.is_empty()
+		and definition.unlocks_stratagems.is_empty()
+	):
+		table.report_row(
+			row,
+			(
+				"a tier that unlocks nothing is a bill a player pays for nothing — name a"
+				+ " Machine, a Gear component or a Stratagem"
+			)
+		)
+
+
+## Checks the chain the sorted tiers form.
+##
+## Two things can only be seen across rows. A Machine unlocked by two tiers has an
+## ambiguous price, and a tier whose Depth is shallower than the one before it could
+## never be the thing holding the chain up — the chain is walked in id order and nothing
+## is skipped, so a Depth that goes backwards is a file somebody misordered rather than
+## a gate that does anything.
+func _check_delivery_chain(table: CsvTable) -> void:
+	var deepest_so_far: int = 0
+	var claimed: PackedStringArray = PackedStringArray()
+	for definition: DeliveryDefinition in _deliveries:
+		if definition.min_depth < deepest_so_far:
+			table.report_row(
+				definition.source_row,
+				(
+					"min_depth: %d is shallower than the %d an earlier tier already demands —"
+					+ " the chain is walked in id order, so a Depth that goes backwards gates"
+					+ " nothing"
+				) % [definition.min_depth, deepest_so_far]
+			)
+		deepest_so_far = maxi(deepest_so_far, definition.min_depth)
+		for machine_id: String in definition.unlocks_machines:
+			if claimed.has(machine_id):
+				table.report_row(
+					definition.source_row,
+					'unlocks_machines: "%s" is already unlocked by an earlier tier' % machine_id
+				)
+				continue
+			claimed.append(machine_id)
+
+
+func _delivery_id_taken(id: String) -> bool:
+	for definition: DeliveryDefinition in _deliveries:
+		if definition.id == id:
+			return true
+	return false
+
+
 func _wave_id_taken(id: String) -> bool:
 	for entry: WaveEntry in _waves:
 		if entry.id == id:
@@ -874,7 +1111,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	player_walk_acceleration = tuning.require_fixed(TUNING_PLAYER_WALK_ACCELERATION)
 	player_look_sensitivity = tuning.require_fixed(TUNING_PLAYER_LOOK_SENSITIVITY)
 	player_eye_height = tuning.require_fixed(TUNING_PLAYER_EYE_HEIGHT)
-	player_starting_stock = tuning.require_int(TUNING_PLAYER_STARTING_STOCK)
+	_read_starting_stock(tuning)
 	survey_height = tuning.require_fixed(TUNING_SURVEY_HEIGHT)
 	survey_transition_seconds = tuning.require_fixed(TUNING_SURVEY_TRANSITION_SECONDS)
 	survey_pitch_degrees = tuning.require_fixed(TUNING_SURVEY_PITCH_DEGREES)
@@ -883,6 +1120,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	machine_input_buffer_crafts = tuning.require_int(TUNING_MACHINE_INPUT_BUFFER_CRAFTS)
 	power_baseline_supply_kw = tuning.require_int(TUNING_POWER_BASELINE_SUPPLY_KW)
 	nest_health = tuning.require_int(TUNING_NEST_HEALTH)
+	nest_delivery_reach = tuning.require_fixed(TUNING_NEST_DELIVERY_REACH)
 	wave_telegraph_seconds = tuning.require_fixed(TUNING_WAVE_TELEGRAPH_SECONDS)
 	wave_spawn_interval_seconds = tuning.require_fixed(TUNING_WAVE_SPAWN_INTERVAL_SECONDS)
 	wave_call_early_bounty = tuning.require_int(TUNING_WAVE_CALL_EARLY_BOUNTY)
@@ -918,10 +1156,6 @@ func _read_tuning(tuning: TomlDocument) -> void:
 			)
 		if player_eye_height <= 0:
 			_report_tuning(tuning, TUNING_PLAYER_EYE_HEIGHT, "a player has to see from somewhere")
-		if player_starting_stock < 0:
-			_report_tuning(
-				tuning, TUNING_PLAYER_STARTING_STOCK, "a player cannot start owing materials"
-			)
 		if survey_height <= player_eye_height:
 			_report_tuning(
 				tuning,
@@ -947,6 +1181,12 @@ func _read_tuning(tuning: TomlDocument) -> void:
 		if power_baseline_supply_kw < 0:
 			_report_tuning(
 				tuning, TUNING_POWER_BASELINE_SUPPLY_KW, "a grid cannot supply less than nothing"
+			)
+		if nest_delivery_reach <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_NEST_DELIVERY_REACH,
+				"a reach of nothing is a Delivery nobody can hand over"
 			)
 		if nest_health <= 0:
 			_report_tuning(
@@ -1040,6 +1280,55 @@ func _read_tuning(tuning: TomlDocument) -> void:
 
 
 ## Records a tuning value that parsed but makes no sense, naming its key and line.
+## Reads `player.starting_stock`: what a Run opens with, as an `item:count` list.
+##
+## A quoted string rather than a key per Item, because naming an Item in `sim/` is exactly
+## what the project does not do — the set of Items is whatever the Recipes mention, and a
+## tuning key called `starting_iron_plate` would be a second Item table. The list is
+## checked against the interned Items, so a typo is an error naming the key rather than a
+## Run that silently opens empty-handed.
+func _read_starting_stock(tuning: TomlDocument) -> void:
+	var text: String = tuning.require_string(TUNING_PLAYER_STARTING_STOCK).strip_edges()
+	if text.is_empty():
+		return
+	for entry: String in text.split(";"):
+		var pair: PackedStringArray = entry.split(":")
+		if pair.size() != 2:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_STARTING_STOCK,
+				'expected "item:count", got "%s"' % entry.strip_edges()
+			)
+			continue
+		var item: String = pair[0].strip_edges()
+		var count_text: String = pair[1].strip_edges()
+		if _item_ids.find(item) == -1:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_STARTING_STOCK,
+				'"%s" is not an Item any Recipe mentions' % item
+			)
+			continue
+		if not count_text.is_valid_int() or count_text.to_int() <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_STARTING_STOCK,
+				'"%s" must be a positive whole quantity, got "%s"' % [item, count_text]
+			)
+			continue
+		if player_starting_stock_items.has(item):
+			_report_tuning(
+				tuning, TUNING_PLAYER_STARTING_STOCK, '"%s" appears twice' % item
+			)
+			continue
+		# Inserted in sorted order, not file order, so what a Run opens holding is a
+		# property of the content rather than of how somebody typed the list — the same
+		# rule the Machines, the Recipes and the Items obey.
+		var slot: int = player_starting_stock_items.bsearch(item)
+		player_starting_stock_items.insert(slot, item)
+		player_starting_stock_counts.insert(slot, count_text.to_int())
+
+
 func _report_tuning(tuning: TomlDocument, key: String, detail: String) -> void:
 	errors.append("%s:%d: %s: %s" % [tuning.source_path, tuning.line_of(key), key, detail])
 
@@ -1071,6 +1360,12 @@ func _sort_waves() -> void:
 	_waves.sort_custom(func(a: WaveEntry, b: WaveEntry) -> bool: return a.id < b.id)
 
 
+func _sort_deliveries() -> void:
+	_deliveries.sort_custom(
+		func(a: DeliveryDefinition, b: DeliveryDefinition) -> bool: return a.id < b.id
+	)
+
+
 ## Throws away everything a broken load managed to read. Half a definition set is
 ## more dangerous than none, because it looks usable.
 func _discard_content() -> void:
@@ -1080,12 +1375,14 @@ func _discard_content() -> void:
 	_recipe_ids.clear()
 	_item_ids.clear()
 	_waves.clear()
+	_deliveries.clear()
 	player_walk_speed = 0
 	player_sprint_multiplier = 0
 	player_walk_acceleration = 0
 	player_look_sensitivity = 0
 	player_eye_height = 0
-	player_starting_stock = 0
+	player_starting_stock_items.clear()
+	player_starting_stock_counts.clear()
 	survey_height = 0
 	survey_transition_seconds = 0
 	survey_pitch_degrees = 0
@@ -1094,6 +1391,7 @@ func _discard_content() -> void:
 	machine_input_buffer_crafts = 0
 	power_baseline_supply_kw = 0
 	nest_health = 0
+	nest_delivery_reach = 0
 	wave_telegraph_seconds = 0
 	wave_spawn_interval_seconds = 0
 	wave_call_early_bounty = 0

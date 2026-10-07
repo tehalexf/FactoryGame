@@ -456,12 +456,14 @@ func _threatened_sim() -> Simulation:
 	var definitions: Definitions = Definitions.parse(
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
 		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		_soon(tuning),
+		_soon(tuning).replace(SHIPPED_STOCK, STOCKED),
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -659,12 +661,14 @@ func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
 	var definitions: Definitions = Definitions.parse(
 		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
 		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		_soon(tuning).replace("health = 6000", "health = 10"),
+		_soon(tuning).replace("health = 6000", "health = 10").replace(SHIPPED_STOCK, STOCKED),
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -754,12 +758,18 @@ func _sim_with_an_undrawn_machine() -> Simulation:
 	var definitions: Definitions = Definitions.parse(
 		machines,
 		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text(),
+		(
+			FileAccess.open("res://content/tuning.toml", FileAccess.READ)
+			. get_as_text()
+			. replace(SHIPPED_STOCK, STOCKED)
+		),
 		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 	return Simulation.new(1, 1, definitions)
 
@@ -944,3 +954,103 @@ func test_an_empty_magazine_reads_red_from_across_the_factory() -> void:
 		"the HUD says so too, got %s" % view.hud_text()
 	)
 	view.free()
+
+
+# ── The Delivery the Nest is waiting on ───────────────────────────────────────
+# "What the next Delivery requires is visible to the player" is an acceptance criterion of
+# its own (#14): progression is physical, so a player aims their whole Factory at this bill
+# and one they cannot read is one they are guessing at.
+
+func test_the_hud_names_the_next_delivery_and_what_it_still_wants() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	var text: String = view.hud_text()
+	var next: int = sim.query_next_delivery()
+	assert_true(
+		text.contains(sim.query_delivery_display_name(next)),
+		"the tier is named, got %s" % text
+	)
+	for item_id: String in sim.query_delivery_goods(next):
+		assert_true(
+			text.contains(
+				"%s 0/%d" % [item_id, sim.query_delivery_goods_required(next, item_id)]
+			),
+			"every line of the bill is readable, got %s" % text
+		)
+	view.free()
+
+
+func test_the_hud_says_why_a_delivery_cannot_be_handed_over_yet() -> void:
+	# Two reasons in order, and the HUD carries whichever is current. A Run opens mining
+	# nothing, so the first complaint is the Depth gate; once a Miner is standing, what is
+	# left is that the spawn point is not the Nest's doorstep.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("mine deeper first"),
+		"a Factory mining nothing has not reached Depth 1, got %s" % view.hud_text()
+	)
+
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(4, 0, 4)
+		),
+	])
+	view.sync(sim)
+	assert_eq(
+		sim.query_delivery_refusal(0),
+		Simulation.Refusal.TOO_FAR_FROM_THE_NEST,
+		"the Depth gate is open and the player is not at the Nest"
+	)
+	assert_true(
+		view.hud_text().contains("walk to the Nest"),
+		"and the HUD says so, got %s" % view.hud_text()
+	)
+	view.free()
+
+
+func test_the_hud_reports_the_depth_the_factory_has_reached() -> void:
+	# Depth gates what is possible to deliver, so the figure it is gated against belongs on
+	# the same line as the gate rather than somewhere a player has to go and find.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(sim.query_depth_reached(), 0, "no Miner is standing yet")
+	assert_true(
+		view.hud_text().contains("depth 0 of 1"),
+		"the HUD reads reached against required, got %s" % view.hud_text()
+	)
+	view.free()
+
+
+func test_the_hud_says_a_locked_machine_is_locked_rather_than_unbuildable() -> void:
+	# "not unlocked" and "something is in the way" are different problems with different
+	# fixes, so the Build Gun line never collapses them into one word.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.select_machine(0, sim.query_definitions().machine_index("miner_mk2")),
+	])
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("not unlocked"),
+		"got %s" % view.hud_text()
+	)
+	view.free()
+
+
+# ── Fixtures that keep progression out of the way ─────────────────────────────
+# The shipped Delivery chain locks the Ammo Press and the MG Turret behind its first tier
+# and a Run opens holding exactly the plates for one line (`content/deliveries.csv`,
+# `content/tuning.toml`). Neither is what this file asserts, so these fixtures replace them
+# with a tier that locks nothing and a stock that pays for anything.
+
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""

@@ -46,12 +46,14 @@ func _content(overrides: Array = [], waves: String = "") -> Definitions:
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
-		tuning,
+		tuning.replace(SHIPPED_STOCK, STOCKED),
 		_read("res://content/waves.csv") if waves.is_empty() else waves,
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -483,13 +485,13 @@ func test_the_lever_pays_a_bounty_of_every_item_to_whoever_pulled_it() -> void:
 	var items: PackedStringArray = sim.query_definitions().item_ids()
 	assert_true(items.size() >= 3, "the shipped content has coal, iron ore and iron plate")
 	for item_id: String in items:
-		assert_eq(sim.query_player_item(0, item_id), 200, "player.starting_stock_per_item")
+		assert_eq(sim.query_player_item(0, item_id), 400, "the opening stock the fixture sets")
 
 	sim.step([InputAction.call_wave_early(0)])
 	for item_id: String in items:
 		assert_eq(
 			sim.query_player_item(0, item_id),
-			225,
+			425,
 			"plus wave.call_early_bounty_per_item of %s, to spend on meeting it" % item_id
 		)
 
@@ -856,3 +858,18 @@ func test_rebalancing_the_wave_table_mid_run_changes_the_next_wave() -> void:
 	_step(sim, sim.query_telegraph_ticks() - 1)
 	assert_eq(sim.query_wave_number(), 1)
 	assert_eq(_wave_size(sim), 11, "the reloaded table decided the Wave")
+
+
+# ── Fixtures that keep progression out of the way ─────────────────────────────
+# The shipped Delivery chain locks the Ammo Press and the MG Turret behind its first tier
+# and a Run opens holding exactly the plates for one line (`content/deliveries.csv`,
+# `content/tuning.toml`). Both are balance rather than anything asserted in this file, so
+# these fixtures replace them with a tier that locks nothing and a stock that pays for
+# anything. `test_delivery.gd` is where the real chain is asserted.
+
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""

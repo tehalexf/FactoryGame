@@ -1014,6 +1014,7 @@ func _sync_hud(sim: Simulation) -> void:
 		]
 	)
 	lines.append_array(_heat_lines(sim))
+	lines.append_array(_delivery_lines(sim))
 	lines.append_array(_build_gun_lines(sim))
 
 	# The one Power grid, as one line: what it supplies, what the Factory is drawing, and
@@ -1186,6 +1187,74 @@ func _heat_lines(sim: Simulation) -> PackedStringArray:
 		_call_wave_text(sim.query_call_wave_early_refusal(VIEWED_PLAYER)),
 	])
 	return lines
+
+
+## The Delivery the Nest is waiting on, item by item, and why it cannot be handed over yet.
+##
+## An acceptance criterion rather than a nicety: progression is physical, so a player aims
+## their whole Factory at this bill, and one they cannot read is one they are guessing at.
+## Every figure comes out of a query — which tier, what it wants, how much has arrived, the
+## Depth it is gated at — so none of it can be stale or invented, and the reason it is
+## refused is on screen before the walk across the Map rather than after it.
+func _delivery_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var next: int = sim.query_next_delivery()
+	if next == -1:
+		if sim.query_delivery_count() > 0:
+			lines.append("delivery: every tier delivered")
+		return lines
+
+	var goods: PackedStringArray = PackedStringArray()
+	for item_id: String in sim.query_delivery_goods(next):
+		goods.append(
+			"%s %d/%d"
+			% [
+				item_id,
+				sim.query_delivery_goods_delivered(item_id),
+				sim.query_delivery_goods_required(next, item_id),
+			]
+		)
+	lines.append(
+		"delivery %d/%d — %s — %s"
+		% [
+			next + 1,
+			sim.query_delivery_count(),
+			sim.query_delivery_display_name(next),
+			", ".join(goods),
+		]
+	)
+	# Depth on the same line as the gate it is, so "deliver deeper ore" and "mine deeper"
+	# are not two separate readings a player has to put together.
+	lines.append(
+		"hand over (%s) — %s — depth %d of %d"
+		% [
+			OS.get_keycode_string(PlayerController.KEY_DELIVER),
+			_delivery_text(sim.query_delivery_refusal(VIEWED_PLAYER)),
+			sim.query_depth_reached(),
+			sim.query_delivery_min_depth(next),
+		]
+	)
+	return lines
+
+
+## What to tell a player about handing a Delivery over. Wording here, rule in the
+## Simulation — the same split `BuildGun.refusal_text` makes.
+func _delivery_text(refusal: int) -> String:
+	match refusal:
+		Simulation.Refusal.NONE:
+			return "ready"
+		Simulation.Refusal.TOO_FAR_FROM_THE_NEST:
+			return "walk to the Nest"
+		Simulation.Refusal.NOTHING_TO_DELIVER:
+			return "nothing in hand the Nest wants"
+		Simulation.Refusal.DEPTH_TOO_SHALLOW:
+			return "mine deeper first"
+		Simulation.Refusal.NO_DELIVERY_PENDING:
+			return "nothing left to deliver"
+		Simulation.Refusal.RUN_IS_OVER:
+			return "the Run is over"
+		_:
+			return "unavailable"
 
 
 ## What to tell a player about the lever. The wording lives here and the rule lives in the

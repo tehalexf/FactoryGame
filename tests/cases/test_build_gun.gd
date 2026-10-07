@@ -30,7 +30,7 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 40
+starting_stock = "iron_frame:40;iron_ore:40;iron_plate:40"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -44,6 +44,7 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -74,7 +75,16 @@ chaff_crawlers,crawler,0,6,150,40
 
 func _content() -> Definitions:
 	return Definitions.parse(
-		MACHINES, RECIPES, TUNING, WAVES, "machines.csv", "recipes.csv", "tuning.toml", "waves.csv"
+		MACHINES,
+		RECIPES,
+		TUNING,
+		WAVES,
+		DELIVERIES,
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml",
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -351,10 +361,11 @@ func test_the_refusal_a_query_reports_is_the_one_a_build_obeys() -> void:
 # The materials come out of the player's own stock, which is what makes demolishing
 # worth doing: a layout you can take back apart is a layout you will iterate on.
 #
-# Where that stock comes from is `player.starting_stock_per_item` for now — a
-# scaffold standing in until Delivery progression decides it (DESIGN.md, milestone 5).
+# Where that stock comes from is `player.starting_stock`: an explicit bill of goods, so a
+# Run opens with exactly the materials for its opening line and everything past that is
+# unlocked at the Nest (`content/deliveries.csv`).
 
-func test_a_run_opens_with_the_tuned_starting_stock_of_every_item() -> void:
+func test_a_run_opens_holding_the_tuned_starting_stock() -> void:
 	var sim: Simulation = _sim()
 	assert_eq(sim.query_player_item(0, "iron_plate"), 40)
 	assert_eq(sim.query_player_item(0, "iron_ore"), 40)
@@ -531,3 +542,13 @@ func test_demolishing_then_rebuilding_renumbers_nothing_a_player_can_see() -> vo
 	assert_eq(sim.query_machine_tile(0), Vector3i(0, 0, 0), "the first Miner is still first")
 	assert_eq(sim.query_machine_tile(1), Vector3i(8, 0, 0), "and the third has moved up")
 	assert_eq(sim.query_machine_at_tile(Vector3i(5, 0, 1)), -1, "the middle one is really gone")
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it — `test_delivery.gd` is where locking is
+## asserted.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
+"""

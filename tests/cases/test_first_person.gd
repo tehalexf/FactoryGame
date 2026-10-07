@@ -30,7 +30,7 @@ sprint_speed_multiplier = 1.8
 walk_acceleration_metres_per_second_squared = 24
 look_sensitivity_turns_per_1000_pixels = 0.4
 eye_height_metres = 1.7
-starting_stock_per_item = 200
+starting_stock = "iron_plate:200"
 [belt]
 items_per_second = 4
 items_per_tile = 4
@@ -44,6 +44,7 @@ pitch_degrees = 68
 baseline_supply_kw = 300
 [nest]
 health = 6000
+delivery_reach_metres = 5
 [wave]
 telegraph_seconds = 12
 spawn_interval_seconds = 0.5
@@ -68,7 +69,7 @@ crawler_attack_interval_seconds = 1
 func _looking_sim(players: int = 1) -> Simulation:
 	var machines: String = FileAccess.get_file_as_string("res://content/machines.csv")
 	var recipes: String = FileAccess.get_file_as_string("res://content/recipes.csv")
-	var definitions: Definitions = Definitions.parse(machines, recipes, LOOK_TUNING, WAVES)
+	var definitions: Definitions = Definitions.parse(machines, recipes, LOOK_TUNING, WAVES, DELIVERIES)
 	assert_true(definitions.errors.is_empty(), "the look fixture's content must load")
 	return Simulation.new(0, players, definitions)
 
@@ -433,3 +434,13 @@ func test_where_the_camera_has_got_to_is_part_of_the_state_hash() -> void:
 	_step_many(lifting, [InputAction.survey_view(0, true)], 5)
 	_step_many(level, [], 5)
 	assert_ne(lifting.hash(), level.hash(), "a half-raised camera is a different state")
+
+
+## The Delivery tiers, inline so the fixture is a complete definition set. Progression is
+## physical (`content/deliveries.csv`), and a table with no rows in it is an error rather
+## than a Run with no progression. This one unlocks a Gear component and names no Machine,
+## so nothing this file builds is locked behind it — `test_delivery.gd` is where locking is
+## asserted.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""

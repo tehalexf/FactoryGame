@@ -113,6 +113,20 @@ enum Refusal {
 	RUN_IS_OVER = 9,
 	## The intent names a player this Run does not have.
 	NO_SUCH_PLAYER = 10,
+	## The Machine's definition exists but no Delivery has unlocked it yet. A reason
+	## rather than a separate gate, because a player who cannot build something has to be
+	## told why — and because placement and the reason it gives are one function.
+	CONTENT_IS_LOCKED = 11,
+	## Every Delivery tier has been completed. There is nothing left for the Nest to want.
+	NO_DELIVERY_PENDING = 12,
+	## The next Delivery sits at a Depth the Factory is not mining at. Depth gates what is
+	## possible to deliver (GLOSSARY.md), and the way past it is a Miner that reaches
+	## deeper, not a bigger pile of goods.
+	DEPTH_TOO_SHALLOW = 13,
+	## The player is too far from the Nest to hand anything over. Progression is physical.
+	TOO_FAR_FROM_THE_NEST = 14,
+	## The player is holding none of what the Nest is still waiting for.
+	NOTHING_TO_DELIVER = 15,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -210,8 +224,9 @@ var _player_build_rotation: PackedInt64Array = PackedInt64Array()
 ##
 ## Building spends a Machine's `build_cost` out of this and demolishing returns it in
 ## full, which is what makes iterating on a layout cheap (issue #1, user story 7).
-## Where the materials come from in the first place is
-## `player.starting_stock_per_item` for now, and Delivery progression later.
+## Where the materials come from in the first place is `player.starting_stock`, which is
+## exactly the opening line and no more. Past that, what a player can build is what the
+## Nest has unlocked.
 var _player_item_ids: Array = []
 var _player_item_counts: Array = []
 
@@ -244,6 +259,44 @@ var _nest_health: int = 0
 ## `MapLayout` sorted them into. Constant through a Run — a Breach is known in advance
 ## and fortifiable (GLOSSARY.md), which it could not be if it moved. Deep mining opens
 ## new ones, which is the ticket that makes this array grow mid-Run.
+# ── Delivery progression ──────────────────────────────────────────────────────
+# Progression is physical: goods brought to the Nest unlock the next tier of Machines,
+# Gear components and Stratagems (GLOSSARY.md). There is no research menu, no science
+# resource and no stat increase anywhere in it — what a Delivery changes is what a player
+# can *build*.
+#
+# **Everything here is a resolved id, never an index into the definition table.** That is
+# the same precedent `_machine_id` and `_player_selected_machine` set, and it is what makes
+# a hot-reload safe: a content edit that resorts the tiers, or inserts one in the middle,
+# cannot change what a Run has already unlocked. All four arrays are kept sorted, so
+# iteration order is a property of the content rather than of the order things were earned.
+
+## The Delivery tiers this Run has completed, by id, sorted.
+##
+## The chain is walked in the definition set's own id order, and the *next* Delivery is
+## the first tier whose id is not in here. So completing one unlocks exactly its own tier
+## and nothing else: there is no counter to skip ahead and no tier that falls out by
+## implication.
+var _completed_delivery_ids: PackedStringArray = PackedStringArray()
+
+## What the Deliveries completed so far have unlocked, by id, sorted. Three lists because
+## they are three different kinds of thing, and a Machine id is checked against
+## `content/machines.csv` while a Gear component and a Stratagem are identifiers the
+## Simulation records now and a later milestone implements.
+var _unlocked_machine_ids: PackedStringArray = PackedStringArray()
+var _unlocked_gear_ids: PackedStringArray = PackedStringArray()
+var _unlocked_stratagem_ids: PackedStringArray = PackedStringArray()
+
+## What the Nest is holding against the Delivery it is currently waiting on, as parallel
+## sorted Item ids and counts — the same shape a Machine's buffers and a player's pockets
+## use.
+##
+## A Delivery is paid in instalments, because it arrives on a Belt an Item at a time and
+## because carrying a hundred plates in one trip is not a decision. Cleared the moment a
+## tier completes, so the counter only ever holds goods against the open tier.
+var _delivery_items: PackedStringArray = PackedStringArray()
+var _delivery_counts: PackedInt64Array = PackedInt64Array()
+
 var _breach_tile_x: PackedInt64Array = PackedInt64Array()
 var _breach_tile_y: PackedInt64Array = PackedInt64Array()
 var _breach_tile_z: PackedInt64Array = PackedInt64Array()
@@ -622,24 +675,17 @@ func _init(
 	_player_survey_ticks.fill(0)
 	_player_build_rotation.resize(players)
 	_player_build_rotation.fill(0)
-	# The first Machine by id, so a fresh Run has something on the Build Gun rather
-	# than nothing. Empty when the definitions failed to load, which is the one case
-	# where there is genuinely nothing to hold.
-	var opening_machine: String = "" if _definitions.machine_count() == 0 else _definitions.machine_ids()[0]
+	# The first *unlocked* Machine by id, so a fresh Run has something buildable on the
+	# Build Gun rather than something it would refuse. Empty when the definitions failed to
+	# load, which is the one case where there is genuinely nothing to hold.
 	_player_selected_machine.resize(players)
-	_player_selected_machine.fill(opening_machine)
+	_player_selected_machine.fill(_opening_machine())
 
 	# The opening stock, granted once at construction. Deliberately not re-granted on a
-	# hot-reload: raising the number mid-Run must not be a way to conjure materials.
+	# hot-reload: raising the bill mid-Run must not be a way to conjure materials.
 	for player_id: int in range(players):
-		var stock_ids: PackedStringArray = PackedStringArray()
-		var stock_counts: PackedInt64Array = PackedInt64Array()
-		if _definitions.player_starting_stock > 0:
-			for item_id: String in _definitions.item_ids():
-				stock_ids.append(item_id)
-				stock_counts.append(_definitions.player_starting_stock)
-		_player_item_ids.append(stock_ids)
-		_player_item_counts.append(stock_counts)
+		_player_item_ids.append(_definitions.player_starting_stock_items.duplicate())
+		_player_item_counts.append(_definitions.player_starting_stock_counts.duplicate())
 
 	# A reading before the first tick, so a HUD drawn on tick 0 shows the grid the Run
 	# actually starts on rather than a pair of zeroes.
@@ -664,6 +710,7 @@ func step(actions: Array) -> void:
 	_walk()
 	_survey()
 	_transport()
+	_deliveries()
 	_aim()
 	_power()
 	_extract()
@@ -704,6 +751,8 @@ func _apply(action: InputAction) -> void:
 			_apply_demolish(action)
 		InputAction.Kind.CALL_WAVE_EARLY:
 			_apply_call_wave_early(action)
+		InputAction.Kind.DELIVER_TO_NEST:
+			_apply_deliver_to_nest(action)
 
 
 ## Records the throttle a player asked for this tick. Applying it is `_walk`'s job,
@@ -972,6 +1021,14 @@ func _hand_off(index: int, item_id: String) -> bool:
 	if machine != -1:
 		return _accept_input(machine, item_id)
 
+	# The Nest takes goods against the Delivery it is waiting on, which is what makes
+	# progression something the Factory does rather than something a player carries by
+	# hand. It takes only what that tier still wants: there is no store behind the counter,
+	# so an Item the open Delivery does not ask for backs the Belt up where a player can see
+	# it rather than disappearing into the Nest.
+	if _nest_covers(beyond):
+		return _accept_delivery(item_id, 1) == 1
+
 	var onward: int = _belt_entered_at(beyond)
 	if onward == -1 or not _belt_has_entry_room(onward):
 		return false
@@ -998,6 +1055,9 @@ func _hand_off_blocked(index: int) -> bool:
 	var machine: int = query_machine_at_tile(beyond)
 	if machine != -1:
 		return not _input_has_room(machine, items[0])
+
+	if _nest_covers(beyond):
+		return _delivery_would_take(items[0]) == 0
 
 	var onward: int = _belt_entered_at(beyond)
 	return onward == -1 or not _belt_has_entry_room(onward)
@@ -1861,6 +1921,14 @@ func _build_refusal(player_id: int, machine_index: int, tile: Vector3i, rotation
 	var definition: MachineDefinition = _definitions.machine_at(machine_index)
 	if definition == null:
 		return Refusal.NO_SUCH_MACHINE
+	# Before the ground and before the wallet, because being locked is a fact about the
+	# Machine rather than about the tile: a player holding something they have not unlocked
+	# has the same problem wherever they aim it, and telling them about the tile first would
+	# send them walking. A locked Machine may still be put on the Build Gun — the hologram
+	# asks this function every frame about the tile it is over, so the reason is on screen
+	# before the click, which is the only version that leaves the hash alone.
+	if not _machine_is_unlocked(definition.id):
+		return Refusal.CONTENT_IS_LOCKED
 
 	var size: Vector2i = WorldGrid.rotated_footprint(
 		definition.footprint_x, definition.footprint_z, WorldGrid.wrap_rotation(rotation)
@@ -2374,9 +2442,14 @@ func _apply_call_wave_early(action: InputAction) -> void:
 	# than crediting whatever warning happened to be up already.
 	_telegraph_ticks_served = 0
 
+	# Paid in the materials a Run opens with — `player.starting_stock`'s own bill — and not
+	# in a count of every Item in the game, which is what it used to be. The lever is a
+	# trade of breathing room for the means to defend, so what it pays has to be build
+	# materials; paying out of the whole Item set would also have conjured the very goods
+	# `content/deliveries.csv` asks for, and progression a lever can buy is not progression.
 	var bounty: int = _definitions.wave_call_early_bounty
 	if bounty > 0:
-		for item_id: String in _definitions.item_ids():
+		for item_id: String in _definitions.player_starting_stock_items:
 			_give_to_player(action.player_id, item_id, bounty)
 
 
@@ -2395,6 +2468,241 @@ func _call_wave_early_refusal(player_id: int) -> int:
 	if _wave_called_early == 1 or _telegraph_is_showing():
 		return Refusal.WAVE_ALREADY_COMING
 	return Refusal.NONE
+
+
+# ── Delivery progression ──────────────────────────────────────────────────────
+
+## Which Delivery tier the Nest is waiting on, as an index into the definition set, or -1
+## when the chain is finished.
+##
+## The chain is walked in the definition set's own id order and nothing is skipped: the
+## next tier is the first one this Run has not completed. A tier whose Depth the Factory
+## has not reached is still the next tier — it is refused rather than passed over, which is
+## what makes Depth a gate rather than a filter.
+func _next_delivery_index() -> int:
+	for index: int in range(_definitions.delivery_count()):
+		if not _completed_delivery_ids.has(_definitions.delivery_at(index).id):
+			return index
+	return -1
+
+
+## The deepest Node the Factory is actually mining.
+##
+## Derived rather than stored, and derived from the Factory rather than from a flag: a
+## Depth is reached by standing a Miner that reaches it on a Node that has it, and lost
+## again by taking that Miner down. So the gate measures the Factory, which is the only
+## thing a player can argue with.
+##
+## Three conditions, all of them already the Simulation's own rules: the Machine is a
+## Miner, its footprint covers a Node, and it can actually work that Node — its Recipe
+## yields the Node's Resource and the Node is no deeper than the Miner reaches. A Miner Mk1
+## parked on a Depth 3 Node has reached Depth nothing.
+func _depth_reached() -> int:
+	var deepest: int = 0
+	for index: int in range(query_machine_count()):
+		var definition: MachineDefinition = _definitions.machine(_machine_id[index])
+		if definition == null or not definition.is_miner():
+			continue
+		var node: int = _node_under_machine(index, definition)
+		if node == -1:
+			continue
+		var depth: int = _node_depth[node]
+		if depth > definition.max_depth:
+			continue
+		var recipe: RecipeDefinition = _definitions.recipe(definition.recipe_id)
+		if recipe == null or not _recipe_yields(recipe, _node_resource[node]):
+			continue
+		deepest = maxi(deepest, depth)
+	return deepest
+
+
+## Hands a player's goods over to the Nest, or refuses to.
+##
+## Progression is physical (GLOSSARY.md): there is no research menu, so this is a player
+## standing at the Nest with materials in hand. Everything the open tier is still waiting
+## for and the player is carrying crosses the counter, clamped to the bill — the Nest never
+## takes more than it asked for, so there is no surplus to give back and nothing is
+## destroyed.
+##
+## Refused as a **silent no-op whose hash does not move**, the same rule a misaimed build
+## and the call-early lever obey. `query_delivery_refusal` is what says why, beforehand.
+func _apply_deliver_to_nest(action: InputAction) -> void:
+	if _delivery_refusal(action.player_id) != Refusal.NONE:
+		return
+
+	var definition: DeliveryDefinition = _definitions.delivery_at(_next_delivery_index())
+	for item_id: String in definition.goods_items:
+		var handed: int = _accept_delivery(item_id, query_player_item(action.player_id, item_id))
+		if handed > 0:
+			_take_from_player(action.player_id, item_id, handed)
+
+
+## Why handing a Delivery over would be refused, or `Refusal.NONE`. A pure projection about
+## a hand-over that has not happened, so the HUD says what is missing before a player walks
+## across the Map rather than after.
+func _delivery_refusal(player_id: int) -> int:
+	if not _is_player(player_id):
+		return Refusal.NO_SUCH_PLAYER
+	if query_run_is_over():
+		return Refusal.RUN_IS_OVER
+	var index: int = _next_delivery_index()
+	if index == -1:
+		return Refusal.NO_DELIVERY_PENDING
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	if _depth_reached() < definition.min_depth:
+		return Refusal.DEPTH_TOO_SHALLOW
+	if not _player_is_at_the_nest(player_id):
+		return Refusal.TOO_FAR_FROM_THE_NEST
+	for item_id: String in definition.goods_items:
+		if _delivery_would_take(item_id) > 0 and query_player_item(player_id, item_id) > 0:
+			return Refusal.NONE
+	return Refusal.NOTHING_TO_DELIVER
+
+
+## Whether a player is standing close enough to the Nest to hand goods over.
+##
+## Measured to the nearest point of the Nest's footprint rather than to its anchor, so a
+## 4x4 Nest is a building a player walks up to rather than a coordinate they have to find.
+## Compared squared, for the reason a Turret's reach is: `Fixed.sqrt` floors, and a floor
+## would put a player exactly on the boundary in or out of reach depending on a rounding
+## rule.
+func _player_is_at_the_nest(player_id: int) -> bool:
+	var footprint: Vector2i = query_nest_footprint()
+	var origin: Vector3i = query_nest_tile()
+	var tile_size: int = WorldGrid.TILE_SIZE_METRES
+	var low_x: int = Fixed.from_int(origin.x * tile_size)
+	var low_z: int = Fixed.from_int(origin.z * tile_size)
+	var high_x: int = Fixed.from_int((origin.x + footprint.x) * tile_size)
+	var high_z: int = Fixed.from_int((origin.z + footprint.y) * tile_size)
+
+	var gap_x: int = _gap_to_span(_player_x[player_id], low_x, high_x)
+	var gap_z: int = _gap_to_span(_player_z[player_id], low_z, high_z)
+	var reach: int = _definitions.nest_delivery_reach
+	return gap_x * gap_x + gap_z * gap_z <= reach * reach
+
+
+## Adds goods to the Nest's counter against the open Delivery, reporting how many it took.
+##
+## The one place goods become progress, so a Belt running into the Nest and a player
+## handing a pile over are the same event with the same rules. It takes only what the open
+## tier is still waiting for: there is no store behind this, so an Item the Nest does not
+## want is refused and whatever offered it keeps it.
+func _accept_delivery(item_id: String, quantity: int) -> int:
+	var taken: int = mini(_delivery_would_take(item_id), quantity)
+	if taken <= 0:
+		return 0
+
+	var slot: int = _delivery_items.find(item_id)
+	if slot != -1:
+		_delivery_counts[slot] += taken
+	else:
+		slot = _delivery_items.bsearch(item_id)
+		_delivery_items.insert(slot, item_id)
+		_delivery_counts.insert(slot, taken)
+	return taken
+
+
+## How many more of an Item the Nest would take right now.
+##
+## The pure twin of `_accept_delivery`: it asks the same question without moving anything,
+## which is what lets `_hand_off_blocked` report a Belt backed up against a Nest that has
+## stopped wanting what it is carrying. Zero once the Run is over, once the chain is
+## finished, while the open tier is gated above the Depth the Factory is mining, and for any
+## Item that tier does not ask for.
+func _delivery_would_take(item_id: String) -> int:
+	if query_run_is_over():
+		return 0
+	var index: int = _next_delivery_index()
+	if index == -1:
+		return 0
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	if _depth_reached() < definition.min_depth:
+		return 0
+	return maxi(definition.goods_required(item_id) - _delivered_so_far(item_id), 0)
+
+
+## How much of an Item the Nest is already holding against the open Delivery.
+func _delivered_so_far(item_id: String) -> int:
+	var slot: int = _delivery_items.find(item_id)
+	if slot == -1:
+		return 0
+	return _delivery_counts[slot]
+
+
+## Whether the open Delivery's bill has been met in full.
+func _delivery_is_paid(definition: DeliveryDefinition) -> bool:
+	for slot: int in range(definition.goods_items.size()):
+		if _delivered_so_far(definition.goods_items[slot]) < definition.goods_counts[slot]:
+			return false
+	return true
+
+
+## Settles the Nest's counter, once a tick, and unlocks **exactly the tier** whose bill has
+## been met.
+##
+## One place, which is the point: goods reach the counter from two directions — a Belt
+## running into the Nest and a player standing at it with a pile in hand — and a tier that
+## completed on one path and not the other would be two rules. It runs straight after
+## `_transport`, so goods that arrived this tick are settled this tick and before anything
+## that could end the Run.
+##
+## Nothing is unlocked by implication: the ids recorded are the ids that tier names, so a
+## tier the chain has not reached is not quietly earned and a tier completed does not open
+## the one after it. The ids rather than indices, so a content edit that resorts the table
+## cannot renumber what a Run has earned — the same reason `_machine_id` holds an id.
+func _deliveries() -> void:
+	var index: int = _next_delivery_index()
+	if index == -1:
+		return
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	if not _delivery_is_paid(definition):
+		return
+
+	_insert_sorted(_completed_delivery_ids, definition.id)
+	for machine_id: String in definition.unlocks_machines:
+		_insert_sorted(_unlocked_machine_ids, machine_id)
+	for gear_id: String in definition.unlocks_gear:
+		_insert_sorted(_unlocked_gear_ids, gear_id)
+	for stratagem_id: String in definition.unlocks_stratagems:
+		_insert_sorted(_unlocked_stratagem_ids, stratagem_id)
+
+	# The counter is cleared rather than carried, so what the Nest is holding is always
+	# holdings against the tier it is waiting on and never a surplus from the last one.
+	_delivery_items.clear()
+	_delivery_counts.clear()
+
+
+## Adds an id to a sorted list, once. Sorted so that iteration order — and therefore the
+## state hash — is a property of what was unlocked rather than of the order it was earned
+## in; once, so a tier re-read after a hot-reload cannot double an entry.
+func _insert_sorted(ids: PackedStringArray, id: String) -> void:
+	if ids.has(id):
+		return
+	ids.insert(ids.bsearch(id), id)
+
+
+## Whether a Machine may be built: either no Delivery tier claims it, or one that has been
+## completed does.
+##
+## A Machine is locked **because a tier names it**, which is why there is no `locked`
+## column in `content/machines.csv` — the Machines a Run opens with are exactly the ones no
+## tier names, and a second copy of that fact would fall out of step the first time a tier
+## moved.
+func _machine_is_unlocked(machine_id: String) -> bool:
+	if _unlocked_machine_ids.has(machine_id):
+		return true
+	return not _definitions.locks_machine(machine_id)
+
+
+## The Machine a fresh Run opens with on the Build Gun: the first unlocked one by id.
+##
+## The first *unlocked* one, because a Build Gun that opens holding something the
+## Simulation would refuse to place teaches a player that the game is broken.
+func _opening_machine() -> String:
+	for machine_id: String in _definitions.machine_ids():
+		if _machine_is_unlocked(machine_id):
+			return machine_id
+	return ""
 
 
 ## Puts one Enemy of the given kind on the Map at the centre of a tile.
@@ -2777,6 +3085,27 @@ func hash() -> int:
 	hasher.feed_ints(_breach_tile_x)
 	hasher.feed_ints(_breach_tile_y)
 	hasher.feed_ints(_breach_tile_z)
+	# What the Run has unlocked, and what the Nest is holding against the tier it is waiting
+	# on. Hashed because it decides what the next tick will let a player build, and because
+	# two Runs that have progressed differently are not in the same state. Ids rather than
+	# indices, so a hot-reload that resorts the Delivery table cannot move this hash without
+	# anything having been earned or spent.
+	hasher.feed_int(_completed_delivery_ids.size())
+	for delivery_id: String in _completed_delivery_ids:
+		hasher.feed_text(delivery_id)
+	hasher.feed_int(_unlocked_machine_ids.size())
+	for machine_id: String in _unlocked_machine_ids:
+		hasher.feed_text(machine_id)
+	hasher.feed_int(_unlocked_gear_ids.size())
+	for gear_id: String in _unlocked_gear_ids:
+		hasher.feed_text(gear_id)
+	hasher.feed_int(_unlocked_stratagem_ids.size())
+	for stratagem_id: String in _unlocked_stratagem_ids:
+		hasher.feed_text(stratagem_id)
+	hasher.feed_int(_delivery_items.size())
+	for slot: int in range(_delivery_items.size()):
+		hasher.feed_text(_delivery_items[slot])
+		hasher.feed_int(_delivery_counts[slot])
 	# The Wave clock, and whether the Run is over. Every one of these decides what the next
 	# tick does, so none of them may sit outside the hash.
 	hasher.feed_int(_heat)
@@ -3464,6 +3793,116 @@ func query_wave_was_called_early() -> bool:
 ## silence afterwards and the only version that leaves the hash alone.
 func query_call_wave_early_refusal(player_id: int) -> int:
 	return _call_wave_early_refusal(player_id)
+
+
+# ── Delivery progression ──────────────────────────────────────────────────────
+# What the Nest wants, what it is holding, and what the Run has unlocked. All of it is a
+# projection of state the Simulation already holds — nothing here decides anything, and
+# `query_delivery_refusal` in particular is a question about a hand-over that has not
+# happened, so asking it cannot move the hash.
+
+## How many Delivery tiers the content defines.
+func query_delivery_count() -> int:
+	return _definitions.delivery_count()
+
+
+## Which tier the Nest is waiting on, as an index into the definition set, or -1 when the
+## chain is finished. The first tier this Run has not completed; nothing is skipped.
+func query_next_delivery() -> int:
+	return _next_delivery_index()
+
+
+func query_delivery_id(index: int) -> String:
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	return "" if definition == null else definition.id
+
+
+func query_delivery_display_name(index: int) -> String:
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	return "" if definition == null else definition.display_name
+
+
+func query_delivery_min_depth(index: int) -> int:
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	return 0 if definition == null else definition.min_depth
+
+
+## The Items a tier asks for, in the sorted order the file was parsed into. What the next
+## Delivery requires has to be readable, or a player aiming a Factory at a goal is guessing.
+func query_delivery_goods(index: int) -> PackedStringArray:
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	return PackedStringArray() if definition == null else definition.goods_items.duplicate()
+
+
+## How many of an Item a tier asks for. Zero for an Item it does not want.
+func query_delivery_goods_required(index: int, item_id: String) -> int:
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	return 0 if definition == null else definition.goods_required(item_id)
+
+
+## How many of an Item the Nest is holding against the tier it is waiting on. Always about
+## the open tier, because the counter is cleared the moment one completes.
+func query_delivery_goods_delivered(item_id: String) -> int:
+	return _delivered_so_far(item_id)
+
+
+## Whether a tier has been completed.
+func query_delivery_is_complete(index: int) -> bool:
+	var definition: DeliveryDefinition = _definitions.delivery_at(index)
+	if definition == null:
+		return false
+	return _completed_delivery_ids.has(definition.id)
+
+
+## Why handing a Delivery over would be refused, or `Refusal.NONE`.
+func query_delivery_refusal(player_id: int) -> int:
+	return _delivery_refusal(player_id)
+
+
+## The deepest Node the Factory is actually mining — the figure Delivery tiers are gated
+## against. Derived from the Miners standing on the Map, so it rises when one is built over
+## a deeper Node and falls when that Miner comes down.
+func query_depth_reached() -> int:
+	return _depth_reached()
+
+
+## How close a player has to be to the Nest's footprint to hand goods over, in fixed-point
+## metres.
+func query_delivery_reach_metres() -> int:
+	return _definitions.nest_delivery_reach
+
+
+## Whether a player is standing close enough to the Nest to hand goods over.
+func query_player_is_at_the_nest(player_id: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	return _player_is_at_the_nest(player_id)
+
+
+## Whether a Machine may be built at all, by definition index. False for one whose
+## definition exists but which no completed Delivery has unlocked — which is the same
+## question `query_build_refusal` answers with `CONTENT_IS_LOCKED`, asked without a tile.
+func query_machine_is_unlocked(machine_index: int) -> bool:
+	var definition: MachineDefinition = _definitions.machine_at(machine_index)
+	if definition == null:
+		return false
+	return _machine_is_unlocked(definition.id)
+
+
+## The Gear components this Run has unlocked, by id, sorted. Gear itself is a later
+## milestone; what a Run has earned is recorded, hashed and saved from now.
+func query_unlocked_gear() -> PackedStringArray:
+	return _unlocked_gear_ids.duplicate()
+
+
+## The Stratagems this Run has unlocked, by id, sorted. Same standing as the Gear list.
+func query_unlocked_stratagems() -> PackedStringArray:
+	return _unlocked_stratagem_ids.duplicate()
+
+
+## The Delivery tiers this Run has completed, by id, sorted.
+func query_completed_deliveries() -> PackedStringArray:
+	return _completed_delivery_ids.duplicate()
 
 
 # ── Heat ──────────────────────────────────────────────────────────────────────

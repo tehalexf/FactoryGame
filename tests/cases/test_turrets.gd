@@ -28,12 +28,14 @@ func _content(overrides: Array = []) -> Definitions:
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
-		tuning,
+		tuning.replace(SHIPPED_STOCK, STOCKED),
 		_read("res://content/waves.csv"),
+		DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -86,6 +88,7 @@ chaff_crawlers,crawler,0,4,0,4
 func _ammo_content(overrides: Array = [], waves: String = ONE_CRAWLER) -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml")
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
+	tuning = tuning.replace(SHIPPED_STOCK, AMMO_STOCK)
 	for pair: PackedStringArray in overrides:
 		tuning = tuning.replace(pair[0], pair[1])
 	return Definitions.parse(
@@ -93,10 +96,12 @@ func _ammo_content(overrides: Array = [], waves: String = ONE_CRAWLER) -> Defini
 		AMMO_RECIPES,
 		tuning,
 		waves,
+		AMMO_DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -327,12 +332,18 @@ func test_a_turret_with_nothing_in_reach_is_not_on_the_power_grid() -> void:
 	var content: Definitions = Definitions.parse(
 		AMMO_MACHINES.replace("mg_turret_mk1,MG Turret Mk1,turret,2,2,0,0", "mg_turret_mk1,MG Turret Mk1,turret,2,2,90,0"),
 		AMMO_RECIPES,
-		_read("res://content/tuning.toml").replace("telegraph_seconds = 12", "telegraph_seconds = 10"),
+		(
+			_read("res://content/tuning.toml")
+			. replace("telegraph_seconds = 12", "telegraph_seconds = 10")
+			. replace(SHIPPED_STOCK, AMMO_STOCK)
+		),
 		ONE_CRAWLER,
+		AMMO_DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
@@ -512,8 +523,16 @@ func _cannon_content() -> Definitions:
 		_read("res://content/recipes.csv") + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n"
 	)
 	return Definitions.parse(
-		machines, recipes, _read("res://content/tuning.toml"), _read("res://content/waves.csv"),
-		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv"
+		machines,
+		recipes,
+		_read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED),
+		_read("res://content/waves.csv"),
+		DELIVERIES,
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml",
+		"waves.csv",
+		"deliveries.csv"
 	)
 
 
@@ -540,15 +559,18 @@ func test_a_cannon_turret_fires_further_and_harder_with_no_code_that_knows_about
 	# damage — all of it through the same `_craft` the MG and a Smelter go through.
 	var tuning: String = _read("res://content/tuning.toml")
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
+	tuning = tuning.replace(SHIPPED_STOCK, AMMO_STOCK)
 	var content: Definitions = Definitions.parse(
 		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,0,0,500,0,14,80,fire_cannon,\n",
 		AMMO_RECIPES + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n",
 		tuning,
 		ONE_CRAWLER,
+		AMMO_DELIVERIES,
 		"machines.csv",
 		"recipes.csv",
 		"tuning.toml",
-		"waves.csv"
+		"waves.csv",
+		"deliveries.csv"
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 
@@ -725,3 +747,30 @@ func test_a_run_with_a_turret_mid_fight_saves_and_resumes_identically() -> void:
 		sim.step([])
 		loaded.simulation.step([])
 		assert_eq(loaded.simulation.hash(), sim.hash(), "diverged at tick %d" % sim.query_tick())
+
+
+# ── Fixtures that keep progression out of the way ─────────────────────────────
+# This file is about a Turret, and the shipped Delivery chain locks the MG Turret behind
+# its first tier and opens a Run holding exactly the plates for one line
+# (`content/deliveries.csv`, `content/tuning.toml`). Both are balance rather than anything
+# asserted here, so the fixtures below replace them with a tier that locks nothing and a
+# stock that pays for anything. `test_delivery.gd` is where the real chain is asserted.
+
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+## A tier against the shipped Items that names no Machine, so every row of the shipped
+## `machines.csv` is buildable from tick 0.
+const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
+"""
+
+## The Ammunition fixture's Machines are all free to build, so it opens a Run holding
+## nothing — an empty bill is legal and says plainly that materials are not what is under
+## test here.
+const AMMO_STOCK: String = 'starting_stock = ""'
+
+## The same, against the one Item the Ammunition fixture's Recipes mention.
+const AMMO_DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
+t01_opening,Opening Licence,1,ammunition:1,,placeholder_gear,
+"""

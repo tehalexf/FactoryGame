@@ -41,6 +41,13 @@ const KEY_BELT: Key = KEY_B
 ## is one act; holding it down must not call a Wave a tick.
 const KEY_CALL_WAVE: Key = KEY_G
 
+## Handing a Delivery over to the Nest (GLOSSARY.md: progression is physical).
+##
+## A key now and a diegetic act at the Nest when the art pass gets there, for the reason the
+## lever is. An edge rather than a held state: handing goods over is one act, and holding the
+## key down must not empty a player's pockets a tick at a time.
+const KEY_DELIVER: Key = KEY_F
+
 ## Saving and resuming a Run. Gathered here with the rest so the rebinding ticket has
 ## one file to change, but deliberately **not** read by `sample_devices` and never
 ## turned into an Input Action — `Main._input` handles them where it handles Escape.
@@ -96,6 +103,7 @@ class DeviceSample extends RefCounted:
 	var demolish_clicked: bool = false
 	var belt_clicked: bool = false
 	var call_wave_clicked: bool = false
+	var deliver_clicked: bool = false
 	## Signed quarter turns of hologram rotation asked for this tick.
 	var rotate_steps: int = 0
 	## Signed steps through the Machine list, from the mouse wheel.
@@ -111,6 +119,7 @@ var _place_clicked: bool = false
 var _demolish_clicked: bool = false
 var _belt_clicked: bool = false
 var _call_wave_clicked: bool = false
+var _deliver_clicked: bool = false
 
 
 # ── Gathering device events ───────────────────────────────────────────────────
@@ -146,6 +155,8 @@ func note_event(event: InputEvent) -> void:
 				_belt_clicked = true
 			elif key.keycode == KEY_CALL_WAVE:
 				_call_wave_clicked = true
+			elif key.keycode == KEY_DELIVER:
+				_deliver_clicked = true
 
 
 ## Reads the devices for one tick and drains the buffer, so nothing is spent twice.
@@ -173,6 +184,7 @@ func sample_devices() -> DeviceSample:
 	sample.demolish_clicked = _demolish_clicked
 	sample.belt_clicked = _belt_clicked
 	sample.call_wave_clicked = _call_wave_clicked
+	sample.deliver_clicked = _deliver_clicked
 
 	_unsent_mouse_motion = Vector2.ZERO
 	_unsent_rotate_steps = 0
@@ -181,6 +193,7 @@ func sample_devices() -> DeviceSample:
 	_demolish_clicked = false
 	_belt_clicked = false
 	_call_wave_clicked = false
+	_deliver_clicked = false
 
 	return sample
 
@@ -253,6 +266,13 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# reads `query_call_wave_early_refusal` so a player knows before they press it.
 	if sample.call_wave_clicked:
 		actions.append(InputAction.call_wave_early(player_id))
+
+	# Sent whatever the Simulation would make of it, for the reason the lever is. Standing
+	# close enough, holding anything the Nest wants, and the Depth the open tier is gated at
+	# are all the Simulation's decisions; the HUD reads `query_delivery_refusal` so a player
+	# knows which of them is in the way before they press it.
+	if sample.deliver_clicked:
+		actions.append(InputAction.deliver_to_nest(player_id))
 
 	if sample.forward != 0.0 or sample.strafe != 0.0:
 		actions.append(
