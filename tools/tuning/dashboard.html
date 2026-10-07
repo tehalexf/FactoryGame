@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DEEP FOUNDRY — tuning</title>
+<style>
+/* One stylesheet, no fonts fetched, no CDN. The dashboard has to work with no
+   network at all, because it is a local tool for a local file. */
+:root {
+  --ink: #e7e3da;
+  --ink-dim: #a49c8d;
+  --ink-faint: #76705f;
+  --ground: #16181a;
+  --panel: #1e2124;
+  --panel-high: #262a2e;
+  --rule: #343a3f;
+  --accent: #e0a23c;
+  --accent-dim: #8a6523;
+  --good: #7fb069;
+  --bad: #d9655b;
+  --radius: 5px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font: 14px/1.5 ui-sans-serif, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+a { color: var(--accent); }
+
+/* ── Top bar ──────────────────────────────────────────────────────────────── */
+header {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 12px 20px;
+  background: linear-gradient(#22262a, #1a1d20);
+  border-bottom: 1px solid var(--rule);
+  box-shadow: 0 2px 14px #0008;
+}
+.brand { font-weight: 700; letter-spacing: .14em; font-size: 12px; text-transform: uppercase; }
+.brand span { color: var(--accent); }
+.filename { color: var(--ink-faint); font-size: 12px; }
+.spacer { flex: 1 1 auto; }
+.tally { font-size: 12px; color: var(--ink-dim); }
+.tally b { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+button {
+  font: inherit; font-size: 12px; color: var(--ink);
+  background: var(--panel-high); border: 1px solid var(--rule);
+  border-radius: var(--radius); padding: 6px 11px; cursor: pointer;
+}
+button:hover { border-color: var(--accent-dim); background: #2e3338; }
+button:active { transform: translateY(1px); }
+button:disabled { opacity: .4; cursor: default; }
+button.danger:hover { border-color: var(--bad); color: #ffd9d4; }
+button.ghost { background: transparent; }
+button.tiny { padding: 2px 7px; font-size: 11px; }
+
+input[type=text], input[type=number] {
+  font: inherit; color: var(--ink); background: #121416;
+  border: 1px solid var(--rule); border-radius: var(--radius); padding: 5px 8px;
+}
+input:focus-visible, button:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+
+/* ── Frame ────────────────────────────────────────────────────────────────── */
+.frame { display: flex; align-items: flex-start; gap: 0; }
+nav {
+  position: sticky; top: 53px; align-self: flex-start;
+  width: 212px; flex: 0 0 212px; padding: 16px 10px 40px;
+  max-height: calc(100vh - 53px); overflow-y: auto;
+  border-right: 1px solid var(--rule);
+}
+nav a {
+  display: flex; justify-content: space-between; gap: 8px; align-items: baseline;
+  padding: 5px 10px; border-radius: var(--radius);
+  color: var(--ink-dim); text-decoration: none; font-size: 13px;
+}
+nav a:hover { background: var(--panel); color: var(--ink); }
+nav a .n {
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  color: var(--accent); opacity: 0; transition: opacity .15s;
+}
+nav a.has-changes .n { opacity: 1; }
+main { flex: 1 1 auto; min-width: 0; padding: 20px 26px 120px; max-width: 1080px; }
+
+.search { display: flex; gap: 10px; align-items: center; margin-bottom: 18px; }
+.search input[type=text] { flex: 1 1 auto; max-width: 420px; }
+.toggle { display: inline-flex; gap: 7px; align-items: center; font-size: 12px; color: var(--ink-dim); }
+
+.preamble {
+  color: var(--ink-faint); font-size: 12.5px; border-left: 2px solid var(--rule);
+  padding: 2px 0 2px 14px; margin: 0 0 26px;
+}
+.preamble p { margin: 0 0 8px; }
+
+/* ── Sections ─────────────────────────────────────────────────────────────── */
+section { margin: 0 0 34px; scroll-margin-top: 66px; }
+h2 {
+  margin: 0 0 4px; font-size: 19px; letter-spacing: .01em;
+  display: flex; align-items: baseline; gap: 10px;
+}
+h2 .addr { font-size: 11px; color: var(--ink-faint); }
+.sect-rule { height: 1px; background: linear-gradient(90deg, var(--accent-dim), transparent); margin: 0 0 14px; }
+
+.note {
+  background: var(--panel); border: 1px solid var(--rule); border-left: 2px solid var(--accent-dim);
+  border-radius: var(--radius); padding: 11px 14px; margin: 0 0 14px;
+  color: var(--ink-dim); font-size: 12.5px;
+}
+.note h3 {
+  margin: 0 0 6px; font-size: 11px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--accent);
+}
+.note p { margin: 0 0 8px; }
+.note p:last-child { margin-bottom: 0; }
+
+/* ── One tuning value ─────────────────────────────────────────────────────── */
+.field {
+  border: 1px solid var(--rule); border-left: 3px solid transparent;
+  background: var(--panel); border-radius: var(--radius);
+  padding: 11px 14px; margin: 0 0 8px;
+}
+.field.changed { border-left-color: var(--accent); background: #22231f; }
+/* Two columns: what the value is, and the control for it. A grid rather than a
+   wrapping row so every slider in a section lines up down the right-hand side —
+   a column of controls at the same x is what makes seventy of them scannable. */
+.field-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px; align-items: center;
+}
+.ident { display: flex; align-items: baseline; gap: 8px 11px; flex-wrap: wrap; min-width: 0; }
+.name { font-weight: 600; }
+.unit { color: var(--ink-faint); font-size: 12px; }
+.addr { font-size: 11px; color: var(--ink-faint); }
+.chip {
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  border: 1px solid var(--accent-dim); color: var(--accent);
+  border-radius: 20px; padding: 1px 8px; visibility: hidden;
+}
+.field.changed .chip { visibility: visible; }
+.was { font-size: 11px; color: var(--ink-faint); visibility: hidden; }
+.field.changed .was { visibility: visible; }
+
+.control { display: flex; align-items: center; gap: 10px; justify-self: end; }
+.control input[type=range] {
+  width: 230px; accent-color: var(--accent); background: transparent;
+}
+.control input[type=number], .control input[type=text] { width: 110px; text-align: right; }
+.control input[type=text] { width: 230px; text-align: left; }
+.control .flag { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-dim); }
+.control input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+.help { color: var(--ink-dim); font-size: 12.5px; margin: 8px 0 0; }
+.help p { margin: 0 0 7px; }
+.help p:last-child { margin-bottom: 0; }
+.help code { background: #101214; border: 1px solid var(--rule); border-radius: 3px; padding: 0 4px; font-size: 11.5px; }
+.help strong { color: var(--ink); }
+details.help > summary {
+  cursor: pointer; list-style: none; color: var(--ink-dim); font-size: 12.5px;
+}
+details.help > summary::-webkit-details-marker { display: none; }
+details.help > summary::after {
+  content: " more"; color: var(--accent); font-size: 11px;
+}
+details.help[open] > summary::after { content: " less"; }
+details.help > summary > p { display: inline; }
+
+/* ── History drawer ───────────────────────────────────────────────────────── */
+#history {
+  position: fixed; top: 0; right: 0; bottom: 0; width: 400px; max-width: 92vw;
+  background: var(--panel); border-left: 1px solid var(--rule);
+  box-shadow: -10px 0 30px #0009; z-index: 40;
+  transform: translateX(102%); transition: transform .18s ease-out;
+  display: flex; flex-direction: column;
+}
+#history.open { transform: none; }
+#history header { position: static; box-shadow: none; }
+#history .list { overflow-y: auto; padding: 8px 14px 24px; }
+.snap {
+  display: flex; align-items: center; gap: 10px;
+  border-bottom: 1px solid var(--rule); padding: 9px 0;
+}
+.snap .what { flex: 1 1 auto; min-width: 0; }
+.snap .sum { font-size: 12.5px; word-break: break-word; }
+.snap .when { font-size: 11px; color: var(--ink-faint); }
+.empty { color: var(--ink-faint); font-size: 12.5px; padding: 16px 0; }
+
+/* ── Status ───────────────────────────────────────────────────────────────── */
+#status {
+  position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+  z-index: 50; max-width: min(780px, 92vw);
+  border-radius: var(--radius); padding: 10px 14px;
+  border: 1px solid var(--rule); background: var(--panel-high);
+  box-shadow: 0 6px 24px #000a; font-size: 13px; display: none;
+}
+#status.show { display: block; }
+#status.ok { border-color: var(--good); }
+#status.bad { border-color: var(--bad); }
+#status .title { font-weight: 600; }
+#status.ok .title { color: var(--good); }
+#status.bad .title { color: var(--bad); }
+#status ul { margin: 6px 0 0; padding-left: 18px; }
+#status li { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px; color: var(--ink-dim); }
+#status .close { float: right; margin-left: 12px; }
+
+@media (max-width: 860px) {
+  nav { display: none; }
+  .control { margin-left: 0; width: 100%; }
+  .control input[type=range] { flex: 1 1 auto; width: auto; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">Deep&nbsp;Foundry <span>/ tuning</span></div>
+  <div class="filename mono" id="filename">content/tuning.toml</div>
+  <div class="spacer"></div>
+  <div class="tally"><b id="tally-changed">0</b> of <span id="tally-total">0</span> changed from default</div>
+  <div class="tally" id="deep-state" title="Before anything is written, the candidate file is handed to the game's own loader in a throwaway directory. Only a definition set that loads gets written."></div>
+  <button id="show-changed" class="ghost">Changed only</button>
+  <button id="open-history">History</button>
+  <button id="reset-all" class="danger">Reset all</button>
+</header>
+
+<div class="frame">
+  <nav id="nav"></nav>
+  <main>
+    <div class="search">
+      <input type="text" id="filter" placeholder="Filter by name, address or description…" autocomplete="off" spellcheck="false">
+      <span class="toggle" id="match-count"></span>
+    </div>
+    <div class="preamble" id="preamble"></div>
+    <div id="sections"></div>
+  </main>
+</div>
+
+<aside id="history" aria-label="Change history">
+  <header>
+    <div class="brand">History</div>
+    <div class="spacer"></div>
+    <button id="close-history" class="ghost">Close</button>
+  </header>
+  <div class="list" id="history-list"></div>
+</aside>
+
+<div id="status" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+
+// The page holds no model of its own. Every write returns the whole state read
+// back off the file, and the page redraws from that — so a hand edit in a text
+// editor, a `git checkout`, or a second tab all converge on what the file says
+// rather than on what this tab last remembered.
+let state = null;
+const nodes = new Map();   // key -> { root, input, number, was }
+let filterText = "";
+let changedOnly = false;
+
+// ── Rendering helpers ──────────────────────────────────────────────────────
+const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+// The file's comments are plain prose with a little emphasis in them. This
+// renders exactly what they already use and nothing else — it is a reader of
+// the file's style, not a markdown engine.
+function prose(text) {
+  if (!text) return "";
+  return text.split(/\n\s*\n/).map((para) => {
+    let html = escapeHtml(para).replace(/\n/g, " ");
+    html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
+    html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    html = html.replace(/(^|[\s(—])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>");
+    return "<p>" + html + "</p>";
+  }).join("");
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+// Keep a slider's output looking like a number a person typed: a step of 0.05
+// gives two decimals, a step of 1 gives none. Writing 0.30000000000000004 into
+// the tuning file would be legal and unreadable.
+function format(value, step) {
+  const decimals = (String(step).split(".")[1] || "").length;
+  return Number(value).toFixed(decimals);
+}
+
+// ── Talking to the file ────────────────────────────────────────────────────
+async function post(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const payload = await response.json();
+  if (payload.state) { state = payload.state; patch(); }
+  if (payload.ok) {
+    say("ok", "Saved", []);
+  } else {
+    say("bad", payload.detail || "Refused", payload.errors || []);
+  }
+  return payload.ok;
+}
+
+async function load() {
+  const payload = await (await fetch("/api/state")).json();
+  state = payload.state;
+  draw();
+}
+
+let statusTimer = null;
+function say(kind, title, errors) {
+  const box = document.getElementById("status");
+  box.className = "show " + kind;
+  box.innerHTML = "";
+  const close = el("button", "close tiny ghost", "dismiss");
+  close.onclick = () => { box.className = ""; };
+  box.appendChild(close);
+  box.appendChild(el("div", "title", title));
+  if (errors.length) {
+    const list = el("ul");
+    errors.forEach((line) => list.appendChild(el("li", null, line)));
+    box.appendChild(list);
+  }
+  clearTimeout(statusTimer);
+  // A refusal stays up: it is the message that matters, and it names the file
+  // and line the way the game would.
+  if (kind === "ok") statusTimer = setTimeout(() => { box.className = ""; }, 1600);
+}
+
+// ── Drawing the page ───────────────────────────────────────────────────────
+function draw() {
+  document.getElementById("filename").textContent = state.file;
+  document.getElementById("preamble").innerHTML = prose(state.preamble);
+  document.getElementById("deep-state").textContent = state.deep_check_available
+    ? "checked against the game's own loader"
+    : "subset check only (no godot on PATH)";
+
+  const nav = document.getElementById("nav");
+  const host = document.getElementById("sections");
+  nav.innerHTML = "";
+  host.innerHTML = "";
+  nodes.clear();
+
+  state.sections.forEach((section) => {
+    const link = el("a", "", "");
+    link.href = "#s-" + section.name;
+    link.appendChild(el("span", null, section.title));
+    link.appendChild(el("span", "n", ""));
+    link.dataset.section = section.name;
+    nav.appendChild(link);
+
+    const block = el("section");
+    block.id = "s-" + section.name;
+    block.dataset.section = section.name;
+    const heading = el("h2");
+    heading.appendChild(el("span", null, section.title));
+    heading.appendChild(el("span", "addr mono", "[" + section.name + "]"));
+    block.appendChild(heading);
+    block.appendChild(el("div", "sect-rule"));
+
+    // Notes and fields interleave in the order the file writes them, so
+    // somebody who knows the file knows the page.
+    let drawn = 0;
+    const flushNotes = (upTo) => {
+      section.notes.filter((n) => n.position === upTo).forEach((note) => {
+        const box = el("div", "note");
+        if (note.heading) box.appendChild(el("h3", null, note.heading));
+        const body = el("div");
+        body.innerHTML = prose(note.body);
+        box.appendChild(body);
+        block.appendChild(box);
+      });
+    };
+    flushNotes(0);
+    section.fields.forEach((field) => {
+      block.appendChild(drawField(field));
+      drawn += 1;
+      flushNotes(drawn);
+    });
+    host.appendChild(block);
+  });
+
+  patch();
+}
+
+function drawField(field) {
+  const root = el("div", "field");
+  root.dataset.key = field.key;
+  root.dataset.haystack = (
+    field.key + " " + field.label + " " + field.name + " " + field.help
+  ).toLowerCase();
+
+  const head = el("div", "field-head");
+  const ident = el("div", "ident");
+  ident.appendChild(el("span", "name", field.label));
+  if (field.unit) ident.appendChild(el("span", "unit", field.unit));
+  ident.appendChild(el("span", "addr mono", field.key));
+  ident.appendChild(el("span", "chip", "changed"));
+  const was = el("span", "was", "");
+  ident.appendChild(was);
+  head.appendChild(ident);
+
+  const control = el("div", "control");
+  let input = null;
+  let number = null;
+
+  if (field.control === "slider") {
+    input = document.createElement("input");
+    input.type = "range";
+    input.min = field.min; input.max = field.max; input.step = field.step;
+    number = document.createElement("input");
+    number.type = "number";
+    number.step = field.step;
+    input.addEventListener("input", () => { number.value = format(input.value, field.step); });
+    // `change` rather than `input`: a write per pixel of drag would be a write
+    // per pixel of drag, and each one snapshots the file.
+    input.addEventListener("change", () => commit(field.key, format(input.value, field.step)));
+    bindNumber(number, field);
+    control.appendChild(input);
+    control.appendChild(number);
+  } else if (field.control === "number") {
+    number = document.createElement("input");
+    number.type = "number";
+    if (field.step) number.step = field.step;
+    bindNumber(number, field);
+    control.appendChild(number);
+  } else if (field.control === "flag") {
+    const label = el("label", "flag");
+    number = document.createElement("input");
+    number.type = "checkbox";
+    number.addEventListener("change", () => commit(field.key, number.checked ? "true" : "false"));
+    label.appendChild(number);
+    label.appendChild(el("span", null, "true"));
+    control.appendChild(label);
+  } else {
+    number = document.createElement("input");
+    number.type = "text";
+    bindNumber(number, field);
+    control.appendChild(number);
+  }
+
+  const reset = el("button", "tiny ghost", "reset");
+  reset.title = "Back to the shipped default";
+  reset.onclick = () => post("/api/reset", { key: field.key });
+  control.appendChild(reset);
+  head.appendChild(control);
+  root.appendChild(head);
+
+  if (field.help) root.appendChild(drawHelp(field.help));
+
+  nodes.set(field.key, { root, input, number, was, reset, field });
+  return root;
+}
+
+function bindNumber(node, field) {
+  node.addEventListener("change", () => commit(field.key, node.value));
+  node.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") node.blur();
+    if (event.key === "Escape") { node.value = currentOf(field.key); node.blur(); }
+  });
+}
+
+function currentOf(key) {
+  for (const section of state.sections) {
+    for (const field of section.fields) if (field.key === key) return field.value;
+  }
+  return "";
+}
+
+// The file's longer comments run to several paragraphs. The first one is the
+// answer; the rest is the argument, which is worth having and not worth
+// occupying the screen until it is asked for.
+function drawHelp(text) {
+  const paragraphs = text.split(/\n\s*\n/);
+  if (paragraphs.length === 1) {
+    const box = el("div", "help");
+    box.innerHTML = prose(text);
+    return box;
+  }
+  const box = el("details", "help");
+  const summary = el("summary");
+  summary.innerHTML = prose(paragraphs[0]);
+  box.appendChild(summary);
+  const rest = el("div");
+  rest.innerHTML = prose(paragraphs.slice(1).join("\n\n"));
+  box.appendChild(rest);
+  return box;
+}
+
+// ── Updating in place ──────────────────────────────────────────────────────
+// A write returns the whole state. Redrawing the page from scratch would lose
+// the scroll position, the open help, and the focus — in the middle of tuning.
+function patch() {
+  document.getElementById("tally-changed").textContent = state.changed_count;
+  document.getElementById("tally-total").textContent = state.value_count;
+
+  state.sections.forEach((section) => {
+    const link = document.querySelector('nav a[data-section="' + section.name + '"]');
+    if (link) {
+      link.classList.toggle("has-changes", section.changed > 0);
+      link.querySelector(".n").textContent = section.changed;
+    }
+    section.fields.forEach((field) => {
+      const node = nodes.get(field.key);
+      if (!node) return;
+      node.root.classList.toggle("changed", field.changed);
+      node.was.textContent = field.changed ? "was " + field.default : "";
+      node.reset.disabled = !field.changed;
+      const focused = document.activeElement;
+      if (node.number && node.number !== focused) {
+        if (node.number.type === "checkbox") node.number.checked = field.value === "true";
+        else node.number.value = field.value;
+      }
+      if (node.input && node.input !== focused) node.input.value = field.value;
+    });
+  });
+
+  drawHistory();
+  applyFilter();
+}
+
+function drawHistory() {
+  const list = document.getElementById("history-list");
+  list.innerHTML = "";
+  document.getElementById("open-history").textContent =
+    "History" + (state.history.length ? " (" + state.history.length + ")" : "");
+  if (!state.history.length) {
+    list.appendChild(el("div", "empty", "Nothing written yet. Every change snapshots the file first, and they land here."));
+    return;
+  }
+  state.history.forEach((entry) => {
+    const row = el("div", "snap");
+    const what = el("div", "what");
+    what.appendChild(el("div", "sum", entry.summary));
+    what.appendChild(el("div", "when", when(entry.written_at) + " · before this write"));
+    row.appendChild(what);
+    const restore = el("button", "tiny", "Restore");
+    restore.onclick = () => post("/api/restore", { id: entry.id });
+    row.appendChild(restore);
+    list.appendChild(row);
+  });
+}
+
+function when(iso) {
+  if (!iso) return "";
+  const at = new Date(iso);
+  return isNaN(at) ? iso : at.toLocaleString();
+}
+
+// ── Filtering ──────────────────────────────────────────────────────────────
+function applyFilter() {
+  let shown = 0;
+  const changedKeys = new Set();
+  state.sections.forEach((s) => s.fields.forEach((f) => { if (f.changed) changedKeys.add(f.key); }));
+
+  nodes.forEach((node, key) => {
+    const matches = !filterText || node.root.dataset.haystack.includes(filterText);
+    const wanted = matches && (!changedOnly || changedKeys.has(key));
+    node.root.style.display = wanted ? "" : "none";
+    if (wanted) shown += 1;
+  });
+
+  const filtering = Boolean(filterText) || changedOnly;
+  document.querySelectorAll("#sections section").forEach((block) => {
+    const any = Array.from(block.querySelectorAll(".field")).some((f) => f.style.display !== "none");
+    block.style.display = any ? "" : "none";
+    block.querySelectorAll(".note").forEach((n) => { n.style.display = filtering ? "none" : ""; });
+  });
+  document.getElementById("match-count").textContent =
+    filtering ? shown + " of " + state.value_count + " shown" : "";
+}
+
+// ── Wiring ─────────────────────────────────────────────────────────────────
+function commit(key, value) { return post("/api/set", { key, value }); }
+
+document.getElementById("filter").addEventListener("input", (event) => {
+  filterText = event.target.value.trim().toLowerCase();
+  applyFilter();
+});
+document.getElementById("show-changed").addEventListener("click", (event) => {
+  changedOnly = !changedOnly;
+  event.target.classList.toggle("ghost", !changedOnly);
+  applyFilter();
+});
+document.getElementById("open-history").onclick = () =>
+  document.getElementById("history").classList.add("open");
+document.getElementById("close-history").onclick = () =>
+  document.getElementById("history").classList.remove("open");
+document.getElementById("reset-all").onclick = () => {
+  if (state.changed_count === 0) { say("ok", "Nothing to reset — every value is already its shipped default.", []); return; }
+  const ok = confirm(
+    "Put all " + state.changed_count + " changed values back to their shipped defaults?\n\n" +
+    "The file is snapshotted first, so this is in the history and can be undone."
+  );
+  if (ok) post("/api/reset", {});
+};
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") document.getElementById("history").classList.remove("open");
+  if (event.key === "/" && document.activeElement.tagName !== "INPUT") {
+    event.preventDefault();
+    document.getElementById("filter").focus();
+  }
+});
+
+load();
+</script>
+</body>
+</html>
