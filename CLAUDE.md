@@ -225,6 +225,40 @@ Useful revsets here: `trunk()` is aliased to `integration/milestone-1@origin`, s
 `jj log -r '::@ ~ ::trunk()'` is "my unpushed work" and `jj rebase -d trunk()`
 rebases onto the integration branch.
 
+### ⚠️ Any jj command abandons a `git merge` in progress — including a read-only one
+
+Measured, during #42's merge, and the failure is silent. jj **snapshots the working
+copy on almost every command**, and a merge in progress is a state it has no concept
+of: `MERGE_HEAD` and the staged index are a git-only arrangement, so the snapshot
+rewrites git's index and what was a staged merge becomes loose worktree edits. The
+content on disk is left correct, which is exactly what makes it dangerous — nothing
+looks wrong.
+
+**The command that did it was `jj --no-pager file list -r @`.** There is no such thing
+as a read-only jj command in a colocated checkout: `jj st`, `jj log` and `jj file list`
+all snapshot first. `jj op log` names the culprit afterwards (`snapshot working copy`,
+with the offending `args:` line), which is how this was confirmed rather than guessed.
+
+Had the merge been committed without checking, `integration/milestone-1` would have
+gained a **single-parent** commit carrying the merged content with no merge recorded —
+so `git branch --merged` would never have known the branch was in, and the next merge
+of it would have replayed work already present.
+
+So: **while a `git merge` is open in the main checkout, run no jj command at all**, and
+assume a concurrent agent may run one. Verify before committing a merge, and the check
+is two integers and a hash rather than a judgement:
+
+```bash
+git log -1 --format=%P                                   # expect two parents
+git merge-tree --write-tree HEAD <branch>                # git's own merge result
+git rev-parse HEAD^{tree}                                # must equal it
+```
+
+A merge whose tree equals `merge-tree`'s output is the merge git would have made,
+whatever happened to the index on the way. That is what makes the recovery trustworthy
+without re-running the suites: the content is proved identical to the thing that was
+tested, rather than reconstructed by hand.
+
 ### jj workspaces are not git worktrees — use git in a worktree
 
 This is the one genuine limitation, stated up front so nobody rediscovers it.
