@@ -1580,6 +1580,11 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   grid, what is in the player's hands, and the Machines in trouble by id and state. `H`
   shows the rest. The toggle is **not an Input Action**, for the reason saving is not: it
   does nothing to the Run and a replay has nothing to reproduce.
+- **The three pictures are committed**, in `docs/images/building_placing.png`,
+  `building_routing.png` and `building_running.png`, and
+  `SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh` rebuilds them.
+  They are the same claim as the contact sheets: the only honest way to judge what a player
+  is told is to look at it.
 - **One objective line, and it is not a tutorial.** `game/objective.gd` is a pure function
   of the Run's state — place a Miner on a Node, place a Smelter, drag a Belt between them,
   deliver — with nothing to enter, nothing to skip and nothing remembered. A player who
