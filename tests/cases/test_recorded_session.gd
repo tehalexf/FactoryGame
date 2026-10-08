@@ -5,8 +5,9 @@
 ## Input Actions: every action in it is produced by the *actual* input producer,
 ## `PlayerController`, from a sequence of device readings — mouse travel, held keys,
 ## clicks, a scroll wheel, Survey View held and released. The session walks, looks, lifts
-## the camera, selects, rotates, builds, lays a Belt and demolishes, and it is built by
-## driving the controller against a live Simulation exactly as a frame loop would.
+## the camera, selects, rotates, builds, **drags a Belt route out and releases it**, and
+## demolishes, and it is built by driving the controller against a live Simulation exactly as
+## a frame loop would.
 ##
 ## That is the whole determinism argument for the first-person layer. The mouse reports
 ## floats and the camera ray is float arithmetic, but what is *recorded* is a script of
@@ -99,9 +100,43 @@ func _session() -> Array:
 		strolling.strafe = -1.0
 		ticks.append(strolling)
 
-	var laying: PlayerController.DeviceSample = _sample()
-	laying.belt_clicked = true
-	ticks.append(laying)
+	# Put the Belt tool on the Build Gun, then **drag a route out**: press, turn the view so
+	# the far end lands somewhere else, flip the corner the other way round with the right
+	# button half way through, and release. That is the whole of #36's gesture through the
+	# real input producer, and it is the fixture the ticket asked for — a drag reproduces
+	# because what was recorded is the *route*, decided on release, and not the mouse travel
+	# that aimed it.
+	var tooling: PlayerController.DeviceSample = _sample()
+	tooling.belt_clicked = true
+	ticks.append(tooling)
+
+	var anchoring: PlayerController.DeviceSample = _sample()
+	anchoring.place_clicked = true
+	ticks.append(anchoring)
+
+	for tick: int in range(14):
+		var dragging: PlayerController.DeviceSample = _sample()
+		dragging.mouse_motion = Vector2(9.0, -3.0)
+		ticks.append(dragging)
+
+	var cornering: PlayerController.DeviceSample = _sample()
+	cornering.rotate_steps = 1
+	ticks.append(cornering)
+
+	for tick: int in range(10):
+		var dragging_on: PlayerController.DeviceSample = _sample()
+		dragging_on.mouse_motion = Vector2(5.0, 2.0)
+		ticks.append(dragging_on)
+
+	var releasing: PlayerController.DeviceSample = _sample()
+	releasing.primary_released = true
+	ticks.append(releasing)
+
+	# And take the tool back off, so the clicks later in the session mean what they meant
+	# when they were recorded.
+	var untooling: PlayerController.DeviceSample = _sample()
+	untooling.belt_clicked = true
+	ticks.append(untooling)
 
 	# Decide you are ready and pull the lever. A called Wave belongs in the strongest
 	# fixture in the suite: it is the one intent that changes *when* the Run gets harder, so
@@ -233,6 +268,23 @@ func test_the_recorded_session_really_walked_looked_surveyed_and_built() -> void
 		"and the Delivery it tried to hand over really was refused"
 	)
 	assert_true(sim.query_belt_count() >= 1, "including a Belt")
+	# The honesty check on the drag, and the thing a replay of a route that never happened
+	# would read as green while proving nothing. A route that cornered is **two** Belts whose
+	# runs are at right angles and which meet end to end, so that is what is asserted rather
+	# than a Belt count.
+	assert_eq(sim.query_belt_count(), 2, "the dragged route turned a corner")
+	assert_ne(
+		sim.query_belt_direction(0),
+		sim.query_belt_direction(1),
+		"its two runs are at right angles"
+	)
+	var first_exit: Vector3i = sim.query_belt_tile(0, sim.query_belt_length_tiles(0) - 1)
+	assert_eq(
+		first_exit + WorldGrid.direction_step(sim.query_belt_direction(0)),
+		sim.query_belt_tile(1, 0),
+		"and they meet end to end, which is what makes Items cross the corner"
+	)
+	assert_false(sim.query_player_is_laying_belt(0), "and the Belt tool went away again")
 	assert_ne(sim.query_player_position(0).x, 0, "and walked off the spot")
 	assert_ne(sim.query_player_yaw_turns(0), 0, "and looked around while doing it")
 	# #29's half of the session. The jump is the one thing in here that is not observable at

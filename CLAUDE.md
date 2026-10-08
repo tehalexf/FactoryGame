@@ -13,6 +13,8 @@ tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-
 tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
 tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|ground). Needs Xvfb.
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png routing
+                                 # the same, through the player's own camera (placing|routing|running)
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 tools/run_tests.sh              # the whole suite, headless. This is the CI command.
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
@@ -424,21 +426,81 @@ arrays, never as an object per Item.
   edge (an input port) or at the *entry tile* of another Belt. No inserter entity exists
   (DESIGN.md), there is no stored connection to go stale, and side-loading onto the
   middle of a Belt is deliberately not a connection.
-- **Open: `content/machine_ports.csv` is still not the Simulation's authority.** #19 added
-  that file and the mesh markers that match it, declaring an exact edge and tile for each
-  port. The Simulation accepts a Belt against *any* footprint edge tile, which is looser.
-  It still cannot adopt the file: the table describes eleven Machine bodies and
-  `content/machines.csv` defines ten — #10 added the Ammo Press and the MG Turret and #17
-  added the Silo, leaving `press_mk1`, `assembler_mk1` and `generator_mk1` undeclared — so loading it
-  under its own documented rule ("machine_id must name a row in machines.csv") would still
-  fail the whole content load. The Turret also has no row *there*, so the Belt that feeds
-  it docks against any footprint edge for now. The ticket that brings the remaining
-  Machines into `machines.csv` should make
-  `Definitions` read the ports table and tighten `_load_from_port` and `_hand_off` to the
-  declared edge, tile and direction — one declaration, not two.
+- **`content/machine_ports.csv` is read and drawn, and is still not the Simulation's
+  *authority*.** #19 added the file and the mesh markers that match it, declaring an exact
+  edge and tile for each port, and until #36 nothing in the game read a line of it — so a
+  player was shown none of it and found out which face of a Smelter takes ore by building
+  it wrong. `sim/machine_ports.gd` now loads it and answers, for a Machine at a tile turned
+  any of four ways, which tile each port presents, which way it faces and where a Belt
+  would dock; `Definitions` loads it as the one **optional** table and the renderer draws
+  an arrow on every port of every Machine standing and of the one the hologram is about to
+  land. What has *not* changed is the rule: `_load_from_port` and `_hand_off` still take
+  any footprint edge tile, which is looser than the declaration.
+  - **Why the file loads at all now.** Its own documented rule is "machine_id must name a
+    row in machines.csv", and the table still describes bodies `machines.csv` does not
+    define — `press_mk1`, `assembler_mk1`, `generator_mk1` — plus the Nest's delivery port
+    and a Belt's own two ends, neither of which is a Machine. So the loader **keeps** a row
+    naming no Machine rather than refusing the file: `ports_of` never finds it, because
+    nothing asks about a Machine that does not exist. That looseness is the price of
+    showing the player anything, and it is the clause to tighten on the day a declared
+    port is a rule — a port declared for a Machine nobody defined is a typo worth refusing
+    then.
+  - **It is deliberately not in `Definitions.digest()`.** The digest is the set of numbers
+    a Run is playing by, which a lockstep client checks it agrees with the Host about. The
+    ports are read by the renderer and by nothing in the Simulation, so a client whose
+    table differs draws different arrows and simulates the same Run.
+  - **Open, and now a smaller ticket than it was:** tighten `_load_from_port` and
+    `_hand_off` to the declared edge, tile and direction, and add the ports to the digest
+    on the same day. It is a behaviour change with a balance consequence — every Factory in
+    every fixture docks wherever it docks today, and the Turret has no row in the ports
+    table at all — so it wants its own ticket and its own balance pass, not a corner of
+    somebody else's.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
+
+### Laying one: press, drag, release
+
+Until #36 a Belt was **one keypress stamping a fixed four-tile run** from the aimed tile
+along the player's facing, and the code called itself a stopgap. A factory game lives or
+dies on how it feels to lay a Belt, so this is the part of building that got the most
+attention.
+
+- **The route is the unit of intent.** `sim/belt_route.gd` is pure arithmetic over tiles —
+  an L: a run along one axis, a corner, a run along the other — and it is shared by the
+  three callers that must never disagree: the refusal projection, the apply, and the
+  renderer drawing the preview. A route computed three times is three chances to disagree
+  on the frame it matters.
+- **The first run stops one tile short of the corner.** A Belt hands its Items to the Belt
+  whose run *starts* on the tile past its own far end, so the corner tile has to be the
+  second run's entry rather than the first run's exit. Getting that off by one lays two
+  Belts that look joined and are not, which is why the arithmetic has exactly one copy.
+- **One corner per drag, and a zigzag is two drags.** A general path is a path the player
+  did not draw and has to inspect before committing.
+- **`BUILD_BELT` grew a seventh argument rather than being replaced.** It is the corner
+  axis, and an absent one reads as 0, so every recorded script and every fixture written
+  when a Belt was a straight run still means what it meant.
+- **Two identical tiles are a drag that never moved**, which is one tile of Belt aimed
+  along the player's own facing — authoritative fixed-point state the Simulation already
+  holds, read the same way by the apply and by the projection, so the preview cannot point
+  one way and the Belt another. The argument `PAINT` makes for carrying no aim at all.
+- **It lands whole or not at all.** `_belt_route_refusal` is consulted over every tile
+  before the first Belt appears, in the shape `_build_refusal` already had, and
+  `query_belt_route_refusal` reports the same function to the preview. A route half-laid up
+  to the first obstruction is a player demolishing what they did not ask for.
+- **The drag anchor is a device reading in the controller**, in the same category as the
+  mouse buffer and the sprint latch: the route is *decided on release*, it crosses as one
+  intent, and a replay reproduces the route without reproducing the mouse travel that aimed
+  it. `test_recorded_session` drags one out with the corner flipped half way through and
+  asserts, beside the replay, that two runs at right angles really did meet end to end.
+- **DESIGN.md puts Belt routing on the menu side of its diegetic line**, with the things
+  done hundreds of times rather than with the Silo's dial. A press-drag-release with a
+  previewed route is exactly that: fast, repeatable, and nothing to transcribe.
+
+**Open: a Belt still costs nothing**, so the HUD's route line reads "free". `content/tuning.toml`
+says in as many words that the ticket giving Belts a cost should give Walls one at the same
+time, in whatever table ends up owning both; the length is the number a player actually
+decides on and it is on screen before the release.
 
 ### The update order, and the bias it avoids
 
@@ -1430,6 +1492,18 @@ is only read with the Build Gun out, because routing a Belt is a build act. `C` 
 with #17's Silo charge counter, which moved to `K` — "Where the controls went" has the
 whole map.
 
+**And the Build Gun itself holds a tool**, Machine or Belt, which `C` swaps (#36). A Belt
+has no row in `content/machines.csv` and cannot be one more position on the Machine list,
+but a player laying one still has to be able to say so and have the mouse mean it: with
+the Machine tool out a click places, and with the Belt tool out a press, a drag and a
+release lay a route. `_player_build_tool` is Simulation state for the three reasons
+`_player_build_mode` is, and **grep it and the only callers are its two queries,
+`_apply_set_build_tool`, and `_apply_select_machine`** — which puts the Machine tool back,
+because scrolling to a Smelter is a player saying they want to place one.
+`test_nothing_in_the_simulation_asks_which_tool_is_out` pins that the way build mode is
+pinned. `SET_BUILD_TOOL` carries the resulting tool rather than a flip, for the reason
+`SET_BUILD_MODE` carries the resulting mode.
+
 **It is not a mode in the gating sense, and the criterion is written as the absence of
 code.** Grep `_player_build_mode` and the only callers are its three queries. Not one
 refusal consults it, `_apply_build_machine` has never heard of it, and neither has
@@ -1463,7 +1537,62 @@ works mid-Wave, mid-burst and in Survey View.
   mode anybody is in, so it samples the *edge* (one click is one Machine) and the *held
   state* (a trigger is not a click) and `actions_for_tick` picks. A player who presses `B`
   and clicks in the same tick gets the act of the mode they are swapping *to*, which is the
-  rule that already makes a scroll-and-click place what the player scrolled to.
+  rule that already makes a scroll-and-click place what the player scrolled to. #36 added
+  a **third** reading of the same button, the *release*, which is the far end of a Belt
+  drag — and the **number row** is read both ways on the same argument: with the Build Gun
+  out `1`-`9` and `0` are the Machine picker, with the weapon out they are the weapon and
+  Gear-slot keys they always were. `test_no_two_actions_share_a_key` therefore has an
+  exemption with a reason written next to it, because deliberate sharing read by hand is
+  exactly what that test must not forbid.
+
+### Building you can see: ports, connection, the picker, the HUD and the one line
+
+#36, and the player's own direction: *"building is very much NOT fleshed out, setting up a
+basic production should be paramount"*. Every system underneath building worked; the act of
+building did not. Five things changed beside the drag above, and **every one of them is a
+query asked every frame rather than anything remembered** — the renderer holds no second
+opinion about the Factory, which is the rule that makes all of this safe to add.
+
+- **Ports are drawn.** An arrow on every declared port of every Machine standing and of the
+  one the hologram is about to land, pointing the way goods travel, inputs cool and outputs
+  warm. On the **dock tile** rather than the port tile: the port tile is part of the
+  footprint, so a marker there is a marker inside the Machine — which a render showed
+  immediately — and the tile outside is the more useful answer anyway, because it is where
+  the Belt goes.
+- **What is not connected is marked where it is not connected.** `query_belt_end_is_connected`
+  and `query_belt_start_is_fed` are the geometry halves of `_hand_off` and `_load_from_port`,
+  so a Belt drawn as connected is one that would really hand an Item over; a red post stands
+  at every end that leads nowhere and an amber tag hangs over every Machine
+  `query_machine_is_starved` calls starved. There is no stored connection to go stale, so
+  demolishing the Smelter a Belt fed marks it on the next frame with no bookkeeping anywhere.
+  An arrow a tile says which way each Belt carries.
+- **The Machine picker is a row of cells**, one per Machine and one for the Belt tool, with
+  the key printed on it, what it costs, whether a Delivery still has it locked, and the icon
+  of **the Item the Machine makes** — which is what a player is hunting for when they go
+  looking for a Smelter, and which means a Machine added as a row gets a picture without
+  anybody drawing one. Those are #20's generated icons, which nothing had used. A Machine
+  whose Recipe produces no Item — a Turret, a generator, a Silo — reads by its name, as does
+  one whose Item has no icon yet (`iron_plate` is one): a missing picture is an ordinary
+  state, the rule a Machine with no generated body already obeys.
+- **The HUD is triaged.** It was fifty-three appended lines drawn over the Factory they
+  describe. `hud_text()` is still the whole wall and the suite still asserts against it;
+  what is *shown* is `hud_brief_text()` — the urgent banners, the objective, the Nest, the
+  grid, what is in the player's hands, and the Machines in trouble by id and state. `H`
+  shows the rest. The toggle is **not an Input Action**, for the reason saving is not: it
+  does nothing to the Run and a replay has nothing to reproduce.
+- **The three pictures are committed**, in `docs/images/building_placing.png`,
+  `building_routing.png` and `building_running.png`, and
+  `SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh` rebuilds them.
+  They are the same claim as the contact sheets: the only honest way to judge what a player
+  is told is to look at it.
+- **One objective line, and it is not a tutorial.** `game/objective.gd` is a pure function
+  of the Run's state — place a Miner on a Node, place a Smelter, drag a Belt between them,
+  deliver — with nothing to enter, nothing to skip and nothing remembered. A player who
+  builds the line before reading it never sees a word of it; one who demolishes their Miner
+  an hour in gets the first line back, because the first thing is true again. It goes quiet
+  for good once a Delivery tier has landed. It names roles and states rather than Machine
+  ids, because a line that named `smelter_mk1` would be a second content table written in
+  GDScript. It lives in `game/` for the reason `BuildGun.refusal_text` does.
 
 ### Refusals are a query, not state
 
@@ -1747,10 +1876,23 @@ Run you are standing in.
   moment #27 landed — press it next to a Downed teammate and you did both — and #29
   retiring `E` left the right key free: `KEY_WITHDRAW` is now `E`, beside `KEY_DELIVER`
   (`F`), which is the same act in the opposite direction.
-- **The whole map, and no key appears twice.** `W` `A` `S` `D` walk, Shift sprints, Space
-  jumps, `Q` is Survey View, `B` holsters, `C` Belt, `V` Wall, `X` demolish, `R` wrench,
-  `T` revive, `E` withdraw, `F` deliver, `G` calls the Wave, `Z` and `K` wind the Silo dial,
-  `L` loads it, `P` paints, `1`–`3` weapons, `4`–`7` component slots, F5/F9 save and load.
+- **The whole map, and no key appears twice *in one hand*.** `W` `A` `S` `D` walk, Shift
+  sprints, Space jumps, `Q` is Survey View, `B` holsters, `C` swaps the Build Gun's tool
+  between Machine and Belt, `V` Wall, `X` demolish, `R` wrench, `T` revive, `E` withdraw,
+  `F` deliver, `G` calls the Wave, `Z` and `K` wind the Silo dial, `L` loads it, `P` paints,
+  `H` shows the rest of the HUD, F5/F9 save and load. The **number row reads by hand**:
+  `1`–`9` and `0` are the Machine picker with the Build Gun out, and `1`–`3` weapons and
+  `4`–`7` component slots with the weapon out — the arrangement the primary button has had
+  since #29, and the one thing `test_no_two_actions_share_a_key` cannot see, because the picker has no
+  key constants of its own. `test_the_number_row_is_the_one_thing_two_acts_share_and_it_shares_by_hand`
+  is the assertion that it does: in either hand, one press does exactly one thing.
+- **Left mouse is three readings now**, not two: the edge places a Machine or anchors a Belt
+  drag, the held state fires, and the release commits the route. Which it is, is the hand
+  and the tool, decided in `actions_for_tick` and nowhere else.
+- **Right mouse turns the hologram with the Machine tool out and flips the route's corner
+  with the Belt tool out.** There is no hologram to turn then, and which way an L bends is
+  the one thing about a route a player chooses — a tool deciding what the mouse means,
+  which is the only kind of mode this project has.
 - `KEY_JUMP` is **Space**, held.
 - `KEY_1`–`KEY_3` are the weapon frames, in the sorted order the table interns them, so a
   fourth weapon becomes the fourth key without `player_controller.gd` changing. `KEY_4`
