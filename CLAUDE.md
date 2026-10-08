@@ -418,6 +418,17 @@ off that.
   down the road clear. Catwalks the same, and more so: a deck at 3.8 m across a road is the
   one prop in the set that can hide a Machine behind it.
 
+**The pictures are committed and they are the argument.**
+[`docs/images/playtest2_yard_before.png`](docs/images/playtest2_yard_before.png) against
+[`_after`](docs/images/playtest2_yard_after.png) is the eye-level view: a bright pipe run
+on a diagonal across the near field, props dotted at random behind it, becoming a clear
+working ground with the yard lined up along its roads.
+[`playtest2_ground_before.png`](docs/images/playtest2_ground_before.png) against
+[`_after`](docs/images/playtest2_ground_after.png) is the same pair at standing height and
+is mostly about the floor: a smooth sheet with a texture printed on it, becoming ground.
+`tools/visual/shot.sh out.png eye|ground` rebuilds them, and every finding above came from
+reading one of them — none from reading the code.
+
 **The light** kept #25's shape — ambient and reflections off the sky, filmic
 tonemap, SSAO, depth fog — and changed four things. The sun dropped from 41 to 23
 degrees, which is what makes the hour *stated* rather than merely not
