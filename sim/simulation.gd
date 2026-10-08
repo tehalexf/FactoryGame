@@ -10504,6 +10504,44 @@ func query_belt_start_is_fed(index: int) -> bool:
 	return upstream != -1
 
 
+## How many Belts run out of a Machine's declared output ports: the size of the branch its
+## output is shared between.
+##
+## **`_machine_behind_belt`'s answer asked from the other side**, per Machine rather than per
+## Belt, so the membership a player is shown is exactly the group `_load_the_ports` serves in
+## rotation. A Belt docking against a wall that is not a declared output port is not in it —
+## it is not a branch that gets no turns, it is not a branch (#47).
+##
+## 1 is an ordinary line and 2 or more is a split. A projection the Simulation never reads
+## back: #46 put the rotation behind the façade and nothing drew it, which made a fairly
+## shared Machine indistinguishable from a priority (#48).
+func query_machine_branch_count(machine: int) -> int:
+	return _branch_belts(machine).size()
+
+
+## The nth Belt of a Machine's branch, in the canonical order `_load_the_ports` serves them
+## in, or -1 past the end. Canonical order rather than index order for the reason the cursor
+## indexes that way: the list is geography and not build history.
+func query_machine_branch_belt(machine: int, which: int) -> int:
+	var branches: PackedInt64Array = _branch_belts(machine)
+	if which < 0 or which >= branches.size():
+		return -1
+	return branches[which]
+
+
+## The Belts a Machine loads, in canonical order. The one definition both queries read, so
+## the count and the membership cannot disagree about what a branch is.
+func _branch_belts(machine: int) -> PackedInt64Array:
+	var branches: PackedInt64Array = PackedInt64Array()
+	if machine < 0 or machine >= query_machine_count():
+		return branches
+	var canonical: PackedInt64Array = _canonical_belts()
+	for position: int in range(canonical.size()):
+		if _machine_behind_belt(canonical[position]) == machine:
+			branches.append(canonical[position])
+	return branches
+
+
 ## The Belt, if any, whose far end hands Items onto the tile given. The reverse of
 ## `_belt_downstream`, walked rather than stored for the reason nothing else here is stored.
 func _belt_at_tile_feeding(tile: Vector3i) -> int:

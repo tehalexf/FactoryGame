@@ -685,3 +685,217 @@ func _count_of(actions: Array, kind: int) -> int:
 		if action.kind == kind:
 			found += 1
 	return found
+
+
+# ── A branch you can read ─────────────────────────────────────────────────────
+# #46 made a Machine share its output between its Belts and #47 decided which Belts those
+# are; neither drew a line of it. A fairly-shared Belt and a blocked one look identical from
+# above, so back-pressure read as a bug. Three marks, and every one of them is a query asked
+# every frame: a tag over a Machine that splits, a post at each branch, and a different post
+# at the branch that cannot take its turn.
+
+func _branching_view() -> Array:
+	# A Miner with ore leaving by two faces, both Belts running onto open ground, so nothing
+	# downstream can mask which of them is doing what. A Miner declares an output on every
+	# face, which is what lets one Factory make this branch without turning anything.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 0)
+		),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(3, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 1), Vector3i(3, 0, 1)),
+	])
+	return [sim, view]
+
+
+func test_a_machine_with_one_belt_off_it_wears_no_split_tag() -> void:
+	# The control. One Belt is an ordinary line and marking it would make the tag mean
+	# "there is a Belt here", which is a thing a player can already see.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 0)
+		),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(6, 0, 0)),
+	])
+	view.sync(sim)
+	assert_eq(sim.query_machine_branch_count(0), 1, "the Simulation calls it one Belt")
+	assert_eq(view.split_marker_count(), 0, "so nothing says it split")
+	assert_eq(view.branch_marker_count(), 0, "and neither Belt end is a branch post")
+	view.free()
+
+
+func test_a_machine_serving_two_belts_is_visibly_doing_so() -> void:
+	var made: Array = _branching_view()
+	var sim: Simulation = made[0]
+	var view: WorldView = made[1]
+	_run(sim, 120)
+	view.sync(sim)
+	assert_eq(view.split_marker_count(), 1, "one tag, over the Machine that splits")
+	assert_eq(view.branch_marker_count(), 2, "and a post at each branch it feeds")
+	assert_eq(view.blocked_branch_marker_count(), 0, "with neither of them blocked")
+	view.free()
+
+
+func test_a_branch_post_stands_at_the_belt_it_is_about() -> void:
+	# The mark is where the thing it describes is, which is the rule the dangling post and
+	# the starved tag already obey. A post at the Machine's own centre would say a split
+	# exists and not which Belts are in it.
+	var made: Array = _branching_view()
+	var sim: Simulation = made[0]
+	var view: WorldView = made[1]
+	view.sync(sim)
+	var north: Vector3 = view.branch_marker_position(0)
+	var south: Vector3 = view.branch_marker_position(1)
+	var first: FixedVec2 = sim.query_tile_centre_metres(Vector3i(2, 0, 0))
+	assert_true(
+		is_equal_approx(north.x, Fixed.to_float(first.x))
+			and is_equal_approx(north.z, Fixed.to_float(first.z)),
+		"the first post stands on the first branch's entry tile, got %v" % north
+	)
+	assert_true(south.z > north.z, "and the second on the other one's, got %v" % south)
+	view.free()
+
+
+func test_a_blocked_branch_is_marked_differently_from_a_sharing_one() -> void:
+	# The thing a player has to act on, and the whole reason this is drawn: a Belt whose far
+	# end will not take another Item is not taking its turn, and from above it looks exactly
+	# like one that is. The Smelter here cannot keep up with the Miner, so that branch backs
+	# up solid while the other goes on running.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0)),
+		# South off the Miner into an Ammo Press, which takes plate on that face and not ore —
+		# the mistake a real player makes, and the one that produces a branch that is docked,
+		# pointing the right way, and will never hand over a single Item.
+		InputAction.build_belt(0, Vector3i(0, 0, 2), Vector3i(0, 0, 3)),
+		InputAction.build_machine(
+			0, definitions.machine_index("ammo_press_mk1"), Vector3i(0, 0, 4)
+		),
+		# East off the Miner onto open ground, which goes on taking its turn.
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(8, 0, 0)),
+	])
+	assert_eq(sim.query_machine_branch_count(0), 2, "the Miner feeds two branches")
+
+	_run(sim, 400)
+	view.sync(sim)
+	var refused: int = sim.query_belt_at_tile(Vector3i(0, 0, 2))
+	assert_true(
+		sim.query_belt_end_is_connected(refused),
+		"that branch is docked against a declared input port, so it is not dangling"
+	)
+	assert_true(
+		sim.query_belt_is_stalled(refused),
+		"and it is backed up, because the Press will not take ore"
+	)
+	assert_eq(view.blocked_branch_marker_count(), 1, "exactly the blocked one is marked")
+	assert_eq(view.branch_marker_count(), 1, "and the branch still running wears the other post")
+	# The one dangling post belongs to the east branch, which really does pour onto the
+	# ground. The blocked branch is not marked dangling, which is the distinction: it leads
+	# somewhere and cannot get there, where a dangling end leads nowhere at all.
+	assert_eq(view.dangling_marker_count(), 1, "the east branch pours onto open ground")
+	assert_true(
+		sim.query_belt_end_is_connected(refused),
+		"and the blocked one does not, so the two complaints never land on one tile"
+	)
+	view.free()
+
+
+func test_a_split_whose_branches_are_both_blocked_says_the_surplus_is_banking() -> void:
+	# The third thing worth showing. Two stalled Belts off one Machine look like a Factory
+	# that has lost its output; `query_machine_output_total` says it is in the Machine, whose
+	# buffer is uncapped. A player with no reason to believe that would tear the line down.
+	var made: Array = _branching_view()
+	var sim: Simulation = made[0]
+	var view: WorldView = made[1]
+	_run(sim, 1800)
+	view.sync(sim)
+	assert_true(sim.query_belt_is_full(0), "both branches filled up")
+	assert_true(sim.query_belt_is_full(1))
+	assert_true(sim.query_machine_output_total(0) > 0, "and the Miner is holding the surplus")
+	assert_eq(view.banking_marker_count(), 1, "which the tag over it says")
+	assert_eq(view.split_marker_count(), 0, "in place of the plain split tag, not beside it")
+	view.free()
+
+
+func test_the_branch_marks_do_not_grow_the_scene_tree() -> void:
+	var made: Array = _branching_view()
+	var sim: Simulation = made[0]
+	var view: WorldView = made[1]
+	view.sync(sim)
+	var nodes: int = view.get_child_count()
+	for which: int in range(6):
+		sim.step([
+			InputAction.build_belt(
+				0, Vector3i(20, 0, 20 + which * 2), Vector3i(26, 0, 20 + which * 2)
+			)
+		])
+		_run(sim, 30)
+		view.sync(sim)
+	assert_eq(view.get_child_count(), nodes, "six more Belts, no new nodes")
+	assert_eq(view.branch_marker_count(), 2, "and the branch is still the one Machine's two")
+	view.free()
+
+
+func test_the_brief_hud_says_a_branch_is_blocked_and_that_a_split_is_banking() -> void:
+	# `hud_brief_text()` is what a player actually sees, and the test of a line in it is
+	# whether it changes what they do in the next few seconds. "a branch is blocked" does: it
+	# turns two Belts that look the same into one to go and look at. The counts come off the
+	# marks rather than being recomputed, which is the arrangement the dangling-ends clause in
+	# this very sentence already has — one decision about what a blocked branch is, not two.
+	var made: Array = _branching_view()
+	var sim: Simulation = made[0]
+	var view: WorldView = made[1]
+	_run(sim, 1800)
+	view.sync(sim)
+	assert_eq(view.banking_marker_count(), 1, "the split is banking its surplus")
+	assert_true(
+		view.hud_brief_text().contains("1 split banking"),
+		"the brief HUD says so, got:\n%s" % view.hud_brief_text()
+	)
+	view.free()
+
+
+func test_the_brief_hud_counts_a_blocked_branch() -> void:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(0, 0, 2), Vector3i(0, 0, 3)),
+		InputAction.build_machine(
+			0, definitions.machine_index("ammo_press_mk1"), Vector3i(0, 0, 4)
+		),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(8, 0, 0)),
+	])
+	view.sync(sim)
+	assert_true(
+		not view.hud_brief_text().contains("branch"),
+		"nothing is blocked yet, so nothing is said about a branch"
+	)
+
+	_run(sim, 400)
+	view.sync(sim)
+	assert_eq(view.blocked_branch_marker_count(), 1, "the ore branch is blocked at the Press")
+	assert_true(
+		view.hud_brief_text().contains("1 branch blocked"),
+		"and the brief HUD counts it, got:\n%s" % view.hud_brief_text()
+	)
+	view.free()

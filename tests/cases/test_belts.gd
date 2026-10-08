@@ -1217,3 +1217,63 @@ func test_an_item_already_on_a_belt_beats_a_machine_port_for_the_same_slot() -> 
 			alone.query_machine_output(0, "iron_ore"),
 		]
 	)
+
+
+# ── A branch you can read ─────────────────────────────────────────────────────
+# #46 made a Machine serve its Belts in rotation and #47 made the declared port decide which
+# Belts those are. Both of those are facts the Simulation holds and a player could not see,
+# and a mechanic a player cannot read is indistinguishable from a bug. These are the
+# projections #48 draws: which Belts come off a Machine, in the order they are served.
+
+func test_a_machine_names_the_belts_that_branch_off_it() -> void:
+	# The membership the rotation is over. It is `_machine_behind_belt`'s answer asked from
+	# the other side — per Machine rather than per Belt — so a Belt that does not dock
+	# against a declared output port is not in the list, exactly as it is not in the group
+	# `_load_the_ports` serves.
+	var sim: Simulation = _branching_sim(false)
+	var north: int = sim.query_belt_at_tile(Vector3i(2, 0, 0))
+	var south: int = sim.query_belt_at_tile(Vector3i(2, 0, 1))
+
+	assert_eq(sim.query_machine_branch_count(0), 2, "the Miner has two Belts off it")
+	assert_eq(
+		sim.query_machine_branch_belt(0, 0), north,
+		"and they are named in canonical tile order, which is the order they are served in"
+	)
+	assert_eq(sim.query_machine_branch_belt(0, 1), south)
+	assert_eq(sim.query_machine_branch_belt(0, 2), -1, "past the end is -1, not a plausible 0")
+
+
+func test_a_belt_against_the_wrong_wall_is_not_a_branch() -> void:
+	# The looseness #47 closed, read from this side: a Belt whose entry sits behind a tile
+	# the ports table does not declare an output on is not connected to that Machine at all,
+	# so it is not a branch that gets no turns — it is not a branch.
+	# A Smelter rather than a Miner, because a Miner's ore leaves by any of its four faces
+	# and a Smelter's plate leaves by two: it takes ore on the north and gives plate back on
+	# the south and east. So a Belt off its northern wall is standing against an *input*.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([
+		InputAction.build_machine(0, _smelter_index(sim), Vector3i(10, 0, 10)),
+		InputAction.build_belt(0, Vector3i(10, 0, 13), Vector3i(10, 0, 16)),
+		InputAction.build_belt(0, Vector3i(10, 0, 9), Vector3i(10, 0, 6)),
+	])
+	assert_eq(sim.query_belt_count(), 2, "both Belts were laid")
+	assert_eq(sim.query_machine_branch_count(0), 1, "only the one docking legally is a branch")
+	assert_eq(
+		sim.query_machine_branch_belt(0, 0), sim.query_belt_at_tile(Vector3i(10, 0, 13)),
+		"and it is the one off the declared output face"
+	)
+
+
+func test_asking_about_a_branch_leaves_the_run_exactly_where_it_was() -> void:
+	# The rule every projection in this file obeys: a query the Simulation never reads back
+	# cannot move the state hash, so the renderer asking it every frame changes no Run.
+	var sim: Simulation = _blocked_branch_sim()
+	_run(sim, 200)
+	var before: int = sim.hash()
+	for index: int in range(sim.query_machine_count()):
+		var branches: int = sim.query_machine_branch_count(index)
+		for which: int in range(branches + 2):
+			var belt: int = sim.query_machine_branch_belt(index, which)
+			if belt != -1:
+				sim.query_belt_is_stalled(belt)
+	assert_eq(sim.hash(), before, "asking moved the hash, so it is not a projection")
