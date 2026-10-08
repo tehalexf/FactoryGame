@@ -13,20 +13,19 @@
 ## read.
 ##
 ## Measured on 2026-10-08, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision,
-## #34's Breaker approach, #37's two rules **and** #35's separate first-Wave interval in — one
-## run on the merged tree, because #34, #37 and #35 each re-measured on their own branch and the
-## schedule's two ends belong to different tickets. Every scenario ends on the same tick on all
-## three seeds. See "The table, measured 2026-10-08" in CLAUDE.md for which ticket owns which row.
+## #34's Breaker approach, #37's two rules, #35's separate first-Wave interval **and** #46's
+## branching Belts in. Every scenario ends on the same tick on all three seeds. See "The table,
+## measured 2026-10-08" and "What #46 cost the table" in CLAUDE.md for which ticket owns which row.
 ##
 ##     bare           3m22s   undefended — #35's shorter first Wave, a minute off
 ##     opening_line   3m12s   undefended, and sooner than bare
 ##     competent     28m48s   a Siege Hulk standing, with 96 rounds still in the Factory
 ##     over_producer 20m21s   the same, 29% sooner
 ##     fortified     28m45s   the same, with 112 rounds unspent — a wash against competent
-##     deep_digger   10m48s   dug too deep, two Breaches
+##     deep_digger   11m03s   swarmed with two Breaches open — #46 fed its Boiler, +15s
 ##     hive_sortie   32m05s   the same, 3m17s later than competent — the longest Run measured
 ##     rifle_picket  28m02s   swarmed, 46s sooner than competent
-##     artillery     16m10s   swarmed, 44% sooner — one Stratagem fired on two Charges
+##     artillery     15m22s   swarmed, 47% sooner — one Stratagem fired on two Charges
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -292,12 +291,14 @@ func test_a_factory_can_power_load_and_fire_a_silo_within_a_run() -> void:
 	assert_eq(report.charges_wasted, 0, "and the Painting was not interrupted")
 
 
-func test_building_artillery_costs_a_run_a_third_of_its_length() -> void:
+func test_building_artillery_costs_a_run_a_visible_part_of_its_length() -> void:
 	# The other half of the acceptance criterion: getting there has to have *cost* something, or
 	# a weapon of last resort is a free one. Against `competent` — the same six Machines on the
 	# same tiles — artillery is four more Machines, four more Belts, seven pulls of the call-early
 	# lever, 400 kW of a grid that was running on 240 of headroom, and a third claimant on the one
-	# Ammo Press. The Run is measurably shorter for all of it.
+	# Ammo Press — which since #46 takes an equal share of that Press rather than the overflow
+	# off the Turret's Belt, and is 48 seconds of the price. The Run is measurably shorter for all
+	# of it: 15m22s against 28m48s, which is 47% and was a third before the Press was shared.
 	#
 	# Asserted as a band rather than a figure, like every other claim in this file: what matters
 	# is that the Silo is a decision with a price and not a button.
