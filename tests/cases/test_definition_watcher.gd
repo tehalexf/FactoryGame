@@ -32,131 +32,22 @@ id,display_name,inputs,outputs,seconds
 mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 """
 
-## The tuning keys this file is not about. Every key the Simulation reads must be present
-## for a set to load, so a test that varies one carries the rest unchanged.
-const OTHER_TUNING: String = """
-walk_acceleration_metres_per_second_squared = 24
-walk_deceleration_metres_per_second_squared = 9
-air_acceleration_metres_per_second_squared = 6
-air_deceleration_metres_per_second_squared = 1.5
-jump_height_metres = 1.1
-gravity_metres_per_second_squared = 22
-jump_repeats_while_held = false
-land_settle_seconds = 0.18
-land_settle_acceleration_percent = 45
-sprint_ramp_seconds = 0.45
-sprint_is_toggle = true
-bob_vertical_metres = 0.012
-bob_lateral_metres = 0.008
-bob_stride_metres = 1.6
-bob_sprint_multiplier = 1.6
-land_dip_metres = 0.035
-land_dip_seconds = 0.22
-land_dip_reference_speed_metres_per_second = 7
-lean_roll_degrees_per_metre_per_second = 0.12
-lean_pitch_degrees_per_metre_per_second = 0.06
-field_of_view_degrees = 75
-sprint_field_of_view_add_degrees = 6
-holster_seconds = 0.2
-look_sensitivity_turns_per_1000_pixels = 0.4
-eye_height_metres = 1.7
-collision_radius_metres = 0.4
-step_up_height_metres = 0.75
-health = 150
-downed_bleed_out_seconds = 20
-respawn_delay_seconds = 8
-revive_seconds = 4
-revive_reach_metres = 3
-starting_weapon = "pneumatic_wrench"
-starting_stock = "iron_ore:200"
-[belt]
-items_per_second = 4
-items_per_tile = 4
-deck_height_metres = 0.9
-[machine]
-input_buffer_crafts = 2
-[survey]
-height_metres = 26
-transition_seconds = 0.4
-pitch_degrees = 68
-[power]
-baseline_supply_kw = 300
-[nest]
-health = 6000
-height_metres = 4.2
-terrace_height_metres = 1.7
-delivery_reach_metres = 5
-store_capacity_per_item = 200
-[silo]
-load_reach_metres = 4
-max_charges_per_load = 4
-[wave]
-telegraph_seconds = 12
-spawn_interval_seconds = 0.5
-call_early_bounty_per_item = 25
 
-[heat]
-per_craft = 2
-per_craft_per_depth = 1
-decay_per_minute = 240
-wave_interval_baseline_seconds = 150
-first_wave_interval_seconds = 50
-wave_interval_minimum_seconds = 40
-per_second_sooner = 20
-[depth]
-draw_percent_per_depth = 60
-breach_tier = 2
-breach_crafts = 40
-breach_offset_tiles = 6
-breach_telegraph_seconds = 45
-[gear]
-enemy_hit_radius_metres = 0.6
-enemy_hit_height_metres = 1.6
-view_kick_degrees_per_shot = 0.35
-view_kick_recover_seconds = 0.5
-[enemy]
-crawler_health = 30
-player_bite_reach_metres = 1.6
-crawler_speed_metres_per_second = 3
-crawler_damage = 10
-crawler_attack_interval_seconds = 1
-breaker_health = 240
-breaker_speed_metres_per_second = 2
-breaker_damage = 60
-breaker_attack_interval_seconds = 1
-breaker_breaks_ranks_within_tiles = 8
-breaker_hit_radius_metres = 0.8
-breaker_hit_height_metres = 2.2
-[siege_hulk]
-health = 1800
-speed_metres_per_second = 1
-range_metres = 60
-shell_damage = 220
-shell_blast_radius_metres = 6
-shell_interval_seconds = 6
-shell_flight_seconds = 3
-stomp_damage = 45
-frontal_armour_percent = 85
-hit_radius_metres = 1.6
-hit_height_metres = 3.2
-[hive]
-health = 1200
-heat_shadow_per_minute = 30
-hit_radius_metres = 2
-hit_height_metres = 4
-[wall]
-health = 240
-height_metres = 2.4
-[wrench]
-repair_points_per_second = 60
-reach_metres = 4
-"""
+## The tuning this file writes into the directory it watches: the shipped file, verbatim.
+## What these tests are about is noticing an edit, so every number in it is the real one —
+## see `ContentFixture` for why no test carries a copy.
+var TUNING: String = ContentFixture.for_case(self).stock(STOCK).tuning
 
-const TUNING: String = """
-[player]
-walk_speed_metres_per_second = 4
-sprint_speed_multiplier = 1.8
-""" + OTHER_TUNING
+## The shipped tuning with one walking speed substituted — an edit a player could make,
+## written as the one value it changes rather than as a copy of the file.
+func _tuned_to(walk_speed: String) -> String:
+	return ContentFixture.for_case(self).tune(
+		[["walk_speed_metres_per_second = 4", "walk_speed_metres_per_second = %s" % walk_speed]]
+	).stock(STOCK).tuning
+
+
+## The one Item this file's Recipes mention, so the opening bill names something real.
+const STOCK: String = "iron_ore:200"
 
 ## Long enough to pass any sane check interval.
 const A_LONG_FRAME: float = 10.0
@@ -252,7 +143,7 @@ func test_editing_the_tuning_file_produces_a_new_definition_set() -> void:
 	var watcher: DefinitionWatcher = _watcher()
 	watcher.check_now()
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("7"))
 
 	var reloaded: Definitions = watcher.check_now()
 	assert_not_null(reloaded, "a saved edit must be noticed")
@@ -282,7 +173,7 @@ func test_adding_a_machine_and_recipe_produces_a_new_definition_set() -> void:
 func test_a_change_is_reported_once_not_on_every_check() -> void:
 	var watcher: DefinitionWatcher = _watcher()
 	watcher.check_now()
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("7"))
 
 	assert_not_null(watcher.check_now())
 	assert_null(watcher.check_now(), "the same edit must not reload every frame")
@@ -314,7 +205,7 @@ func test_fixing_a_malformed_edit_is_noticed() -> void:
 	assert_null(watcher.check_now())
 	assert_true(watcher.has_errors())
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 9\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("9"))
 	var reloaded: Definitions = watcher.check_now()
 	assert_not_null(reloaded, "the fix must be picked up")
 	assert_eq(reloaded.player_walk_speed, 9 * 65536)
@@ -352,7 +243,7 @@ func test_polling_only_checks_once_the_interval_has_elapsed() -> void:
 	# poor trade. The interval is the whole reason `poll` takes a frame time.
 	var watcher: DefinitionWatcher = DefinitionWatcher.new(DIR, 1.0)
 	watcher.check_now()
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("7"))
 
 	assert_null(watcher.poll(0.1), "not yet")
 	assert_null(watcher.poll(0.1), "still not yet")
@@ -364,7 +255,7 @@ func test_the_very_first_edit_of_a_session_is_not_missed() -> void:
 	# established it lazily would swallow the first edit after launch, which is the
 	# one a developer is most likely to be testing the feature with.
 	var watcher: DefinitionWatcher = _watcher()
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("7"))
 	assert_not_null(watcher.check_now())
 
 
@@ -377,7 +268,7 @@ func test_a_saved_edit_reaches_the_simulation_as_an_input_action() -> void:
 	var main: Main = Main.new()
 	main.set_definition_watcher(DefinitionWatcher.new(DIR, 0.0))
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("7"))
 	main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
 
 	assert_eq(main.simulation().query_definition_generation(), 1, "the edit was applied")
@@ -389,7 +280,7 @@ func test_a_saved_edit_is_applied_once_not_on_every_frame() -> void:
 	var main: Main = Main.new()
 	main.set_definition_watcher(DefinitionWatcher.new(DIR, 0.0))
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("7"))
 	for frame: int in range(10):
 		main.advance_frame(1.0 / float(Simulation.TICKS_PER_SECOND))
 
@@ -416,7 +307,7 @@ func test_a_frame_with_no_tick_holds_the_edit_until_there_is_one() -> void:
 	var main: Main = Main.new()
 	main.set_definition_watcher(DefinitionWatcher.new(DIR, 0.0))
 
-	_write(Definitions.TUNING_FILE, "[player]\nwalk_speed_metres_per_second = 7\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING)
+	_write(Definitions.TUNING_FILE, _tuned_to("7"))
 	main.advance_frame(0.001)
 	assert_eq(main.simulation().query_definition_generation(), 0, "no tick, no change")
 

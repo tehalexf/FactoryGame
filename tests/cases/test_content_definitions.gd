@@ -33,132 +33,13 @@ smelt_iron_plate,Smelt Iron Plate,iron_ore:2,iron_plate:1,3.2
 mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
 """
 
-## The tuning keys this file is not about. Every key the Simulation reads has to be
-## present or the set does not load, so the tests below that vary one key carry the rest
-## of them unchanged rather than each restating the whole file.
-const OTHER_TUNING: String = """
-walk_acceleration_metres_per_second_squared = 24
-walk_deceleration_metres_per_second_squared = 9
-air_acceleration_metres_per_second_squared = 6
-air_deceleration_metres_per_second_squared = 1.5
-jump_height_metres = 1.1
-gravity_metres_per_second_squared = 22
-jump_repeats_while_held = false
-land_settle_seconds = 0.18
-land_settle_acceleration_percent = 45
-sprint_ramp_seconds = 0.45
-sprint_is_toggle = true
-bob_vertical_metres = 0.012
-bob_lateral_metres = 0.008
-bob_stride_metres = 1.6
-bob_sprint_multiplier = 1.6
-land_dip_metres = 0.035
-land_dip_seconds = 0.22
-land_dip_reference_speed_metres_per_second = 7
-lean_roll_degrees_per_metre_per_second = 0.12
-lean_pitch_degrees_per_metre_per_second = 0.06
-field_of_view_degrees = 75
-sprint_field_of_view_add_degrees = 6
-holster_seconds = 0.2
-look_sensitivity_turns_per_1000_pixels = 0.4
-eye_height_metres = 1.7
-collision_radius_metres = 0.4
-step_up_height_metres = 0.75
-health = 150
-downed_bleed_out_seconds = 20
-respawn_delay_seconds = 8
-revive_seconds = 4
-revive_reach_metres = 3
-starting_weapon = "pneumatic_wrench"
-starting_stock = "iron_ore:200;iron_plate:200"
-[belt]
-items_per_second = 4
-items_per_tile = 4
-deck_height_metres = 0.9
-[machine]
-input_buffer_crafts = 2
-[survey]
-height_metres = 26
-transition_seconds = 0.4
-pitch_degrees = 68
-[power]
-baseline_supply_kw = 300
-[nest]
-health = 6000
-height_metres = 4.2
-terrace_height_metres = 1.7
-delivery_reach_metres = 5
-store_capacity_per_item = 200
-[silo]
-load_reach_metres = 4
-max_charges_per_load = 4
-[wave]
-telegraph_seconds = 12
-spawn_interval_seconds = 0.5
-call_early_bounty_per_item = 25
 
-[heat]
-per_craft = 2
-per_craft_per_depth = 1
-decay_per_minute = 240
-wave_interval_baseline_seconds = 150
-first_wave_interval_seconds = 50
-wave_interval_minimum_seconds = 40
-per_second_sooner = 20
-[depth]
-draw_percent_per_depth = 60
-breach_tier = 2
-breach_crafts = 40
-breach_offset_tiles = 6
-breach_telegraph_seconds = 45
-[gear]
-enemy_hit_radius_metres = 0.6
-enemy_hit_height_metres = 1.6
-view_kick_degrees_per_shot = 0.35
-view_kick_recover_seconds = 0.5
-[enemy]
-crawler_health = 30
-player_bite_reach_metres = 1.6
-crawler_speed_metres_per_second = 3
-crawler_damage = 10
-crawler_attack_interval_seconds = 1
-breaker_health = 240
-breaker_speed_metres_per_second = 2
-breaker_damage = 60
-breaker_attack_interval_seconds = 1
-breaker_breaks_ranks_within_tiles = 8
-breaker_hit_radius_metres = 0.8
-breaker_hit_height_metres = 2.2
-[siege_hulk]
-health = 1800
-speed_metres_per_second = 1
-range_metres = 60
-shell_damage = 220
-shell_blast_radius_metres = 6
-shell_interval_seconds = 6
-shell_flight_seconds = 3
-stomp_damage = 45
-frontal_armour_percent = 85
-hit_radius_metres = 1.6
-hit_height_metres = 3.2
-[hive]
-health = 1200
-heat_shadow_per_minute = 30
-hit_radius_metres = 2
-hit_height_metres = 4
-[wall]
-health = 240
-height_metres = 2.4
-[wrench]
-repair_points_per_second = 60
-reach_metres = 4
-"""
-
-const GOOD_TUNING: String = """
-[player]
-walk_speed_metres_per_second = 4
-sprint_speed_multiplier = 1.8
-""" + OTHER_TUNING
+## The tuning these tests load: the shipped `content/tuning.toml`, verbatim. This file is
+## the loader's own contract, so it works in raw text — but it no longer carries a copy of
+## that text, because `Definitions` requires every key and a set with any error carries no
+## definitions at all, so one new required key used to break every fixture here at once.
+## `_tuned` is how a test changes one value and is told if its substitution stops matching.
+var GOOD_TUNING: String = ContentFixture.shipped(Definitions.TUNING_FILE)
 
 
 ## The shipped Wave composition, inline so the fixture is a complete definition set. A
@@ -193,6 +74,19 @@ func _parse(
 		"gear.csv",
 		"stratagems.csv"
 	)
+
+
+## The shipped tuning with `overrides` applied. Through `ContentFixture`, so a substitution
+## whose text the shipped file no longer contains is a failure naming it rather than a test
+## that quietly stopped varying anything.
+func _tuned(overrides: Array = []) -> String:
+	return ContentFixture.for_case(self).tune(overrides).tuning
+
+
+## The shipped tuning with `bill` as the opening stock, named by key rather than by a copy
+## of the shipped bill — so these tests say nothing about what a Run actually opens with.
+func _restocked(bill: String) -> String:
+	return ContentFixture.for_case(self).stock(bill).tuning
 
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
@@ -345,14 +239,18 @@ func test_a_tuning_value_reaches_the_definitions_as_fixed_point() -> void:
 
 func test_a_tuning_value_may_be_written_as_a_decimal() -> void:
 	var definitions: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5.5\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		_tuned([["walk_speed_metres_per_second = 4", "walk_speed_metres_per_second = 5.5"]])
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(definitions.player_walk_speed, 360448, "5.5 * 65536")
 
 
 func test_a_missing_tuning_value_is_an_error_naming_the_key() -> void:
-	var definitions: Definitions = _parse(GOOD_MACHINES, GOOD_RECIPES, "[player]\n" + OTHER_TUNING)
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES, GOOD_RECIPES, _tuned([["walk_speed_metres_per_second = 4", ""]])
+	)
 	assert_true(definitions.has_errors())
 	assert_true(
 		definitions.describe_errors().contains("player.walk_speed_metres_per_second"),
@@ -501,7 +399,7 @@ func test_an_unknown_wave_tier_reads_as_nothing_rather_than_crashing() -> void:
 
 func test_a_telegraph_of_no_length_is_refused() -> void:
 	var definitions: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING.replace("telegraph_seconds = 12", "telegraph_seconds = 0")
+		GOOD_MACHINES, GOOD_RECIPES, _tuned([["telegraph_seconds = 12", "telegraph_seconds = 0"]])
 	)
 	assert_true(definitions.has_errors(), "a Wave with no warning is the ambush to prevent")
 	assert_true(
@@ -516,7 +414,7 @@ func test_a_minimum_interval_above_the_baseline_is_refused() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		GOOD_TUNING.replace("wave_interval_minimum_seconds = 40", "wave_interval_minimum_seconds = 300")
+		_tuned([["wave_interval_minimum_seconds = 40", "wave_interval_minimum_seconds = 300"]])
 	)
 	assert_true(definitions.has_errors())
 	assert_true(
@@ -529,7 +427,7 @@ func test_a_gap_shorter_than_the_telegraph_is_refused() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		GOOD_TUNING.replace("wave_interval_minimum_seconds = 40", "wave_interval_minimum_seconds = 5")
+		_tuned([["wave_interval_minimum_seconds = 40", "wave_interval_minimum_seconds = 5"]])
 	)
 	assert_true(definitions.has_errors(), "there would be no quiet tick to read the warning in")
 	assert_true(
@@ -540,7 +438,7 @@ func test_a_gap_shorter_than_the_telegraph_is_refused() -> void:
 
 func test_heat_that_buys_no_time_is_refused() -> void:
 	var definitions: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING.replace("per_second_sooner = 20", "per_second_sooner = 0")
+		GOOD_MACHINES, GOOD_RECIPES, _tuned([["per_second_sooner = 20", "per_second_sooner = 0"]])
 	)
 	assert_true(definitions.has_errors(), "Heat that does not drive the schedule is not Heat")
 	assert_true(
@@ -553,7 +451,7 @@ func test_a_nest_that_hides_nothing_is_a_legal_balance_decision() -> void:
 	# The counterpart: `decay_per_minute = 0` is a Map where Heat only ever climbs, which is
 	# a balance choice rather than a broken file, and the loader must not second-guess it.
 	var definitions: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING.replace("decay_per_minute = 240", "decay_per_minute = 0")
+		GOOD_MACHINES, GOOD_RECIPES, _tuned([["decay_per_minute = 240", "decay_per_minute = 0"]])
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(definitions.heat_decay_per_minute, 0)
@@ -714,10 +612,15 @@ func test_the_digest_does_not_depend_on_comments_or_blank_lines() -> void:
 
 func test_the_digest_does_not_depend_on_tuning_key_order() -> void:
 	var one: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 4\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
+		GOOD_MACHINES, GOOD_RECIPES, GOOD_TUNING
 	)
 	var other: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\n# a comment first\nwalk_speed_metres_per_second = 4\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		_tuned([[
+			"walk_speed_metres_per_second = 4",
+			"# a comment first\nwalk_speed_metres_per_second = 4",
+		]])
 	)
 	assert_eq(one.digest(), other.digest())
 
@@ -736,7 +639,9 @@ func test_changing_a_rate_changes_the_digest() -> void:
 
 func test_changing_a_tuning_value_changes_the_digest() -> void:
 	var changed: Definitions = _parse(
-		GOOD_MACHINES, GOOD_RECIPES, "[player]\nwalk_speed_metres_per_second = 5\nsprint_speed_multiplier = 1.8\n" + OTHER_TUNING
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		_tuned([["walk_speed_metres_per_second = 4", "walk_speed_metres_per_second = 5"]])
 	)
 	assert_ne(changed.digest(), _good().digest())
 
@@ -860,10 +765,7 @@ func test_an_opening_stock_naming_an_unknown_item_names_the_key() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		GOOD_TUNING.replace(
-			'starting_stock = "iron_ore:200;iron_plate:200"',
-			'starting_stock = "unobtainium:1"'
-		)
+		_restocked("unobtainium:1")
 	)
 	assert_true(definitions.has_errors())
 	assert_true(
@@ -876,9 +778,7 @@ func test_an_empty_opening_stock_is_a_run_that_opens_empty_handed() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		GOOD_TUNING.replace(
-			'starting_stock = "iron_ore:200;iron_plate:200"', 'starting_stock = ""'
-		)
+		_restocked("")
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(definitions.player_starting_stock_items.size(), 0)
@@ -888,10 +788,7 @@ func test_the_opening_stock_is_sorted_whatever_order_it_is_written_in() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		GOOD_TUNING.replace(
-			'starting_stock = "iron_ore:200;iron_plate:200"',
-			'starting_stock = "iron_plate:3;iron_ore:7"'
-		)
+		_restocked("iron_plate:3;iron_ore:7")
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(
@@ -1182,7 +1079,7 @@ func test_a_starting_weapon_that_is_a_component_or_missing_is_refused_by_name() 
 	var missing: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		GOOD_TUNING.replace('starting_weapon = "pneumatic_wrench"', 'starting_weapon = "nonesuch"')
+		_tuned([['starting_weapon = "pneumatic_wrench"', 'starting_weapon = "nonesuch"']])
 	)
 	assert_true(missing.has_errors())
 	assert_true(
@@ -1192,9 +1089,7 @@ func test_a_starting_weapon_that_is_a_component_or_missing_is_refused_by_name() 
 	var component: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		GOOD_TUNING.replace(
-			'starting_weapon = "pneumatic_wrench"', 'starting_weapon = "placeholder_gear"'
-		)
+		_tuned([['starting_weapon = "pneumatic_wrench"', 'starting_weapon = "placeholder_gear"']])
 	)
 	assert_true(component.has_errors())
 	assert_true(

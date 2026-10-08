@@ -924,6 +924,84 @@ the rows from an export. These files are read with `FileAccess`, not `load()`.
 - A tuning key nothing reads is a **warning**, because a file carrying a number
   that does nothing lies to whoever is tuning it.
 
+### One tuning fixture, and the cascade it used to cause
+
+**Adding a required key to `content/tuning.toml` costs nothing in the suite, and that is new.**
+Until #51 it cost about **156 failures across nine files**, because eleven copies of that file
+lived inside ten test fixtures. Two tickets in one day paid it: #47 hit the same wall from the
+content side and had an escape (a caller that supplies no structures source gets structures
+that are **free**, which is what an empty `build_cost` column already means), and #49 added two
+required tuning values, which have no such escape — ten fixtures learned the keys by hand, #49
+reported three green suites on its own branch and went red on the merged tip, and #48 was
+blocked behind the repair because it had merged integration mid-flight.
+
+**The rule that makes the cascade is right and was not touched.** A set with any error carries
+no definitions at all, because half a definition set is more dangerous than none — it looks
+usable. 156 failures were that rule working exactly as designed. The defect was the
+duplication that made one key touch eleven files.
+
+**`tests/content_fixture.gd` is the whole of the fix**, and the shape is
+`test_machine_mortality.gd`'s generalised — that file never carried a copy, and substituted
+against the shipped file with pairs like `["breaker_damage = 60", "breaker_damage = 10000"]`.
+
+```gdscript
+var content: Definitions = (
+    ContentFixture
+    . for_case(self)
+    . tune([["decay_per_minute = 240", "decay_per_minute = 0"]])
+    . stock("iron_plate:400")
+    . definitions()
+)
+```
+
+- **Every source defaults to the shipped file and is a plain field**, so a test that wants
+  Recipes it controls assigns `fixture.recipes` and changes nothing else. That ability is
+  load-bearing, not an oversight — `test_depth`, `test_turrets`, `test_heat`, `test_world_view`,
+  `test_enemies` and `test_nest` substitute a Delivery chain that locks nothing and a stock that
+  pays for anything *precisely so* the chain is not what they are asserting.
+- **The two optional tables default to absent**, not to the shipped file, because
+  `Definitions.parse` does: no ports source is the loose docking rule, and no structures source
+  is #47's escape. A fixture that quietly supplied them would change what every existing test
+  means.
+- **An override whose text the shipped file no longer contains is a failure naming it.** That is
+  why the fixture holds the `TestCase` — `String.replace` returns the string unaltered and says
+  nothing, so a renamed key would otherwise leave a test asserting against content it did not
+  choose with **nothing going red**, which is a worse failure than the cascade it replaces. A
+  *multi*-match is not refused, because deliberately changing every occurrence is a legitimate
+  thing to ask for; keep a target unique if you do not mean that.
+- **`stock(bill)` rewrites `player.starting_stock` by key, never by a copy of its value.** Ten
+  files named `starting_stock = "iron_plate:110"` by hand, which is the same defect one line
+  long — #47 moved that bill from 80 to 110 and had to touch all ten.
+- **`tests/cases/test_content_fixture.gd` is its contract**, like `Fixed`'s and
+  `InputQuantiser`'s, because what would go wrong with it is silence. It asserts the override
+  *reaches the definition set* and that a stale one is reported — a helper that quietly returned
+  the shipped defaults would make several suites assert against content they did not choose.
+
+**What the migration found, and it is the ticket's own argument restated.** Six values were
+identical in all eleven copies and differed from the shipped file: `view_kick_recover_seconds`,
+`first_wave_interval_seconds`, `bob_stride_metres`, `holster_seconds`,
+`look_sensitivity_turns_per_1000_pixels` and `walk_deceleration_metres_per_second_squared`. None
+of them was an override anybody chose. They are **old shipped values the copies froze** — so
+nine files had been running on balance the game stopped shipping, silently, and nothing could
+have said so. Dropped where no assertion depended on them; kept as *explicit* overrides in
+`test_first_person`, which pins its sensitivity and deceleration on purpose and says why.
+
+**The CSV tables were considered and deliberately left alone.** Recipes and Machines are also
+supplied by hand in several suites and the cascade risk is real — `CsvTable` errors on a missing
+column, so adding one to `machines.csv` breaks every fixture that spells the header. But the
+shape of the fix is not this one: those fixtures supply *different rows*, a deliberately minimal
+two-Machine Factory that is legible where the shipped seven would not be, so a shared helper
+would need row-level editing (replace by id, add, drop) rather than text substitution. What is
+available cheaply is `ContentFixture.shipped(Definitions.MACHINES_FILE)` for a test that wants
+the real table, which is what replaced ten private copies of a `_read` helper. The row-editing
+version is a ticket of its own, and the day to write it is the day a column is added.
+
+**Open, and the obvious follow-on:** the ten files that already substituted against the shipped
+file still carry their own `_read` and their own `SHIPPED_STOCK` literal. They survive a new
+*key* already, which is why they are outside this ticket — but a changed *value* silently
+un-overrides them, which is the failure `stock()` exists to remove. Moving them onto
+`ContentFixture` is mechanical.
+
 `Definitions.load_from_directory` reads all eight files and `Definitions.parse` takes all
 eight sources, in that order. A missing one is an error naming the path, never an empty
 table — and `game/definition_watcher.gd` digests all eight plus the ports, so editing any of
