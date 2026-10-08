@@ -249,6 +249,26 @@ apart silently, so there is exactly one declaration of each fact:
 | Geometry | `tools/assets/machine_recipes.py` over the kit in `machine_parts.py` | the generator |
 | The surface Godot draws | `assets/machines/materials/*.tres`, generated from the palette | the engine, via `_subresources` in each `.glb.import` |
 
+**Two things about the ports row changed in #47, and both are worth knowing before editing that
+file.** It stopped being a declaration the Simulation merely drew and became the rule it docks a
+Belt against, so a port moved here moves where goods cross a Machine's wall — the figures in the
+balance table are measured against the table as it stands. And because every Machine that needs
+a Belt must now declare its ports, the table legitimately carries rows for Machines
+`content/machine_bodies.csv` has no body for: `machine_specs.load` **skips** such a row rather
+than refusing it, since there is no mesh to put a marker on, and still refuses an id that is in
+neither that file nor `content/machines.csv`, which is where a typo is caught.
+
+**And one measured cost, recorded rather than fixed: a declared port is worth about 20 KB of
+`.glb`.** The committed Machine meshes went from 2.25 MB to 3.04 MB when the table went from 21
+rows to 93 — verified by regenerating `miner_mk1` against the old table and getting its old size
+back to the byte, so it is the ports and nothing else. That is **wrong rather than expensive**: a
+port marker is a Blender Empty with no mesh, `generate_machines.py` gives it no geometry, and the
+glTF node it becomes carries no `mesh`, so it should weigh a few dozen bytes and not twenty
+thousand. Something in the exporter is paying for an Empty in buffer space. Nobody has chased it,
+the asset suite is green either way, and the right fix is a look at the export flags rather than
+at the table — the declaration is the size it needs to be. Worth a ticket if the meshes keep
+growing.
+
 `machines.csv` wins. Where it names a Machine, its footprint and its
 `height_metres` are used and `machine_bodies.csv`'s columns are only a
 cross-check — a disagreement is a load error naming both files, never a silent

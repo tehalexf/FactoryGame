@@ -621,7 +621,7 @@ func test_determinism_a_new_breach_opening_and_being_telegraphed_replays_identic
 # nothing and a stock that pays for anything. `test_delivery.gd` is where the chain itself is
 # asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One

@@ -62,7 +62,7 @@ const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,u
 t01_open,Open Licence,1,iron_plate:4,,mg_drum_magazine,
 """
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "iron_plate:400;ammunition:400"'
 
 ## The dial's reach, stretched so a player standing on the tile they will paint can

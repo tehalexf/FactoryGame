@@ -815,10 +815,12 @@ func test_the_shipped_chain_locks_a_machine_and_opens_with_the_rest() -> void:
 
 func test_a_run_opens_holding_exactly_the_plates_for_the_opening_line() -> void:
 	# The scaffold this ticket replaces granted 200 of every Item in the game. A Run now opens
-	# with one explicit bill: 80 iron plate, against the 78 the whole competent Factory costs.
+	# with one explicit bill: 110 iron plate, against the 78 the competent Factory's Machines
+	# cost and the 30 tiles of Belt that join them up — #47 put the Belts into this bill, and
+	# the invariant is the one it always was.
 	var sim: Simulation = Simulation.new(SEED, 1)
 	assert_eq(sim.query_player_items(0), PackedStringArray(["iron_plate"]), "plate and nothing else")
-	assert_eq(sim.query_player_item(0, "iron_plate"), 80)
+	assert_eq(sim.query_player_item(0, "iron_plate"), 110)
 
 	var definitions: Definitions = sim.query_definitions()
 	var line: int = 0
@@ -833,4 +835,16 @@ func test_a_run_opens_holding_exactly_the_plates_for_the_opening_line() -> void:
 		var machine: MachineDefinition = definitions.machine(machine_id)
 		for slot: int in range(machine.build_cost_items.size()):
 			line += machine.build_cost_counts[slot]
-	assert_eq(line, 78, "the opening line costs 78 plate, so 80 is it and two over")
+	assert_eq(line, 78, "the opening line's Machines cost 78 plate")
+	# And the Belts that make it a line rather than six separate Machines. The thirty tiles
+	# `BalanceScenarios` lays are a plate each, so the whole Factory is 108 and the opening bill
+	# is still it and two over — see `player.starting_stock` in `content/tuning.toml`.
+	assert_eq(
+		definitions.structure_cost_of(Definitions.STRUCTURE_BELT, "iron_plate"),
+		1,
+		"a tile of Belt is a plate"
+	)
+	assert_eq(line + 30, 108, "with its thirty tiles of Belt, 108")
+	assert_eq(
+		sim.query_player_item(0, "iron_plate") - 108, 2, "so a Run opens two plates over"
+	)

@@ -1032,7 +1032,7 @@ func test_rebalancing_the_wave_table_mid_run_changes_the_next_wave() -> void:
 # these fixtures replace them with a tier that locks nothing and a stock that pays for
 # anything. `test_delivery.gd` is where the real chain is asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One

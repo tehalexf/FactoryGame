@@ -127,7 +127,11 @@ func test_a_standing_machine_shows_one_marker_for_every_port_it_declares() -> vo
 	])
 	view.sync(sim)
 	var declared: int = sim.query_definitions().machine_ports().ports_of("smelter_mk1").size()
-	assert_eq(declared, 3, "the Smelter declares ore in, coal in and ingot out")
+	assert_eq(
+		declared,
+		12,
+		"the Smelter declares whole faces: ore in, coal in, ingot out two ways, three tiles each"
+	)
 	assert_eq(view.port_marker_count(), before + declared)
 	view.free()
 
@@ -148,16 +152,20 @@ func test_inputs_and_outputs_are_counted_apart_so_they_can_be_drawn_apart() -> v
 		)
 	])
 	view.sync(sim)
-	assert_eq(view.input_port_marker_count() - held_in, 2, "ore and coal go in")
-	assert_eq(view.output_port_marker_count() - held_out, 1, "ingot comes out")
+	# A Smelter is 3x3 and declares whole faces: ore along the north, coal along the west,
+	# ingot along the south and the east. Whole faces rather than one tile each, because #47
+	# made the declaration the rule and a Machine with one declared output could not branch —
+	# see `content/machine_ports.csv`.
+	assert_eq(view.input_port_marker_count() - held_in, 6, "ore and coal go in, three tiles each")
+	assert_eq(view.output_port_marker_count() - held_out, 6, "ingot comes out of two faces")
 	view.free()
 
 
 func test_a_port_marker_stands_on_the_tile_a_belt_would_dock_at() -> void:
-	# The Smelter is 3x3 and its ingot output is the middle of the south edge, which is tile
-	# (13, 14) of a body anchored at (12, 12). The marker goes on the tile *past* it — (13,
-	# 15), spanning 26 m to 28 m on x and 30 m to 32 m on z, centre (27, 31) — because a
-	# marker on the port tile is a marker inside the Machine, which a render showed
+	# The Smelter is 3x3 and the first ingot output declared is the near end of its south edge,
+	# which is tile (12, 14) of a body anchored at (12, 12). The marker goes on the tile *past*
+	# it — (12, 15), spanning 24 m to 26 m on x and 30 m to 32 m on z, centre (25, 31) — because
+	# a marker on the port tile is a marker inside the Machine, which a render showed
 	# immediately, and because the tile outside is where the Belt actually goes.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
@@ -169,15 +177,15 @@ func test_a_port_marker_stands_on_the_tile_a_belt_would_dock_at() -> void:
 	view.sync(sim)
 	# Marker 0 is the standing Smelter's: the Machines are written before the hologram's.
 	var at: Vector3 = view.output_port_marker_position(0)
-	assert_true(is_equal_approx(at.x, 27.0), "expected x 27.0, got %f" % at.x)
+	assert_true(is_equal_approx(at.x, 25.0), "expected x 25.0, got %f" % at.x)
 	assert_true(is_equal_approx(at.z, 31.0), "expected z 31.0, got %f" % at.z)
 	view.free()
 
 
 func test_turning_the_machine_moves_its_markers_with_it() -> void:
-	# A half turn puts the south face north: the ingot port goes from local (1, 2) to
-	# (1, 0), which for an anchor at (12, 12) is tile (13, 12), and the tile a Belt would
-	# dock at is (13, 11) — centre (27, 23).
+	# A half turn puts the south face north: the first ingot port goes from local (0, 2) to
+	# (2, 0), which for an anchor at (12, 12) is tile (14, 12), and the tile a Belt would
+	# dock at is (14, 11) — centre (29, 23).
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([
@@ -187,7 +195,7 @@ func test_turning_the_machine_moves_its_markers_with_it() -> void:
 	])
 	view.sync(sim)
 	var at: Vector3 = view.output_port_marker_position(0)
-	assert_true(is_equal_approx(at.x, 27.0), "expected x 27.0, got %f" % at.x)
+	assert_true(is_equal_approx(at.x, 29.0), "expected x 29.0, got %f" % at.x)
 	assert_true(is_equal_approx(at.z, 23.0), "expected z 23.0, got %f" % at.z)
 	view.free()
 
@@ -204,7 +212,7 @@ func test_the_hologram_shows_the_ports_of_the_machine_about_to_land() -> void:
 	])
 	view.sync(sim)
 	assert_eq(
-		view.port_marker_count(), 3, "nothing is standing, so these are the hologram's"
+		view.port_marker_count(), 12, "nothing is standing, so these are the hologram's"
 	)
 
 	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
@@ -323,7 +331,7 @@ func test_the_markers_do_not_grow_the_scene_tree_as_a_factory_is_built() -> void
 
 
 # ── The one objective line ────────────────────────────────────────────────────
-# A Run opens on bare ground with 80 plate and no idea what to do. The line is a pure
+# A Run opens on bare ground with 110 plate and no idea what to do. The line is a pure
 # function of the Run's state, so there is nothing to enter, nothing to skip, and it comes
 # back if the thing it was about stops being true.
 

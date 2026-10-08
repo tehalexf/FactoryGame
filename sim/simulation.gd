@@ -2367,7 +2367,7 @@ func _hand_off(index: int, item_id: String) -> bool:
 		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
 	)
 
-	var machine: int = query_machine_at_tile(beyond)
+	var machine: int = _machine_a_belt_feeds(index)
 	if machine != -1:
 		return _accept_input(machine, item_id)
 
@@ -2403,7 +2403,7 @@ func _hand_off_blocked(index: int) -> bool:
 	var beyond: Vector3i = (
 		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
 	)
-	var machine: int = query_machine_at_tile(beyond)
+	var machine: int = _machine_a_belt_feeds(index)
 	if machine != -1:
 		return not _input_has_room(machine, items[0])
 
@@ -2482,9 +2482,72 @@ func _serve_the_branches(machine: int, branches: PackedInt64Array) -> void:
 
 ## The Machine whose output port a Belt runs out of, or -1. The tile behind the entry end:
 ## Belts connect straight into Machine ports and no inserter entity exists (DESIGN.md).
+##
+## **-1 for a Belt that is standing against the wrong part of the wall**, since #47. The
+## declaration in `content/machine_ports.csv` is what a player is shown an arrow for, and it is
+## now the rule: a Belt whose entry sits behind a tile that is not a declared output port, or
+## which runs the wrong way out of one, is not connected to that Machine at all.
+##
+## It matters that this is the one place that is decided rather than two. `_load_the_ports`
+## groups a Machine's Belts by this answer, so a Belt that does not dock legally is **not in
+## the rotation group** — it is not a branch that gets no turns, it is not a branch. And
+## `query_belt_start_is_fed` reads the same function, so the red post the renderer stands at
+## an unfed entry appears exactly where the Simulation would refuse to load.
 func _machine_behind_belt(index: int) -> int:
-	return query_machine_at_tile(
-		_belt_entry_tile(index) - WorldGrid.direction_step(_belt_direction[index])
+	var direction: int = _belt_direction[index]
+	var behind: Vector3i = _belt_entry_tile(index) - WorldGrid.direction_step(direction)
+	var machine: int = query_machine_at_tile(behind)
+	if machine == -1:
+		return -1
+	# An output's goods travel **along** the way its port faces, so a Belt running out of one
+	# runs the same way the port points.
+	if not _belt_docks_against(machine, MachinePorts.OUT_OF, behind, direction):
+		return -1
+	return machine
+
+
+## The Machine a Belt's far end feeds, or -1, under the same rule in the other direction.
+##
+## An input's goods travel **against** the way its port faces — a port on a Machine's northern
+## wall faces north and takes a Belt coming south — so the direction asked for is the Belt's
+## own turned about.
+func _machine_a_belt_feeds(index: int) -> int:
+	var direction: int = _belt_direction[index]
+	var beyond: Vector3i = _belt_exit_tile(index) + WorldGrid.direction_step(direction)
+	var machine: int = query_machine_at_tile(beyond)
+	if machine == -1:
+		return -1
+	if not _belt_docks_against(
+		machine, MachinePorts.INTO, beyond, WorldGrid.wrap_rotation(direction + 2)
+	):
+		return -1
+	return machine
+
+
+## Whether a Machine declares a port of this flow on this tile of its wall, facing this way.
+##
+## **A Machine the table says nothing about takes a Belt anywhere on its footprint edge**,
+## which is what the Simulation did everywhere before #47 and is the only honest answer: a
+## declaration that does not exist cannot be enforced. That is the seam every test that brings
+## its own Machines and no ports table works through, and `Definitions` is what stops the
+## shipped content reaching it — a Machine that needs a Belt and declares no port is refused by
+## name.
+func _belt_docks_against(machine: int, flow: int, tile: Vector3i, facing: int) -> bool:
+	var definition: MachineDefinition = _definitions.machine(_machine_id[machine])
+	if definition == null:
+		return true
+	var ports: MachinePorts = _definitions.machine_ports()
+	if not ports.declares(definition.id):
+		return true
+	return ports.has_port_at(
+		definition.id,
+		flow,
+		tile,
+		facing,
+		query_machine_tile(machine),
+		definition.footprint_x,
+		definition.footprint_z,
+		_machine_rotation[machine]
 	)
 
 
@@ -2494,11 +2557,12 @@ func _machine_behind_belt(index: int) -> int:
 ## The Machine is passed in rather than looked up, because `_load_the_ports` has already asked
 ## which Machine is behind every Belt and the rotation is decided from those answers.
 ##
-## The port is the Machine footprint tile the run starts against: Belts connect straight
-## into Machine ports and no inserter entity exists (DESIGN.md). Any footprint edge tile
-## counts for now; `content/machine_ports.csv` declares the exact edge and tile each port
-## sits on, and CLAUDE.md records why the Simulation cannot adopt that table yet and which
-## ticket should. The room check is what rate-limits loading — an Item can only enter once the
+## The port is the **declared** output port the run starts against: Belts connect straight into
+## Machine ports and no inserter entity exists (DESIGN.md), and since #47 which tiles of a wall
+## are ports is `content/machine_ports.csv`'s answer rather than "any edge tile". That question
+## is already settled by the time this is called — `_machine_behind_belt` is what answered it,
+## and it answered -1 for a Belt docking anywhere else, so such a Belt never reaches here. The
+## room check is what rate-limits loading — an Item can only enter once the
 ## last one is a full spacing clear, which is exactly the Belt's rated throughput and not a
 ## second number that could disagree with it.
 ##
@@ -3596,6 +3660,42 @@ func _build_refusal(player_id: int, machine_index: int, tile: Vector3i, rotation
 	return Refusal.NONE
 
 
+## Whether a player is carrying what a run of a structure costs: its per-tile price times
+## the number of tiles the intent would stand up.
+##
+## **Per tile, and the whole route or nothing.** A route half-laid up to the tile the wallet
+## ran out on is a player demolishing what they did not ask for — the same argument
+## `_belt_route_refusal` already makes about an obstruction, which is why the two live in one
+## function and are asked before the first Belt appears.
+func _can_pay_for_structure(player_id: int, structure_id: String, tiles: int) -> bool:
+	if not _is_player(player_id):
+		return false
+	if tiles <= 0:
+		return true
+	var items: PackedStringArray = _definitions.structure_cost_items(structure_id)
+	var counts: PackedInt64Array = _definitions.structure_cost_counts(structure_id)
+	for index: int in range(items.size()):
+		if query_player_item(player_id, items[index]) < counts[index] * tiles:
+			return false
+	return true
+
+
+## Takes what a run of a structure costs out of a player's pockets, or hands it back when
+## `tiles` is negative — which is what a demolish is. One function for both directions, so a
+## refund cannot come to disagree with a charge about the price.
+func _settle_structure_cost(player_id: int, structure_id: String, tiles: int) -> void:
+	if tiles == 0:
+		return
+	var items: PackedStringArray = _definitions.structure_cost_items(structure_id)
+	var counts: PackedInt64Array = _definitions.structure_cost_counts(structure_id)
+	for index: int in range(items.size()):
+		var quantity: int = counts[index] * absi(tiles)
+		if tiles > 0:
+			_take_from_player(player_id, items[index], quantity)
+		else:
+			_give_to_player(player_id, items[index], quantity)
+
+
 ## Whether a player is carrying everything a Machine costs to build.
 func _can_pay_for(player_id: int, definition: MachineDefinition) -> bool:
 	if not _is_player(player_id):
@@ -3638,10 +3738,10 @@ func _footprint_is_occupied(origin: Vector3i, size_x: int, size_z: int) -> bool:
 ## Takes a Machine or a Belt back apart, returning its materials to the player.
 ##
 ## Nothing is destroyed. A Machine hands back its build cost in full *and* whatever it
-## was holding in either buffer; a Belt hands back the Items riding it. A Belt has no
-## build cost to return because it has no row in `content/machines.csv` — it is not a
-## Machine (GLOSSARY.md), and its one tier's rating lives in tuning. Giving Belts a
-## cost belongs to the ticket that gives them tiers.
+## was holding in either buffer; a Belt hands back the Items riding it **and what its tiles
+## cost**, and a Wall hands back what its one tile cost. A Belt and a Wall are still not
+## Machines and have no row in `content/machines.csv` (GLOSSARY.md): their price is a row in
+## `content/structures.csv`, which is the table that owns both.
 ##
 ## A Machine is demolished by pointing at any tile of its footprint rather than at its
 ## anchor, because a player aiming a Build Gun is aiming at a Machine and not at a
@@ -3663,11 +3763,13 @@ func _apply_demolish(action: InputAction) -> void:
 		_remove_belt(belt)
 		return
 
-	# A Wall has no build cost to hand back, for the reason a Belt has none: it has no row in
-	# `content/machines.csv`. Taking one down is still free in the sense that matters — a
-	# player who mis-walled a lane loses only the ticks.
+	# A Wall hands its tile's price back in full, like everything else a player takes apart
+	# themselves: a player who mis-walled a lane loses only the ticks. An Enemy chewing the
+	# same Wall down returns nothing, which is #11's asymmetry and is why `_destroy_wall`
+	# does not call this.
 	var wall: int = query_wall_at_tile(tile)
 	if wall != -1:
+		_settle_structure_cost(action.player_id, Definitions.STRUCTURE_WALL, -1)
 		_remove_wall(wall)
 
 
@@ -3709,9 +3811,13 @@ func _refund_machine(player_id: int, index: int) -> void:
 		_give_to_player(player_id, input_items[slot], input_counts[slot])
 
 
-## Hands the Items riding a Belt back to a player. One Item a slot, so a packed Belt
-## returns everything it was carrying.
+## Hands a Belt's price and the Items riding it back to a player. One Item a slot, so a packed
+## Belt returns everything it was carrying, and the price is per tile of the run — so a route
+## demolished tile by tile and a route demolished whole cost the same nothing.
 func _refund_belt(player_id: int, index: int) -> void:
+	_settle_structure_cost(
+		player_id, Definitions.STRUCTURE_BELT, -_belt_tiles[index]
+	)
 	var riding: PackedStringArray = _belt_item_ids[index]
 	for slot: int in range(riding.size()):
 		_give_to_player(player_id, riding[slot], 1)
@@ -3890,6 +3996,7 @@ func _apply_build_wall(action: InputAction) -> void:
 	if _build_wall_refusal(action.player_id, tile) != Refusal.NONE:
 		return
 
+	_settle_structure_cost(action.player_id, Definitions.STRUCTURE_WALL, 1)
 	_wall_tile_x.append(tile.x)
 	_wall_tile_y.append(tile.y)
 	_wall_tile_z.append(tile.z)
@@ -3919,6 +4026,10 @@ func _build_wall_refusal(player_id: int, tile: Vector3i) -> int:
 		or query_wall_at_tile(tile) != -1
 	):
 		return Refusal.OCCUPIED
+	# A Wall is one tile per intent, so the per-tile price and the price of the thing are the
+	# same number — which is the one place the two readings of `build_cost_per_tile` coincide.
+	if not _can_pay_for_structure(player_id, Definitions.STRUCTURE_WALL, 1):
+		return Refusal.MISSING_MATERIALS
 	return Refusal.NONE
 
 
@@ -5500,6 +5611,9 @@ func _apply_build_belt(action: InputAction) -> void:
 		return
 
 	for run: BeltRoute.Run in _belt_route_runs(action.player_id, from_tile, to_tile, corner_axis):
+		_settle_structure_cost(
+			action.player_id, Definitions.STRUCTURE_BELT, run.length_tiles()
+		)
 		_lay_belt(run.from, run.direction, run.length_tiles())
 
 
@@ -5565,12 +5679,20 @@ func _belt_route_refusal(
 		# tile gets.
 		return Refusal.OFF_THE_MAP
 
+	var tiles: int = 0
 	for run: BeltRoute.Run in runs:
 		var step: Vector3i = WorldGrid.direction_step(run.direction)
+		tiles += run.length_tiles()
 		for offset: int in range(run.length_tiles()):
 			var refusal: int = _belt_tile_refusal(run.from + step * offset)
 			if refusal != Refusal.NONE:
 				return refusal
+	# The ground before the wallet, exactly as a Machine's refusal orders them: a player
+	# dragging across a Machine has a problem they fix by dragging somewhere else, and one
+	# who cannot pay has a problem they fix by making a shorter route or more plate. The
+	# length is the number they are deciding on and it is on screen while they decide.
+	if not _can_pay_for_structure(player_id, Definitions.STRUCTURE_BELT, tiles):
+		return Refusal.MISSING_MATERIALS
 	return Refusal.NONE
 
 
@@ -10242,6 +10364,58 @@ func query_belt_route_refusal(
 	return _belt_route_refusal(player_id, from_tile, to_tile, corner_axis)
 
 
+## How many tiles of Belt a dragged route would stand up. The number a player is deciding on,
+## and the multiplier the bill below is the per-tile price times.
+func query_belt_route_tiles(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> int:
+	var tiles: int = 0
+	for run: BeltRoute.Run in _belt_route_runs(player_id, from_tile, to_tile, corner_axis):
+		tiles += run.length_tiles()
+	return tiles
+
+
+## What a dragged route would cost, as parallel arrays of Item id and count — the whole bill
+## for the whole route, not the per-tile price.
+##
+## A projection about a route that has not been laid, the same arrangement
+## `query_belt_route_refusal` has and for the same reason: the bill belongs on screen **before
+## the button comes up**, beside the length, which is the only version that leaves the hash
+## alone. Empty for a route that costs nothing, which is what a set with no structures table
+## prices every Belt at.
+## Which Items a route's bill is made of. The route is taken as an argument it does not read,
+## so that the two halves of one bill are asked the same question — which Items, and how many —
+## rather than the caller having to know that only the counts depend on the length.
+func query_belt_route_cost_items(
+	_player_id: int, _from_tile: Vector3i, _to_tile: Vector3i, _corner_axis: int
+) -> PackedStringArray:
+	return _definitions.structure_cost_items(Definitions.STRUCTURE_BELT)
+
+
+func query_belt_route_cost_counts(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> PackedInt64Array:
+	var tiles: int = query_belt_route_tiles(player_id, from_tile, to_tile, corner_axis)
+	var counts: PackedInt64Array = _definitions.structure_cost_counts(
+		Definitions.STRUCTURE_BELT
+	)
+	var total: PackedInt64Array = PackedInt64Array()
+	for index: int in range(counts.size()):
+		total.append(counts[index] * tiles)
+	return total
+
+
+## What one tile of a structure costs — `Definitions.STRUCTURE_BELT` or `STRUCTURE_WALL` — as
+## parallel arrays. What the Machine picker's Belt cell and the Wall key read, so the price on
+## screen is the price the Simulation charges.
+func query_structure_cost_items(structure_id: String) -> PackedStringArray:
+	return _definitions.structure_cost_items(structure_id)
+
+
+func query_structure_cost_counts(structure_id: String) -> PackedInt64Array:
+	return _definitions.structure_cost_counts(structure_id)
+
+
 ## Why one tile of a route would be refused, or `Refusal.NONE`. What the preview tints each
 ## tile by, so the obstruction is marked where it is rather than described in a line of text
 ## somewhere else.
@@ -10264,7 +10438,9 @@ func query_belt_end_is_connected(index: int) -> bool:
 	var beyond: Vector3i = (
 		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
 	)
-	if query_machine_at_tile(beyond) != -1:
+	# The declared port rather than the footprint, since #47, so a Belt that ends against a
+	# Machine's blank wall is marked as going nowhere — which it does.
+	if _machine_a_belt_feeds(index) != -1:
 		return true
 	if _nest_covers(beyond):
 		return true
@@ -10281,10 +10457,7 @@ func query_belt_end_is_connected(index: int) -> bool:
 func query_belt_start_is_fed(index: int) -> bool:
 	if not _is_belt(index):
 		return false
-	var behind: Vector3i = (
-		_belt_entry_tile(index) - WorldGrid.direction_step(_belt_direction[index])
-	)
-	if query_machine_at_tile(behind) != -1:
+	if _machine_behind_belt(index) != -1:
 		return true
 	var upstream: int = _belt_at_tile_feeding(_belt_entry_tile(index))
 	return upstream != -1

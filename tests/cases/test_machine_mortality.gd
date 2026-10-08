@@ -195,11 +195,13 @@ func test_a_destroyed_machine_breaks_the_belt_chain_through_it() -> void:
 func test_a_destroyed_machine_takes_its_build_cost_and_its_contents_with_it() -> void:
 	var sim: Simulation = _open_sim(ONE_BREAKER, ONE_SHOT_BREAKER)
 	var ground: int = WorldGrid.GROUND_LAYER
+	# Measured as a delta rather than against a total, because what else this fixture's opening
+	# spent its plate on — the lever's bounty, the Walls it seals a Breach with since those
+	# acquired a price in #47 — is not what this test is about. miner_mk1 costs iron_plate:8.
+	var before: int = sim.query_player_item(0, "iron_plate")
 	_build(sim, "miner_mk1", Vector3i(14, ground, 0))
-	# This file's player.starting_stock is iron_plate:200, the lever paid
-	# wave.call_early_bounty_per_item of 25 in that bill's one Item, and miner_mk1 costs
-	# iron_plate:8.
-	assert_eq(sim.query_player_item(0, "iron_plate"), 217, "the build cost was spent")
+	assert_eq(before - sim.query_player_item(0, "iron_plate"), 8, "the build cost was spent")
+	var spent: int = sim.query_player_item(0, "iron_plate")
 
 	var mined: int = _step_until(
 		sim, 600, func() -> bool: return sim.query_machine_output(0, "iron_ore") >= 2
@@ -213,7 +215,7 @@ func test_a_destroyed_machine_takes_its_build_cost_and_its_contents_with_it() ->
 
 	assert_eq(
 		sim.query_player_item(0, "iron_plate"),
-		217,
+		spent,
 		"destruction is a loss, not a refund — the build cost is gone with it"
 	)
 	assert_eq(
@@ -228,6 +230,7 @@ func test_demolishing_the_same_machine_hands_everything_back() -> void:
 	# own Factory apart destroys nothing (issue #1, user story 7).
 	var sim: Simulation = _open_sim(ONE_CRAWLER)
 	var ground: int = WorldGrid.GROUND_LAYER
+	var before: int = sim.query_player_item(0, "iron_plate")
 	_build(sim, "miner_mk1", Vector3i(14, ground, 0))
 	var mined: int = _step_until(
 		sim, 600, func() -> bool: return sim.query_machine_output(0, "iron_ore") >= 2
@@ -238,7 +241,7 @@ func test_demolishing_the_same_machine_hands_everything_back() -> void:
 
 	sim.step([InputAction.demolish(0, Vector3i(14, ground, 0))])
 	assert_eq(sim.query_machine_count(), 0)
-	assert_eq(sim.query_player_item(0, "iron_plate"), 225, "the build cost came back in full")
+	assert_eq(sim.query_player_item(0, "iron_plate"), before, "the build cost came back in full")
 	assert_eq(
 		sim.query_player_item(0, "iron_ore"),
 		carried + held,
@@ -887,7 +890,7 @@ func test_a_damaged_factory_round_trips_through_a_save() -> void:
 
 # ── Fixtures that keep progression out of the way ─────────────────────────────
 # The shipped Delivery chain and the shipped opening stock are balance, and neither is what
-# this file asserts: a Run opens holding exactly the 80 plate one line costs
+# this file asserts: a Run opens holding exactly the 110 plate one line costs
 # (`content/tuning.toml`), which is not enough to build and rebuild the way these tests do.
 # So the stock becomes an explicit 200 plate — plate only, because `call_early_bounty_per_item`
 # pays out in the opening bill's Items and an ore bounty would put ore in a player's pockets
@@ -895,7 +898,7 @@ func test_a_damaged_factory_round_trips_through_a_save() -> void:
 # nothing here is refused as `CONTENT_IS_LOCKED`. `test_delivery.gd` is where the real chain
 # and the real bill are asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "iron_plate:200"'
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One

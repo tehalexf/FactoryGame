@@ -11,12 +11,19 @@
 ## standing at a tile and turned by a rotation, exactly which tiles its ports present and
 ## which way each one faces.
 ##
-## **It is not yet what the Simulation accepts a Belt against.** `_load_from_port` and
-## `_hand_off` still take any footprint edge tile, which is looser than this. Tightening
-## them is a behaviour change with a balance consequence — every Factory in every fixture
-## docks wherever it docks today — and is its own ticket; see CLAUDE.md. What is true now is
-## that the declaration is loaded, hashed into nothing, and **on screen**, so the player and
-## the renderer read the same file the mesh was built from.
+## **Since #47 it is also what the Simulation accepts a Belt against.** `_load_from_port` and
+## `_hand_off` dock against a declared port and nowhere else, so the arrow a player is shown is
+## the rule rather than a suggestion — which is why this is fed into `Definitions.digest()`
+## now: a client whose table differed would route goods differently, not merely draw different
+## arrows.
+##
+## **A set with no table at all is still the loose rule**, and that is deliberate rather than a
+## loophole. A declaration that does not exist cannot be enforced, so a Machine the table says
+## nothing about takes a Belt on any footprint edge tile exactly as it always did — which is
+## what keeps a test that brings its own Machines and no ports table working, and is the same
+## shape as a Machine with no generated body drawing a box. The shipped table is checked the
+## other way round: `Definitions` refuses a content set in which a Machine that needs a Belt
+## declares no port, so the looseness cannot be reached from `content/`.
 ##
 ## Pure arithmetic and integers, like `WorldGrid`, and sharing its conventions rather than
 ## restating them: a direction is one of `WorldGrid`'s four and a rotation turns one by
@@ -84,17 +91,34 @@ var errors: PackedStringArray = PackedStringArray()
 ## them for one Machine at a time, never by index.
 var _ports: Array[Port] = []
 
-
-## Reads the table. A row whose `machine_id` names no row in `content/machines.csv` is kept
-## rather than refused: the file also declares the Nest's delivery port and a Belt's own two
-## ends, neither of which is a Machine, and `machine_bodies.csv` still declares bodies that
-## `machines.csv` has not caught up with. Those rows describe a mesh the generator builds and
-## are none of the Simulation's business — `ports_of` simply never finds them, because nothing
-## asks about a Machine that does not exist.
+## The ids that declare a port, in the order they first appear, and the ports of each — two
+## parallel arrays, which is this project's shape for exactly this.
 ##
-## That looseness is the price of loading the file at all today, and it is the clause the
-## ticket that makes ports authoritative should tighten: once `_load_from_port` docks against
-## a declared port, a port declared for a Machine nobody defined is a typo worth refusing.
+## **An index, not a second authority.** `_ports` is the declaration and these are derived from
+## it once at parse; nothing writes to any of the three afterwards. The index exists because the
+## Simulation asks "does a Belt dock here" of **every Belt every tick** since #47, and walking
+## all ninety-odd declared ports to answer a question about one Machine made a long Run
+## measurably slower — the shipped table is more than four times the size it was, for reasons
+## `content/machine_ports.csv` explains, so the lookup had to stop being linear in the whole of
+## it. A dozen ids searched is a dozen string comparisons; ninety ports walked is ninety.
+##
+## Parallel arrays rather than a Dictionary deliberately, and not only to avoid an ADR 0002
+## exemption: this is the shape every indexed thing in the Simulation already has, and a
+## `PackedStringArray.find` is both ordered and cheaper than hashing a string.
+var _machines_with_ports: PackedStringArray = PackedStringArray()
+var _ports_of_machine: Array = []
+
+
+## Reads the table. **This knows nothing about Machines and deliberately does not check against
+## them**: a row whose `machine_id` names no Machine is kept, because the file also declares the
+## Nest's delivery port and a Belt's own two ends — neither of which is a Machine — and because
+## `machine_bodies.csv` declares bodies `machines.csv` has not caught up with. `ports_of` simply
+## never finds those, since nothing asks about a Machine that does not exist.
+##
+## What #47 added is the *cross-check*, and it lives where every other cross-table check does:
+## `Definitions._check_ports_against_machines` refuses a set where a Machine that needs a Belt
+## declares no port, and warns about a row nothing can read. It has to be there rather than here
+## because it is a question about a Machine's Recipe, which this file has never heard of.
 static func parse(source: String, path: String = "machine_ports.csv") -> MachinePorts:
 	var ports: MachinePorts = MachinePorts.new()
 	var table: CsvTable = CsvTable.parse(source, path, PackedStringArray(PORT_COLUMNS))
@@ -135,12 +159,27 @@ static func parse(source: String, path: String = "machine_ports.csv") -> Machine
 
 		if flow == -1 or edge == -1 or machine_id.is_empty() or port_id.is_empty():
 			continue
-		ports._ports.append(Port.new(machine_id, port_id, flow, edge, maxi(along, 0)))
+		ports._append(Port.new(machine_id, port_id, flow, edge, maxi(along, 0)))
 
 	ports.errors.append_array(table.errors)
 	if ports.has_errors():
 		ports._ports.clear()
+		ports._machines_with_ports = PackedStringArray()
+		ports._ports_of_machine = []
 	return ports
+
+
+## Records one port, in file order and in the per-Machine index at once, so the two cannot
+## come to disagree.
+func _append(port: Port) -> void:
+	_ports.append(port)
+	var at: int = _machines_with_ports.find(port.machine_id)
+	if at == -1:
+		_machines_with_ports.append(port.machine_id)
+		_ports_of_machine.append([] as Array[Port])
+		at = _machines_with_ports.size() - 1
+	var group: Array[Port] = _ports_of_machine[at]
+	group.append(port)
 
 
 ## An empty set, which is what a Run gets when the file is absent. Ports are **drawn** and
@@ -162,15 +201,90 @@ func port_count() -> int:
 	return _ports.size()
 
 
+## Whether this set says anything at all about a Machine. The question `_load_from_port` asks
+## first, because a Machine with no declaration is one the loose rule still governs.
+func declares(machine_id: String) -> bool:
+	return _machines_with_ports.find(machine_id) != -1
+
+
+## Whether a Machine declares a port goods travel this way through. What the loader asks to
+## refuse a Machine that takes a Belt-fed input and declares nowhere for it to arrive.
+func declares_flow(machine_id: String, flow: int) -> bool:
+	var at: int = _machines_with_ports.find(machine_id)
+	if at == -1:
+		return false
+	var group: Array[Port] = _ports_of_machine[at]
+	for port: Port in group:
+		if port.flow == flow:
+			return true
+	return false
+
+
+## Every id this table declares a port for, in the order they first appear. What the loader
+## walks to warn about a declaration nothing can read.
+func declared_machine_ids() -> PackedStringArray:
+	return _machines_with_ports.duplicate()
+
+
+## Whether a Belt may dock here: is there a declared port of this flow whose own tile is
+## `port_of_tile` and which faces `facing`?
+##
+## **The edge, the tile and the direction, all three.** The edge and the tile are what
+## `port_of_tile` encodes between them — a port's tile is a tile of a particular face — and
+## `facing` is the direction the port points out of the footprint, which an output's Belt runs
+## along and an input's Belt runs against. Nothing here asks which *good* the port names: a
+## Belt carrying anything the Recipe wants may use any declared input, which is
+## `_accept_input`'s business and always was. See `content/machine_ports.csv`.
+func has_port_at(
+	machine_id: String,
+	flow: int,
+	port_of_tile: Vector3i,
+	facing: int,
+	origin: Vector3i,
+	footprint_x: int,
+	footprint_z: int,
+	rotation: int
+) -> bool:
+	var at: int = _machines_with_ports.find(machine_id)
+	if at == -1:
+		return false
+	var group: Array[Port] = _ports_of_machine[at]
+	for port: Port in group:
+		if port.flow != flow:
+			continue
+		if port_direction(port, rotation) != facing:
+			continue
+		if port_tile(port, origin, footprint_x, footprint_z, rotation) == port_of_tile:
+			return true
+	return false
+
+
+## Feeds the declaration into a hasher, in file order.
+##
+## **In `Definitions.digest()` since #47, and it was deliberately out of it before.** The
+## digest is the set of numbers a Run is playing by, and until the ports were a rule they were
+## a drawing: a client whose table differed drew different arrows and simulated the same Run.
+## Now they decide where goods cross a Machine's wall, so a client whose table differed would
+## simulate a different Factory, and the digest is what refuses that instead of desyncing.
+func feed_into(hasher: StateHasher) -> void:
+	hasher.feed_int(_ports.size())
+	for port: Port in _ports:
+		hasher.feed_text(port.machine_id)
+		hasher.feed_text(port.port_id)
+		hasher.feed_int(port.flow)
+		hasher.feed_int(port.edge)
+		hasher.feed_int(port.tile_along_edge)
+
+
 ## Every port declared for a Machine, in file order. Empty for a Machine the table says
 ## nothing about, which is an ordinary state and not a warning: a row in `machines.csv` is
 ## never blocked on art, and a port is art's half of the declaration.
 func ports_of(machine_id: String) -> Array[Port]:
-	var found: Array[Port] = []
-	for port: Port in _ports:
-		if port.machine_id == machine_id:
-			found.append(port)
-	return found
+	var at: int = _machines_with_ports.find(machine_id)
+	if at == -1:
+		return [] as Array[Port]
+	var group: Array[Port] = _ports_of_machine[at]
+	return group.duplicate()
 
 
 ## Which tile of the Map a port presents, for a Machine anchored at `origin`, declared

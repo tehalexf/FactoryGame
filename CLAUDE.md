@@ -760,6 +760,7 @@ Machines, Recipes and tuning values are **data**, in `content/`:
 
 ```
 content/machines.csv    one row per Machine
+content/structures.csv  one row per thing that is built and is not a Machine: Belt, Wall
 content/recipes.csv     one row per Recipe
 content/waves.csv       one row per tier of Wave composition
 content/deliveries.csv  one row per tier of Delivery progression
@@ -773,6 +774,15 @@ Gear component or a Stratagem is a row. It is never a code change.** There is no
 registry, no enum and no Item table — the set of Items is exactly the set the
 Recipes mention, interned in sorted order. Every column is documented in the
 header comment of the file it belongs to; read that before adding a row.
+
+**A Machine is a row in two files since #47, and that is the one qualification on the sentence
+above.** It needs its Recipe in `recipes.csv`, as it always did, and now also its ports in
+`content/machine_ports.csv` — because a Belt docks against a declared port and nowhere else, so
+a Machine with none is a Machine no Belt can reach. The loader refuses such a set by name rather
+than letting it stand unreachable. It is still data and still not a code change; what changed is
+that the declaration which was art's half is now the game's rule, and it has to be filled in.
+`content/structures.csv` is deliberately **not** extensible in the same way: the structures are
+`belt` and `wall`, because those are the intents that exist.
 
 `content/.gdignore` is load-bearing. Without it Godot's importer claims every
 `.csv` in the directory as a translation table, warns on each import, and strips
@@ -793,19 +803,22 @@ the rows from an export. These files are read with `FileAccess`, not `load()`.
 - A tuning key nothing reads is a **warning**, because a file carrying a number
   that does nothing lies to whoever is tuning it.
 
-`Definitions.load_from_directory` reads all seven files and `Definitions.parse` takes all
-seven sources, in that order. A missing one is an error naming the path, never an empty
-table — and `game/definition_watcher.gd` digests all seven, so editing any of them
-hot-reloads.
+`Definitions.load_from_directory` reads all eight files and `Definitions.parse` takes all
+eight sources, in that order. A missing one is an error naming the path, never an empty
+table — and `game/definition_watcher.gd` digests all eight plus the ports, so editing any of
+them hot-reloads.
 
 The **order they are read in** is not the order they are listed in, and it is load-bearing:
-Recipes first (the Items are interned from them), then Machines, then Gear, then the
+Recipes first (the Items are interned from them), then Machines, then the **structures** —
+because a Belt's `build_cost_per_tile` names an Item and is checked by exactly the rule
+`machines.csv`'s `build_cost` is — then Gear, then the
 **Stratagems** — a `sentry` row has to name a Turret in `machines.csv` — then the Waves, then
 the Deliveries, whose three unlock columns each have to name a row in one of the tables above
 — and **tuning last**, because `player.starting_weapon` has to name a weapon frame that no
 Delivery tier locks, which is a question only the Gear table and the Delivery table together
-can answer. Errors are still gathered in *file* order, so the report reads like a list of
-things to go and fix.
+can answer. The **ports** are read after all of it, because
+`_check_ports_against_machines` asks about Machines and their Recipes together. Errors are
+still gathered in *file* order, so the report reads like a list of things to go and fix.
 
 `sim/csv_table.gd` and `sim/toml_document.gd` are the only parsers. Both are
 hand-rolled: Godot ships no TOML parser, and vendoring one into a public repo is
@@ -924,35 +937,50 @@ arrays, never as an object per Item.
   edge (an input port) or at the *entry tile* of another Belt. No inserter entity exists
   (DESIGN.md), there is no stored connection to go stale, and side-loading onto the
   middle of a Belt is deliberately not a connection.
-- **`content/machine_ports.csv` is read and drawn, and is still not the Simulation's
-  *authority*.** #19 added the file and the mesh markers that match it, declaring an exact
-  edge and tile for each port, and until #36 nothing in the game read a line of it — so a
-  player was shown none of it and found out which face of a Smelter takes ore by building
-  it wrong. `sim/machine_ports.gd` now loads it and answers, for a Machine at a tile turned
-  any of four ways, which tile each port presents, which way it faces and where a Belt
-  would dock; `Definitions` loads it as the one **optional** table and the renderer draws
-  an arrow on every port of every Machine standing and of the one the hologram is about to
-  land. What has *not* changed is the rule: `_load_from_port` and `_hand_off` still take
-  any footprint edge tile, which is looser than the declaration.
-  - **Why the file loads at all now.** Its own documented rule is "machine_id must name a
-    row in machines.csv", and the table still describes bodies `machines.csv` does not
-    define — `press_mk1`, `assembler_mk1`, `generator_mk1` — plus the Nest's delivery port
-    and a Belt's own two ends, neither of which is a Machine. So the loader **keeps** a row
-    naming no Machine rather than refusing the file: `ports_of` never finds it, because
-    nothing asks about a Machine that does not exist. That looseness is the price of
-    showing the player anything, and it is the clause to tighten on the day a declared
-    port is a rule — a port declared for a Machine nobody defined is a typo worth refusing
-    then.
-  - **It is deliberately not in `Definitions.digest()`.** The digest is the set of numbers
-    a Run is playing by, which a lockstep client checks it agrees with the Host about. The
-    ports are read by the renderer and by nothing in the Simulation, so a client whose
-    table differs draws different arrows and simulates the same Run.
-  - **Open, and now a smaller ticket than it was:** tighten `_load_from_port` and
-    `_hand_off` to the declared edge, tile and direction, and add the ports to the digest
-    on the same day. It is a behaviour change with a balance consequence — every Factory in
-    every fixture docks wherever it docks today, and the Turret has no row in the ports
-    table at all — so it wants its own ticket and its own balance pass, not a corner of
-    somebody else's.
+- **`content/machine_ports.csv` is the rule, since #47.** #19 added the file and the mesh
+  markers that match it; #36 made the renderer draw an arrow on every declared port; and until
+  #47 `_load_from_port` and `_hand_off` still took **any footprint edge tile**, so a player was
+  shown a rule the Simulation did not enforce — which is worse than teaching them nothing.
+  `_machine_behind_belt` and `_machine_a_belt_feeds` now answer -1 for a Belt standing against
+  a wall that is not a declared port, or running the wrong way out of one, and every other
+  consumer reads those two functions: the load, the hand-off, the blockage report, and the red
+  post `query_belt_start_is_fed` puts at an entry nothing feeds.
+  - **A face is declared tile by tile, and that is what the table grew for.** A port is one
+    tile wide, so a Machine whose goods cross a whole face carries one row per tile of it. Two
+    things force that rather than a single port per good. #46 made a Machine serve several
+    Belts in rotation — a factory game's second verb after laying one — and a Machine with one
+    declared output could never branch. And declaring only the middle tile of a 3-wide face
+    would make *which tile a player aimed at* the difference between a line that works and one
+    that does not, for no reason a player could see. So the shipped table went from 21 rows to
+    77, and the arrows now draw along whole faces, which is more legible rather than less.
+  - **The port says where, not what.** A Belt docking at a declared input port may carry any
+    Item the Recipe wants; `_accept_input` decides that and always did. The good in a port_id
+    is the intended routing rather than a restriction — a Smelter takes ore on its north face
+    and coal on its west one by design, and feeding ore in from the west works.
+  - **Two cross-checks replace the old looseness, and they point in opposite directions.** A
+    Machine that takes a Belt-fed input and declares no input port, or produces an Item and
+    declares no output port, is an **error naming the row** — because after this change such a
+    Machine is one no Belt can reach. That is what made the Turret's ports impossible to forget:
+    it had no row at all and would have docked nowhere. A row naming a Machine `machines.csv`
+    does not define is a **warning**, not an error, and the distinction is the point: the
+    Nest's delivery port and a Belt's own two ends are legitimately not Machines, and
+    `machine_bodies.csv` legitimately declares bodies — `press_mk1`, `assembler_mk1`,
+    `generator_mk1` — that `machines.csv` has not caught up with. Data nothing reads is what a
+    warning is for, which is the treatment a tuning key nothing reads already gets.
+  - **It is in `Definitions.digest()` now**, and it was out of it before for a reason that
+    stopped being true. The digest is the set of numbers a Run is playing by; while the ports
+    were drawn and nothing else, a client whose table differed drew different arrows and
+    simulated the same Run. A client whose table differs now carries goods across a different
+    wall, so the digest is what refuses that rather than letting it desync.
+  - **A set with no ports table at all is still the loose rule**, and that is honest rather
+    than a loophole: a declaration that does not exist cannot be enforced. It is the seam every
+    test that brings its own Machines works through, and it is the same shape as a Machine with
+    no generated body drawing a box. What stops `content/` reaching it is the error above.
+  - **The Nest is deliberately not enforced.** It is not a Machine (GLOSSARY.md), and
+    `_hand_off` reaches it through a clause of its own rather than through a Machine's ports —
+    so a Belt into the Nest docks anywhere on its 4x4 wall, as every Delivery line in every
+    scenario already does. Its row in the ports table is there because the mesh generator needs
+    it.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
@@ -995,10 +1023,11 @@ attention.
   done hundreds of times rather than with the Silo's dial. A press-drag-release with a
   previewed route is exactly that: fast, repeatable, and nothing to transcribe.
 
-**Open: a Belt still costs nothing**, so the HUD's route line reads "free". `content/tuning.toml`
-says in as many words that the ticket giving Belts a cost should give Walls one at the same
-time, in whatever table ends up owning both; the length is the number a player actually
-decides on and it is on screen before the release.
+**A Belt costs a plate a tile, and the HUD's route line says what the route will cost before
+the release.** #47 gave Belts and Walls a price in `content/structures.csv`, which is the table
+that owns both — see "What a Belt and a Wall cost", below. The length was always the number a
+player decides on; now the bill beside it is the consequence of that decision, which is what
+makes laying out a Factory a question of routing rather than of taste.
 
 ### The update order, and the bias it avoids
 
@@ -1553,12 +1582,14 @@ points, tuning rather than a row for the reason a Belt's rating is.
   and the run is the thing; a Wall is a tile because the only question it answers is whether
   *this* tile is walkable, and because a Wall chewed through in the middle of a line has to
   leave the rest of the line standing.
-- **A Wall costs nothing to build, and there is deliberately no tuning key for a cost.** A
-  build cost names an Item, the Items that exist are exactly the ones the Recipes mention, and
-  `machines.csv` is where a cost sits *next to* that check. Naming one in tuning would couple
-  the tuning file to the Recipe table from the other side of the content directory, and it
-  broke every test that supplies its own Recipes when it was tried. The ticket that gives Belts
-  a cost should give Walls one at the same time, in whatever table ends up owning both.
+- **A Wall costs two plates a tile, out of `content/structures.csv`**, which is the table #47
+  added to own a Belt's price and a Wall's together. It is deliberately *not* a tuning key, and
+  the reason is the trap that stopped this being done sooner: a build cost names an Item, the
+  Items that exist are exactly the ones the Recipes mention, and `machines.csv` is where a cost
+  sits *next to* that check. A key in tuning would couple the tuning file to the Recipe table
+  from the other side of the content directory, and it broke every test that supplies its own
+  Recipes when it was tried. See "What a Belt and a Wall cost", below, for how the table avoids
+  that.
 - `WorldView` draws them through **one MultiMesh**, with per-instance colour for health,
   because a Wall is the cheapest thing a player builds and a late-game maze is hundreds of
   them. `test_world_view` asserts the scene tree does not grow by a node for thirty of them.
@@ -2206,7 +2237,9 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   warm. On the **dock tile** rather than the port tile: the port tile is part of the
   footprint, so a marker there is a marker inside the Machine — which a render showed
   immediately — and the tile outside is the more useful answer anyway, because it is where
-  the Belt goes.
+  the Belt goes. **Since #47 the arrow is a promise the Simulation keeps**: a Belt docks against
+  a declared port and nowhere else, so the dock tile the arrow stands on is literally the tile a
+  Belt has to start on or end against. Until then it was a drawing of a rule nobody enforced.
 - **What is not connected is marked where it is not connected.** `query_belt_end_is_connected`
   and `query_belt_start_is_fed` are the geometry halves of `_hand_off` and `_load_from_port`,
   so a Belt drawn as connected is one that would really hand an Item over; a red post stands
@@ -2328,7 +2361,8 @@ A Machine an Enemy chewed down returns nothing at all.
 Where the stock comes from is `player.starting_stock`: an explicit `item:count` bill rather
 than the count-of-everything scaffold it replaced. It is granted once at construction, so
 raising it mid-Run is not a way to conjure materials. The shipped value is
-`"iron_plate:80"` — the whole competent Factory costs 78 — so **a Run opens with the opening
+`"iron_plate:110"` — the whole competent Factory costs 108, being 78 of Machines and 30 tiles
+of Belt at a plate each — so **a Run opens with the opening
 line and two plates over**, and everything past that is unlocked at the Nest.
 
 A tuning key rather than a per-Item key, and a quoted string rather than a table, because
@@ -2350,6 +2384,74 @@ Run opens able to build its line and swing a wrench and unable to fire a shot. T
 exists now; what has not been done is the pass that checks a Run can actually keep a magazine
 full out of it, which is a balance question and wants somebody playing it. See the Gear
 section.
+
+### What a Belt and a Wall cost
+
+#47, and the half of it that is about the production loop rather than about the economy. The
+length of a route is the number a player actually decides on, and it is on screen before the
+drag is released — so a free Belt made layout a question of taste and a priced one makes it a
+question of routing, which is the decision a factory game is about. A Wall was the cheapest
+thing in the game at nothing at all.
+
+**`content/structures.csv` is the table that owns both**, one row per thing that is built and is
+not a Machine, with a `build_cost_per_tile` column in the same `item:count` form a Recipe's
+inputs and a Machine's `build_cost` use. A Belt is a plate a tile and a Wall is two.
+
+- **Neither is a row in `content/machines.csv`, and that was never in question.** DESIGN.md
+  lists both alongside the Nest, outside the eight Machines, and GLOSSARY.md keeps the words
+  apart. A structure has no Recipe, no Power, no ports, no buffers and no role, so the only
+  thing a table has to say about one is what it costs — which is exactly what
+  `StructureDefinition` carries and all it carries.
+- **The set of structures is closed, which is the opposite of the Machine table and is right.**
+  A ninth Machine is a row; a third structure would need a `BUILD_*` intent, so a row for one
+  would be a number nothing reads. The loader therefore refuses a row naming anything but
+  `belt` and `wall`, and refuses a file that omits either.
+- **How the naming trap was solved, because it is why this had not been done.** A build cost
+  names an Item, the Items that exist are exactly the ones the Recipes mention, and
+  `machines.csv` is where a cost already sits *next to* that check. A key in
+  `content/tuning.toml` would couple the tuning file to the Recipe table from the other side of
+  the content directory — and it broke every test that supplies its own Recipes when it was
+  tried, because such a test's Recipes do not mention `iron_plate`, so a tuning value that did
+  would make its whole definition set an error and carry no definitions at all. The table fixes
+  that in two moves. It is **read after the Recipes and checked against them** by
+  `_check_structures_against_recipes`, which is `_check_machines_against_recipes` pointed at the
+  other table. And **a caller that supplies no structures source gets structures that are
+  free**, which is not a default smuggled in: it is the same thing an empty `build_cost` column
+  already means for a Machine, and `load_from_directory` lists the file among the ones whose
+  absence is an error naming the path — so a Run can never lose the prices quietly and a test
+  that never asked for them never meets them.
+  `test_structure_costs.test_a_set_that_brings_its_own_recipes_gets_structures_that_are_free`
+  is the acceptance criterion as a test.
+- **Charged per tile and refunded per tile, through one function.** `_settle_structure_cost`
+  takes a tile count and spends it, or hands it back when the count is negative, so a refund
+  cannot come to disagree with a charge about the price. Demolishing a Belt returns every plate
+  its run cost along with the Items riding it; demolishing a Wall returns its tile's two. An
+  Enemy chewing either down returns **nothing**, which is #11's asymmetry applied to the
+  cheapest thing a player builds.
+- **It lands whole or not at all.** `MISSING_MATERIALS` comes out of `_belt_route_refusal`
+  after the ground and before anything is laid, so a route the wallet cannot cover lays not one
+  tile and the hash does not move — a route half-laid up to the tile the plate ran out on is a
+  player demolishing what they did not ask for, which is the argument that function already
+  makes about an obstruction. The wallet is checked **last**, because a player dragging across a
+  Machine has a problem they fix by dragging somewhere else.
+- **The bill is on screen before the release, and it is the bill for the route.**
+  `query_belt_route_cost_items` and `query_belt_route_cost_counts` are projections about a route
+  that has not been laid — the arrangement every refusal in this project has — and the HUD's
+  route line reads them beside the length. Per route rather than per tile, because the per-tile
+  price is a number a player would otherwise multiply by the length while holding a mouse
+  button down. The Machine picker's Belt cell quotes the per-tile figure instead, because a cell
+  is about the tool and the route line is about the drag.
+- **`player.starting_stock` moved with the price and for no other reason.** 110 plate against
+  the 78 the opening Factory's Machines cost and the 30 tiles of Belt that join them up: 108,
+  and the invariant that line has always stated — the opening line and two plates over — is
+  unchanged. Pricing Belts without moving it would have left every measured scenario unable to
+  lay the line its Machines were standing waiting for, which is not a balance finding; it is the
+  same Factory with the cost of its Belts not budgeted.
+
+What the price actually changed in the measured Runs is **when** a haul gets laid rather than
+whether — three scenarios now buy their Belts with the call-early lever, which is a Wave
+arriving sooner. See "What the Belt price cost the table", below.
+
 
 ### Rotation
 
@@ -3038,7 +3140,9 @@ spending and the thing you defend.
   would send the same intent with different numbers and the Simulation would not know the
   difference — the same split `BuildGun.refusal_text` makes.
 - **`test_nest_store.gd` ends with the acceptance test, and it runs on the shipped economy.**
-  `content/` unaltered: 80 plate, an opening line that costs 78, a second Ammo Press at 14.
+  `content/` unaltered: 110 plate, an opening line that costs 78 in Machines and nine tiles of
+  Belt on that compact Map, a second Ammo Press at 14, and the change spent on Wall so the
+  premise is empty pockets.
   It stands the whole line up, checks that a second Press is `MISSING_MATERIALS`, lets the
   Smelter belt plate into the Nest, withdraws 14 and builds it. The Map is the test's own,
   because the starter Map's Nodes are far enough apart that joining them up is a lesson in
@@ -3270,9 +3374,11 @@ it from several methods.
 
 ### The table, measured 2026-10-08
 
-Seeds 7, 11 and 29, and **every scenario ends on the same tick on all three.** `rifle_picket`,
-the one row that has ever spread, now differs only in peak Heat — 6186, 6178, 6174 — and not in
-when it ends. See "What the seed can reach", below.
+Seeds 7, 11 and 29. **Eight of the nine scenarios end on the same tick on all three**, and
+`rifle_picket` — the one row that has ever spread — spreads again: 27m18s, 27m20s and 26m39s,
+against the identical figure #46 measured. It is the only row that fires a ranged weapon, and
+`Simulation._scatter` is the only consumer of the seeded RNG in `sim/`, so this is the property
+behaving rather than changing. See "What the seed can reach", below.
 
 **Every column is the same scenarios through the same harness.** The first two differ by four
 numbers in one content file and nothing else. The third adds #30's collision and #34's Breaker
@@ -3284,19 +3390,21 @@ two ends belong to different tickets, and hand-merging three tables would record
 ever produced. See "What collision cost the two sorties", "What #34 cost the table", "What #37
 cost the table" and "What the shorter first Wave cost", below. The sixth is #46's branching
 Belts, measured on the merged tree with all nine scenarios unchanged, so the delta is attributable
-to the mechanic alone — see "What #46 cost the table".
+to the mechanic alone — see "What #46 cost the table". The seventh is #47's Belt price and
+declared ports, measured together on the merged tree, and **six of the nine rows did not move at
+all** — see "What the Belt price and the declared port cost the table".
 
-| Scenario | #26 before | #26 after | #34 | #37 | merged | **#46** | Wave | Peak Heat | What killed it, now |
-|---|---|---|---|---|---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | 3m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
-| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | 3m12s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
-| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | 28m48s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
-| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
-| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
-| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | 10m48s | **11m03s** | 12 | 2995 | swarmed, 16 rounds left, with **two Breaches** open |
-| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | 32m05s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | 28m02s | **28m02s** | 34 | 6186 | swarmed, 46s sooner than `competent` |
-| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | 16m10s | **15m22s** | 20 | 4906 | swarmed, **47% sooner** than `competent` |
+| Scenario | #26 before | #26 after | #34 | #37 | merged | #46 | **#47** | Wave | Peak Heat | What killed it, now |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | 3m22s | 3m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | 3m12s | 3m12s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | 28m48s | 28m48s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | 10m48s | 11m03s | **12m27s** | 15 | 3538 | swarmed, 16 rounds left, with **two Breaches** open |
+| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | 32m05s | 32m05s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | 28m02s | 28m02s | **27m18s** | 33 | 6051 | swarmed, 1m30s sooner than `competent` |
+| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | 16m10s | 15m22s | **16m40s** | 22 | 5433 | swarmed, **42% sooner** than `competent` |
 
 **#36 moved no row of this table, and that was the control its shape predicted**: it gave a
 player a Belt-routing tool and a port table to aim it with, and a scenario issues `BUILD_BELT`
@@ -3620,34 +3728,101 @@ a branch that makes no difference to a Run is a branch whose Belt was backed up 
 changing one. `artillery` losing 48 seconds is the Silo being charged properly rather than the
 Silo becoming too expensive, and `deep_digger` gaining 15 is a trap getting slightly less sharp.
 
+### What the Belt price and the declared port cost the table
+
+**Two changes measured together, and six of the nine rows did not move by a tick.** That is the
+control the shape of this ticket predicted and the most useful thing in the measurement, so it is
+worth saying why before the three rows that did.
+
+- **The declared port moved nothing, because every scenario Belt already docked legally.** This
+  was checked rather than hoped for: the shipped ports table was *re-declared against the Factory
+  the scenarios actually build* — a Miner's ore leaves by whichever face the line runs along, an
+  Ammo Press gives rounds back on three faces because `competent` takes two lines off its western
+  wall and one off its eastern, a Smelter takes ore on the north and coal on the west because that
+  is where its Belts arrive. Declaring the table to match the game that exists is content design
+  and the better half of this change; the alternative was re-routing every Factory in the project
+  to suit a declaration nobody had ever validated. One fixture did have to move — see below.
+- **The Belt price moved nothing where the opening bill absorbed it**, which is six rows.
+  `player.starting_stock` went 80 to 110 so the documented Factory's thirty tiles are budgeted,
+  and `bare`, `opening_line`, `competent`, `over_producer`, `fortified` and `hive_sortie` are
+  bit-identical across all three seeds to the figures #46 measured.
+
+The three that moved all moved for the same reason, and it is the reason the price exists: **a
+haul that used to be free is now bought with a pull of the call-early lever**, which is a Wave
+arriving sooner.
+
+- **`deep_digger` is 12m27s against 11m03s — a minute and a half *longer*.** Its two Nest lines
+  are forty and twenty-four tiles, 64 plate against an opening bill budgeted for the Factory's
+  own thirty, so they wait on the lever: two pulls buy the coal line at two minutes and a third
+  buys the ammunition line at three, where both used to go up at tick 3. The coal line therefore
+  diverts the Boiler's fuel later and comes down at five minutes rather than three. More of the
+  Run is spent with a Boiler that is actually burning, so the Factory produces more, carries 18%
+  more peak Heat and reaches Wave 15 rather than 12 — and still digs to Depth 2 and still opens
+  its second Breach, which is what the row measures. **The lesson the price teaches is the one
+  finding 9 said nothing said out loud:** a forty-tile haul to pay a twenty-coal bill is now a
+  visible forty-plate decision made before the drag is released.
+- **`artillery` is 16m40s against 15m22s, 78 seconds longer**, by the same mechanism in a row that
+  was already lever-funded: its four extra Belts cost plate the lever has to find first, so the
+  Silo stands up later, and a Run that spends less of itself at 1,060 kW of demand lasts longer.
+  It still powers, loads and fires. 42% of `competent` rather than 47%.
+- **`rifle_picket` is 27m18s against 28m02s, 44 seconds shorter, and its sign has now moved for
+  the fifth time.** The twenty-four-tile line that banks his magazine costs 24 plate, bought with
+  one lever pull the row did not carry before. `SAME_LENGTH_SECONDS` widened from 90 to 150 to
+  keep the claim it guards — a rifleman is neither free nor ruinous — because 90 seconds exactly
+  is the measured margin and would sit on the old boundary. **Do not read an Ammunition finding
+  into it**: five tickets have now moved this margin without one of them touching what a round
+  costs or what a Press makes.
+
+**No balance number was changed to make any of this true**, and the one tuning value that moved —
+`player.starting_stock`, 80 to 110 — moved with the Belt price and is budgeted from it rather than
+chosen: 78 of Machines plus the 30 tiles the documented Factory needs, and two over, which is the
+invariant that line has always stated.
+
+**One fixture's docking changed and its meaning changed with it**, which is worth recording
+plainly because it is the one place the declaration contradicted a Factory somebody had written.
+`test_nest_store`'s opening line runs **east to west** — ore from a Miner at x = 12 into a Smelter
+at x = 7, plate on westward to the Nest — and a Smelter stood square takes ore on its north and
+west faces and gives plate back on its south and east. Stood square in that line it faces the
+wrong way and neither of its Belts connects. The fixture now builds the Smelter and the Boiler
+**turned half round**, which is what the arrows on them say and what a player would do. What
+changed in meaning is that the fixture is now also a statement about rotation: it says a Factory
+can be built in either direction *provided the Machines are turned to suit*, which before this
+ticket was not a thing a Factory could get wrong. `test_belts`'s branching Smelter moved for the
+same reason — its second branch left by the Smelter's northern wall, which is an input face, and
+now leaves by the southern one.
+
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
 the Simulation rather than of the harness.** The Map is handcrafted (`MapLayout.starter()`
 consults no seed), the Wave schedule is a function of Heat, and the single consumer of the
 seeded RNG in the whole of `sim/` is `Simulation._scatter` — the spread on a *ranged* shot. So
-three seeds are three identical Runs, down to which Machines were lost in which order, and
+three seeds are three identical Runs — down to which Machines were lost in which order — for
+every scenario in which nobody pulls a trigger, and
 `test_balance.test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed` asserts
-exactly that.
+exactly that on `competent`. `rifle_picket` is the one row that fires, and it is the one row
+that has ever spread.
 
 Two consequences worth knowing before anybody quotes a variance:
 
 - **The three seeds in the measurement are a demonstration, not a sample.** There is no
   distribution to sample until a player opens fire — and `rifle_picket` is the one row that
   does. #26 measured it identical across all three seeds; with #30's collision in it was 26m32s
-  on seed 7 against 26m29s on seeds 11 and 29; on #35's branch it spread eleven seconds. **On
-  the merged schedule the spread in Run length is back to zero**: 28m02s on all three seeds, and
-  the only figure that still differs is peak Heat — 6186, 6178 and 6174. That is the claim in
-  its clearest form yet. The seeded RNG moves *where the rounds go*, which moves how much Heat
-  the Factory had made by the end, and it does not move how long the Nest stands. Every row in
-  the table is now bit-identical across seeds in end tick, and
-  `test_balance.test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed` asserts that
-  on `competent`.
+  on seed 7 against 26m29s on seeds 11 and 29; on #35's branch it spread eleven seconds; on the
+  merged schedule and through #46 it was identical again at 28m02s. **#47 split it once more**:
+  27m18s, 27m20s and 26m39s, a spread of 39 seconds, with peak Heat 6051, 6001 and 5892.
 
-  Worth not over-reading: the spread going to zero is not an improvement anybody made. It is
-  where this schedule's phase happens to put the last Wave, and the next ticket that re-phases
-  the schedule may well split the three seeds again. The *property* — scatter moves rounds, not
-  Run length — is the thing to hold on to, and it is what the test asserts.
+  The last paragraph of this bullet used to warn that the spread going to zero was not an
+  improvement anybody made and that the next ticket to re-phase the schedule might split the
+  seeds again. It did, and the ticket was #47 — which bought the picket's Belt with a lever pull
+  and moved the schedule's phase by one Wave. So the warning is now a measurement rather than a
+  caution, and the **property** is the thing to hold on to: scatter moves where the rounds go,
+  which moves how much Heat the Factory had made by the end and, on a row that fires, when the
+  last Wave lands. It does not move how long a Factory that fires nothing stands. The other
+  eight rows are bit-identical across all three seeds, and
+  `test_balance.test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed` asserts that
+  on `competent`, which is one of them.
 - **`Simulation.hash()` cannot be used as the evidence**, which is a trap worth naming because
   it looks like it should be: the hash feeds `_rng.state`, which is seeded, so two seeds differ
   in hash from tick 0 whether or not a draw is ever taken.
@@ -3737,10 +3912,15 @@ recorded here instead, which is what #26 asked for.
    share: the line now takes half the Miner's coal while it fills instead of all of it, which is
    what moved `deep_digger` itself from 10m48s to 11m03s and its Power deficit down to 17% of the
    Run. Unlike the store this is at least *visible* — it is a Belt packed solid with coal — and it
-   is bounded by something the player built rather than by a number in `tuning.toml`. But "I ran a
-   Belt to the Nest and my Factory browned out for half the Run" is still a lesson nothing says
-   out loud, and the HUD is where it would be said. **Re-measuring the demolish-removed variant is
-   the cheap half of that ticket.**
+   is bounded by something the player built rather than by a number in `tuning.toml`. **#47 made
+   the half of it that is a decision say itself out loud**: the line costs forty plate and the
+   route line quotes the bill beside the length before the drag is released, so "forty tiles to
+   deliver twenty coal" is now a visible trade rather than a free one — and `deep_digger` buys that
+   line with two pulls of the lever instead of getting it at tick 3, which is what moved the row to
+   12m27s. What is still unsaid is the *consequence*: the Belt holds 160 coal before back-pressure
+   reaches the Miner, and nothing warns that the Boiler is going to go hungry for as long as it
+   fills. That is a HUD ticket, and **re-measuring the demolish-removed variant is still the cheap
+   half of it.**
 10. **"The Turret ran dry" has to be measured on the Factory, not on the Turret.** A destroyed
    Turret holds no rounds and contributes no ticks, so a per-Turret ratio reports 0% for the
    most common ending there is: the Ammunition ran out, and then the Breakers ate the Turret.
@@ -3753,11 +3933,26 @@ Honest residue, so the next ticket does not have to rediscover it:
 - **Anything that is about feel through a mouse.** `gear.view_kick_degrees_per_shot`,
   `gear.enemy_hit_radius_metres`, `silo.paint_seconds`, and whether a player *hesitates* before
   leaving the Factory. A harness has no opinion about any of them.
+- **Whether a priced Belt makes routing interesting or makes it fiddly**, which is #47's whole
+  bet and the one thing a scripted session cannot have an opinion about. A scenario issues
+  `BUILD_BELT` with two tiles; a player drags a route watching a bill climb, and whether that
+  reads as a decision or as book-keeping is a question for somebody with a mouse. The two numbers
+  to reach for if it reads as book-keeping are the price in `content/structures.csv` and
+  `player.starting_stock`, in that order.
+- **Whether the declared port reads as a rule or as a mystery.** The arrows have been on screen
+  since #36 and now mean something, so a Belt that will not connect is a Belt whose Machine is
+  facing the wrong way — and the fix is to rotate it, which is a thing the HUD never says. A
+  player who does not notice the arrows will read a refusal as a bug. `test_nest_store` needed
+  exactly that fix to its own Factory, which is weak evidence that a person will too.
 - **Hand repair under fire.** No scenario picks up a wrench to save a Machine, because chasing a
   Breaker open-loop is not possible. `wrench.repair_points_per_second` against
   `enemy.breaker_damage` is still an arithmetic claim.
 - **Walls.** Nothing in the nine scenarios builds one, so `wall.health` against
-  `enemy.breaker_damage` is likewise unplayed.
+  `enemy.breaker_damage` is likewise unplayed — and since #47 so is **what a Wall costs**. Two
+  plates a tile was priced against a Belt's one, on the argument that a Wall's whole job is to be
+  chewed through and a maze should not be cheaper than the line it protects. Nothing has measured
+  whether a player ever wants one at that price, and the scenario that would say is a
+  `competent` Factory that walls its lane instead of building its second Turret.
 - **Two of the three Stratagems, and the Painting's length.** The Silo itself is measured now —
   `artillery` powers one, loads it and fires it — but what it fires is a **Sentry Drop**, because
   that is the one row the shipped Delivery chain does not lock: `supply_drop` sits behind

@@ -1128,16 +1128,23 @@ func test_the_shipped_smelter_can_feed_two_consumers_at_once() -> void:
 	# wants 20 plate a minute and the Smelter makes 18.75, so before #46 a second Belt off that
 	# Smelter never received a single plate and `artillery` had to build a whole second ore
 	# line to feed its Silo. Shipped Machines, shipped Recipes, nothing inline.
+	#
+	# **Every Belt here docks against a declared port, which #47 made the rule.** The Smelter
+	# takes ore along its western face and gives plate back along its southern and eastern ones,
+	# and the Ammo Press takes plate along its northern face — so the branch that used to leave
+	# by the Smelter's *north* wall now leaves by its south, and the Press stands below rather
+	# than beside. The claim is unchanged and the geometry is the one the arrows were always
+	# drawing; see `content/machine_ports.csv`.
 	var sim: Simulation = _sim_on_one_node()
 	sim.step([
 		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
 		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(3, 0, 0)),
 		InputAction.build_machine(0, _smelter_index(sim), Vector3i(4, 0, -1)),
-		InputAction.build_belt(0, Vector3i(7, 0, 0), Vector3i(8, 0, 0)),
 		InputAction.build_machine(
-			0, sim.query_definitions().machine_index("ammo_press_mk1"), Vector3i(9, 0, -1)
+			0, sim.query_definitions().machine_index("ammo_press_mk1"), Vector3i(4, 0, 4)
 		),
-		InputAction.build_belt(0, Vector3i(4, 0, -2), Vector3i(4, 0, -5)),
+		InputAction.build_belt(0, Vector3i(4, 0, 2), Vector3i(4, 0, 3)),
+		InputAction.build_belt(0, Vector3i(7, 0, 0), Vector3i(9, 0, 0)),
 	])
 	assert_eq(sim.query_machine_count(), 3, "the Miner, the Smelter and the Ammo Press")
 	assert_eq(sim.query_belt_count(), 3, "the ore Belt and the Smelter's two branches")
@@ -1145,7 +1152,7 @@ func test_the_shipped_smelter_can_feed_two_consumers_at_once() -> void:
 
 	# Both branches ran. The equal share itself is asserted on a Miner above, where the Items
 	# stay where they can be counted; here the Press eats what it is sent, which is the point.
-	var the_other_way: int = sim.query_belt_at_tile(Vector3i(4, 0, -2))
+	var the_other_way: int = sim.query_belt_at_tile(Vector3i(7, 0, 0))
 	var elsewhere: int = sim.query_belt_item_count(the_other_way)
 	assert_true(elsewhere > 0, "the second branch carried %d plate, not none" % elsewhere)
 	assert_true(
