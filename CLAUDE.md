@@ -665,18 +665,23 @@ Measured, with each cue's catalogue gain applied, because "subtle" has to be a n
 
 | cue | gain | integrated | centroid | peak |
 |---|---|---|---|---|
-| Telegraph, before | −9 dB | −19.0 LUFS | 953 Hz | −10.1 dBFS |
-| **Telegraph, now** | **−22 dB** | **−43.3 LUFS** | **148 Hz** | **−23.2 dBFS** |
-| `factory_bed` | −16 dB | −36.4 LUFS | 565 Hz | −23.8 dBFS |
-| `factory_busy` | −14 dB | −36.9 LUFS | 1920 Hz | −17.3 dBFS |
+| Telegraph, #35's | −9 dB | −19.0 LUFS | 953 Hz | −10.1 dBFS |
+| **Telegraph, now** | **−24 dB** | **−45.3 LUFS** | **148 Hz** | **−25.2 dBFS** |
+| `factory_bed` | −24 dB | −44.4 LUFS | 565 Hz | −31.8 dBFS |
+| `factory_busy` | −20 dB | −42.9 LUFS | 1920 Hz | −23.3 dBFS |
 | `turret_fire` | −12 dB | −26.0 LUFS | 332 Hz | −12.9 dBFS |
+| `breach_opens` | −7 dB | −29.2 LUFS | 1996 Hz | −8.0 dBFS |
 | `wave_begin` | −3 dB | −17.8 LUFS | 335 Hz | −3.9 dBFS |
 
-It is **genuinely quiet**, said plainly: its peak is level with the quiet ambience bed's
-and six decibels under the busy one, and it is the lowest-centred sound in the game by a
-factor of two. What makes it noticeable at that level is that it is a transient against a
-continuous bed, which costs no loudness at all.
-`test_the_telegraph_cue_is_the_quietest_thing_in_the_catalogue` holds it there.
+It is **genuinely quiet**, said plainly rather than hedged: 26 LU quieter than the cue the
+player called awful, 15 dB down at the peak, and an octave and a half lower in centroid.
+Integrated it is below *both* ambience beds; what keeps it audible is the one number where
+it is not, its peak, which stands 6.6 dB over the quiet bed's — because a transient against
+a continuous bed costs almost no loudness to hear.
+`test_the_telegraph_cue_is_the_quietest_thing_in_the_catalogue` holds it there, and
+`test_the_ambience_beds_sit_under_everything_they_are_a_bed_for` was widened from the two
+beds by name to `LOOPING_CUES` so that a cue which is itself quasi-ambient can sit on the
+floor with them instead of failing for it.
 
 **There is no separate Breach klaxon** — the Telegraph's is the only sustained warning in
 the game. The nearest thing is `breach_opens`, and it had the same defect from the same
