@@ -1687,16 +1687,16 @@ func _ensure_swarm_mesh(kind: int) -> void:
 ## **There was a second branch here and #49 removed it. The note is the deliverable.** The
 ## pack splits each character into a body material and an 80-vertex `Glow` material for its
 ## eye sockets, and #38 painted that surface with an ember emission and recorded it as the
-## thing that would make a swarm readable at thirty metres. It renders nothing, on every one
-## of the six committed characters, and the documentation calling it the readability aid is
-## what #49 was opened about.
+## thing that would make a swarm readable at thirty metres. It renders nothing, and the
+## documentation calling it the readability aid is what #49 was opened about.
 ##
 ## The plumbing was never the problem and that was checked rather than assumed: the baked
 ## mesh really does carry a surface named `Glow`, the branch really did fire, and the same
 ## emission on the *body* surface renders a glowing skeleton with full bloom. The geometry is
 ## simply inside the skull — 0.13 m behind its front on the Minion, and wider than the skull
-## is, so what a player looks into is brow and cheek. A render at `pair` range shows both
-## kinds with dark sockets, which is the measurement that settles it.
+## is, so what a player looks into is brow and cheek. All six committed characters carry the
+## same 80-vertex `Glow` box at the same place on the shared rig, and a render at `pair` range
+## shows the three that are cast with dark sockets, which is what settles it.
 ##
 ## It is gone rather than kept-in-case, because "it will light up the day somebody ships
 ## different art" is an untested claim about art nobody has, and an untested claim in a

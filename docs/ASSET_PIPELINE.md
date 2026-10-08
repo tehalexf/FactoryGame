@@ -845,8 +845,9 @@ characters. The plumbing was never at fault and #49 checked rather than assumed 
 mesh really does carry a surface named `Glow`, the branch really did fire, and the same
 emission on the *body* surface renders a glowing skeleton with full bloom. The geometry is
 inside the skull — 0.13 m behind its front on the Minion, and wider than the skull is — so
-what a player looks into is brow and cheek. A close render shows both kinds with dark
-sockets, which is the measurement that settles it.
+what a player looks into is brow and cheek. All six characters carry the same 80-vertex glow
+box at the same place on the shared rig, and a close render shows the three that are cast
+with dark sockets, which is what settles it.
 
 #38 left the branch in place against a future character with exposed glow geometry. #49
 removed it, because that is an untested claim about art nobody has, and an untested claim in

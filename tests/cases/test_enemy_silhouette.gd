@@ -133,7 +133,21 @@ func test_a_crawler_and_a_breaker_are_told_apart_by_being_different_sizes() -> v
 
 
 ## Every cast kind's outline, in both views, over `POSES` frames of its walk.
+##
+## Cached across the methods that read it, the way `test_balance.gd` caches a played Run and
+## for the same reason: this skins about five thousand vertices and rasterises about six
+## thousand triangles eighteen times over, which is worth paying once.
+static var _cached_outlines: Dictionary = {}
+
+
 func _outlines() -> Dictionary:
+	if not _cached_outlines.is_empty():
+		return _cached_outlines
+	_cached_outlines = _measure_outlines()
+	return _cached_outlines
+
+
+func _measure_outlines() -> Dictionary:
 	var sim: Simulation = _a_wave_of_every_kind()
 	var heights: Dictionary = _heights(sim)
 	var bodies: EnemyBodies = EnemyBodies.new()
