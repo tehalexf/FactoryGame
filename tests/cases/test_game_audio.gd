@@ -831,3 +831,130 @@ func test_the_director_holds_no_opinion_about_the_run() -> void:
 			_names(second.cues_for_frame(sim)),
 			"two listeners of the same Run must hear the same thing"
 		)
+
+
+## #35 again, and the half of *"needs variance"* the branch could not reach: a hero
+## cue resolved to **one** path, so the five committed takes of a wrench swing were
+## variance for everybody except the player who filed the report. `convert_audio.sh
+## --takes N` cuts several and `SoundBank._hero_paths` walks the numbered suffixes.
+##
+## Asserted **only where the bundle is actually on this machine**, which is the same
+## shape `WeaponViewmodel`'s tests take about the purchased arms: on a clone without
+## it there is nothing to make a claim about, and the claim for that clone is
+## `test_the_cues_a_player_hears_over_and_over_have_more_than_one_take` above.
+func test_the_hero_takes_vary_too_when_the_bundle_is_on_this_machine() -> void:
+	var bank: SoundBank = SoundBank.new()
+	var checked: int = 0
+	for cue: String in [
+		SoundBank.WEAPON_SWING,
+		SoundBank.WEAPON_HIT,
+		SoundBank.ENEMY_ATTACK,
+		SoundBank.ENEMY_DEATH,
+		SoundBank.PLAYER_LAND,
+	]:
+		if not bank.is_hero(cue):
+			continue
+		checked += 1
+		var paths: PackedStringArray = bank.paths_for(cue)
+		assert_true(
+			paths.size() > 1,
+			"'%s' has the bundle and still one hero take, so a Wave plays one sample" % cue
+		)
+		# Several takes and not the same file several times, which is the whole point.
+		var seen: Dictionary = {}
+		for path: String in paths:
+			assert_false(seen.has(path), "'%s' resolves to %s twice" % [cue, path])
+			seen[path] = true
+		# And the variation still comes out of the tick rather than a clock.
+		var at_a_tick: AudioStream = bank.stream_for(cue, 3)
+		assert_eq(bank.stream_for(cue, 3), at_a_tick, "the same tick must choose the same take")
+		var differed: bool = false
+		for tick: int in range(paths.size()):
+			if bank.stream_for(cue, tick) != at_a_tick:
+				differed = true
+		assert_true(differed, "'%s' must choose differently on a different tick" % cue)
+
+	if checked == 0:
+		# Not a skip and not a pass by accident: say which world this run was in.
+		assert_true(
+			true, "no Sonniss bundle on this machine, so there are no hero takes to vary"
+		)
+
+
+## A hero cut and a Kenney take of the same event are **not** reliably the same
+## loudness, and where they are far apart one gain cannot be the mix in both worlds.
+## So a catalogue entry may carry a fourth number, the gain for when the hero take is
+## the one playing, and `gain_db` is its only reader.
+##
+## Two cues need it and the reasons are different. `FACTORY_BUSY` has to sit *above*
+## `FACTORY_BED` or the crossfade that makes a Factory's growth audible inverts — and
+## the hero busy cut measures below the hero bed while the Kenney busy loop measures
+## above the Kenney bed, so the gap has to be built differently in each world.
+## `WEAPON_SWING` is a whoosh standing in for impacts: low crest, so peak-normalising
+## it leaves it 5 dB quieter than they are.
+##
+## The claim under test is not the numbers. It is that **whichever world this machine
+## is in, `gain_db` answers for the file it is about to play**, and that a fourth gain
+## is only ever *less* attenuation — a hero cut needing more would mean the hero cut
+## was the louder file, which is the opposite of why this mechanism exists.
+func test_a_cue_whose_two_sources_differ_in_loudness_carries_a_gain_for_each() -> void:
+	var bank: SoundBank = SoundBank.new()
+	var declared: int = 0
+	for cue: String in bank.cues():
+		var entry: Array = SoundBank.CATALOGUE[cue] as Array
+		if entry.size() < 4:
+			continue
+		declared += 1
+		var committed: float = entry[2] as float
+		var hero: float = entry[3] as float
+		assert_eq(
+			bank.gain_db(cue),
+			hero if bank.is_hero(cue) else committed,
+			"'%s' must be mixed at the gain of the file it is going to play" % cue
+		)
+		assert_true(
+			hero > committed,
+			(
+				"'%s' asks for more attenuation on its hero take (%f) than on its"
+				+ " fallbacks (%f), which inverts what the fourth gain is for"
+			) % [cue, hero, committed]
+		)
+	assert_true(declared > 0, "nothing declares a per-source gain; the mechanism is dead code")
+
+
+## The loud ambience bed has to be the loud one. `ambience_db` crossfades the pair as
+## the Factory grows and that is the whole of "growth is audible" — a busy bed mixed
+## *under* the quiet one would make a Factory at full tilt the quieter of the two.
+##
+## Asserted about `ambience_db` at a size where both are running rather than about the
+## two gains, because the gains are only the ceilings the ramps climb towards.
+func test_the_busy_bed_is_the_louder_of_the_two_beds() -> void:
+	var bank: SoundBank = SoundBank.new()
+	assert_true(
+		bank.gain_db(SoundBank.FACTORY_BUSY) > bank.gain_db(SoundBank.FACTORY_BED),
+		(
+			"the busy bed's ceiling (%f) is at or below the quiet bed's (%f)"
+			% [bank.gain_db(SoundBank.FACTORY_BUSY), bank.gain_db(SoundBank.FACTORY_BED)]
+		)
+	)
+
+
+## The one cue in the catalogue that is cut as a one-shot and played as a loop, and the
+## reason it is: a klaxon's attack is the warning, and `--mode loop` crossfades a cue's
+## tail over its own head, which would fade that attack in. So the Telegraph's cue is a
+## horn blast with silence either side of it, looped by the engine, and it rearticulates
+## once a cycle the way a real klaxon does.
+func test_the_klaxon_is_looped_by_the_player_rather_than_by_the_cut() -> void:
+	assert_true(
+		SoundBank.LOOPING_CUES.has(SoundBank.TELEGRAPH_KLAXON),
+		"a warning that stopped after one blast would not be a warning"
+	)
+	var recipe: String = FileAccess.get_file_as_string("res://tools/assets/convert_audio.sh")
+	assert_false(recipe.is_empty(), "the recipe must be readable to be asserted about")
+	for line: String in recipe.split("\n"):
+		if not line.begins_with("cue telegraph_klaxon"):
+			continue
+		assert_false(
+			line.contains("--mode loop"),
+			"the klaxon must be cut as a one-shot, or its attack is crossfaded away"
+		)

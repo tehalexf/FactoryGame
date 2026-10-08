@@ -18,6 +18,7 @@ the event is somewhere in the middle and nobody can be asked to find it by hand.
 
 import json
 import math
+import re
 import shutil
 import subprocess
 import sys
@@ -61,6 +62,23 @@ def setUpModule():
     # Something far too short for any sensible cut, to prove the refusal.
     _signals["brief"] = _work / "brief.wav"
     _render(_signals["brief"], "sine=f=440:d=0.2", "volume=0.5")
+    # Two **gestures**, each a quiet run-up that swells into a loud hit, with digital
+    # silence between them: the shape of a melee library's swing-to-impact takes, and
+    # the one `--lead auto` exists for. The run-ups are deliberately different
+    # lengths — 0.30 s and 0.15 s — because that is the thing a fixed `--lead` cannot
+    # be right about twice. Hits land at 2.0 s and 6.0 s.
+    _signals["gestures"] = _work / "gestures.wav"
+    _render(
+        _signals["gestures"],
+        "sine=f=300:d=9",
+        # Each window is scaled to its own envelope and everything else is zeroed, so
+        # between the gestures the file is digitally silent rather than quiet.
+        "volume=0.06:enable='between(t,1.70,2.00)',"
+        "volume=1.0:enable='between(t,2.00,2.25)',"
+        "volume=0.06:enable='between(t,5.85,6.00)',"
+        "volume=0.9:enable='between(t,6.00,6.25)',"
+        "volume=0:enable='not(between(t,1.70,2.25)+between(t,5.85,6.25))'",
+    )
 
 
 def tearDownModule():
@@ -97,6 +115,11 @@ def _probe(path: Path) -> dict:
         "codec": stream["codec_name"],
         "duration": float(report["format"]["duration"]),
     }
+
+
+def _second(report: str) -> float:
+    """The second the converter says it cut from, out of its own one-line report."""
+    return float(re.search(r"@ ([0-9.]+) s", report).group(1))
 
 
 def _convert(*arguments: str) -> subprocess.CompletedProcess:
@@ -182,6 +205,153 @@ class FindingTheOnset(unittest.TestCase):
         self.assertEqual(wav_to_cue.attack_offset_seconds([]), 0.0)
 
 
+class FindingSeveralTakes(unittest.TestCase):
+    """`--takes` reads a non-cumulative envelope, so it rises and falls per take."""
+
+    @staticmethod
+    def _hits(at: list[tuple[float, float]], length: float = 12.0) -> list[tuple[float, float]]:
+        """An 85 ms frame envelope that is silent except for a hit at each `(second, dB)`."""
+        frames = []
+        second = 0.0
+        while second < length:
+            level = -90.0
+            for when, peak in at:
+                if when <= second < when + 0.2:
+                    level = peak
+            frames.append((second, level))
+            second += 0.0853333
+        return frames
+
+    def test_the_loudest_take_comes_first_so_adding_one_does_not_renumber_the_rest(self):
+        frames = self._hits([(1.0, -12.0), (4.0, -3.0), (8.0, -20.0)])
+        three = wav_to_cue.take_offsets_seconds(frames, 3, 0.5)
+        self.assertEqual(len(three), 3)
+        self.assertAlmostEqual(three[0], 4.0 - wav_to_cue.PRE_ATTACK_SECONDS, places=1)
+        self.assertEqual(
+            wav_to_cue.take_offsets_seconds(frames, 2, 0.5),
+            three[:2],
+            "asking for one fewer take must leave the others where they were",
+        )
+
+    def test_two_peaks_inside_one_hit_are_one_take(self):
+        # The bug this guards against, measured on a tool recording: a take whose
+        # envelope stays flat for half a second has two frames a gap apart that back
+        # off to onsets 80 ms apart, and the two cuts then overlap almost entirely.
+        frames = [(second * 0.0853333, -4.0 if 10 <= second <= 20 else -90.0) for second in range(40)]
+        self.assertEqual(
+            len(wav_to_cue.take_offsets_seconds(frames, 4, 0.4)),
+            1,
+            "one event is one take however many frames of it are near the peak",
+        )
+
+    def test_a_take_more_than_the_floor_below_the_loudest_is_not_a_take(self):
+        frames = self._hits([(1.0, -3.0), (5.0, -3.0 - wav_to_cue.TAKE_FLOOR_DB - 6.0)])
+        self.assertEqual(
+            len(wav_to_cue.take_offsets_seconds(frames, 2, 0.5)),
+            1,
+            "the room tone between the takes is not a quiet take of the prop",
+        )
+
+    def test_room_tone_holds_no_takes_at_all(self):
+        self.assertEqual(wav_to_cue.take_offsets_seconds(self._hits([]), 3, 0.5), [])
+        self.assertEqual(wav_to_cue.take_offsets_seconds([], 3, 0.5), [])
+
+
+class TheFrameTheAnalysisReadsOn(unittest.TestCase):
+    """The in-point can only be as precise as the frame it is measured on.
+
+    Asserted here rather than through an output file because the frame size does not
+    appear anywhere in what `parse_frame_peaks` reads — it is a property of the
+    request — and because the thing it fixes is a 0-130 ms inconsistency between
+    takes, which no single cue's duration or level can show.
+    """
+
+    def test_the_hunt_asks_for_a_frame_short_enough_to_place_an_onset(self):
+        self.assertLessEqual(
+            wav_to_cue.ANALYSIS_FRAME_SAMPLES / wav_to_cue.SAMPLE_RATE,
+            0.020,
+            "an onset offset under ~20 ms is not heard as a separate event; "
+            "ffmpeg's own 4096-sample frame is 85 ms and four times too coarse",
+        )
+
+    def test_the_frame_is_re_cut_before_astats_rather_than_after(self):
+        # `asetnsamples` has to come first in the chain or `astats` has already
+        # reported on the frames ffmpeg chose.
+        captured = {}
+
+        def fake_run(command):
+            captured["filters"] = command[command.index("-af") + 1]
+
+            class Result:
+                returncode = 0
+                stdout = "pts_time:0\nlavfi.astats.Overall.Peak_level=-6.0\n"
+                stderr = ""
+
+            return Result()
+
+        original = wav_to_cue._run
+        wav_to_cue._run = fake_run
+        try:
+            wav_to_cue._frame_peaks(Path("in.wav"), 0.0, 1.0, False, "ffmpeg")
+        finally:
+            wav_to_cue._run = original
+        filters = captured["filters"]
+        self.assertIn("asetnsamples=n=%d" % wav_to_cue.ANALYSIS_FRAME_SAMPLES, filters)
+        self.assertLess(
+            filters.index("asetnsamples"), filters.index("astats"), "order is the claim"
+        )
+        self.assertIn("p=0", filters, "a padded last frame is a frame of invented silence")
+
+
+class MeasuringTheRunUpToAHit(unittest.TestCase):
+    """`approach_offsets_seconds`, which is what `--lead auto` is made of.
+
+    The bug it exists to prevent shipped once: a fixed `--lead 0.22` against run-ups
+    that are really 80-144 ms, on a recording with digital silence between takes, so
+    four of five cues were most of a fifth of a second of silence followed by the
+    leading edge of the thud they were supposed to lead into.
+    """
+
+    @staticmethod
+    def _frames(levels: list[float], step: float = 0.01) -> list[tuple[float, float]]:
+        return [(index * step, level) for index, level in enumerate(levels)]
+
+    def test_the_run_up_is_measured_back_to_the_silence_before_it(self):
+        # Silence, then 50 ms of quiet run-up, then the hit. The run-up is what the
+        # cue should be, and it is 50 ms whatever the recipe guessed.
+        frames = self._frames([-95.0] * 10 + [-30.0] * 5 + [-2.0] * 5)
+        self.assertAlmostEqual(
+            approach(frames, [0.15])[0], 0.05, places=3,
+            msg="back to where signal rose out of the silence, not to the file's start",
+        )
+
+    def test_two_takes_in_one_recording_get_their_own_lengths(self):
+        # The whole point: a run-up is a property of the performance, so two takes in
+        # one file have two different ones and a single declared number is wrong on at
+        # least one of them.
+        frames = self._frames(
+            [-95.0] * 5 + [-30.0] * 8 + [-2.0] * 3 + [-95.0] * 5 + [-30.0] * 2 + [-2.0] * 3
+        )
+        self.assertEqual(
+            [round(value, 3) for value in approach(frames, [0.13, 0.23])],
+            [0.08, 0.02],
+        )
+
+    def test_a_take_with_no_silence_in_front_of_it_reports_nothing(self):
+        # Continuous signal has no measurable run-up, and saying zero is honest —
+        # `convert` turns that into a refusal naming the cue rather than cutting an
+        # arbitrary window and calling it a swing.
+        frames = self._frames([-30.0] * 20)
+        self.assertEqual(approach(frames, [0.19]), [0.0])
+
+    def test_no_frames_is_no_measurement_rather_than_an_error(self):
+        self.assertEqual(approach([], [1.0, 2.0]), [0.0, 0.0])
+
+
+def approach(frames, onsets):
+    return wav_to_cue.approach_offsets_seconds(frames, onsets)
+
+
 class ChoosingTheGain(unittest.TestCase):
     def test_a_one_shot_is_peak_normalised(self):
         quiet = wav_to_cue.Levels(peak_dbfs=-18.0, rms_dbfs=-40.0)
@@ -242,6 +412,79 @@ class BuildingTheFilters(unittest.TestCase):
 
 
 # ── The artefact, which needs ffmpeg ──────────────────────────────────────────
+
+
+@unittest.skipIf(FFMPEG is None or FFPROBE is None, "ffmpeg is not installed")
+class CuttingTheRunUpRatherThanTheSilenceBeforeIt(unittest.TestCase):
+    """`--lead auto` end to end, against two gestures with unequal run-ups.
+
+    The regression this pins down shipped: a swing cue that was 73-91% digital
+    silence because the declared lead was longer than the run-up, so the window
+    opened in the gap between takes. A cue that begins in silence is the one defect
+    here that a level meter misses entirely — it peak-normalises to exactly the same
+    -1 dBFS as a good one.
+    """
+
+    def _cut(self, take: str, extra: list[str] | None = None):
+        out = _work / f"runup_{take}.ogg"
+        result = _convert(
+            "--input", str(_signals["gestures"]), "--output", str(out),
+            "--takes", "2", "--take", take,
+            "--duration", "0.5", "--lead", "auto", "--search", "0:9",
+            *(extra or []),
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return out, result.stdout
+
+    def test_the_cue_is_as_long_as_the_run_up_it_measured(self):
+        # The fixture's two run-ups are 0.30 s and 0.15 s and the cap is 0.5 s, so
+        # neither cue may come out at the cap — that would be the fixed-lead bug back
+        # again — and the two must differ, because that is the whole claim.
+        lengths = {}
+        for take in ("1", "2"):
+            out, said = self._cut(take)
+            lengths[take] = _probe(out)["duration"]
+            self.assertIn("run-up measured", said, "the figure is reported, not hidden")
+        for take, length in lengths.items():
+            with self.subTest(take=take):
+                self.assertLess(length, 0.45, "measured, not the declared cap")
+                self.assertGreater(length, 0.05, "and not nothing")
+        self.assertNotAlmostEqual(
+            lengths["1"], lengths["2"], places=2,
+            msg="two takes, two performances, two lengths — one number cannot fit both",
+        )
+
+    def test_the_cue_holds_signal_from_its_first_moment(self):
+        # The assertion the shipped regression would have failed: measure only the
+        # opening of the cue. 200 of 220 ms at -95 dB is what went out, and every
+        # level check on the whole file passed it.
+        out, _ = self._cut("1")
+        opening = _work / "opening.wav"
+        subprocess.run(
+            [FFMPEG, "-hide_banner", "-loglevel", "error", "-y",
+             "-t", "0.03", "-i", str(out), str(opening)],
+            check=True,
+        )
+        self.assertGreater(
+            wav_to_cue.measure(opening, FFMPEG).rms_dbfs, -60.0,
+            "a cue that opens in silence is a cue that fires late",
+        )
+
+    def test_a_measured_lead_needs_several_takes_to_measure_across(self):
+        result = _convert(
+            "--input", str(_signals["gestures"]), "--output", str(_work / "no.ogg"),
+            "--duration", "0.3", "--lead", "auto",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--takes", result.stderr)
+
+    def test_a_loop_has_no_in_point_to_lead_and_says_so(self):
+        result = _convert(
+            "--input", str(_signals["steady"]), "--output", str(_work / "no.ogg"),
+            "--mode", "loop", "--start", "2", "--duration", "4", "--lead", "auto",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("--lead", result.stderr)
 
 
 @unittest.skipIf(FFMPEG is None or FFPROBE is None, "ffmpeg is not installed")
@@ -311,6 +554,58 @@ class CuttingACue(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 1)
         self.assertIn("--start", result.stderr)
+
+    def test_several_takes_of_one_recording_are_several_different_cuts(self):
+        # Three events, so three takes — and the point of them is that they differ.
+        source = _work / "three.wav"
+        _render(
+            source,
+            "sine=f=330:d=12",
+            "volume=0:enable='between(t,0,2)+between(t,2.4,5)+between(t,5.4,8)+gt(t,8.4)'",
+        )
+        sizes = []
+        for take in (1, 2, 3):
+            out = _work / ("take%d.ogg" % take)
+            result = _convert(
+                "--input", str(source), "--output", str(out), "--duration", "0.3",
+                "--takes", "3", "--take", str(take), "--search", "0:12",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("take %d of 3" % take, result.stdout)
+            sizes.append(out.read_bytes())
+        self.assertEqual(len(set(sizes)), 3, "three takes that are byte-identical are one take")
+
+    def test_asking_for_more_takes_than_the_recording_holds_names_both_numbers(self):
+        result = _convert(
+            "--input", str(_signals["event"]), "--output", str(_work / "nope.ogg"),
+            "--duration", "0.3", "--takes", "4", "--search", "0:12",
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("4 were asked for", result.stderr)
+        self.assertIn("separable take", result.stderr)
+
+    def test_a_lead_opens_the_cut_before_the_onset_rather_than_on_it(self):
+        # How one recorded swing-to-impact becomes two cues: the swing is the air in
+        # front of the thud, so its window ends where the measured in-point begins.
+        plain = _convert(
+            "--input", str(_signals["event"]), "--output", str(_work / "on.ogg"),
+            "--duration", "0.3", "--search", "0:12",
+        )
+        led = _convert(
+            "--input", str(_signals["event"]), "--output", str(_work / "ahead.ogg"),
+            "--duration", "0.3", "--lead", "0.3", "--search", "0:12",
+        )
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        self.assertEqual(led.returncode, 0, led.stderr)
+        self.assertAlmostEqual(
+            _second(led.stdout), _second(plain.stdout) - 0.3, places=2,
+            msg="the lead is in output seconds, like --duration",
+        )
+        self.assertLess(
+            wav_to_cue.measure(_work / "ahead.ogg", FFMPEG).rms_dbfs,
+            wav_to_cue.measure(_work / "on.ogg", FFMPEG).rms_dbfs,
+            "and what it cut is the approach, which is quieter than the event",
+        )
 
     def test_a_recording_too_short_for_the_cut_says_so_by_name(self):
         result = _convert(

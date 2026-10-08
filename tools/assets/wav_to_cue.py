@@ -30,6 +30,31 @@ several takes it picks the biggest, which is the one worth shipping. A recipe
 that disagrees can narrow the hunt with `--search` or override it outright with
 `--start`.
 
+`--takes N` is the same measurement asked `N` times, and it is what answers #35's
+*"needs variance"* on a machine that has the bundle. A prop library records one
+object eight or ten times end to end, so the several takes of a cue are several
+takes of a real event rather than several slices of one — the loudest frame, its
+onset, then that whole take forbidden and the next loudest found, repeating while
+anything is within `TAKE_FLOOR_DB` of the first. **Strongest first**, so take 1 is
+the cut the single-take path would have made and asking for a fifth take leaves the
+first four alone. A recording holding fewer separable takes than the recipe asked
+for is an error naming both numbers.
+
+`--lead` opens the cut *ahead* of that in-point instead of on it, which is what lets
+one recorded gesture become the two cues the game plays. A real swing-to-impact is
+air and then a thud; the swing cue is the air, ending where the thud begins, and the
+hit cue is the same take from the onset on. Both halves then come off one recording
+of one real event rather than two libraries that have never met.
+
+**`--lead auto` measures the run-up rather than taking a number for it**, for the
+same reason the in-point is measured: the approach is *inside* the take and its
+length is a property of the performance, not of the recipe. Measured on the bundle's
+own swing-impact library the run-ups are 80, 85, 91, 96, 96, 123, 128 and 144 ms, so
+a stated lead is wrong on every take but one — and the first attempt at this cue
+stated 0.22 s against a 113 ms mean, which put four of five cues 73-91% into the
+digital silence *between* takes. `--duration` becomes the cap, and the cue is as long
+as the air it found.
+
 `--mode loop` takes a declared window instead, because an ambience bed has no
 transient to find, and then **crossfades its own tail over its own head** so the
 file loops without a click. The output is `duration` long and seamless; the extra
@@ -91,6 +116,18 @@ DEFAULT_PEAK_DBFS = -1.0
 # What a loop's RMS is normalised to, and the ceiling its peaks may not cross.
 DEFAULT_RMS_DBFS = -22.0
 DEFAULT_LOOP_PEAK_DBFS = -3.0
+
+# How many samples each frame the attack hunt reads covers. ffmpeg's own audio
+# frame is 4096, which quantises every in-point in this file to 85 ms; this is the
+# precision the whole measured-in-point idea actually needs, and it is cheap —
+# eight times as many frames to parse, seconds on the longest search here.
+ANALYSIS_FRAME_SAMPLES = 512
+
+# How far below the loudest take in a search window a quieter one still counts as
+# a take of the same event. A prop library records the same object eight or ten
+# times and they are never the same loudness; 22 dB takes the quiet ones and
+# still refuses the room tone between them.
+TAKE_FLOOR_DB = 22.0
 
 # How long a loop's tail is folded back over its head. Long enough to hide the
 # seam in a broadband bed, short enough that a rhythmic one does not audibly
@@ -215,13 +252,123 @@ def attack_offset_seconds(frames: list[tuple[float, float]]) -> float:
     return 0.0
 
 
-def find_attack(
+def take_offsets_seconds(
+    frames: list[tuple[float, float]], count: int, min_gap_seconds: float
+) -> list[float]:
+    """Where the `count` loudest separate takes in a stretch begin, strongest first.
+
+    A prop library records the same object eight or ten times end to end, which is
+    the one thing in the bundle that answers *"needs variance"*: several cuts of one
+    recording are several takes of one event, where several in-points of one
+    continuous whoosh are three slices of the same gust.
+
+    **The frames here are not cumulative.** `attack_offset_seconds` reads the
+    staircase `reset=0` produces, which can only ever find one event; this reads
+    per-frame peaks, so the envelope rises and falls once per take.
+
+    Greedy, because the alternative — thresholding — needs a threshold, and the
+    loudness of a prop recording's quietest usable take is not knowable in advance.
+    So: take the loudest frame, back it off to its own onset exactly as
+    `attack_offset_seconds` does, forbid `min_gap_seconds` either side of it so the
+    same take cannot be picked twice, and repeat while the next loudest is within
+    `TAKE_FLOOR_DB` of the first.
+
+    **Strongest first, not earliest first**, so take 1 is the take the single-cut
+    path would have chosen and asking for one more take appends rather than
+    renumbering every cue that was already cut.
+    """
+    if count < 1 or not frames:
+        return []
+    loudest = max(peak for _, peak in frames)
+    if loudest <= SILENCE_FLOOR_DBFS:
+        return []
+
+    remaining = [peak for _, peak in frames]
+    offsets: list[float] = []
+    while len(offsets) < count:
+        peak = max(remaining)
+        if peak <= loudest - TAKE_FLOOR_DB or peak == -math.inf:
+            break
+        index = remaining.index(peak)
+        onset = index
+        while onset > 0 and frames[onset - 1][1] >= frames[index][1] - ONSET_TOLERANCE_DB:
+            onset -= 1
+        second = max(0.0, frames[onset][0] - PRE_ATTACK_SECONDS)
+        # **The gap is enforced on the onsets, not only on the peaks**, and that is
+        # not redundant: a take whose envelope stays within `ONSET_TOLERANCE_DB` for
+        # half a second backs two peaks that *are* a gap apart off to two onsets
+        # that are not, and the cuts then overlap. Measured on a tool recording,
+        # which gave takes 80 ms apart from peaks 400 ms apart — two files that are
+        # all but the same sound, which answers "needs variance" with a copy.
+        if all(abs(second - taken) >= min_gap_seconds for taken in offsets):
+            offsets.append(second)
+        for other in range(len(frames)):
+            if abs(frames[other][0] - frames[index][0]) < min_gap_seconds:
+                remaining[other] = -math.inf
+    return offsets
+
+
+def approach_offsets_seconds(
+    frames: list[tuple[float, float]], onsets: list[float]
+) -> list[float]:
+    """How long the run-up to each of `onsets` lasts, in seconds, in the same order.
+
+    **The measurement `--lead auto` is made of, and the reason a fixed lead was
+    wrong.** A melee library records a swing-to-impact as one gesture with digital
+    silence between takes, so the air before the hit is *inside* the take and its
+    length is a property of the performance: measured on the bundle's own
+    swing-impact recording the run-ups are 80, 85, 91, 96, 96, 123, 128 and 144 ms.
+    A recipe that names one number is therefore wrong on every take but one, and
+    wrong in the direction that matters — #35 shipped `--lead 0.22` against a 113 ms
+    mean, so four of five cues were 73-91% digital silence followed by the leading
+    edge of the thud they were supposed to lead into.
+
+    So the run-up is read rather than declared: from the onset, walk back while
+    there is still signal, and stop at the silence that separates this take from the
+    one before it. `SILENCE_FLOOR_DBFS` is the floor because that is already this
+    file's definition of "nothing here", and a prop library's inter-take gap is
+    digital silence at -95 dB or below rather than room tone.
+
+    Zero for a take that runs straight out of the start of the stretch or out of
+    continuous signal — honest, and it leaves the caller cutting from the onset
+    exactly as it would without a lead.
+    """
+    if not frames:
+        return [0.0 for _ in onsets]
+    approaches: list[float] = []
+    for onset in onsets:
+        # The frame the onset names. `take_offsets_seconds` has already backed the
+        # onset off by `PRE_ATTACK_SECONDS`, so the search starts at or just before
+        # the frame the attack is in, which is what we want to walk back from.
+        index = 0
+        for position, (second, _) in enumerate(frames):
+            if second > onset:
+                break
+            index = position
+        edge = index
+        while edge > 0 and frames[edge - 1][1] > SILENCE_FLOOR_DBFS:
+            edge -= 1
+        if edge == 0:
+            # The walk ran off the front without meeting silence, so this take does
+            # not begin inside the searched stretch and its run-up is **not
+            # bounded** by anything here. Reporting the whole stretch would cut
+            # however much audio happened to precede the window and call it a swing;
+            # zero says "nothing measurable", and `convert` turns that into a
+            # refusal naming the cue.
+            approaches.append(0.0)
+            continue
+        approaches.append(max(0.0, frames[index][0] - frames[edge][0]))
+    return approaches
+
+
+def _frame_peaks(
     path: Path,
     search_start: float,
     search_length: float,
-    ffmpeg: str = "ffmpeg",
-) -> float:
-    """The absolute second the loudest transient in the search window begins."""
+    cumulative: bool,
+    ffmpeg: str,
+) -> list[tuple[float, float]]:
+    """Every audio frame's peak across the search window, as `astats` reports it."""
     result = _run(
         [
             ffmpeg,
@@ -236,8 +383,19 @@ def find_attack(
             "-map",
             "0:a:0",
             "-af",
-            "astats=metadata=1:reset=0,"
-            "ametadata=print:key=lavfi.astats.Overall.Peak_level:file=-",
+            # **Re-frame before measuring.** ffmpeg's native audio frame is 4096
+            # samples — 85 ms — and the onset is read off a frame *start*, so the
+            # real attack can sit anywhere inside it: the cut opens between 45 ms
+            # before the hit and 40 ms after it, differently for every take.
+            # Measured across a four-take series, the RMS of each cue's first 75 ms
+            # spread **44.0 dB** at 4096 samples and 4.9 dB at 512 — three of the
+            # four opened in digital silence and arrived late. 512 samples is
+            # 10.7 ms, under the ~20 ms at which an offset stops being heard as a
+            # separate event. `p=0` leaves the last short frame unpadded.
+            "asetnsamples=n=%d:p=0,"
+            "astats=metadata=1:reset=%d,"
+            "ametadata=print:key=lavfi.astats.Overall.Peak_level:file=-"
+            % (ANALYSIS_FRAME_SAMPLES, 0 if cumulative else 1),
             "-f",
             "null",
             "-",
@@ -246,7 +404,66 @@ def find_attack(
     if result.returncode != 0:
         raise CueError("could not analyse %s: %s" % (path, result.stderr.strip()[-400:]))
     # `file=-` writes the metadata to stdout; the progress report goes to stderr.
-    return search_start + attack_offset_seconds(parse_frame_peaks(result.stdout))
+    return parse_frame_peaks(result.stdout)
+
+
+def find_attack(
+    path: Path,
+    search_start: float,
+    search_length: float,
+    ffmpeg: str = "ffmpeg",
+) -> float:
+    """The absolute second the loudest transient in the search window begins."""
+    frames = _frame_peaks(path, search_start, search_length, True, ffmpeg)
+    return search_start + attack_offset_seconds(frames)
+
+
+def find_takes(
+    path: Path,
+    search_start: float,
+    search_length: float,
+    count: int,
+    min_gap_seconds: float,
+    ffmpeg: str = "ffmpeg",
+) -> list[float]:
+    """The absolute seconds the `count` loudest separate takes begin, strongest first.
+
+    A recording with fewer separable takes than the recipe asked for is an **error
+    naming both numbers**, not a cue that quietly ships the same cut twice: the
+    whole value of several takes is that they are different, so silently writing
+    four copies of one would answer the report it exists to answer with a lie.
+    """
+    return [onset for onset, _ in find_take_windows(
+        path, search_start, search_length, count, min_gap_seconds, ffmpeg
+    )]
+
+
+def find_take_windows(
+    path: Path,
+    search_start: float,
+    search_length: float,
+    count: int,
+    min_gap_seconds: float,
+    ffmpeg: str = "ffmpeg",
+) -> list[tuple[float, float]]:
+    """`(onset, run-up length)` for each of the `count` loudest takes, strongest first.
+
+    One analysis pass for both numbers, because they come off the same envelope and
+    reading it twice would be two ffmpeg invocations over the same minute of audio.
+    `find_takes` is this with the run-ups dropped.
+    """
+    frames = _frame_peaks(path, search_start, search_length, False, ffmpeg)
+    offsets = take_offsets_seconds(frames, count, min_gap_seconds)
+    if len(offsets) < count:
+        raise CueError(
+            "%s holds %d separable take(s) in %.1f s from %.1f s, and %d were asked for"
+            % (path, len(offsets), search_length, search_start, count)
+        )
+    approaches = approach_offsets_seconds(frames, offsets)
+    return [
+        (search_start + offset, approach)
+        for offset, approach in zip(offsets, approaches)
+    ]
 
 
 # ── Measuring and setting levels ──────────────────────────────────────────────
@@ -501,10 +718,18 @@ def convert(
     peak_dbfs: float,
     rms_dbfs: float | None,
     semitones: float = 0.0,
+    lead: float = 0.0,
+    take: int = 1,
+    takes: int = 1,
     ffmpeg: str = "ffmpeg",
     ffprobe: str = "ffprobe",
-) -> float:
-    """Cut one cue. Returns the second of the source it was taken from.
+) -> tuple[float, float]:
+    """Cut one cue. Returns the second of the source it came from, and the cue's length.
+
+    The length is returned rather than taken as read because `--lead auto`
+    **measures** it: the cue is exactly as long as the run-up it found, so a caller
+    that reported what it asked for would be reporting a number that is not the
+    file's.
 
     Two encodes rather than one, because the gain cannot be chosen until the cut
     has been measured and the thing worth measuring is the cut rather than the
@@ -516,8 +741,22 @@ def convert(
         raise CueError("no such recording: %s" % source)
 
     ratio = speed_ratio(semitones)
+
+    # ── What the caller asked for, checked before anything is read ────────────
+    #
+    # These are all contradictions **within the arguments**, so none of them needs
+    # the recording and none of them should wait for it: a refusal that depends on
+    # reading a 400 MB WAV is slower than it needs to be and, worse, reports the
+    # wrong problem first when the input is not audio at all. `--take 4 of 3` is a
+    # contradiction whatever the file turns out to be.
     if mode == "loop" and abs(ratio - 1.0) > 1e-6:
         raise CueError("--semitones is for one-shots; a transposed loop has no stable seam")
+    if takes > 1 and mode == "loop":
+        raise CueError("--takes is for one-shots; an ambience bed has one window")
+    if not 1 <= take <= takes:
+        raise CueError("--take %d is not one of %d take(s)" % (take, takes))
+    if lead != 0.0 and mode == "loop":
+        raise CueError("--lead is for a measured in-point; a loop's window is declared")
 
     available = source_duration_seconds(source, ffprobe)
     needed = duration * ratio + (seam if mode == "loop" else 0.0)
@@ -526,12 +765,57 @@ def convert(
             "%s is only %.2f s long and this cut needs %.2f s" % (source, available, needed)
         )
 
+    # Set where a take's run-up is measured, and left unset on every path that does
+    # not measure one — a stated `--start`, or a single-take cut.
+    measured_approach: float | None = None
+
     if start is None:
         if mode == "loop":
             raise CueError("a loop needs --start: there is no transient to find")
         search_start = min(search[0], max(0.0, available - needed))
         search_length = min(search[1], available - search_start)
-        start = find_attack(source, search_start, search_length, ffmpeg)
+        if takes > 1:
+            # No two takes may overlap, so they are at least one cue's worth of
+            # source apart — which is `(duration + lead) * ratio`, the stretch this
+            # cut actually reads, and not the output's length.
+            window = find_take_windows(
+                source,
+                search_start,
+                search_length,
+                takes,
+                (duration + max(lead, 0.0)) * ratio,
+                ffmpeg,
+            )[take - 1]
+            start, measured_approach = window
+        else:
+            start = find_attack(source, search_start, search_length, ffmpeg)
+
+    if lead < 0.0:
+        # `--lead auto`. The run-up is a property of the performance and differs
+        # take to take, so it is measured off the same envelope the onset came from
+        # and the cue is exactly as long as the approach it found. `--duration` is
+        # the **cap**: a run-up longer than the cue asked for is trimmed to end on
+        # the onset, which is the end that matters.
+        if measured_approach is None:
+            raise CueError("--lead auto needs --takes; there is one envelope to read")
+        if measured_approach <= 0.0:
+            raise CueError(
+                "%s take %d of %d runs out of silence with no measurable approach;"
+                " name a --lead in seconds or cut this cue from the onset"
+                % (source, take, takes)
+            )
+        # **The approach is measured in *source* seconds and `--duration` is in
+        # output seconds**, so it crosses the transposition before the two are
+        # compared. Without that division a cue pitched down a major third would
+        # open 79% of the way back through its own run-up and drop the first fifth
+        # of the air — internally consistent, and not the approach it measured.
+        lead = min(duration, measured_approach / ratio)
+        duration = lead
+        needed = duration * ratio
+    # The lead is in output seconds like `duration` is, so it stretches with the
+    # transposition: an octave down reads half as much source and the approach to
+    # the hit arrives half as fast, which is the whole point of resampling.
+    start = max(0.0, start - lead * ratio)
     start = max(0.0, min(start, available - needed))
 
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -547,7 +831,20 @@ def convert(
         _encode(cut(gain), output, channels, ffmpeg)
     finally:
         probe.unlink(missing_ok=True)
-    return start
+    return start, duration
+
+
+def _parse_lead(text: str) -> float:
+    """`--lead 0.22` in seconds, or `--lead auto` as the sentinel -1.
+
+    A negative lead has no meaning as a distance — it would open the cut *after* the
+    in-point it is measured from — so negative is free to mean "measure it", and
+    `convert` reads it that way. One parameter rather than two because a lead is one
+    idea: how far before the hit this cue starts. Only the answer's source changes.
+    """
+    if text.strip().lower() == "auto":
+        return -1.0
+    return float(text)
 
 
 def _parse_search(text: str) -> tuple[float, float]:
@@ -585,6 +882,26 @@ def main(argv: list[str]) -> int:
         default=0.0,
         help="transpose by resampling; negative is lower, slower and bigger. One-shots only",
     )
+    parser.add_argument(
+        "--lead",
+        default="0",
+        help=(
+            "open the cut this many output seconds ahead of the measured in-point,"
+            " or 'auto' to measure the take's own run-up and end on the in-point"
+        ),
+    )
+    parser.add_argument(
+        "--takes",
+        type=int,
+        default=1,
+        help="how many separate takes of this event the recording holds. One-shots only",
+    )
+    parser.add_argument(
+        "--take",
+        type=int,
+        default=1,
+        help="which of them to cut, 1 being the loudest. Strongest first, so --takes may grow",
+    )
     parser.add_argument("--gain-db", type=float, default=0.0)
     parser.add_argument("--peak-dbfs", type=float, default=None)
     parser.add_argument("--rms-dbfs", type=float, default=None)
@@ -601,7 +918,7 @@ def main(argv: list[str]) -> int:
         rms = DEFAULT_RMS_DBFS
 
     try:
-        start = convert(
+        start, written = convert(
             source=arguments.input,
             output=arguments.output,
             mode=arguments.mode,
@@ -616,6 +933,9 @@ def main(argv: list[str]) -> int:
             peak_dbfs=peak,
             rms_dbfs=rms,
             semitones=arguments.semitones,
+            lead=_parse_lead(arguments.lead),
+            take=arguments.take,
+            takes=arguments.takes,
             ffmpeg=arguments.ffmpeg,
             ffprobe=arguments.ffprobe,
         )
@@ -623,8 +943,21 @@ def main(argv: list[str]) -> int:
         print("error: %s" % problem, file=sys.stderr)
         return 1
     print(
-        "%s  <-  %s @ %.2f s, %.2f s %s"
-        % (arguments.output.name, arguments.input.name, start, arguments.duration, arguments.mode)
+        "%s  <-  %s @ %.2f s, %.2f s %s%s%s"
+        % (
+            arguments.output.name,
+            arguments.input.name,
+            start,
+            written,
+            arguments.mode,
+            "" if arguments.takes == 1 else ", take %d of %d" % (arguments.take, arguments.takes),
+            # Said out loud, because a measured run-up is the one figure in the line
+            # the recipe did not choose, and a recipe author reading this is exactly
+            # the person who needs to see what it found.
+            ""
+            if _parse_lead(arguments.lead) >= 0.0
+            else ", run-up measured (cap %.2f s)" % arguments.duration,
+        )
     )
     return 0
 

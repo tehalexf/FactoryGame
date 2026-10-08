@@ -523,8 +523,13 @@ from it may be committed.
 
 So:
 
+    bash tools/assets/link_licensed.sh --check  # can this checkout even see the bundle?
     bash tools/assets/convert_audio.sh          # -> assets_licensed/generated/audio/
     bash tools/assets/convert_audio.sh silo     # only cues whose name matches
+
+**Check the first line before trusting the second.** `assets_licensed/` is gitignored,
+so a git worktree never has it, and an empty quarantine means "not linked" rather than
+"not purchased" — see CLAUDE.md, "The purchased packs".
 
 `convert_audio.sh` *is* the recipe — which recording becomes which cue, how long,
 how far transposed, and **why that recording**. `tools/assets/wav_to_cue.py` is
@@ -542,15 +547,29 @@ a clone without the Sonniss bundle gets a Kenney lever rather than a silent one.
 that it resolves to a file which exists, and that the fallback is under
 `assets/audio/`.
 
-A handful of cues — footsteps, landings — have **no** hero take at all, because
-the bundle ships no footsteps. The catalogue's contract is that a cue resolves,
-not that it resolves to Sonniss.
+One cue — `footstep` — has **no** hero take at all, because the bundle ships no
+footsteps. The catalogue's contract is that a cue resolves, not that it resolves to
+Sonniss. (`player_land` was in that list and should not have been: a landing is not a
+footstep, it is plate steel taking a load, and the bundle has that.)
+
+### Both halves of the mix, and the gain that is per source
+
+Every hero one-shot leaves `wav_to_cue.py` peak-normalised to the same ceiling, so a
+single gain per cue is a true mix **as long as the cue's two sources are equally
+loud**. The one-shots are; the two ambience beds are not, by ten dB, because a bed is
+RMS-normalised under a peak ceiling where Kenney ships a mastered loop at full scale.
+So a `CATALOGUE` entry may carry a **fourth** number — the gain to use when the hero
+take is the one playing — and `SoundBank.gain_db` is its only reader. A mix figure
+reasoned in one world is not transferable to the other; #35 is the worked example of
+getting that wrong.
 
 ### What `wav_to_cue.py` does, and the one decision worth knowing
 
 | Step | Why |
 |---|---|
 | **The in-point is measured, not remembered** | A hand-picked offset into a 300 MB recording is a number nobody can re-derive, and one that silently becomes wrong if the pack is re-downloaded with a different master. `--mode oneshot` runs `astats` with its reset disabled — so each frame reports the loudest sample *so far*, a staircase — and takes the onset as the first frame within 6 dB of the top, then opens the window 45 ms ahead of it. Repeatable, needs no ears, and for a prop recording the loudest moment *is* the event. `--search` narrows the hunt; `--start` overrides it |
+| **Several takes, also measured** | `--takes N` writes `name.ogg`, `name_2.ogg` … from the N loudest *separable* takes of one recording, which is how a hero cue gets the variation the committed fallbacks have always had. A prop library records its object eight or ten times end to end, so these are takes of one event and not slices of one gesture. Greedy peak picking on a **non-cumulative** envelope — the staircase above can only ever find one event — each peak backed off to its own onset, then that whole take forbidden; **strongest first**, so raising the count appends rather than renumbering. The gap is enforced on the *onsets*, not only the peaks, or a flat-topped take yields two cuts 80 ms apart. Fewer separable takes than the recipe asked for is an **error naming both numbers** |
+| **One gesture, two cues** | `--lead` opens the cut a stated distance *ahead* of the measured in-point. A recorded swing-to-impact is air and then a thud, and the game plays those as two cues, so the swing is cut with a lead and a duration that both end where the thud begins and the hit is the same take from the onset on. The lead is in output seconds like `--duration`, so it stretches with `--semitones` |
 | Seamless loops | `--mode loop` takes a declared window and **crossfades its own tail over its own head**, so an ambience bed loops without a click. One `asplit`, two `afade`s and an `amix`; the output is `--duration` long and the extra `--seam` seconds are read past the window and folded back in |
 | Transposition by resampling | `--semitones` re-labels the sample rate and resamples back, so a cue drops in pitch **and slows down together**. That is how a small recorded object becomes a big one: a Boiler is not a motorcycle at a lower pitch, it is a bigger thing turning more slowly. Phase-vocoder pitch shifting would preserve the tempo and keep the small-object cues reading as small objects. `--duration` is the length of the *output*, so the recipe says what it wants and the script reads `duration × ratio` of source |
 | Levels | One-shots are **peak**-normalised to −1 dBFS, which is what a transient wants. Loops are **RMS**-normalised to −22 dBFS under a −3 dBFS ceiling, because a bed is judged by how loud it sits and one peak-normalised against a distant clang is a bed nobody can hear. Two encodes per cue: the first measures the cut, the second ships it. **The mix is not here** — every hero cue comes out at the same ceiling, and `SoundBank.CATALOGUE`'s gain column is what makes a Silo's breech louder than a footstep |

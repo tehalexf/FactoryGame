@@ -7,6 +7,8 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 ## Commands
 
 ```bash
+tools/assets/link_licensed.sh    # point this checkout's assets_licensed/ at the one with the packs
+tools/assets/link_licensed.sh --check  # what purchased packs can this checkout actually see?
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
@@ -189,6 +191,54 @@ it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
 float-based.
 
+## The purchased packs, and why your checkout probably cannot see them
+
+**An empty `assets_licensed/` means "not linked". It never means "not purchased".**
+
+Read that before concluding anything from that directory, because the mistake has
+already been made and it was expensive. `assets_licensed/` is gitignored — the
+repository is public and nothing in there may be redistributed (docs/ASSETS.md) — and
+a **git worktree is a checkout of tracked files, so it never has it**. Every agent
+this project has spawned has worked in a worktree. Every one of them has opened an
+empty quarantine. One of them reasoned from that emptiness that the packs were not on
+this machine, concluded that a playtest's audio complaints must therefore have been
+about the committed Kenney fallbacks, and fixed the fallbacks — while the 37 hero cues
+sat in the main checkout, in the player's Windows build, being the sounds the player
+was actually describing.
+
+So, first thing in a new worktree:
+
+```bash
+bash tools/assets/link_licensed.sh          # one symlink per pack, from the main checkout
+bash tools/assets/link_licensed.sh --check  # or just ask, and change nothing
+```
+
+`--check` exits non-zero on an empty quarantine, so it is usable as a precondition in
+a script that is about to claim something about an asset.
+
+Three things about it worth knowing rather than rediscovering:
+
+- **It links each pack, not the directory.** `assets_licensed/.gdignore` is *tracked*
+  — it is the one file in the quarantine that must be in git, because without it
+  Godot's importer walks gigabytes of third-party Unity projects and WAV libraries —
+  so replacing the directory with a symlink shows up as deleting a tracked file.
+  Per-pack links leave it alone and `git status` stays clean, because everything under
+  `assets_licensed/` is ignored anyway.
+- **Godot follows the links**, and the converters and `game/sound_bank.gd` need no
+  change to see them: `res://assets_licensed/generated/audio/...` resolves through a
+  symlink exactly as through a directory.
+- **The licence guard is undiminished**, and this was checked rather than assumed. Git
+  refuses to add a path *"beyond a symbolic link"*, so no asset bytes can be staged
+  through one; staging a link itself is caught by
+  `tools/assets/check_licensed_staged.py` like any other quarantined path. Do not work
+  around either.
+
+The converters themselves are honest about absence — `convert_audio.sh`,
+`convert_weapons.sh` and `convert_props.sh` all print a note and exit 0 with no
+bundle, and the game runs without any of it. That is the point of the design and it is
+also what makes the blind spot so quiet: **nothing fails when you cannot see the
+packs**. It just stops being the game the player played.
+
 ## Sound
 
 **No diegetic control ships silent.** DESIGN.md is explicit about why — IRON
@@ -245,12 +295,53 @@ Two rules came out of it, both now tests:
   always there; what was missing was anybody checking which cues used it.
   `test_the_cues_a_player_hears_over_and_over_have_more_than_one_take` names them.
 
-**Open, and the report exposed it: a hero take has no variation at all.** `SoundBank._resolve`
-returns one path for a cue whose hero cut is present — "a hero cue is a particular recording
-chosen on purpose" — so the variance that answers *"needs variance"* exists only in the
-committed fallbacks, which is to say only on the clones without the bundle. Fixing it means
-`convert_audio.sh` cutting several takes per cue and `_resolve` returning them all, and it
-wants somebody who can hear the result.
+### The same five reports, done again against the hero takes
+
+The paragraph above is what the mix looked like from inside a worktree, where the packs are
+invisible — see "The purchased packs" above for why, and read that before trusting any claim
+about an asset. **All five reports were about the hero cues**, which the main checkout has 37
+of and the player's build had all of. So the fallback work stands, as what a clone hears, and
+the five were done again against the files the player was describing. Three things came out
+of it that outlive the five cues:
+
+- **A hero cue has takes now.** `convert_audio.sh --takes N` cuts the N loudest separable
+  takes of a recording to `name.ogg`, `name_2.ogg` …, and `SoundBank._hero_paths` walks those
+  numbered suffixes. `tick % count` never knew which world it was choosing in. The takes are
+  *measured*, not written down — greedy peak picking on a non-cumulative envelope, strongest
+  first so raising the count appends — and **a recording with fewer separable takes than the
+  recipe asked for is an error naming both numbers**, because the one thing several takes must
+  be is different. That error fired twice while the five were being cut and both times it was
+  right.
+- **`--lead auto` lets one recorded gesture become two cues.** A real swing-to-impact is
+  air and then a thud, and the game plays those as two cues; the swing is cut as the air
+  ending where the thud begins, and the hit is the same take from the onset on. Two halves
+  of one event beat two libraries that have never met. **The lead is measured, not
+  stated**, for the same reason the in-point is: the approach is *inside* the take and its
+  length is a property of the performance — 80 to 144 ms across one library's takes — so a
+  recipe naming one number is wrong on every take but one. A fixed `--lead 0.22` against a
+  113 ms mean was tried first and shipped four cues that were 73-91% digital silence
+  followed by the leading edge of the thud they were supposed to lead into.
+- **The gain column is per source where the two sources are not the same loudness.** One gain
+  per cue assumes a hero cut and a Kenney take of the same event measure alike, which is true
+  of the one-shots (both are peak-normalised) and false of the ambience beds by ten dB — a bed
+  is RMS-normalised under a peak ceiling, where Kenney ships a mastered loop at full scale. So
+  a catalogue entry may carry a fourth number, the gain for when the hero take is playing, and
+  `gain_db` is its only reader. **This is why a mix number set in one world cannot be trusted
+  in the other**, and it is the generalisation of the mistake that produced this section.
+
+**"Too loud" is a measurement.** Every figure in `sound_bank.gd`'s `#35` notes is the file's
+loudest 85 ms window plus its gain — what a player hears — because every hero one-shot peaks
+within a dB of every other by construction, so a peak reading can only say they are all the
+same. Measured that way the wrench's swing was 0.6 dB *above* the hit it lands; the "generic"
+in the same report was 31 dB of missing low end; and the "hum" was 94% of a bed's energy below
+200 Hz, which no amount of turning down could have fixed, because the bed is normalised on the
+RMS that rumble dominated. The *busy* bed turned out to have a real alarm tone inside it,
+25-38 dB above its neighbours, running continuously under a working Factory.
+
+**What still cannot be judged here: whether any of it sounds good.** Nothing in this
+repository can listen. Everything above is spectrum, envelope and level, which is enough to
+catch a cue that is the wrong object or the wrong loudness and is not enough to catch one
+that is merely unpleasant.
 
 The recordings are long source material rather than game SFX, so
 `tools/assets/convert_audio.sh` is the recipe — which recording becomes which cue

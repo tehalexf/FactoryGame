@@ -33,6 +33,31 @@
 ## clips by tick rather than letting the engine's clock drive them: the Simulation
 ## is reproducible and nothing in the presentation layer should be the reason a
 ## replay sounds different from the Run it recorded.
+##
+## **A hero cue has takes too, and until #35 it did not.** `_resolve` returned one
+## path for any cue whose hero cut was present — "a hero cue is a particular
+## recording chosen on purpose" — so the variance that answers the playtest's
+## *"needs variance"* existed only on the clones *without* the bundle, which is to
+## say in the one world the player who filed the report was not in. A prop library
+## records its object eight or ten times end to end, so `convert_audio.sh --takes N`
+## cuts N of them to `name.ogg`, `name_2.ogg` … and `_hero_paths` walks those
+## numbered suffixes until one is missing. One mechanism, two sources: `tick % count`
+## has never known or cared which world it is choosing in.
+##
+## ## The gain is per source where the two sources are not the same loudness
+##
+## One number per cue was the original arrangement and it rests on an assumption
+## that is true of the one-shots and false of the beds: that a hero cut and a Kenney
+## take of the same event are equally loud, so one gain means one mix. Measured, the
+## two ambience beds' hero cuts are **ten dB quieter** than the Kenney loops they
+## fall back to — `wav_to_cue.py` normalises a bed's RMS under a peak ceiling where
+## Kenney ships a mastered loop at full scale — so a gain set for one world was
+## wrong by ten dB in the other, and #35 set them for the world it could see.
+##
+## So a catalogue entry may carry a **fourth** number, the gain to use when the hero
+## take is the one playing. Where it is absent the one gain serves both, which is the
+## case for every cue whose two sources measured within a few dB of each other.
+## `gain_db` is the only reader, so nothing else has to know.
 class_name SoundBank
 extends RefCounted
 
@@ -40,6 +65,12 @@ extends RefCounted
 ## shipping tree, gitignored, and usually absent — an ordinary state, not a
 ## warning, exactly as a Machine with no `.glb` is.
 const HERO_DIRECTORY: String = "res://assets_licensed/generated/audio/"
+
+## How far `_hero_paths` counts before it stops looking. A bound rather than a
+## limit anybody will reach: the point is that a corrupt asset tree cannot turn cue
+## resolution into an unbounded walk, and no recording in the bundle holds twenty
+## usable takes of one event.
+const MAX_HERO_TAKES: int = 16
 
 const IMPACTS: String = "res://assets/audio/kenney_impact_sounds/"
 const SCI_FI: String = "res://assets/audio/kenney_sci_fi_sounds/"
@@ -116,15 +147,23 @@ const DIEGETIC_CUES: Array = [
 ## the stream before it is handed out. Everything else is one-shot.
 const LOOPING_CUES: Array = [FACTORY_BED, FACTORY_BUSY, PAINT_LOOP, TELEGRAPH_KLAXON]
 
-## Cue id -> `[hero file, [committed fallbacks], gain in dB]`.
+## Cue id -> `[hero file, [committed fallbacks], gain in dB]`, with an optional
+## fourth entry: the gain to use when the hero take is what is playing.
 ##
 ## The gain is **the mix**, and it has to be here rather than in the conversion,
-## because every hero cue comes out of `wav_to_cue.py` peak-normalised to the same
-## ceiling: equally loud, which is the opposite of a mix. These numbers are what
+## because every hero one-shot comes out of `wav_to_cue.py` peak-normalised to the
+## same ceiling: equally loud, which is the opposite of a mix. These numbers are what
 ## make a Silo's breech louder than a footstep.
 ##
 ## A fallback list is a set of takes of the same event, not a chain of
-## alternatives: all of them exist, and one is picked per play.
+## alternatives: all of them exist, and one is picked per play. A hero cue's takes
+## are the numbered files beside it and work the same way.
+##
+## **Every figure in a `#35` note below is the loudest 85 ms window of the file plus
+## this gain** — what a player hears, rather than what the file peaks at. All the
+## hero cues peak within a dB of each other by construction, so a peak reading can
+## only ever say they are all the same, and the thing the report was about is which
+## of them is loud.
 const CATALOGUE: Dictionary = {
 	# ── The Silo's loading cycle ─────────────────────────────────────────────
 	# The dial sits under a player's hands, so it is close, dry and quiet. Tin for
@@ -170,13 +209,28 @@ const CATALOGUE: Dictionary = {
 	# was a *trailer* alarm, a designed cinematic sting. Both fail #21's own standard
 	# of real mechanisms over designed sounds.
 	#
-	# A klaxon is a **motor** — an electric motor spinning a chopper against a port,
-	# which is why a siren winds up and winds down. `engineCircular_004` is the only
-	# circular motor in the committed packs not already spoken for by the Boiler's
-	# startup or the busy Factory bed, so it is the honest stand-in: a thing with a
-	# rotor, spinning, for as long as the Telegraph runs. Only the first take is ever
-	# used, because a looping cue is opened once rather than chosen per play.
-	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["engineCircular_004"], -4.0],
+	# The committed fallback is a **motor**: an electric motor spinning a chopper
+	# against a port is what a siren is, which is why one winds up and winds down.
+	# `engineCircular_004` is the only circular motor in the packs not already spoken
+	# for by the Boiler's startup or the busy Factory bed, so it is the honest stand-in
+	# — a thing with a rotor, spinning, for as long as the Telegraph runs. Only the
+	# first take is ever used, because a looping cue is opened once rather than chosen
+	# per play.
+	#
+	# **The hero take is now a real horn**, which is the same mechanism: a 209 Hz root,
+	# low-passed so the root is what carries, rearticulated every 2.54 s by the loop.
+	# `convert_audio.sh` has the whole repick — why #35's blind one could not have been
+	# cut at all, and why the first attempt here measured as a 2 kHz needle with the
+	# fundamental 8.6 dB below it.
+	#
+	# **-9, and the first number was -4 picked by eye.** That put the cue at -9.1 LUFS,
+	# the loudest thing in the entire catalogue, in the ear's most sensitive band, running
+	# for the whole Telegraph — which is not "a warning you cannot hear is not a warning",
+	# it is a warning nobody can think through. Now the two worlds land within 0.3 dB of
+	# each other at -17.3 hero and -17.0 fallback: the loudest *sustained* cue in the game
+	# by about fifteen dB over either bed, and eleven dB below the Nest taking a hit, which
+	# is the one sound that should still cut through it.
+	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["engineCircular_004"], -9.0],
 	WAVE_BEGIN: ["wave_begin", ["lowFrequency_explosion_001"], -3.0],
 	BREACH_OPENS: ["breach_opens", ["impactGlass_heavy_000", "impactGlass_heavy_003"], -4.0],
 
@@ -198,13 +252,39 @@ const CATALOGUE: Dictionary = {
 	# player hears more than any other, and it had one take at -8 dB — one sample, at
 	# the volume of a Machine being built, on every swing for the whole Run.
 	#
-	# Three fixes, and they are three different complaints. *Variance*: five takes, so
-	# `tick % count` has something to choose between. *Too loud*: a swing through air is
-	# the quietest thing a weapon does — the sound that matters is what it lands on, so
-	# the swing goes under the hit by five dB and nearly under a footstep. *Generic* is
+	# Three fixes, and they are three different complaints. *Variance*: five committed
+	# takes and **five hero ones**, so `tick % count` has something to choose between in
+	# either world — the hero half of that is what #35 could not do, because it could not
+	# see the bundle and `_resolve` returned one path. *Too loud*: a swing through air is
+	# the quietest thing a weapon does — what matters is what it lands on. *Generic* is
 	# the one the committed packs cannot fully answer: Kenney ships no whoosh, and a soft
-	# medium impact is the nearest thing to air moving. The hero take is a real melee
-	# swing and is what this sounds like on a machine with the bundle.
+	# medium impact is the nearest thing to air moving.
+	#
+	# **The hero cut is a different recording now, and the old one is why the report says
+	# "generic".** The player heard a long-blade whoosh out of a melee SFX pack: the wrong
+	# object — a wrench has no blade — measured 0.6 dB *louder* than the hit it lands
+	# (-16.8 against -16.2), and 31 dB short of it below 80 Hz. A swing with no mass under
+	# it is what "generic" sounds like.
+	#
+	# **The swing and the hit are the two halves of one recorded gesture**, which is what
+	# they are: `convert_audio.sh` cuts the air before the thud for this cue and the thud
+	# for `WEAPON_HIT`, out of the same take of the same real swing, five takes each. The
+	# air is 134-175 ms depending on the take, because `--lead auto` measures each
+	# performance's run-up rather than taking a number for it — the fixed `--lead 0.22`
+	# tried first shipped four cues that were most of the way to being digital silence,
+	# and `convert_audio.sh` keeps that attempt written down.
+	#
+	# Measured on the cuts: centroid **267-277 Hz** with 80-250 Hz the strongest band and
+	# above 2 kHz at -39, against the blade's 3108 Hz. A heavy tool moving air, which is
+	# what a Pneumatic Wrench is and what every earlier pick was not.
+	#
+	# **-17 on the fallbacks, -13 on the hero take.** A rising whoosh has a low crest, so
+	# peak-normalising one leaves it quieter than a peak-normalised impact — the hero cuts
+	# measure 4.7 dB below the Kenney takes they stand in for — and one gain would have
+	# put the two worlds that far apart. At these two they land at -23.8 and -22.7: five
+	# and a half dB under the hit's -18.2 and about two above a footstep's -25.6, which is
+	# the order a melee swing wants. What you hit matters more than the swinging, and
+	# neither is a bootfall.
 	WEAPON_SWING: [
 		"weapon_swing",
 		[
@@ -214,10 +294,14 @@ const CATALOGUE: Dictionary = {
 			"impactSoft_medium_003",
 			"impactSoft_medium_004",
 		],
-		-16.0,
+		-17.0,
+		-13.0,
 	],
 	# What the wrench lands on, which is the half of a melee hit that should carry the
-	# weight. Five takes and 4 dB down: it was the third-loudest cue in the table.
+	# weight. Five takes and 4 dB down: it was the third-loudest cue in the table. **Five
+	# hero takes too**, each the second half of the gesture whose first half is
+	# `WEAPON_SWING` — the half of the wrench a player hears on contact had one take
+	# before #35 and one hero take until now. Consistent within 3.4 dB.
 	WEAPON_HIT: [
 		"weapon_hit",
 		[
@@ -238,17 +322,41 @@ const CATALOGUE: Dictionary = {
 	# **#35: *"the middle core hum is too loud"*.** The player heard it as coming from
 	# the Nest, which is the one structure in the middle of the Map and the thing a drone
 	# with no position attaches itself to. These are the ceilings a *full* Factory
-	# sustains rather than a worst case, and the quiet one's was 3 dB **above** a
-	# footstep — which is not a bed, it is a drone with the Factory mixed into it.
+	# sustains rather than a worst case, and they were -30.3 and -27.4 as heard.
 	#
 	# A bed is the floor of the mix: everything else stands on it, so it belongs under
-	# the quietest thing it carries. Eight dB down each, which keeps the gap between them
-	# — the crossfade "growth is audible" is made of — and puts the pair below the
-	# footsteps. `test_the_ambience_beds_sit_under_everything_they_are_a_bed_for` is the
-	# rule rather than these two numbers, so a later cue that goes quieter than a bed
-	# fails rather than disappearing underneath it.
+	# the quietest thing it carries.
+	# `test_the_ambience_beds_sit_under_everything_they_are_a_bed_for` is that rule
+	# rather than these numbers, so a later cue that goes quieter than a bed fails rather
+	# than disappearing underneath it.
+	#
+	# **The busy bed carries two gains and the quiet one does not, which is the fourth
+	# entry earning its keep rather than being applied for symmetry.** The *loud* bed has
+	# to sit above the quiet one or the crossfade that "growth is audible" is made of
+	# inverts — and the gap has to be built differently in each world, because the hero
+	# busy cut measures 0.5 dB *below* the hero bed while the Kenney busy loop measures
+	# 0.5 dB *above* the Kenney bed. One gain cannot produce a gap in both. So: -22/-20 on
+	# busy against a flat -24 on the bed, which lands the pairs at -26.6 and -29.1 as
+	# heard on the fallbacks and -35.5 and -39.0 on the hero cuts. Busy above bed by 2.5
+	# and 3.5 dB; both pairs under a footstep's -25.6.
+	#
+	# **The hero pair ends up a further ten dB down, and that is the gain-comparison rule
+	# costing them.** `gain_db` must stay below the quietest declared gain for the test
+	# above to pass, and the hero cuts are quiet files, so a level target of -33 would
+	# have needed gains of -18 and -14.5 and failed it. The error is in the quiet
+	# direction, which is the direction the report points, and **the quiet bed at -39 is
+	# the one number here I would most want a listener to check** — it may now be under
+	# the threshold of being a bed at all in a small Factory, where `BED_FLOOR_DB` takes
+	# it another 14 dB down.
+	#
+	# **And the hum was a character problem as well as a level one.** The quiet bed put
+	# 94% of its energy below 200 Hz, which is the measurement behind the word "hum" —
+	# and because a bed is normalised on its RMS, which that rumble dominated, turning it
+	# down could only ever have made a quieter drone. `convert_audio.sh` high-passes it at
+	# 200 Hz now, and found an alarm tone sitting inside the *busy* bed while it was
+	# looking. Both are there.
 	FACTORY_BED: ["factory_bed", ["spaceEngineLow_000"], -24.0],
-	FACTORY_BUSY: ["factory_busy", ["engineCircular_002"], -22.0],
+	FACTORY_BUSY: ["factory_busy", ["engineCircular_002"], -22.0, -20.0],
 	MACHINE_BUILT: ["machine_built", ["impactPlate_medium_000", "impactPlate_medium_002"], -5.0],
 	MACHINE_DESTROYED: ["machine_destroyed", ["explosionCrunch_001", "explosionCrunch_003"], -3.0],
 	MACHINE_DAMAGED: ["machine_damaged", ["impactMetal_medium_001", "impactMetal_medium_004"], -9.0],
@@ -268,6 +376,13 @@ const CATALOGUE: Dictionary = {
 	# same way. Five takes of it for the attack, because a Wave is dozens of them a
 	# second, and the heavier family for a death — something structural giving way rather
 	# than something soft landing.
+	#
+	# **And the hero takes are off designed creature vocals and onto real objects**, which
+	# is where "weird" was actually coming from: the player heard an insectoid shriek at a
+	# 4986 Hz centroid attacking and an *ethereal entity* dying. Both are physical now —
+	# a wooden strike for the bite at 1273-2435 Hz, brittle ice snapping for the death —
+	# and both have takes, five and three, where each had one. `convert_audio.sh` has why
+	# those two recordings and not the insectoid one #35 repicked blind.
 	ENEMY_ATTACK: [
 		"enemy_attack",
 		[
@@ -314,10 +429,18 @@ const CATALOGUE: Dictionary = {
 	# over concrete, so the landing is a bootfall with weight behind it: five takes of a
 	# light steel plate, three dB further down. Same family as `MACHINE_BUILT`'s plate
 	# and two weights below it, because setting a Smelter down should be heavier than
-	# landing on one. Still no hero take — the bundle has no footsteps in it, which is
-	# the same reason `FOOTSTEP` has none.
+	# landing on one.
+	#
+	# **It has a hero take now, and #35 was right that it had none.** "The bundle has no
+	# footsteps in it" was true and was the wrong question: a landing is not a footstep,
+	# it is a **body** arriving, mass first and surface second. Four takes of exactly that,
+	# whose bands fall monotonically from -11.5 dB below 80 Hz to -28.3 above 2 kHz — and
+	# the comical one they replace was the inverse of a body, a boof with an 85% rolloff
+	# at 255 Hz and no surface in it at all. One gain serves both worlds, -22.6 heard
+	# against -24.8. `FOOTSTEP` still has no hero take and still should not: a walk cycle
+	# is five light scuffs and nothing in the bundle is one.
 	PLAYER_LAND: [
-		"",
+		"player_land",
 		[
 			"impactPlate_light_000",
 			"impactPlate_light_001",
@@ -401,15 +524,36 @@ func _resolve(cue: String) -> PackedStringArray:
 	if entry.is_empty():
 		return PackedStringArray()
 
-	var hero: String = entry[0] as String
-	if hero != "":
-		var path: String = "%s%s.ogg" % [HERO_DIRECTORY, hero]
-		if FileAccess.file_exists(path):
-			# One hero take, not a set: the variation a Wave needs is already in the
-			# fallbacks, and a hero cue is a particular recording chosen on purpose.
-			return PackedStringArray([path])
+	var hero: PackedStringArray = _hero_paths(entry[0] as String)
+	if not hero.is_empty():
+		return hero
 
 	return committed_paths(cue)
+
+
+## Every take of `hero` that is on this machine: `hero.ogg`, then `hero_2.ogg`,
+## `hero_3.ogg` and so on until one is missing. Empty when the bundle is not here,
+## which is the ordinary case.
+##
+## **Numbered rather than listed**, so adding a take to `convert_audio.sh` needs no
+## edit here — and numbered rather than enumerated with `DirAccess`, because a
+## directory listing's order is not something to build a deterministic choice on and
+## `tick % count` has to mean the same thing on every machine. The first missing
+## number ends the set: a gap would make the count depend on a file nobody cut.
+func _hero_paths(hero: String) -> PackedStringArray:
+	var paths: PackedStringArray = PackedStringArray()
+	if hero == "":
+		return paths
+	var first: String = "%s%s.ogg" % [HERO_DIRECTORY, hero]
+	if not FileAccess.file_exists(first):
+		return paths
+	paths.append(first)
+	for take: int in range(2, MAX_HERO_TAKES + 1):
+		var path: String = "%s%s_%d.ogg" % [HERO_DIRECTORY, hero, take]
+		if not FileAccess.file_exists(path):
+			break
+		paths.append(path)
+	return paths
 
 
 ## The committed CC0 files this cue falls back to, whether or not the hero take is
@@ -430,12 +574,19 @@ func committed_paths(cue: String) -> PackedStringArray:
 	return paths
 
 
-## The gain this cue plays at, in dB. Zero for a cue nobody declared, which is the
-## loudest a missing declaration can be and therefore the easiest to notice.
+## The gain this cue plays at **on this machine**, in dB. Zero for a cue nobody
+## declared, which is the loudest a missing declaration can be and therefore the
+## easiest to notice.
+##
+## Two sources that are not equally loud need two gains to land at one mix, and the
+## two ambience beds are measurably ten dB apart — see the note at the head of this
+## file. A cue with no fourth entry has one gain, which is almost all of them.
 func gain_db(cue: String) -> float:
 	var entry: Array = CATALOGUE.get(cue, []) as Array
 	if entry.size() < 3:
 		return 0.0
+	if entry.size() > 3 and is_hero(cue):
+		return entry[3] as float
 	return entry[2] as float
 
 
