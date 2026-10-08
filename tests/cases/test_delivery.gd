@@ -41,10 +41,16 @@ func _distant_nest_layout() -> MapLayout:
 	return layout
 
 
+## The Press is paid partly in **ore** — one lump, which is exactly what is left in a
+## player's pockets once the opening tier's bill is paid — and that is what makes this fixture's ore something a
+## player can spend again — and therefore something the Nest's store has room for. The store
+## only banks what has a sink (`Definitions.item_can_be_spent`), so a fixture whose ore paid
+## for nothing would have a Nest that refused it the moment the bill was met, and the two
+## Belt tests below would be measuring the store's rule rather than the Delivery's.
 const MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
 miner_mk1,Miner Mk1,miner,2,2,1.8,0,0,400,1,0,0,0,0,mine_iron_ore,iron_plate:2
 miner_mk2,Miner Mk2,miner,2,2,1.8,0,0,500,2,0,0,0,0,mine_iron_ore,iron_plate:4
-press_mk1,Press Mk1,crafter,2,2,2,0,0,500,0,0,0,0,0,press_iron_frame,iron_plate:2
+press_mk1,Press Mk1,crafter,2,2,2,0,0,500,0,0,0,0,0,press_iron_frame,iron_plate:2;iron_ore:1
 """
 
 const RECIPES: String = """id,display_name,inputs,outputs,seconds

@@ -1351,6 +1351,21 @@ var _player_paint_ticks: PackedInt64Array = PackedInt64Array()
 var _player_paint_interrupted_tick: PackedInt64Array = PackedInt64Array()
 var _player_charges_wasted: PackedInt64Array = PackedInt64Array()
 
+## What a *finished* Painting has delivered, per player: how many Stratagems have been called
+## in and how many Charges went into them.
+##
+## The symmetric half of the two counters above, and state for the same two reasons. A player
+## has to be able to read what their artillery has actually bought — a Run that fired four
+## Charges and a Run that lost four to a Breaker's bite look identical from a stockpile that is
+## empty either way. And it is what lets a fixture **prove** a Stratagem was fired rather than
+## infer it from an effect: a Barrage that killed nothing because nothing was in the radius
+## left no trace, a Sentry can expire before anybody looks, and a Supply Drop's goods are
+## indistinguishable from a withdrawal. #37's acceptance criterion is "a competently built
+## Factory can power, load and fire a Silo within a Run", and this is the figure that answers
+## it in the balance harness.
+var _player_stratagems_fired: PackedInt64Array = PackedInt64Array()
+var _player_charges_fired: PackedInt64Array = PackedInt64Array()
+
 var _machine_input_items: Array = []
 var _machine_input_counts: Array = []
 
@@ -1540,6 +1555,10 @@ func _init(
 	_player_paint_interrupted_tick.fill(-1)
 	_player_charges_wasted.resize(players)
 	_player_charges_wasted.fill(0)
+	_player_stratagems_fired.resize(players)
+	_player_stratagems_fired.fill(0)
+	_player_charges_fired.resize(players)
+	_player_charges_fired.fill(0)
 	for player_id: int in range(players):
 		_player_component_ids.append(PackedStringArray())
 
@@ -5128,6 +5147,12 @@ func _resolve_painting(player_id: int) -> void:
 	if definition == null or charges <= 0:
 		return
 
+	# Counted here rather than inside the three effects, because what was fired is one fact and
+	# the effects are three shapes of consequence. A row whose effect lands on nothing still
+	# fired.
+	_player_stratagems_fired[player_id] += 1
+	_player_charges_fired[player_id] += charges
+
 	if definition.is_barrage():
 		_shell_the_ground(definition, target, charges)
 	elif definition.is_supply():
@@ -6162,11 +6187,31 @@ func _nest_store_held(item_id: String) -> int:
 	return _nest_store_counts[slot]
 
 
-## How much more of an Item the store has room for. Zero once the Run is over: a Nest that
-## has fallen is not a counter anybody is banking at, which is the rule `_delivery_would_take`
-## already obeys, and it is what stops a Belt quietly filling a ruin.
+## How much more of an Item the store has room for.
+##
+## Zero once the Run is over: a Nest that has fallen is not a counter anybody is banking at,
+## which is the rule `_delivery_would_take` already obeys, and it is what stops a Belt
+## quietly filling a ruin.
+##
+## **And zero for an Item a player could not spend again**, which is the single clause #37's
+## second trap needed. The store is the faucet — "where Factory output becomes something a
+## player can spend again" — and `Definitions.item_can_be_spent` is the question that asks
+## whether a given Item is any such thing. Coal is not: nothing's `build_cost` names it and no
+## weapon fires it, so 200 coal banked at the Nest is a Factory's fuel converted into a number
+## with no sink. The *bill* still takes coal whenever a tier asks for it, because the bill is
+## paid before the store and a tier asking for coal is the Delivery chain making the diversion
+## the player's visible, finite decision.
+##
+## What that buys is the rule this project already relies on everywhere else, now reaching the
+## case that mattered: a coal Belt a player ran to the Nest pays the open tier, and then the
+## store refuses it, the Belt packs up where they can see it, and **the diversion ends
+## itself**. Before this it went on quietly taking half of the one coal Node for ten minutes
+## while the Boiler browned the Factory out, with the player having done nothing they could
+## see. Nothing is destroyed: what will not fit is not taken.
 func _nest_store_room(item_id: String) -> int:
 	if query_run_is_over():
+		return 0
+	if not _definitions.item_can_be_spent(item_id):
 		return 0
 	return maxi(_definitions.nest_store_capacity_per_item - _nest_store_held(item_id), 0)
 
@@ -7789,6 +7834,8 @@ func hash() -> int:
 	# is the loudest possible divergence.
 	hasher.feed_ints(_player_paint_interrupted_tick)
 	hasher.feed_ints(_player_charges_wasted)
+	hasher.feed_ints(_player_stratagems_fired)
+	hasher.feed_ints(_player_charges_fired)
 	# The Belts, and every Item riding one. Items are derived state — recomputed
 	# identically on every client and never replicated (ADR 0002) — and that is exactly
 	# why they have to be hashed: the guarantee that they are identical everywhere is
@@ -9063,6 +9110,23 @@ func query_player_charges_wasted(player_id: int) -> int:
 	if not _is_player(player_id):
 		return 0
 	return _player_charges_wasted[player_id]
+
+
+## How many Stratagems a player has called in, and the Charges that went into them.
+##
+## **What a finished Painting bought, as a number**, beside what an interrupted one cost. The
+## same argument: a HUD can say it, and a fixture can prove a Stratagem was fired rather than
+## conclude it from an effect that may have landed on nothing.
+func query_player_stratagems_fired(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_stratagems_fired[player_id]
+
+
+func query_player_charges_fired(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _player_charges_fired[player_id]
 
 
 # ── The Nest, the Breaches, the Waves and the Enemies ─────────────────────────
