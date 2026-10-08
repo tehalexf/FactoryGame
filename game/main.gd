@@ -121,6 +121,12 @@ func _input(event: InputEvent) -> void:
 			save_run()
 		elif key.keycode == PlayerController.KEY_LOAD and not key.echo:
 			load_run()
+		# How much of the HUD is on screen, here for the reason saving is here: it does
+		# nothing to the Run, it leaves the hash where it was, and a replay has nothing to
+		# reproduce. The brief is the default and this is the rest of the wall.
+		elif key.keycode == PlayerController.KEY_HUD_DETAIL and not key.echo:
+			if _world_view != null:
+				_world_view.set_hud_detailed(not _world_view.hud_is_detailed())
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 		_capture_the_mouse()
 
@@ -136,6 +142,17 @@ func _capture_the_mouse() -> void:
 func _process(delta: float) -> void:
 	advance_frame(delta)
 	if _world_view != null:
+		# The drag in flight, handed from the input producer to the renderer so the preview
+		# is the route that would cross. Neither may reach for the other, and this is the one
+		# place both are in scope. It is a device reading on its way in, like the mouse
+		# buffer it sits next to — the Simulation is still the only thing that knows a Belt
+		# was laid.
+		if _controller != null and _simulation != null:
+			_world_view.note_belt_drag(
+				_controller.is_dragging_a_belt(),
+				_controller.belt_drag_anchor(),
+				_controller.belt_corner_axis(_simulation, LOCAL_PLAYER)
+			)
 		_world_view.sync(_simulation)
 	# After the view, so a cue about a Machine that has just appeared is played in
 	# the same frame the Machine is drawn in rather than the frame before it.
