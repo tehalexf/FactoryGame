@@ -564,19 +564,22 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 		actions.append(InputAction.select_machine(player_id, sample.machine_picked))
 		build_tool = Simulation.BUILD_TOOL_MACHINE
 
-	# **The wheel reads by hand, exactly as the number row above it does.** A player
-	# holding a rifle who scrolls is not choosing a Machine — they have no hologram to
-	# aim and nothing on screen would change, so the only effect was to silently
-	# re-point the Build Gun they would draw next. That is the same disagreement #35
-	# found between the hologram and the four inline build-mode tests: a reading that
-	# is gated on one side and not the other.
-	if sample.machine_steps != 0 and gun_in_hand:
-		var chosen: int = _stepped_machine(sim, player_id, sample.machine_steps)
-		if chosen != -1:
-			actions.append(InputAction.select_machine(player_id, chosen))
-			# Choosing a Machine is the Simulation's way of putting the Machine tool back,
-			# so the reading used for the rest of this tick follows it.
-			build_tool = Simulation.BUILD_TOOL_MACHINE
+	# **The wheel turns the building, and the number row chooses it.** A playtest asked for
+	# it in those words — "scrolling while in build mode should rotate the building and not
+	# switch the currently hologrammed building" — and it is the better split: which way a
+	# Machine faces is adjusted constantly while aiming one placement, where which Machine is
+	# on the gun is chosen once and then built several times. A wheel is the right device for
+	# the continuous act and a labelled key for the discrete one, which is also why the cells
+	# print their keys.
+	#
+	# **It reads by hand**, exactly as the number row does. A player holding a rifle who
+	# scrolls has no hologram to turn and nothing on screen would change, so the only effect
+	# would be to silently re-point the Build Gun they would draw next — the same
+	# disagreement #35 found between the hologram and four inline build-mode tests, a
+	# reading gated on one side and not the other.
+	var turn_steps: int = sample.rotate_steps
+	if gun_in_hand:
+		turn_steps += sample.machine_steps
 
 	# A drag whose tool has left the player's hands is a drag they changed their mind
 	# about. Dropped here rather than refused later, because an intent nobody is still
@@ -584,15 +587,15 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	if build_tool != Simulation.BUILD_TOOL_BELT:
 		_belt_dragging = false
 
-	if sample.rotate_steps != 0:
+	if turn_steps != 0:
 		if build_tool == Simulation.BUILD_TOOL_BELT:
 			# There is no hologram to turn with the Belt tool out, and the one thing about a
 			# route a player chooses is which way it bends. The same button therefore does
 			# the one useful thing in each hand — a tool deciding what the mouse means,
 			# which is the only kind of mode this project has.
-			_belt_corner_flips += sample.rotate_steps
+			_belt_corner_flips += turn_steps
 		else:
-			actions.append(InputAction.rotate_build(player_id, sample.rotate_steps))
+			actions.append(InputAction.rotate_build(player_id, turn_steps))
 
 	# **The four build acts, routed by what is in the player's hands.** A click with the
 	# Build Gun out places; the same click with the weapon out fires, further down. Nothing
@@ -608,7 +611,7 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 		# The rotation the player will be holding once this tick's rotate has applied,
 		# so rotating and placing in the same tick places the Machine they can see.
 		var rotation: int = WorldGrid.wrap_rotation(
-			sim.query_player_build_rotation(player_id) + sample.rotate_steps
+			sim.query_player_build_rotation(player_id) + turn_steps
 		)
 		var machine: int = sim.query_player_selected_machine_index(player_id)
 		# **Where the gun is pointing, which for a Miner is the Node it snapped to** (#42).
@@ -989,18 +992,6 @@ func _nearest_downed(sim: Simulation, player_id: int) -> int:
 		best = other
 		best_gap = squared
 	return best
-
-
-## The Machine `steps` along from the one on the Build Gun, wrapping at both ends, or -1
-## when the definitions carry no Machines to step through.
-func _stepped_machine(sim: Simulation, player_id: int, steps: int) -> int:
-	var count: int = sim.query_definitions().machine_count()
-	if count == 0:
-		return -1
-	var current: int = sim.query_player_selected_machine_index(player_id)
-	if current == -1:
-		current = 0
-	return posmod(current + steps, count)
 
 
 ## One `WITHDRAW_FROM_NEST` intent per Item the Machine on the Build Gun is still short of,

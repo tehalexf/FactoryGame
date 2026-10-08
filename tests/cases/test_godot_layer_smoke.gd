@@ -192,26 +192,28 @@ func test_rotating_and_placing_in_one_tick_places_the_rotation_the_player_can_se
 	)
 
 
-func test_the_wheel_steps_through_the_machines_and_wraps() -> void:
+func test_the_wheel_turns_the_building_rather_than_stepping_through_the_list() -> void:
+	# This test used to assert the wheel stepped through the Machine list and wrapped. A
+	# playtest asked for the opposite — "scrolling while in build mode should rotate the
+	# building and not switch the currently hologrammed building" — so stepping is gone and
+	# the number row is the only picker. The claim worth keeping from the old test is that
+	# the wheel still *does* something and that it does not quietly choose a Machine;
+	# `test_building_view` holds the pair of them in both hands.
 	var sim: Simulation = Simulation.new(1, 1)
-	# The wheel is the Machine picker only with the Build Gun out; scrolling with a weapon
-	# in hand chooses nothing, which `test_building_view` asserts from the other side.
 	sim.step([InputAction.set_build_mode(0, true)])
 	var controller: PlayerController = PlayerController.new()
-	var count: int = sim.query_definitions().machine_count()
-	assert_true(count >= 2, "the premise of the rest")
+	var chosen: String = sim.query_player_selected_machine(0)
 
-	var ids: PackedStringArray = sim.query_definitions().machine_ids()
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.machine_steps = 1
 	sim.step(controller.actions_for_tick(sim, 0, sample))
-	assert_eq(sim.query_player_selected_machine(0), ids[1], "one step is the next by id")
 
-	# A full lap of the list comes back to where it started, rather than running off the
-	# end of the Machine table.
-	for step: int in range(count):
-		sim.step(controller.actions_for_tick(sim, 0, sample))
-	assert_eq(sim.query_player_selected_machine(0), ids[1], "stepping all the way wraps")
+	assert_eq(sim.query_player_build_rotation(0), 1, "the wheel turned the hologram")
+	assert_eq(
+		sim.query_player_selected_machine(0),
+		chosen,
+		"and left the Machine on the gun alone"
+	)
 
 
 func test_a_demolish_returns_the_materials_the_build_spent() -> void:

@@ -681,38 +681,44 @@ func test_the_number_row_is_the_one_thing_two_acts_share_and_it_shares_by_hand()
 	)
 
 
-func test_the_wheel_reads_by_hand_so_scrolling_with_a_rifle_out_changes_nothing() -> void:
-	# From a playtest: "scrolling while not in build mode should not change the currently
-	# equipped build gun building". The number row was gated on the hand from the day the
-	# holster landed and the wheel never was, so a player holding a rifle who scrolled
-	# silently re-pointed the Build Gun they would draw next — nothing on screen moved,
-	# which is what made it a trap rather than a surprise.
+func test_the_wheel_turns_the_building_and_the_number_row_chooses_it() -> void:
+	# A playtest asked for this in these words: "scrolling while in build mode should rotate
+	# the building and not switch the currently hologrammed building". The wheel used to be
+	# the Machine picker, which left rotation on the right mouse button and gave a player two
+	# devices for the discrete act and one for the continuous one.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var controller: PlayerController = PlayerController.new()
+	var scrolling: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	scrolling.machine_steps = 1
+
+	var chosen_before: String = sim.query_player_selected_machine(0)
+	var turning: Array = controller.actions_for_tick(sim, 0, scrolling)
+	assert_eq(_count_of(turning, InputAction.Kind.ROTATE_BUILD), 1, "the wheel turns it")
+	assert_eq(_count_of(turning, InputAction.Kind.SELECT_MACHINE), 0, "and chooses nothing")
+
+	sim.step(turning)
+	assert_eq(
+		sim.query_player_selected_machine(0),
+		chosen_before,
+		"the Machine on the gun is the one it was"
+	)
+	assert_eq(sim.query_player_build_rotation(0), 1, "and it has turned a quarter")
+
+
+func test_the_wheel_reads_by_hand_so_scrolling_with_a_rifle_out_turns_nothing() -> void:
+	# It reads by hand for the reason the number row does: a player holding a rifle has no
+	# hologram to turn, so the only effect of the old reading was to silently re-point the
+	# Build Gun they would draw next.
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
 	var scrolling: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
 	scrolling.machine_steps = 1
 
-	# A Run opens with the weapon out (#42), so this is the hand a player is actually in
-	# when they scroll by accident.
-	assert_false(
-		sim.query_player_is_in_build_mode(0),
-		"a Run opens with the weapon out"
-	)
+	assert_false(sim.query_player_is_in_build_mode(0), "a Run opens with the weapon out")
 	var in_combat: Array = controller.actions_for_tick(sim, 0, scrolling)
-	assert_eq(
-		_count_of(in_combat, InputAction.Kind.SELECT_MACHINE),
-		0,
-		"the wheel chooses no Machine with a weapon in hand"
-	)
-
-	# And it still works with the Build Gun out, which is the half that must not regress.
-	sim.step([InputAction.set_build_mode(0, true)])
-	var in_build: Array = controller.actions_for_tick(sim, 0, scrolling)
-	assert_eq(
-		_count_of(in_build, InputAction.Kind.SELECT_MACHINE),
-		1,
-		"and chooses one with the Build Gun out"
-	)
+	assert_eq(_count_of(in_combat, InputAction.Kind.ROTATE_BUILD), 0, "nothing turns")
+	assert_eq(_count_of(in_combat, InputAction.Kind.SELECT_MACHINE), 0, "nothing is chosen")
 
 
 func _count_of(actions: Array, kind: int) -> int:
