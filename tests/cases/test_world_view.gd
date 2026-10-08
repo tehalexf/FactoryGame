@@ -1979,3 +1979,165 @@ func test_a_split_tag_hangs_off_its_own_machines_roof_and_stacks_with_the_others
 		"and a branch post stands clear of the Belt deck rather than inside it"
 	)
 	view.free()
+
+
+# ── Ore you can see ───────────────────────────────────────────────────────────
+# #52, from a playtest: "I cant seem to find any ore in range for the miners." A Node was a
+# 0.4 m slab in a brown the ground itself is made of, 28 m from where a Run starts. The slab
+# stays a slab — a Node is **ground a Miner is placed over**, and anything that made it a
+# structure would trade one confusion for another — so what carries the legibility is a stack
+# of unshaded segments floating well clear of it, one per Depth tier.
+
+func test_a_node_wears_one_floating_segment_for_every_depth_tier_it_sits_at() -> void:
+	# Depth counted out rather than coloured, so "deeper" reads as "taller mark" and a player
+	# learns the tiers by looking rather than by being starved by one.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(16, 0, 0), "iron_ore", 3)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.ore_beacon_count(), 4, "one segment for the shallow Node and three for the seam")
+	view.free()
+
+
+func test_the_ore_wears_a_marking_on_the_ground_and_a_stack_in_the_air_above_it() -> void:
+	# Two marks because two viewpoints, and a render is what settled it. The stack is what
+	# reads at eye level across the yard; the marking is what reads from Survey View, where a
+	# vertical mark is a 0.6 m square seen end on and the first survey shot showed no ore at
+	# all. The marking also gives the floating stack an owner — #41's lesson, which is that a
+	# bright mark with nothing under it belongs to nobody.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 2)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	assert_eq(view.ore_marking_count(), 1, "one marking painted on the one piece of ore")
+	assert_eq(view.ore_beacon_count(), 2, "and a segment in the air for each of its two tiers")
+
+	# Tile (10,0,0) is 20 m to 22 m on x and 0 m to 2 m on z, so the centre is (21, 1). Every
+	# mark stands over the middle of the Node's own tile.
+	for at: Vector3 in [
+		view.ore_marking_position(0), view.ore_beacon_position(0), view.ore_beacon_position(1)
+	]:
+		assert_eq(at.x, 21.0)
+		assert_eq(at.z, 1.0)
+
+	# The marking lies on the ore. The stack starts clear above it, with open air between —
+	# which is what stops a mark over buildable ground reading as a structure standing on it.
+	assert_true(
+		view.ore_marking_position(0).y <= WorldView.NODE_HEIGHT_METRES + 0.1,
+		"the marking is paint on the ore, got %f" % view.ore_marking_position(0).y
+	)
+	var lowest: float = minf(view.ore_beacon_position(0).y, view.ore_beacon_position(1).y)
+	assert_true(
+		lowest - WorldView.NODE_BEACON_SEGMENT_METRES * 0.5 > WorldView.NODE_HEIGHT_METRES + 0.5,
+		"and there is open air under the stack, got %f" % lowest
+	)
+	assert_ne(view.ore_beacon_position(0).y, view.ore_beacon_position(1).y, "a stack, not a pile")
+	view.free()
+
+
+func test_iron_and_coal_wear_different_colours_and_ore_out_of_reach_wears_neither() -> void:
+	# Three questions one mark has to answer at thirty metres: is there ore here, which ore,
+	# and is it mine yet. The third is `query_node_is_workable_now` — the Simulation's own
+	# answer, the same one the objective line points by — so a mark cannot promise a seam the
+	# hint will not send a player to.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(16, 0, 0), "coal", 1)
+	layout.add_node(Vector3i(22, 0, 0), "iron_ore", 2)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	var iron: Color = _beacon_over(view, sim, Vector3i(10, 0, 0))
+	var coal: Color = _beacon_over(view, sim, Vector3i(16, 0, 0))
+	var seam: Color = _beacon_over(view, sim, Vector3i(22, 0, 0))
+	assert_ne(iron, coal, "iron and coal are told apart by colour")
+	assert_eq(iron, WorldView.ORE_IRON_COLOUR)
+	assert_eq(coal, WorldView.ORE_COAL_COLOUR)
+	assert_eq(seam, WorldView.ORE_OUT_OF_REACH_COLOUR, "and a seam no Miner can lift is inert")
+	view.free()
+
+
+## The colour of the lowest beacon segment over a Node's tile.
+func _beacon_over(view: WorldView, sim: Simulation, tile: Vector3i) -> Color:
+	var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+	var best: int = -1
+	for instance: int in range(view.ore_beacon_count()):
+		var at: Vector3 = view.ore_beacon_position(instance)
+		if not is_equal_approx(at.x, Fixed.to_float(centre.x)):
+			continue
+		if not is_equal_approx(at.z, Fixed.to_float(centre.z)):
+			continue
+		if best == -1 or at.y < view.ore_beacon_position(best).y:
+			best = instance
+	assert_true(best != -1, "there is a mark over %s" % tile)
+	return view.ore_beacon_colour(best)
+
+
+func test_building_on_ore_takes_its_marks_away_whether_or_not_the_machine_works_it() -> void:
+	# The mark is an invitation — *this is ore you can still claim* — so it leaves when the
+	# ground stops being claimable, with nothing remembered. Deliberately not "when the ore is
+	# being worked": a Miner standing idle on ore it cannot mine already says so in amber
+	# through `query_machine_is_starved`, and marking the same tile twice is two marks about
+	# one thing. Pointing at it would be pointing at ground nothing can be placed on, which is
+	# the very reason `Objective` skips it too.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(16, 0, 0), "coal", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.ore_marking_count(), 2, "two Nodes, nothing built on either")
+
+	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	sim.step([InputAction.build_machine(0, miner, Vector3i(10, 0, 0))])
+	view.sync(sim)
+	assert_eq(view.ore_marking_count(), 1, "the iron has been claimed")
+	assert_eq(view.ore_beacon_count(), 1, "and its stack went with it")
+
+	# An iron Miner over coal: it covers the Node and mines the wrong thing, so it is starved —
+	# and the ground is taken all the same.
+	sim.step([InputAction.build_machine(0, miner, Vector3i(16, 0, 0))])
+	view.sync(sim)
+	assert_true(sim.query_machine_is_starved(1), "the second Miner is over the wrong ore")
+	assert_eq(view.ore_marking_count(), 0, "and claimed ground is claimed either way")
+	view.free()
+
+
+func test_the_ore_marks_do_not_grow_the_scene_tree() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var children: int = view.get_child_count()
+	assert_true(view.ore_beacon_count() > 1, "the shipped Map has ore with tiers to count")
+	_run(sim, 30)
+	view.sync(sim)
+	assert_eq(view.get_child_count(), children, "every segment is one instance of one MultiMesh")
+	view.free()
+
+
+func test_the_ore_in_the_ground_is_painted_inside_the_palette_rather_than_brightened() -> void:
+	# The lesson #32 recorded and #38 paid for again: a colour picked against a white
+	# background is a colour picked against the wrong thing. The old slab was 0.45 albedo
+	# against a palette that runs 0.055 to 0.14, so it was *already* the brightest thing in
+	# frame and still invisible — because it shared its hue with the rust and soot the ground
+	# is made of. Brightness was never the lever, so the ore reads as a seam in the ground and
+	# the marks above it do the work.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for colour: Color in [WorldView.ORE_IRON_GROUND, WorldView.ORE_COAL_GROUND]:
+		for channel: float in [colour.r, colour.g, colour.b]:
+			assert_true(
+				channel <= 0.2, "%s sits inside the palette's range, got %f" % [colour, channel]
+			)
+	assert_ne(WorldView.ORE_IRON_GROUND, WorldView.ORE_COAL_GROUND, "and the two seams differ")
+	view.free()

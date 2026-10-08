@@ -8573,6 +8573,24 @@ func query_player_yaw_turns(player_id: int) -> int:
 	return _player_yaw[player_id]
 
 
+## The unit vector a player is facing along, on the horizontal plane.
+##
+## The yaw stated as a direction rather than as an angle, and it is `_facing` — the one
+## authority on what a yaw points along, shared with the throttle `_wanted_velocity`
+## rotates. Handed out because the yaw *convention* is the Simulation's and a caller that
+## rebuilt the basis out of `query_player_yaw_turns` would own a second copy of it: the
+## mistake `_lateral_speed` and `_forward_speed` exist to avoid on the inside.
+##
+## #52's objective hint is the caller. "The ore is to your right" is a sentence about the
+## player's own frame, and the geometry of a vector handed over is `game/`'s business in the
+## way `WorldView`'s `atan2` on a Siege Hulk's facing point is. A projection: nothing in the
+## Simulation reads it back.
+func query_player_facing(player_id: int) -> FixedVec2:
+	if not _is_player(player_id):
+		return FixedVec2.zero()
+	return _facing(_player_yaw[player_id])
+
+
 ## How far from level a player is looking, in fixed-point turns. Positive is up, and
 ## the magnitude never exceeds `MAX_PITCH_TURNS`.
 func query_player_pitch_turns(player_id: int) -> int:
@@ -8930,6 +8948,87 @@ func query_node_is_within_depth_of(machine_index: int, node_index: int) -> bool:
 	if definition == null or not definition.is_miner():
 		return false
 	return _miner_reaches(definition, node_index)
+
+
+## Whether any Miner this Run could build right now would actually work this Node.
+##
+## **Both halves of the question and the unlock set as well**, which is what makes it one
+## answer rather than three and the reason it lives here. `query_node_yields_for` and
+## `query_node_is_within_depth_of` each answer about *one* `content/machines.csv` row, which
+## is the right shape for a Build Gun that is holding one; what a mark on the ground and an
+## objective line both need is whether there is *anything* a player owns that could lift it,
+## and the two must not disagree — a beacon drawn as reachable over a seam the hint will not
+## point at is exactly the two-copies-of-a-rule #36's `query_belt_end_is_connected` exists to
+## prevent.
+##
+## A statement about this Run and not about the content: a Depth 2 seam is out of reach at
+## tick 0 and in reach the moment a tier pays for `miner_mk2`, with no number having moved.
+## Nothing in the Simulation reads it back.
+##
+## Walked in definition index order, which is sorted by id — the order every other loop over
+## the Machine table uses, so the answer is a property of the content rather than of the walk.
+func query_node_is_workable_now(node_index: int) -> bool:
+	if not _is_node(node_index):
+		return false
+	for index: int in range(_definitions.machine_count()):
+		var definition: MachineDefinition = _definitions.machine_at(index)
+		if definition == null or not definition.is_miner():
+			continue
+		if not _machine_is_unlocked(definition.id):
+			continue
+		if not _miner_reaches(definition, node_index):
+			continue
+		var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
+		if recipe != null and _recipe_yields(recipe, _node_resource[node_index]):
+			return true
+	return false
+
+
+## Whether a Miner is standing on this Node and actually extracting from it.
+##
+## **Covering is not working, and #52 is the ticket that cost.** `query_node_under_machine` is
+## geometry — the Node a footprint covers — and covering is one of the three things a Miner
+## needs: an iron Miner over coal mines the wrong thing and a Mk1 on a Depth 2 seam cannot lift
+## it, and both of those cover a Node while accumulating nothing at all. So this is
+## `query_machine_is_starved` pointed the other way round, which keeps the question on
+## `_machine_has_its_inputs` — the one predicate behind what the grid bills, what advances and
+## what a query calls starved — rather than on a list of cases somebody has to keep in step
+## with it.
+##
+## Two callers and they must not disagree: `Objective`'s first step goes quiet on it, and the
+## beacon `WorldView` hangs over unworked ore goes quiet on it. A mark that vanished over ore
+## the hint still points at would be two opinions about one fact. Nothing in the Simulation
+## reads it back.
+func query_node_is_being_worked(node_index: int) -> bool:
+	if not _is_node(node_index):
+		return false
+	for index: int in range(query_machine_count()):
+		if query_node_under_machine(index) != node_index:
+			continue
+		if not query_machine_is_starved(index):
+			return true
+	return false
+
+
+## Whether any Machine's footprint covers this Node.
+##
+## Geometry, and deliberately a weaker claim than `query_node_is_being_worked`: a Machine here
+## may be mining this ore, mining the wrong thing, or not a Miner at all. What the two callers
+## share is the consequence rather than the cause — **this is ground nothing more can be put
+## on** — which is what both of them are actually asking. `Objective` will not send a player to
+## a tile that is occupied, and `WorldView` takes its mark off one, because a mark over ground
+## a player cannot build on is an invitation that cannot be accepted.
+##
+## Walked from the Machines rather than asked of each Node, which is `_mark_obstructions`'
+## lesson: a Factory has fewer Machines than this question has callers per frame. Nothing in
+## the Simulation reads it back.
+func query_node_is_built_on(node_index: int) -> bool:
+	if not _is_node(node_index):
+		return false
+	for index: int in range(query_machine_count()):
+		if query_node_under_machine(index) == node_index:
+			return true
+	return false
 
 
 ## The Node on a tile, or -1. Nodes occupy one tile each.

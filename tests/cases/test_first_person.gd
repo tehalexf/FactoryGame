@@ -183,6 +183,32 @@ func test_a_player_starts_facing_along_negative_z_and_level() -> void:
 	assert_eq(sim.query_player_pitch_turns(0), 0, "and level with the horizon")
 
 
+func test_which_way_a_player_faces_is_a_unit_vector_the_simulation_hands_out() -> void:
+	# #52. A hint that says "ore to your right" needs the basis a player's own frame is
+	# built in, and `_facing` is the one authority on it — the same one `_wanted_velocity`
+	# walks them by. Handing out the vector keeps that authority in the Simulation; what
+	# `game/` does with it is geometry on a number it was given.
+	var sim: Simulation = _looking_sim()
+	var forward: FixedVec2 = sim.query_player_facing(0)
+	assert_eq(forward.x, 0, "yaw 0 looks down -z")
+	assert_eq(forward.z, -Fixed.ONE, "a whole metre of it, so it is a unit vector")
+
+	# A quarter turn to the left, which is a *rise* in yaw, puts -x ahead.
+	sim.step([InputAction.look(0, Fixed.from_int(-625), 0)])
+	assert_eq(sim.query_player_yaw_turns(0), Fixed.QUARTER_TURN, "exactly a quarter turn")
+	var left: FixedVec2 = sim.query_player_facing(0)
+	assert_eq(left.x, -Fixed.ONE, "and the quarter boundaries are exact in the sine table")
+	assert_eq(left.z, 0)
+
+
+func test_asking_which_way_a_player_faces_does_not_move_the_hash() -> void:
+	var sim: Simulation = _looking_sim()
+	sim.step([InputAction.look(0, Fixed.from_int(137), 0)])
+	var before: int = sim.hash()
+	sim.query_player_facing(0)
+	assert_eq(sim.hash(), before, "a projection the Simulation never reads back")
+
+
 func test_moving_the_mouse_right_turns_the_player_clockwise() -> void:
 	var sim: Simulation = _looking_sim()
 	# 500 pixels is half a thousand; half of 0.4 turns is 0.2 turns, which is

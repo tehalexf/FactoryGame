@@ -651,3 +651,73 @@ t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 ## A Run on the Map a Run starts on, reading that same content.
 func _starter_sim(world_seed: int) -> Simulation:
 	return Simulation.new(world_seed, 1, _content(), MapLayout.starter())
+
+
+# ── Which ore a Run can actually work, and saying so ──────────────────────────
+# #52. A Depth 2 seam that no Miner a Run owns can lift looks exactly like shallow iron,
+# so the first thing a player may learn about Depth is a Miner that is silently starved.
+# `query_node_is_workable_now` is the projection that lets a mark say which is which, and
+# it is one answer rather than three because the mark and the objective line must not
+# disagree about what is reachable.
+
+func test_a_node_is_workable_when_some_unlocked_miner_could_lift_it() -> void:
+	# The shipped Map: three Depth 1 Nodes, and seams at Depth 2 and Depth 3. A Run opens
+	# with miner_mk1 and coal_miner_mk1, both Depth 1, so exactly the shallow three are
+	# workable and the two seams are not.
+	var sim: Simulation = Simulation.new(1, 1)
+	var workable: int = 0
+	var out_of_reach: int = 0
+	for index: int in range(sim.query_node_count()):
+		if sim.query_node_is_workable_now(index):
+			assert_eq(
+				sim.query_node_depth(index), 1, "only the shallow ore is within a Mk1's reach"
+			)
+			workable += 1
+		else:
+			assert_true(sim.query_node_depth(index) >= 2, "and the seams are the ones that are not")
+			out_of_reach += 1
+	assert_eq(workable, 3, "the three shallow Nodes")
+	assert_eq(out_of_reach, 2, "and the two deeper seams")
+
+
+func test_a_node_whose_resource_nothing_unlocked_mines_is_not_workable() -> void:
+	# Depth is not the only reason a Node can be out of reach, and the projection answers
+	# the question the mark asks rather than the Depth half of it: a Node yielding something
+	# no unlocked Miner's Recipe produces is a Node nothing can work either.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(6, 0, 0), "ammunition", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var iron: int = sim.query_node_at_tile(Vector3i(0, 0, 0))
+	var nothing: int = sim.query_node_at_tile(Vector3i(6, 0, 0))
+	assert_true(sim.query_node_is_workable_now(iron), "a Miner mines iron ore")
+	assert_false(sim.query_node_is_workable_now(nothing), "and no Miner mines Ammunition")
+
+
+func test_a_chain_that_unlocks_a_deeper_miner_makes_the_seam_workable() -> void:
+	# The projection reads the Run's unlocks, which is what makes it a statement about this
+	# Run rather than about `content/machines.csv`: the same Depth 2 seam is out of reach
+	# under the shipped chain, which locks miner_mk2 behind `t02_deep_mining`, and in reach
+	# under this file's chain, which locks nothing.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 2)
+	layout.sort_nodes()
+
+	var shipped: Simulation = Simulation.new(1, 1, null, layout)
+	assert_false(shipped.query_node_is_workable_now(0), "the shipped chain locks miner_mk2")
+
+	var open_chain: Simulation = Simulation.new(1, 1, _content(), layout)
+	assert_true(
+		open_chain.query_node_is_workable_now(0), "and a chain that locks nothing frees the seam"
+	)
+
+
+func test_asking_which_ore_is_workable_does_not_move_the_hash() -> void:
+	# A projection the Simulation never reads back, the standing `query_belt_end_is_connected`
+	# has. A mark drawn from it must not be able to change the Run it is a mark about.
+	var sim: Simulation = Simulation.new(1, 1)
+	var before: int = sim.hash()
+	for index: int in range(sim.query_node_count()):
+		sim.query_node_is_workable_now(index)
+	assert_eq(sim.hash(), before, "asking is a read")

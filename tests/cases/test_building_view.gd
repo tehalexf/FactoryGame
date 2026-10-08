@@ -338,7 +338,9 @@ func test_the_markers_do_not_grow_the_scene_tree_as_a_factory_is_built() -> void
 func test_a_fresh_run_is_told_to_put_a_miner_on_a_node() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	assert_true(Objective.line(sim, 0).contains("Miner"), Objective.line(sim, 0))
-	assert_true(Objective.line(sim, 0).contains("node"), "and where to put it")
+	# Where to put it, which since #52 is a Resource and a bearing rather than the word
+	# "node": the playtest that produced that ticket proves naming the act was not enough.
+	assert_true(Objective.line(sim, 0).contains("iron ore"), "and where to put it")
 
 
 func test_a_miner_on_bare_rock_has_not_done_the_first_thing() -> void:
@@ -899,3 +901,116 @@ func test_the_brief_hud_counts_a_blocked_branch() -> void:
 		"and the brief HUD counts it, got:\n%s" % view.hud_brief_text()
 	)
 	view.free()
+
+
+# ── Being pointed at the ore ───────────────────────────────────────────────────
+# #52, from a playtest: "I cant seem to find any ore in range for the miners." The first
+# thing the game asks of a player is to walk 28 m to something they cannot see, in a
+# direction nothing indicates. The line already goes quiet the moment a Miner is working
+# ore, so the hint is a *rewording of the first step* rather than a step of its own —
+# nothing remembered, nothing to skip, and no tutorial state anywhere.
+#
+# The bearing is relative to where the player is looking rather than to a compass, because
+# this game has no compass and "north-east" is a word a player cannot act on.
+
+func test_the_first_line_says_how_far_the_ore_is_and_which_way_to_turn() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var line: String = Objective.line(sim, 0)
+	assert_true(line.contains("Miner"), line)
+	assert_true(line.contains("iron ore"), "it names the Resource, not an item id: %s" % line)
+	assert_true(line.contains(" m "), "and how far away it is: %s" % line)
+
+
+func test_the_bearing_is_relative_to_where_the_player_is_looking() -> void:
+	# A Map with one Node due east of the Nest, where a Run starts the player. Yaw 0 looks
+	# down -z, so east is squarely to their right; a half turn puts it squarely to their
+	# left, with nothing but the look having happened.
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(20, 0, 1), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+
+	assert_true(
+		Objective.line(sim, 0).contains("to your right"),
+		"the ore is east and the player looks north: %s" % Objective.line(sim, 0)
+	)
+	# 2500 pixels is half a turn at the shipped sensitivity of 0.2 turns per thousand.
+	sim.step([InputAction.look(0, Fixed.from_int(2500), 0)])
+	assert_true(
+		Objective.line(sim, 0).contains("to your left"),
+		"and after a half turn it is to their left: %s" % Objective.line(sim, 0)
+	)
+
+
+func test_the_line_points_at_the_nearest_ore_a_run_could_actually_work() -> void:
+	# A seam no unlocked Miner can lift is not somewhere to send a player, however close it
+	# is: sending them there would be telling them to do the one thing that cannot be done.
+	# `query_node_is_workable_now` is the Simulation's answer and this reads it rather than
+	# working out its own.
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 4), "iron_ore", 3)
+	layout.add_node(Vector3i(0, 0, 30), "coal", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var line: String = Objective.line(sim, 0)
+	assert_true(line.contains("coal"), "the far coal is workable and the near seam is not: %s" % line)
+	assert_false(line.contains("iron"), line)
+
+
+func test_a_node_already_built_on_is_not_where_the_player_is_sent() -> void:
+	# A Miner standing on ore it cannot work leaves the first step unmet, so the line is
+	# still up — and pointing at the tile it is standing on would be pointing at ground
+	# nothing can be placed on.
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 6), "coal", 1)
+	layout.add_node(Vector3i(0, 0, 24), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	# An iron Miner over the coal: it reaches the Depth and mines the wrong thing, so
+	# nothing is mining and the near Node is nonetheless occupied.
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 6)
+		)
+	])
+	var line: String = Objective.line(sim, 0)
+	assert_true(line.contains("Miner"), "the first step is still unmet: %s" % line)
+	assert_true(line.contains("iron ore"), "and the free Node is the far one: %s" % line)
+
+
+func test_the_hint_goes_quiet_the_moment_a_miner_is_working_ore() -> void:
+	# Both halves of #52's second part: a player at the Nest is told which way to walk, and
+	# the telling stops once they are mining. Nothing is remembered to make that happen —
+	# it is the first step being met, which is how every other step here goes quiet.
+	# Clear of the Nest, which stands on the origin of an empty layout and obstructs
+	# building: a Miner refused is not a Miner working, and the first render of this test
+	# was a refusal reading as a hint that would not go quiet.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 12), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	assert_true(Objective.line(sim, 0).contains(" m "), Objective.line(sim, 0))
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 12)
+		)
+	])
+	assert_false(
+		Objective.line(sim, 0).contains(" m "),
+		"a player who is mining is not told where ore is: %s" % Objective.line(sim, 0)
+	)
+
+
+func test_a_map_with_no_workable_ore_says_nothing_it_cannot_back_up() -> void:
+	# A direction to nowhere is worse than no direction. With nothing a Run could work the
+	# line falls back to naming the act, which is exactly what it said before #52.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 3)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var line: String = Objective.line(sim, 0)
+	assert_true(line.contains("Miner"), line)
+	assert_false(line.contains(" m "), "there is no distance to quote: %s" % line)

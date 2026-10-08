@@ -31,6 +31,96 @@ extends Node3D
 ## A Node is drawn as a low slab, so a Miner standing on one does not hide it.
 const NODE_HEIGHT_METRES: float = 0.4
 
+## What the ore in the ground is painted, per Resource.
+##
+## **#52, and the lever is hue and material rather than brightness.** The playtest report was
+## "I cant seem to find any ore in range for the miners", and the slab a player could not see
+## was `Color(0.45, 0.32, 0.18)` — *four times* the albedo the palette's own surfaces run at
+## (0.055 to 0.14), which makes it the one mistake #32 and #38 both paid for: a colour picked
+## against a white background. It was already the brightest thing in frame and still invisible,
+## because it shared its hue with the rust and the soot `ground.gdshader` paints the yard out
+## of. **Nothing on the ground plane can win a contrast fight against the ground plane**, so
+## these come back down into the palette and read as a seam rather than as a highlight, and
+## the marks floating above them do the finding.
+##
+## Iron is a dark oxide and coal is a cold near-black. Up close that is the difference a player
+## needs — which ore is this — and at range the beacon's colour carries it instead.
+const ORE_IRON_GROUND: Color = Color(0.14, 0.072, 0.050)
+const ORE_COAL_GROUND: Color = Color(0.042, 0.044, 0.055)
+
+## What a Node's beacon is painted: the Resource, and whether this Run could work it at all.
+##
+## **Green and violet are the two hues this project has not already spent**, and that is the
+## whole of why they were picked. Red is a mistake, amber is waiting, hazard yellow is
+## attention, teal is a split flowing, warm orange is an output port, cool blue an input, cream
+## a flow arrow — every one of those is a mark *about the Factory*, and a sixth warm mark among
+## them would be a sixth thing to learn in the place a player is already reading five. A Node
+## is not part of the Factory; it is the Map, like a Breach, so it reads in a colour family
+## nothing in the Factory uses.
+##
+## **Out of reach loses the Resource rather than dimming it.** A seam no unlocked Miner can
+## lift is still worth seeing — it is what `content/deliveries.csv` is selling — but the
+## actionable fact is "not yours yet", not which ore it is, and a dimmed version of a colour
+## reads as a rendering artefact rather than as a state (`PENDING_BREACH_HEIGHT_METRES` records
+## the same decision for a Breach about to open). So it goes inert steel: plainly a mark, and
+## plainly not an invitation. `query_node_is_workable_now` decides which, and the objective
+## line points by that same function — a beacon cannot promise ore the hint will not send a
+## player to.
+const ORE_IRON_COLOUR: Color = Color(0.38, 0.93, 0.70, 0.9)
+const ORE_COAL_COLOUR: Color = Color(0.72, 0.45, 0.96, 0.9)
+const ORE_OUT_OF_REACH_COLOUR: Color = Color(0.62, 0.65, 0.68, 0.75)
+
+## A Node's beacon: how far above the ore the lowest segment floats, how tall each segment
+## is, and the air between two of them. In metres.
+##
+## **One segment per Depth tier, stacked upward.** The third thing a Node has to say is how
+## deep it is, and Depth is a small whole number — so it is counted out rather than coloured,
+## which means "deeper" reads as "taller mark" and the tiers need no key. It also puts the
+## richest ore highest on the skyline, which is correct: the seams are what the Delivery chain
+## is selling.
+##
+## **The base is 1.3 m and a render is why it is not 5.** It was 5.0 first, reasoned from the
+## marks a Machine built on this tile could wear — a Smelter's tag reaches `height` plus
+## `SPLIT_MARK_CLEARS_THE_ROOF_METRES` — and the spawn render killed it twice over. The ticket
+## said the nearest ore is 28 m away; it is **12.7 m**, and at 12.7 m a mark 5 m up sits 21
+## degrees above the horizon, which is #41's symptom exactly: a bright thing in the sky with
+## nothing visibly under it. The collision it was avoiding is gone anyway, because the beacon
+## now leaves the moment *anything* is built on the Node (`query_node_is_built_on`) rather than
+## when the Node is worked — so there is never a Machine under one to collide with.
+##
+## At 1.3 m the stack starts at chest height with open air under it, which is what keeps a mark
+## over buildable ground from reading as a structure standing on it, and a Depth 3 seam still
+## reaches 5.5 m and breaks the horizon from across the Map.
+const NODE_BEACON_BASE_METRES: float = 1.3
+const NODE_BEACON_SEGMENT_METRES: float = 1.0
+const NODE_BEACON_GAP_METRES: float = 0.4
+
+## How wide a beacon segment is drawn, as a fraction of a tile. Narrow, because a mark as wide
+## as the tile it is about would read as a roof hanging over the ore.
+const NODE_BEACON_WIDTH_FRACTION: float = 0.32
+
+## The painted marking on the ore itself: how much of the tile it covers, how thick it is drawn
+## and how far above the slab it lies. In metres except the fraction.
+##
+## **A second render is why this exists, and it is the finding that mattered most.** The stack
+## alone is a *vertical* mark, and from Survey View — the one mode this game has for reading
+## the whole Factory at a glance, looking down from 26 m — a vertical mark is a 0.6 m square
+## seen end on. The survey shot showed no ore at all. So the ore wears a flat marking as well,
+## and the two answer different questions: the stack is what you see from eye level across the
+## yard, the marking is what you see from above and up close.
+##
+## It also fixes the first render's other complaint. A floating stack needs an owner (#41), and
+## a bright patch directly beneath it is one — the two read as one mark rather than as a thing
+## in the sky and a dark patch of ground that happen to share a tile.
+##
+## **Paint rather than a slab**, inset and millimetres thick, because the yard is already full
+## of painted markings — `ground.gdshader` draws the grid as paint, and paint is the one thing
+## on a floor that unambiguously is not an object standing on it. A Miner is placed *over* a
+## Node, and a mark that read as occupied would trade one confusion for another.
+const NODE_MARKING_FRACTION: float = 0.62
+const NODE_MARKING_THICKNESS_METRES: float = 0.05
+const NODE_MARKING_LIFT_METRES: float = 0.03
+
 ## How high a tile of Belt stands when it has no generated body — a low slab, so the
 ## Items riding it are what the eye follows.
 const BELT_HEIGHT_METRES: float = 0.3
@@ -212,6 +302,14 @@ var _machine_meshes: Array[MeshInstance3D] = []
 var _machine_dressing: PackedStringArray = PackedStringArray()
 
 var _node_meshes: Array[MeshInstance3D] = []
+
+## The marks over the Map's ore, and the readable record of where they went and what colour
+## they are. One MultiMesh however many Nodes at however many Depths (#52).
+var _ore_beacons: MultiMeshInstance3D = null
+var _ore_beacon_transforms: Array[Vector3] = []
+var _ore_beacon_colours: Array[Color] = []
+var _ore_marking_transforms: Array[Vector3] = []
+var _ore_marking_colours: Array[Color] = []
 
 ## Every tile of Belt, as instances of one mesh.
 ##
@@ -1198,7 +1296,7 @@ static func _instance_transform(buffer: PackedFloat32Array, instance: int) -> Tr
 
 func _sync_nodes(sim: Simulation) -> void:
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
-	_resize_pool(_node_meshes, sim.query_node_count(), tile_size, NODE_HEIGHT_METRES, Color(0.45, 0.32, 0.18))
+	_resize_pool(_node_meshes, sim.query_node_count(), tile_size, NODE_HEIGHT_METRES, ORE_IRON_GROUND)
 
 	for index: int in range(sim.query_node_count()):
 		var tile: Vector3i = sim.query_node_tile(index)
@@ -1208,6 +1306,176 @@ func _sync_nodes(sim: Simulation) -> void:
 			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + NODE_HEIGHT_METRES * 0.5,
 			Fixed.to_float(centre.z)
 		)
+		# The seam repainted every sync rather than once at construction, because a pooled
+		# slab is reused for whichever Node took its index and the Resource is read off the
+		# Simulation like everything else here. The material is this instance's own, from
+		# `_resize_pool`, so writing it tints one Node.
+		var skin: StandardMaterial3D = (
+			_node_meshes[index].material_override as StandardMaterial3D
+		)
+		if skin != null:
+			skin.albedo_color = _ore_ground_colour(sim.query_node_resource(index))
+
+	_sync_ore_beacons(sim)
+
+
+## What the ore in the ground is painted, from the Resource it yields.
+##
+## Iron is the default rather than a third case, because the Resources that exist are exactly
+## the ones the Recipes mention and `sim/` names none of them — a Node yielding something this
+## renderer has never heard of is an ordinary state and gets the ore colour, exactly as a
+## Machine with no generated body gets a box.
+static func _ore_ground_colour(resource: String) -> Color:
+	return ORE_COAL_GROUND if resource == "coal" else ORE_IRON_GROUND
+
+
+## The marks over every Node nothing has been built on: a flat marking painted on the ore, and
+## one floating segment above it per Depth tier, coloured by the Resource — or inert where no
+## Miner this Run owns could lift it.
+##
+## **It goes quiet the way the objective line does**, and on the same question the line picks a
+## target by: `query_node_is_built_on`. A Node under a Machine is no longer ground a player can
+## be sent to, whether or not that Machine is any good at working it — and a Miner standing
+## idle on ore it cannot mine says so already, in amber, through `query_machine_is_starved`.
+## Marking it twice would be two marks about one tile, and it is also what forced the beacon up
+## into the sky in the first draft: with nothing ever built underneath, the stack is free to
+## start at chest height where it belongs.
+##
+## One MultiMesh with per-instance colour and per-instance scale, so a Map of any number of
+## Nodes at any Depth costs the scene tree one node — the arrangement the Walls have, and for
+## the same reason. The scale is what lets one box be both a 5 cm painted square and a 1 m
+## floating segment.
+func _sync_ore_beacons(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _ore_beacons == null:
+		_ore_beacons = MultiMeshInstance3D.new()
+		var instanced: MultiMesh = MultiMesh.new()
+		instanced.transform_format = MultiMesh.TRANSFORM_3D
+		instanced.use_colors = true
+		var unit: BoxMesh = BoxMesh.new()
+		unit.size = Vector3.ONE
+		instanced.mesh = unit
+		_ore_beacons.multimesh = instanced
+		var skin: StandardMaterial3D = StandardMaterial3D.new()
+		skin.vertex_color_use_as_albedo = true
+		skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		# Unshaded, for the reason an Ammunition gauge is: a mark a directional light can
+		# darken is a mark a player fails to find at the one moment they are looking for it,
+		# and the sun on this Map is 23 degrees up.
+		skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_ore_beacons.material_override = skin
+		add_child(_ore_beacons)
+
+	_ore_marking_transforms.clear()
+	_ore_marking_colours.clear()
+	_ore_beacon_transforms.clear()
+	_ore_beacon_colours.clear()
+
+	var segment: Vector3 = Vector3(
+		tile_size * NODE_BEACON_WIDTH_FRACTION,
+		NODE_BEACON_SEGMENT_METRES,
+		tile_size * NODE_BEACON_WIDTH_FRACTION
+	)
+	var marking: Vector3 = Vector3(
+		tile_size * NODE_MARKING_FRACTION,
+		NODE_MARKING_THICKNESS_METRES,
+		tile_size * NODE_MARKING_FRACTION
+	)
+	for index: int in range(sim.query_node_count()):
+		if sim.query_node_is_built_on(index):
+			continue
+		var tile: Vector3i = sim.query_node_tile(index)
+		var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+		var ground: float = Fixed.to_float(sim.query_layer_height_metres(tile.y))
+		var colour: Color = _ore_beacon_colour_of(sim, index)
+
+		_ore_marking_colours.append(colour)
+		_ore_marking_transforms.append(
+			Vector3(
+				Fixed.to_float(centre.x),
+				ground + NODE_HEIGHT_METRES + NODE_MARKING_LIFT_METRES,
+				Fixed.to_float(centre.z)
+			)
+		)
+		for tier: int in range(maxi(sim.query_node_depth(index), 1)):
+			_ore_beacon_colours.append(colour)
+			_ore_beacon_transforms.append(
+				Vector3(
+					Fixed.to_float(centre.x),
+					(
+						ground
+						+ NODE_BEACON_BASE_METRES
+						+ NODE_BEACON_SEGMENT_METRES * 0.5
+						+ tier * (NODE_BEACON_SEGMENT_METRES + NODE_BEACON_GAP_METRES)
+					),
+					Fixed.to_float(centre.z)
+				)
+			)
+
+	var total: int = _ore_marking_transforms.size() + _ore_beacon_transforms.size()
+	_ore_beacons.multimesh.instance_count = total
+	for instance: int in range(_ore_marking_transforms.size()):
+		_write_ore_instance(
+			instance, _ore_marking_transforms[instance], marking, _ore_marking_colours[instance]
+		)
+	for instance: int in range(_ore_beacon_transforms.size()):
+		_write_ore_instance(
+			_ore_marking_transforms.size() + instance,
+			_ore_beacon_transforms[instance],
+			segment,
+			_ore_beacon_colours[instance]
+		)
+
+
+## One instance of the shared unit box, scaled to what it is standing in for.
+func _write_ore_instance(instance: int, at: Vector3, size: Vector3, colour: Color) -> void:
+	_ore_beacons.multimesh.set_instance_transform(
+		instance, Transform3D(Basis.IDENTITY.scaled(size), at)
+	)
+	_ore_beacons.multimesh.set_instance_color(instance, colour)
+
+
+## What a Node's marks are painted: the Resource, or inert where no Miner this Run owns could
+## lift it. `query_node_is_workable_now` decides, which is the function the objective line
+## points by — so a mark cannot promise ore the hint will not send a player to.
+func _ore_beacon_colour_of(sim: Simulation, index: int) -> Color:
+	if not sim.query_node_is_workable_now(index):
+		return ORE_OUT_OF_REACH_COLOUR
+	return ORE_COAL_COLOUR if sim.query_node_resource(index) == "coal" else ORE_IRON_COLOUR
+
+
+## How many beacon segments are floating over the Map's ore. For the smoke test; a player
+## counts the segments over one Node to read its Depth.
+func ore_beacon_count() -> int:
+	return _ore_beacon_transforms.size()
+
+
+## Where one beacon segment floats. The readable record of what was drawn, because the
+## engine-side MultiMesh buffer is invisible to a headless test.
+func ore_beacon_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= _ore_beacon_transforms.size():
+		return Vector3.ZERO
+	return _ore_beacon_transforms[instance]
+
+
+## What one beacon segment is painted: the Resource, or inert for ore out of reach.
+func ore_beacon_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _ore_beacon_colours.size():
+		return Color.BLACK
+	return _ore_beacon_colours[instance]
+
+
+## How many pieces of ore wear a painted marking: one each, for the ore nothing is built on.
+func ore_marking_count() -> int:
+	return _ore_marking_transforms.size()
+
+
+## Where one painted marking lies — on the ore itself, which is what anchors the stack
+## floating above it to the ground it is about.
+func ore_marking_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= _ore_marking_transforms.size():
+		return Vector3.ZERO
+	return _ore_marking_transforms[instance]
 
 
 func _sync_machines(sim: Simulation) -> void:
