@@ -423,9 +423,9 @@ after are `docs/images/enemies_{pair,wave,boss}_{before,after}.png`, rebuilt wit
 `SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png <preset>`.
 
 **What it costs**, measured with `ENEMY_COUNT=<n> tools/visual/frame_cost.sh` against the
-same scenario before and after: `WorldView.sync` goes from 3.22 ms to 4.32 ms at 18 Enemies
-and from 3.80 ms to 4.56 ms at 71, so about **a millisecond of a 16.67 ms frame**, plus
-1.4 M primitives and 17 MB of video memory. That is the CPU rebuild only — the skinning is
+same scenario with and without the renderer half: `WorldView.sync` goes from 3.16 ms to
+4.34 ms at 18 Enemies and from 3.76 ms to 4.44 ms at 71, so about **a millisecond of a
+16.67 ms frame**, plus 1.4 M primitives and 17 MB of video memory. That is the CPU rebuild only — the skinning is
 in a vertex shader and Xvfb is llvmpipe, so **the GPU half of this is unmeasured here** and
 wants a machine with a real card.
 
