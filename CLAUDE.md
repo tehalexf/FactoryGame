@@ -2598,6 +2598,10 @@ collision cost the two sorties", "What #34 cost the table" and "What #37 cost th
 | `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m13s | **27m16s** | 32 | 5862 | swarmed, 1m51s sooner than `competent` |
 | `artillery` — grows a Silo and fires it | — | — | — | **16m10s** | 21 | 5584 | swarmed, **44% sooner** than `competent` |
 
+Re-measured again after #36 landed and **every row is bit-identical**, which is what #36's
+additive shape predicted: it gave a player a Belt-routing tool and a port table to aim it with
+and changed nothing the scenarios drive, because a scenario issues `BUILD_BELT` directly.
+
 `rifle_picket`'s 27m13s was a transcription error in #34's column: the figure the harness has
 printed on seed 7 throughout is **27m16s**, and the three-second seed spread is 27m16s against
 27m13s on seeds 11 and 29 rather than the other way round. Corrected here rather than quietly,
