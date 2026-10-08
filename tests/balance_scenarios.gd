@@ -80,9 +80,12 @@ const SECOND_BOILER_TILE: Vector3i = Vector3i(16, GROUND, 8)
 ## into and collects nothing from, used here for what it is for.
 ##
 ## **The Silo needs its own plate and the opening line has none to spare.** The Smelter makes
-## 18.75 plate a minute and the Ammo Press wants 20, so the Press takes every plate the Smelter
-## produces: a second Belt off the Smelter is served after the Press's by canonical Belt order
-## and therefore never gets one at all. A Silo's Recipe is a plate and twenty rounds, so the
+## 18.75 plate a minute and the Ammo Press wants 20, so the Press can use every plate the Smelter
+## produces. Before #46 a second Belt off that Smelter never got one at all, because the Press's
+## was served first every tick; since #46 it would get half, and halving the Press is not a trade
+## this row wants. **The second ore line is therefore still the right build and no longer the
+## only one** — a judgement rather than a measurement, because what has been measured is this Run
+## and not the branched alternative. See CLAUDE.md, "What is still unmeasured". A Silo's Recipe is a plate and twenty rounds, so the
 ## plate has to come from somewhere, and a second Miner and Smelter is what a player would
 ## build. They cost 20 plate between them and almost nothing in Power — the Silo takes 3 plate a
 ## minute of the 18.75 they make, so both spend about a sixth of their time working and the rest
@@ -270,10 +273,11 @@ static func deep_digger() -> BalanceScenario:
 	# **What is left is the Belt itself.** The store used to take 200 coal past the tier's bill
 	# and now takes none, because coal is not an Item a player can spend again
 	# (`Definitions.item_can_be_spent`) — but this line is forty tiles long, so it holds 160 coal
-	# of its own before back-pressure ever reaches the Miner, and its entry at (12, 6) *precedes*
-	# the Boiler's at (14, 4) in canonical Belt order, so it is served first. Measured with the
-	# demolish removed, this Run lasts **6m20s with 98% of it in Power deficit** — against 10m48s
-	# with it. So the diversion a long Belt can hide inside itself is bigger than the one the Nest
+	# of its own before back-pressure ever reaches the Miner, and since #46 it takes **half** the
+	# Miner's coal while it is filling rather than all of it. Measured with the demolish removed
+	# and before #46, this Run lasted **6m20s with 98% of it in Power deficit** — against 10m48s
+	# with it. That pair has not been re-measured on a fair share, and the share is exactly what
+	# #46 changed, so read it as the shape of the trap rather than its current size. So the diversion a long Belt can hide inside itself is bigger than the one the Nest
 	# was hiding, and tearing the line down once the tier is paid is still a decision a player has
 	# to make. See "Findings that are not tuning" in CLAUDE.md.
 	scenario.at_second(180, _demolish_all(_coal_belts_to_the_nest_tiles()))
@@ -597,6 +601,10 @@ static func _demolish_all(tiles: Array) -> Array:
 ## store fills to `nest.store_capacity_per_item` — at which point the Belt backs up and the
 ## Turret gets everything again. Paying for progression out of the Ammunition that was
 ## defending you is the whole of what this row costs.
+##
+## **"Halves" became literal with #46.** Before branching it was a priority: this Belt's entry at
+## (7, 11) comes after the Turret's at (7, 9), so the Turret was fed first and this line got only
+## the overflow. The row's cost is now the one its comment always claimed.
 static func _ammunition_belts_to_the_nest() -> Array:
 	return [
 		InputAction.build_belt(0, Vector3i(7, GROUND, 11), Vector3i(0, GROUND, 11)),
@@ -607,12 +615,11 @@ static func _ammunition_belts_to_the_nest() -> Array:
 
 ## Coal from the coal Miner's southern face, east and into the second Boiler at (16, 8).
 ##
-## Its entry at (13, 6) **precedes** the first Boiler's at (14, 4) in canonical Belt order, so
-## the second Boiler is fed first and the first one burns what is left: 40 coal a minute against
-## two appetites of 30 is one Boiler burning continuously and the other a third of the time.
-## Which way round the priority falls does not matter to the grid — the average supply is 800 kW
-## either way — but it is worth knowing that a splitter in this game is a priority and not a
-## half-share, because that is what the Silo's plate line discovered the hard way.
+## Since #46 the Coal Miner gives its two Belts equal turns, so 40 coal a minute against two
+## appetites of 30 is **two Boilers each burning two thirds of the time** rather than one burning
+## continuously and the other a third of the time. The grid cannot tell the difference — the
+## average supply is 800 kW either way, which is what pays for the Silo — but the Factory reads
+## very differently, because both Boilers now visibly cycle instead of one sitting idle.
 static func _second_boiler_belts() -> Array:
 	return [
 		InputAction.build_belt(0, Vector3i(13, GROUND, 6), Vector3i(13, GROUND, 8)),
@@ -631,11 +638,12 @@ static func _second_ore_belts() -> Array:
 
 ## Rounds off the Ammo Press's western face, west along z = 11 and south into the Silo.
 ##
-## **A third claimant on one Press, and the one #17 asked about.** Its entry at (7, 11) comes
-## after the first Turret's at (7, 9), so the Turret is fed first and the Silo gets what the
-## Turret's line cannot hold — which, because that line is sixty rounds of Belt, is most of what
-## the Press makes between Waves. A Charge is twenty rounds, so the artillery and the magazine
-## are spending the same output, which is exactly the tension the Silo was priced for.
+## **A third claimant on one Press, and the one #17 asked about.** Since #46 the Press gives this
+## line and the Turret's equal turns, so the Silo takes half of what the Press makes rather than
+## the overflow off a sixty-round Belt. A Charge is twenty rounds, so the artillery and the
+## magazine are spending the same output — which is exactly the tension the Silo was priced for,
+## and which this row now pays at full price: see "What #46 cost the table" in CLAUDE.md for the
+## 48 seconds it costs.
 static func _silo_ammunition_belts() -> Array:
 	return [
 		InputAction.build_belt(0, Vector3i(7, GROUND, 11), Vector3i(3, GROUND, 11)),

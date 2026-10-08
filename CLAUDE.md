@@ -1019,6 +1019,65 @@ The order is derived, so it is rebuilt rather than hashed, and only when a Belt 
 `tests/cases/test_belts.gd` asserts the absence of the bias directly, by building the
 same Factory in two orders and comparing every Item position tick by tick.
 
+### A line that branches, and the rotation that makes it one
+
+#46. **Loading a Belt from a Machine port is a pass of its own, after every Belt has moved**,
+because a branch is decided at the Machine and not at the Belt. A Machine's output buffer is one
+pot and each Belt takes at most one Item a tick, so two Belts off one Machine *compete* —
+and deciding that competition inside `_advance_belt` meant deciding it in the order the Belts
+happened to be advanced in, which is the one order this section is at pains not to let anything
+depend on.
+
+**The two halves meet on exactly one tile, and the order between them is deliberate.** A Belt fed
+by a Machine port is usually not fed by another Belt as well — the tile behind its entry is a
+Machine footprint tile or it is not, and `_hand_off` checks for a Machine before it checks for a
+Belt. But two runs pointing different ways *can* land a hand-off on that same entry, and then one
+of the two is refused. Loading last means the **upstream Belt gets the slot**, which is the right
+way round rather than an accident: an Item on a Belt has nowhere else to go and backs the whole
+line up behind it, where a Machine's output buffer is uncapped and banks the surplus safely.
+Before #46 the port cut in and stalled the line feeding it, and
+`test_an_item_already_on_a_belt_beats_a_machine_port_for_the_same_slot` is the pin on the new
+rule. Everywhere else, #46 moved every Factory in every fixture onto a new code path and changed
+what exactly one of them did.
+
+- **The rotation is one integer per Machine, `_machine_port_cursor`, and it is hashed.** Which of
+  its Belts a Machine gave first claim to last. One more parallel per-Machine array, indexed
+  exactly like `_machine_progress_ticks`, so a Machine with no Belts off it carries a 0 nothing
+  reads — and giving branching its own index space is how a branch would stop being a property of
+  a Machine.
+- **The cursor indexes the Machine's Belts in *canonical* order, which is what keeps the
+  fairness free of the bias above.** The list is geography — by the tile each run starts at — and
+  the cursor is the only history in it, so a share cannot depend on which branch was laid first.
+  `test_a_branch_splits_the_same_way_whichever_belt_was_laid_first` is the same two-Factories
+  assertion the update order has, pointed at a branch.
+- **A blocked branch is skipped, not waited on.** A Belt with no room at its entry simply fails
+  to take and the Item is offered to the next branch, so one full branch never starves the other.
+  And the cursor moves to one past whichever branch actually *got* the first Item rather than past
+  the one that merely had first claim — a branch that was blocked did not have its turn, so it
+  does not lose it.
+- **What two full branches cannot carry banks in the Machine**, whose output buffer is uncapped,
+  which is where a player reads the surplus off. Nothing is destroyed because a Belt filled up —
+  the rule a full input buffer already obeys.
+- **Scarcity is the whole of what the rotation is for.** A Machine producing faster than its
+  branches can carry serves all of them every tick and the cursor changes nothing. A Machine
+  producing one Item every ninety ticks — which is every Miner the shipped content can build —
+  alternates them exactly.
+- **The canonical order is cached, not sorted per tick.** It falls out of the same rebuild that
+  produces the downstream-first order, under the same staleness flag, because that rebuild
+  already sorts the Belts to decide where to start each chain. This is the hottest loop in the
+  project and a per-tick sort of every Belt in a late-game Factory is not a thing to add to it.
+
+**One fixture's premise changed and is worth knowing about**, because it is finding 8's third
+consequence arriving as a behaviour change rather than as a number.
+`test_power.test_determinism_the_factory_losing_its_fuel_really_did_cross_into_deficit` lays a
+second Belt off a Coal Miner to divert its fuel, and before #46 that diversion was a **cut** —
+the Boiler never saw another lump and the grid settled on the 300 kW baseline for good. It is now
+a **share**: the Boiler is fed about 20 lumps a minute against the 30 it burns, so it goes out,
+relights, and goes out again. The fixture still crosses the line in both directions, which is
+what it is for, so what the test asserts moved from the last tick's reading to a count over the
+window — because which side of a flicker the last tick lands on says nothing about whether the
+Factory lost its fuel.
+
 ### Machines, ports and starvation
 
 - A crafter's inputs live in an **input buffer** separate from its output buffer, with a
@@ -1032,12 +1091,14 @@ same Factory in two orders and comparing every Item position tick by tick.
 - A tick runs **Belts before Machines**: an Item delivered this tick is usable this
   tick, and an Item produced this tick is collected on the next, which is the same rule a
   freshly built Machine follows.
-- **Two Belts off one Machine is a priority, not a half-share.** `_load_from_port` walks Belts
-  in canonical order and each takes one Item from the Machine behind its entry, so the Belt
-  whose entry tile comes first is filled every tick and the second gets only what the first has
-  no room for. That is a real mechanism and not a bug — it is how back-pressure composes — but
-  it is not a splitter, and three measured Factory facts fall out of it. See the splitter finding
-  under "The joint balance pass".
+- **Two Belts off one Machine is a split, and that is #46.** A line that branches is a factory
+  game's second verb after laying a Belt, and until #46 this game did not have it: Belts were
+  loaded one at a time inside `_advance_belt`, so the Belt whose entry tile came first took
+  every Item and the second got only what the first had no room for. That was a *priority*
+  rather than a share, and three measured Factory facts fell out of it — the sharpest being
+  that **a second Belt off the shipped Smelter never received a single plate**, because the
+  Ammo Press took the lot. See the branching section below, and finding 8 under "The joint
+  balance pass" for what it cost before it was fixed.
 
 ## The one Power grid
 
@@ -1355,16 +1416,18 @@ sessions headless to the end of the Run and reports what happened; the whole met
 scenarios and every finding live under "The joint balance pass", below. Re-run it after any
 edit to `content/` rather than reasoning about what the edit did.
 
-Shipped Map, shipped content, three seeds, measured 2026-10-07 **with #34 in**:
+Shipped Map, shipped content, three seeds, measured 2026-10-08 **with #46 in** — none of these
+four rows has a Machine with two Belts off it, so #46 left every one of them exactly where #35's
+schedule did:
 
 | Scenario | Run | Wave | Peak Heat | What killed it |
 |---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | 1 | 0 | undefended; the first Wave alone |
-| `competent` — six Machines, one MG on the lane | **29m07s** | 35 | 6788 | three Siege Hulks, 96 rounds still in it |
+| `bare` — builds nothing | 3m22s | 1 | 0 | undefended; the first Wave alone |
+| `competent` — six Machines, one MG on the lane | **28m48s** | 35 | 6725 | a Siege Hulk standing, 96 rounds still in it |
 | `fortified` — a second MG over the Factory itself | **28m45s** | 35 | 6716 | the same, 112 rounds unspent |
-| `hive_sortie` — `competent` after clearing one Hive | **32m22s** | 39 | 6724 | the same, 3m15s later |
+| `hive_sortie` — `competent` after clearing one Hive | **32m05s** | 39 | 6672 | the same, 3m17s later |
 
-Seven times the Run an undefended Nest gets, and still lost.
+Nine times the Run an undefended Nest gets, and still lost.
 
 **It no longer loses because it runs dry, and #34 is why.** Before it, a Breaker steered by the
 Factory from the moment it emerged, so the documented Factory lost all five production Machines
@@ -1385,8 +1448,8 @@ spend what one Press makes**, which is a different and better problem to have th
 and it is why the second Turret in `fortified` is now a wash rather than a two-minute gain.
 
 **The measured way past thirty minutes is to walk out and clear a Hive**, which is the only
-thing in Milestone 1 that moves Heat permanently: `hive_sortie` is 32m22s against `competent`'s
-29m07s, and it is the longest Run the harness has recorded. A second Ammo Press is still the
+thing in Milestone 1 that moves Heat permanently: `hive_sortie` is 32m05s against `competent`'s
+28m48s, and it is the longest Run the harness has recorded. A second Ammo Press is still the
 *arithmetic* answer to the middle of the Run — production is the defence, in the most literal
 form available — but since #34 the thing a one-Press Factory ends up short of is not rounds. It
 ends with 96 of them. Both are buyable: the call-early lever pays
@@ -3151,19 +3214,21 @@ instead of 600, and 300 + 800 pays for the Silo. See "The one Power grid".
 
 So **a Milestone 1 Run can power a Silo, and the Silo is something it builds toward.** The
 `artillery` row of the balance harness is the Run: a second Boiler on the same coal Node, a
-second Miner and Smelter on the spare iron Node — because the Ammo Press already takes every
-plate the first Smelter makes, so the Silo's plate has to be *made* rather than diverted —
+second Miner and Smelter on the spare iron Node — because the Ammo Press can use every plate
+the first Smelter makes, so the Silo's plate is better *made* than branched off it —
 ninety-six plate found seven pulls of the call-early lever at a time, and then a walk, a dial,
 an irreversible load and five seconds of standing still. It fires a **Sentry Drop**, which is
-the one Stratagem the shipped chain does not lock, and the Run is a third shorter than
-`competent` for all of it. **Nothing in `content/` changed to make that true.**
+the one Stratagem the shipped chain does not lock. Measured with #46 in, the Run is **15m22s**
+against `competent`'s 28m48s — 47% shorter — with 36% of it in Power deficit, 7 Charges banked
+at the peak against a capacity of 8, and 32 rounds still in the Factory at the end.
+**Nothing in `content/` changed to make any of that true.**
 
 Two things that measurement settles and one it sharpens. The twenty-rounds-a-Charge figure is
-**not** the number most likely to be wrong: the Silo is a third claimant on the Press and the
-Press's Turret line is sixty rounds of Belt, so the Silo is fed out of what the Turret's line
-cannot hold and a Charge every forty seconds is comfortable. What costs the Run is the 400 kW
-and the seven lever pulls, not the rounds. And the plate is the real bottleneck, which no
-amount of tuning the Recipe would have shown.
+**not** the number most likely to be wrong: the Silo is a third claimant on the Press and since
+#46 it takes an equal share of what the Press makes rather than the overflow off a sixty-round
+Belt — which is 48 seconds of Run and still a Charge every forty seconds, comfortably. What
+costs the Run is the 400 kW and the seven lever pulls, not the rounds. And the plate is the real
+bottleneck, which no amount of tuning the Recipe would have shown.
 
 `paint_seconds` is still unmeasured — five seconds is a guess at how long a player can be asked
 to be helpless, and it is the whole feel of the mechanic. `artillery` fires a three-second
@@ -3217,19 +3282,21 @@ not one of the eight rows of record. The fifth adds #35's separate
 the merged tree** — because #34, #37 and #35 each re-measured on their own branch, the schedule's
 two ends belong to different tickets, and hand-merging three tables would record figures no Run
 ever produced. See "What collision cost the two sorties", "What #34 cost the table", "What #37
-cost the table" and "What the shorter first Wave cost", below.
+cost the table" and "What the shorter first Wave cost", below. The sixth is #46's branching
+Belts, measured on the merged tree with all nine scenarios unchanged, so the delta is attributable
+to the mechanic alone — see "What #46 cost the table".
 
-| Scenario | #26 before | #26 after | #34 | #37 | **merged** | Wave | Peak Heat | What killed it, now |
-|---|---|---|---|---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
-| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
-| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
-| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
-| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
-| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
-| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | **28m02s** | 34 | 6186 | swarmed, 46s sooner than `competent` |
-| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | **16m10s** | 21 | 5584 | swarmed, **44% sooner** than `competent` |
+| Scenario | #26 before | #26 after | #34 | #37 | merged | **#46** | Wave | Peak Heat | What killed it, now |
+|---|---|---|---|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | 3m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | 3m12s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | 28m48s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | 10m48s | **11m03s** | 12 | 2995 | swarmed, 16 rounds left, with **two Breaches** open |
+| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | 32m05s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | 28m02s | **28m02s** | 34 | 6186 | swarmed, 46s sooner than `competent` |
+| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | 16m10s | **15m22s** | 20 | 4906 | swarmed, **47% sooner** than `competent` |
 
 **#36 moved no row of this table, and that was the control its shape predicted**: it gave a
 player a Belt-routing tool and a port table to aim it with, and a scenario issues `BUILD_BELT`
@@ -3464,6 +3531,10 @@ single tick.** That is worth as much as the new row is: both changes are about f
 table could not see, so a table that *had* moved would have meant one of them had a side effect
 nobody asked for.
 
+> **Read the `artillery` figures below as #37's column**, not as current ones. #46's branching
+> Belts gave the Silo an equal share of the Ammo Press instead of the Turret's overflow and the
+> row is now 15m22s; see "What #46 cost the table". The reasoning here is unaffected.
+
 **The new row is the acceptance criterion.** `artillery` is `competent` plus four Machines, four
 Belts and a Silo that gets loaded and fired — 16m10s, Wave 21, one Stratagem called in on two
 Charges with nothing wasted, and 8 Charges banked at the peak, which is the Silo's whole
@@ -3493,6 +3564,61 @@ it in Power deficit** — which is #26's finding reproduced, and the store is no
 it: forty tiles of Belt hold 160 coal of their own before back-pressure reaches the Miner, and
 that line's entry precedes the Boiler's in canonical Belt order so it is served first. So the
 store's 200 is gone and 180 remain, which is the new finding below rather than a fix that failed.
+
+### What #46 cost the table
+
+**#46 changed how a Machine shares its output between two Belts and nothing else, and it moved
+two of the nine rows.** No number in `content/` was touched and no tuning key was added. All nine
+scenarios were re-measured unchanged, on the merged tree, so the delta belongs to the mechanic
+alone — which is also why the seven rows that did not move are worth as much as the two that did:
+a branch that makes no difference to a Run is a branch whose Belt was backed up anyway.
+
+| Scenario | merged | #46 | #46's doing |
+|---|---|---|---|
+| `bare` | 3m22s | 3m22s | — no Belt at all |
+| `opening_line` | 3m12s | 3m12s | — one Belt per Machine |
+| `competent` | 28m48s | 28m48s | — one Belt per Machine |
+| `over_producer` | 20m21s | 20m21s | — |
+| `fortified` | 28m45s | 28m45s | — |
+| `deep_digger` | 10m48s | **11m03s** | **+15s**, and Wave 12 on 2995 Heat against Wave 11 on 2565 |
+| `hive_sortie` | 32m05s | 32m05s | — |
+| `rifle_picket` | 28m02s | 28m02s | — its branch was already backed up |
+| `artillery` | 16m10s | **15m22s** | **−48s**, Wave 20 on 4906 Heat against Wave 21 on 5584 |
+
+- **`deep_digger` got *longer* by sharing its coal, which is the fix landing.** That Run builds a
+  forty-tile coal Belt to the Nest to pay `t02_deep_mining`, and finding 8's third consequence was
+  that the Belt's entry tile at (12, 6) *precedes* the Boiler's at (14, 4), so the Nest's line was
+  served first every tick and the Boiler burned what was left. The Boiler now gets half, and the
+  measured consequence is a Factory that spends **17% of the Run in Power deficit** instead of
+  browning out behind a line it cannot see: more throughput, 17% more peak Heat, a Wave further
+  into the schedule — **and fifteen seconds longer anyway**, because a Turret that is fed outlives
+  the Heat it costs. It still reaches Depth 2 and still opens its second Breach, so what the row
+  measures is unchanged.
+- **`artillery` got shorter by sharing its rounds, and that is the row paying a price it was
+  always supposed to pay.** The Silo's Ammunition line and the Turret's both come off the one Ammo
+  Press, and the Silo's entry at (7, 11) comes *after* the Turret's at (7, 9) — so before #46 the
+  Turret was fed first and the Silo took only what sixty rounds of Belt could not hold. The Silo
+  now takes half. It still banks enough: **7 Charges at the peak against a capacity of 8, and the
+  same one Stratagem fired on two Charges with none wasted.** What it no longer has is the
+  Turret's share — 32 rounds left in the Factory at the end against 52 — and the Run is 48 seconds
+  shorter, **47% of `competent` rather than 44%**. Power went the same way, 36% of the Run in
+  deficit against 31%. The honest reading is the one #17 asked for and #37 could only half answer:
+  **artillery and the magazine spend the same output, and now they really do split it.**
+- **`rifle_picket` has a branch and did not move at all**, which is the control that keeps the
+  `deep_digger` attribution honest. It runs the same second Belt off the Ammo Press to the Nest
+  that `deep_digger` does; its Run length, Wave and peak Heat are identical to three seeds. An
+  Ammunition line into the Nest fills the store and then backs up, so over a Run its share is the
+  same either way — the priority only ever showed in the minutes before it filled. So
+  `deep_digger`'s fifteen seconds are the *coal* branch, not that one.
+- **Two Boilers on one coal Node now cycle together instead of one running flat out.** 40 coal a
+  minute against two appetites of 30 used to be one Boiler burning continuously and the other a
+  third of the time; it is now two Boilers each burning two thirds of the time. The grid cannot
+  tell the difference and #37's 800 kW of average supply is untouched — but it is what a player
+  sees, and it is the clearest small example of what this ticket did.
+
+**No balance number was changed for any of this**, and the two moved rows are not an argument for
+changing one. `artillery` losing 48 seconds is the Silo being charged properly rather than the
+Silo becoming too expensive, and `deep_digger` gaining 15 is a trap getting slightly less sharp.
 
 ### What the seed can reach
 
@@ -3584,27 +3710,37 @@ recorded here instead, which is what #26 asked for.
    `BalanceProbe` did — yields 9,830,400 and an "at the interval floor" verdict that is always
    true. Anything reading a `_seconds` field off `Definitions` goes through `Fixed.floor_to_int`
    or the same `Fixed.mul` the Simulation uses.
-8. **A splitter in this game is a priority, not a half-share — and that is the half of #37's
-   second trap that is still open.** `_load_from_port` walks Belts in canonical order and takes
-   one Item from the Machine behind each entry, so a Machine with two Belts off it fills the
-   first one that has room *every tick*. Two Belts only alternate when the first is backed up.
-   Three consequences, all measured: the Ammo Press feeds its Turret line and the Silo gets what
-   that line cannot hold, which is fine; a second Belt off the Smelter never receives a single
-   plate, because the Press takes the lot, which is why `artillery` has to build a second ore
-   line; and `deep_digger`'s coal Belt to the Nest is served **before** the Boiler's purely
-   because its entry tile has a smaller x, which is the invisible part of the starvation #37
-   fixed the visible part of. The CLAUDE.md sentence claiming the Press "alternates" between two
-   lines was wrong and is corrected where it stands. A fair round-robin would need "which Belt
-   was served last" as hashed state in the one function every Belt goes through, which is a
-   bigger change than #37's two findings and belongs to whichever ticket owns Belt routing.
+8. ~~**A splitter in this game is a priority, not a half-share.**~~ **Fixed by #46**, which is
+   the ticket this finding said it belonged to. `_load_from_port` used to be called per Belt from
+   inside `_advance_belt`, so a Machine with two Belts off it filled the first one that had room
+   *every tick* and the two only alternated when the first was backed up. Three consequences were
+   measured and all three are now gone: the Ammo Press fed its Turret line and the Silo got only
+   what that line could not hold; **a second Belt off the Smelter never received a single plate**,
+   because the Press took the lot, which is why `artillery` had to build an entire second ore
+   line; and `deep_digger`'s coal Belt to the Nest was served **before** the Boiler's purely
+   because its entry tile had a smaller x, which was the invisible part of the starvation #37
+   fixed the visible part of. (The sentence that claimed the Press "alternates" between two lines
+   was wrong and #37 corrected it.)
+
+   The fix is the shape this finding named: **"which Belt was served last" as hashed state in the
+   one function every Belt goes through.** Loading became a pass of its own, after every Belt has
+   advanced, and `_machine_port_cursor` — one integer per Machine, hashed — rotates which branch
+   gets first claim. The list it indexes is the Machine's Belts in *canonical* order, so the
+   share is geography plus one integer of history rather than build order. See "A line that
+   branches, and the rotation that makes it one". The lesson the trap replaced: **two Belts off
+   one Machine both run, and what neither can carry banks in the Machine where you can see it.**
 9. **A long Belt is a long buffer, and a Belt pointed at the Nest hides its diversion inside
    itself.** `deep_digger`'s coal line is forty tiles, which is 160 coal before back-pressure
    reaches the Miner at all — eight times what the tier it was built to pay actually wanted.
-   With the demolish removed the Run is 6m20s and 98% browned out even with #37's store fix in.
-   Unlike the store this is at least *visible* — it is a Belt packed solid with coal — and it is
-   bounded by something the player built rather than by a number in `tuning.toml`. But "I ran a
-   Belt to the Nest and my Factory browned out for four minutes" is still a lesson nothing says
-   out loud, and the HUD is where it would be said.
+   With the demolish removed the Run was 6m20s and 98% browned out even with #37's store fix in.
+   **#46 blunted it rather than closing it**, and neither figure has been re-measured on the fair
+   share: the line now takes half the Miner's coal while it fills instead of all of it, which is
+   what moved `deep_digger` itself from 10m48s to 11m03s and its Power deficit down to 17% of the
+   Run. Unlike the store this is at least *visible* — it is a Belt packed solid with coal — and it
+   is bounded by something the player built rather than by a number in `tuning.toml`. But "I ran a
+   Belt to the Nest and my Factory browned out for half the Run" is still a lesson nothing says
+   out loud, and the HUD is where it would be said. **Re-measuring the demolish-removed variant is
+   the cheap half of that ticket.**
 10. **"The Turret ran dry" has to be measured on the Factory, not on the Turret.** A destroyed
    Turret holds no rounds and contributes no ticks, so a per-Turret ratio reports 0% for the
    most common ending there is: the Ammunition ran out, and then the Breakers ate the Turret.
@@ -3620,7 +3756,7 @@ Honest residue, so the next ticket does not have to rediscover it:
 - **Hand repair under fire.** No scenario picks up a wrench to save a Machine, because chasing a
   Breaker open-loop is not possible. `wrench.repair_points_per_second` against
   `enemy.breaker_damage` is still an arithmetic claim.
-- **Walls.** Nothing in the eight scenarios builds one, so `wall.health` against
+- **Walls.** Nothing in the nine scenarios builds one, so `wall.health` against
   `enemy.breaker_damage` is likewise unplayed.
 - **Two of the three Stratagems, and the Painting's length.** The Silo itself is measured now —
   `artillery` powers one, loads it and fires it — but what it fires is a **Sentry Drop**, because
@@ -3643,6 +3779,18 @@ Honest residue, so the next ticket does not have to rediscover it:
   ends with 96 rounds unspent and `fortified` with 112, so **one Turret cannot spend what one
   Press makes**, and the plate the lever pays is better spent on throughput than on a second
   Turret. Which of the two a second Press and a second Turret *together* fixes is unmeasured.
+- **A branched Factory, which is the Run #46 made possible and none of the nine measures.** Every
+  scenario is the Factory a player would have built *before* a line could branch. The sharpest
+  missing row is `artillery` **without** its second ore line, feeding the Silo's plate off a
+  branch of the first Smelter instead: it would save 20 plate and two Machines' worth of Heat and
+  Power, at the price of halving the Ammo Press while the Silo's branch is filling. The arithmetic
+  says it works — the Silo wants 3 plate a minute out of 18.75, so its branch fills, backs up, and
+  hands the Press everything back — but arithmetic is what this harness exists to replace, and
+  **the second ore line is still the only build measured.** Shipped-content branching itself is
+  asserted, in `test_belts.test_the_shipped_smelter_can_feed_two_consumers_at_once`; what is not
+  measured is a whole Run built around it.
+- **Whether a long Belt to the Nest is still a trap, on a fair share.** Finding 9's 6m20s was
+  measured when that line took *all* the coal. See it for what is cheap to re-measure.
 - **Co-op.** Every scenario is one player. Four players on one Ammo Press is a different
   economy, and the Simulation already supports measuring it.
 

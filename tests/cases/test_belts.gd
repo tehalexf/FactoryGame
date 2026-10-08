@@ -936,3 +936,275 @@ artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_ore:1,,placeholder_gear,
 """
+
+
+# ── A line that branches ──────────────────────────────────────────────────────
+# Two Belts off one Machine. The Machine's output buffer is one pot and each Belt takes
+# at most one Item a tick, so the two compete whenever the Machine produces more slowly
+# than the pair could carry — which is every Factory the shipped content can build. A
+# fixed claim order makes that a *priority*: the canonically first Belt takes every Item
+# and the second one never runs. The rotation is what makes it a split.
+
+## A Miner at the origin with a Belt off each of two adjacent footprint edge tiles. Both
+## run four tiles to nowhere, so nothing downstream can mask which of them was fed.
+func _branching_sim(second_branch_first: bool) -> Simulation:
+	var sim: Simulation = _sim_on_one_node()
+	var miner: InputAction = InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0))
+	var north: InputAction = InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(5, 0, 0))
+	var south: InputAction = InputAction.build_belt(0, Vector3i(2, 0, 1), Vector3i(5, 0, 1))
+	if second_branch_first:
+		sim.step([miner, south, north])
+		return sim
+	sim.step([miner, north, south])
+	return sim
+
+
+func test_a_machine_with_two_belts_off_it_feeds_both_of_them() -> void:
+	# The Miner makes one ore every 90 ticks, which is far less than either Belt could
+	# carry, so the two branches are competing for every single Item. Nine ore are collected
+	# in 900 ticks and they must come out five and four, alternating, rather than nine and
+	# nothing.
+	var sim: Simulation = _branching_sim(false)
+	_run(sim, 900)
+	var north: int = sim.query_belt_at_tile(Vector3i(2, 0, 0))
+	var south: int = sim.query_belt_at_tile(Vector3i(2, 0, 1))
+	assert_eq(sim.query_belt_item_count(north), 5, "the first branch took its half")
+	assert_eq(sim.query_belt_item_count(south), 4, "and the second branch took the rest")
+	assert_eq(sim.query_item_total("iron_ore"), 10, "ten ore mined; the tenth is collected next tick")
+
+
+## Everything a player can see about a branch, keyed by the tile each run starts at rather
+## than by index, so that two Factories laid in different orders can be compared at all.
+func _describe_branch(sim: Simulation) -> PackedInt64Array:
+	var described: PackedInt64Array = PackedInt64Array()
+	for entry: Vector3i in [Vector3i(2, 0, 0), Vector3i(2, 0, 1)]:
+		var belt: int = sim.query_belt_at_tile(entry)
+		described.append(sim.query_belt_item_count(belt))
+		for slot: int in range(sim.query_belt_item_count(belt)):
+			described.append(sim.query_belt_item_distance_metres(belt, slot))
+	described.append(sim.query_machine_output(0, "iron_ore"))
+	return described
+
+
+func test_a_branch_splits_the_same_way_whichever_belt_was_laid_first() -> void:
+	# The bias this guards against is the one the rotation could have introduced. A share
+	# that started from the Belt built first would be a fact about history, which two clients
+	# can disagree about and a player cannot see; the cursor indexes the Machine's Belts in
+	# *canonical* order, so both Factories below are the same Factory and every Item in them
+	# must be in the same place on every tick.
+	var laid_north_first: Simulation = _branching_sim(false)
+	var laid_south_first: Simulation = _branching_sim(true)
+	for tick: int in range(900):
+		laid_north_first.step([])
+		laid_south_first.step([])
+		assert_eq(
+			_describe_branch(laid_north_first),
+			_describe_branch(laid_south_first),
+			"the two branches diverged on tick %d" % tick
+		)
+
+
+## A fast Miner with two branches off it: a short one north into a Smelter that cannot keep
+## up, and a longer one east leading nowhere. The Miner outruns the pair, so the Machine's own
+## output buffer is where everything neither of them can carry ends up. The Smelter is 3x3, so
+## it sits two tiles clear of the Belt that feeds it rather than on top of it.
+func _blocked_branch_sim() -> Simulation:
+	var sim: Simulation = _saturating_sim()
+	sim.step([
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(0, 0, -1), Vector3i(0, 0, -2)),
+		InputAction.build_machine(0, _smelter_index(sim), Vector3i(-1, 0, -5)),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(5, 0, 0)),
+	])
+	assert_eq(sim.query_belt_count(), 2, "both branches were laid")
+	return sim
+
+
+func test_a_blocked_branch_is_skipped_rather_than_starving_the_other_one() -> void:
+	# Back-pressure has to compose with the rotation or the mechanic is worse than the bug
+	# it replaces: a branch that waited its turn behind a full one would let a single backed-up
+	# consumer stop a line that has somewhere else to send its goods. The blocked branch simply
+	# fails to take and the Item is offered to the next one.
+	var sim: Simulation = _blocked_branch_sim()
+	var into_the_smelter: int = sim.query_belt_at_tile(Vector3i(0, 0, -1))
+	var to_nowhere: int = sim.query_belt_at_tile(Vector3i(2, 0, 0))
+	_run(sim, 200)
+	assert_true(sim.query_belt_is_full(into_the_smelter), "the branch into the Smelter backed up")
+	assert_true(
+		sim.query_belt_item_count(to_nowhere) > sim.query_belt_item_count(into_the_smelter),
+		(
+			"the other branch kept running: %d Items against the blocked branch's %d"
+			% [
+				sim.query_belt_item_count(to_nowhere),
+				sim.query_belt_item_count(into_the_smelter),
+			]
+		)
+	)
+
+
+func test_what_two_full_branches_cannot_carry_banks_in_the_machine() -> void:
+	# The other half of the same rule, and the half a player reads off the Machine: nothing is
+	# destroyed because two Belts are full, it goes into the output buffer, which is uncapped.
+	var sim: Simulation = _blocked_branch_sim()
+	var into_the_smelter: int = sim.query_belt_at_tile(Vector3i(0, 0, -1))
+	var to_nowhere: int = sim.query_belt_at_tile(Vector3i(2, 0, 0))
+	_run(sim, 600)
+	assert_true(sim.query_belt_is_full(into_the_smelter), "both branches are full")
+	assert_true(sim.query_belt_is_full(to_nowhere), "the one leading nowhere too")
+	var banked: int = sim.query_machine_output(0, "iron_ore")
+	assert_true(banked > 0, "and the surplus is in the Miner, which holds %d ore" % banked)
+	_run(sim, 60)
+	assert_true(
+		sim.query_machine_output(0, "iron_ore") > banked,
+		"and it goes on banking while they stay full"
+	)
+
+
+func test_which_branch_had_first_claim_is_state_a_run_carries() -> void:
+	# The rotation is hashed, so it is saved — `RunSave` reflects over the Simulation's own
+	# properties — and the two facts are one test: resume a Run that has just fed its first
+	# branch and the next Item still goes to the second. A cursor the save dropped would
+	# reset to the canonically first Belt and feed it twice in a row.
+	var sim: Simulation = _branching_sim(false)
+	var north: int = sim.query_belt_at_tile(Vector3i(2, 0, 0))
+	var south: int = sim.query_belt_at_tile(Vector3i(2, 0, 1))
+	while sim.query_belt_item_count(north) == 0:
+		sim.step([])
+	assert_eq(sim.query_belt_item_count(south), 0, "the first ore went to the first branch")
+
+	var restored: Simulation = RunSave.deserialise(RunSave.serialise(sim)).simulation
+	assert_eq(restored.hash(), sim.hash(), "the Run came back the Run it was")
+	while restored.query_belt_item_count(south) == 0:
+		restored.step([])
+		assert_eq(
+			restored.query_belt_item_count(north),
+			1,
+			"the resumed Run fed the first branch a second time"
+		)
+
+
+func test_determinism_a_branching_line_replays_identically() -> void:
+	# A Miner with a Belt off each of two footprint edge tiles, on the starter Map. The
+	# rotation is hashed state that changes on every Item collected, so a replay that
+	# reproduces this reproduces every turn of it tick for tick.
+	var sim: Simulation = Simulation.new(29, 1)
+	var script: InputScript = InputScript.new()
+	script.add_tick([
+		InputAction.build_machine(0, _miner_index(sim), FIXTURE_MINER_TILE),
+		InputAction.build_belt(0, FIXTURE_BELT_ENTRY, Vector3i(-1, 0, 10)),
+		InputAction.build_belt(0, Vector3i(-4, 0, 11), Vector3i(-1, 0, 11)),
+	])
+	script.add_idle_ticks(900)
+
+	var recording: ReplayRecording = DeterminismHarness.record(script, 29, 1)
+	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording)
+	assert_true(divergence.is_identical, divergence.describe())
+
+
+func test_determinism_the_branching_fixture_really_did_branch() -> void:
+	# A fixture that replays a Factory doing nothing interesting proves nothing, and a branch
+	# is exactly the kind of thing it would be easy to conclude from a Belt that moved. This
+	# walks the same script and insists both branches carried Items, in equal share.
+	var sim: Simulation = Simulation.new(29, 1)
+	sim.step([
+		InputAction.build_machine(0, _miner_index(sim), FIXTURE_MINER_TILE),
+		InputAction.build_belt(0, FIXTURE_BELT_ENTRY, Vector3i(-1, 0, 10)),
+		InputAction.build_belt(0, Vector3i(-4, 0, 11), Vector3i(-1, 0, 11)),
+	])
+	assert_eq(sim.query_belt_count(), 2, "the branch was laid")
+	_run(sim, 900)
+	var first: int = sim.query_belt_item_count(sim.query_belt_at_tile(FIXTURE_BELT_ENTRY))
+	var second: int = sim.query_belt_item_count(sim.query_belt_at_tile(Vector3i(-4, 0, 11)))
+	assert_true(first > 0, "the first branch carried %d Items" % first)
+	assert_true(second > 0, "and the second carried %d" % second)
+	assert_true(
+		absi(first - second) <= 1,
+		"an equal share give or take one Item, not %d against %d" % [first, second]
+	)
+
+
+func test_the_shipped_smelter_can_feed_two_consumers_at_once() -> void:
+	# Finding 8's sharpest consequence, on the content a player actually plays: the Ammo Press
+	# wants 20 plate a minute and the Smelter makes 18.75, so before #46 a second Belt off that
+	# Smelter never received a single plate and `artillery` had to build a whole second ore
+	# line to feed its Silo. Shipped Machines, shipped Recipes, nothing inline.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(3, 0, 0)),
+		InputAction.build_machine(0, _smelter_index(sim), Vector3i(4, 0, -1)),
+		InputAction.build_belt(0, Vector3i(7, 0, 0), Vector3i(8, 0, 0)),
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("ammo_press_mk1"), Vector3i(9, 0, -1)
+		),
+		InputAction.build_belt(0, Vector3i(4, 0, -2), Vector3i(4, 0, -5)),
+	])
+	assert_eq(sim.query_machine_count(), 3, "the Miner, the Smelter and the Ammo Press")
+	assert_eq(sim.query_belt_count(), 3, "the ore Belt and the Smelter's two branches")
+	_run(sim, 2400)
+
+	# Both branches ran. The equal share itself is asserted on a Miner above, where the Items
+	# stay where they can be counted; here the Press eats what it is sent, which is the point.
+	var the_other_way: int = sim.query_belt_at_tile(Vector3i(4, 0, -2))
+	var elsewhere: int = sim.query_belt_item_count(the_other_way)
+	assert_true(elsewhere > 0, "the second branch carried %d plate, not none" % elsewhere)
+	assert_true(
+		sim.query_machine_output(2, "ammunition") > 0,
+		"and the Ammo Press was fed well enough to make rounds out of its branch"
+	)
+
+
+## A Miner whose Belt runs east, on content fast enough to saturate it — and, optionally, a
+## second Miner whose Belt runs south and hands its Items onto that first Belt's **entry tile**.
+## That tile is the one place a Machine port and another Belt's far end can both reach, which
+## happens whenever the two runs point different ways.
+func _contested_entry_sim(with_the_upstream_belt: bool) -> Simulation:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(2, 0, -5), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, _fast_content(), layout)
+	var actions: Array = [
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(5, 0, 0)),
+	]
+	if with_the_upstream_belt:
+		actions.append(InputAction.build_machine(0, _miner_index(sim), Vector3i(2, 0, -5)))
+		actions.append(InputAction.build_belt(0, Vector3i(2, 0, -3), Vector3i(2, 0, -1)))
+	sim.step(actions)
+	return sim
+
+
+func test_an_item_already_on_a_belt_beats_a_machine_port_for_the_same_slot() -> void:
+	# The one place #46's two passes meet, and the one ordering it changed. A Belt's entry can
+	# be reached both by the Machine behind it and by another Belt's far end; whichever gets the
+	# slot, the other is refused. Loading after every hand-off means the **upstream Belt wins**,
+	# which is the better of the two rules rather than an accident: an Item on a Belt has nowhere
+	# else to go and backs the whole line up behind it, where a Machine's output buffer is
+	# uncapped and banks the surplus safely. Before #46 the port cut in and stalled the line
+	# feeding it.
+	#
+	# Measured as the difference between two Factories, because both Miners mine the same ore
+	# and an Item on the contested Belt carries no label saying where it came from.
+	var alone: Simulation = _contested_entry_sim(false)
+	var contested: Simulation = _contested_entry_sim(true)
+	assert_eq(alone.query_belt_count(), 1, "one run, port-fed")
+	assert_eq(contested.query_belt_count(), 2, "and the same run with a Belt joining its entry")
+	_run(alone, 600)
+	_run(contested, 600)
+	assert_eq(
+		contested.query_belt_item_count(contested.query_belt_at_tile(Vector3i(2, 0, 0))),
+		alone.query_belt_item_count(alone.query_belt_at_tile(Vector3i(2, 0, 0))),
+		"the contested Belt carries the same Items either way; a slot is a slot"
+	)
+	assert_true(
+		contested.query_machine_output(0, "iron_ore")
+		> alone.query_machine_output(0, "iron_ore"),
+		(
+			"but the Machine behind it banked %d ore against %d, because the upstream Belt took "
+			+ "the slots its port would have had"
+		) % [
+			contested.query_machine_output(0, "iron_ore"),
+			alone.query_machine_output(0, "iron_ore"),
+		]
+	)
