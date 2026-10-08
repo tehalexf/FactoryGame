@@ -18,6 +18,9 @@ tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|grou
 SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png routing
                                  # the same, through the player's own camera (placing|routing|running)
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
+ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
+                                 # a Wave arriving (swarm|pair|boss|distance; + hud, + bare)
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
