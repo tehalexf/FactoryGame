@@ -12,6 +12,7 @@ back but a text editor. Every refusal test below is that failure, prevented.
 
 import sys
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -288,3 +289,71 @@ def _values(source):
     from tuning import tuning_file
 
     return [f.key for f in tuning_file.TuningFile.parse(source, "x").fields()]
+
+
+class SnapshotsTakenInsideOneMillisecond(StoreFixture):
+    """Two writes close enough together to share a snapshot id stem.
+
+    The id is a UTC timestamp to the millisecond, and a second write inside the
+    same millisecond gets `-1` appended. `history()` used to order those by
+    sorting the `*.json` paths, which compares the extension too — and `-` is
+    0x2D while `.` is 0x2E, so `...123-1.json` sorts *before* `...123.json` and
+    a reverse sort puts the **older** snapshot first. `history()` promises
+    newest first and the page's undo button restores `history()[0]`, so a tie
+    rolled back the wrong edit: it discarded the second-newest change and kept
+    the newest.
+
+    Whether two writes land in one millisecond is a question about how fast the
+    machine is, which is why this surfaced as the same commit passing one CI run
+    and failing the next. The clock is pinned here so it is not a question at
+    all, and `test_the_oldest_entry_still_undoes_everything` fails with the exact
+    text that CI reported.
+    """
+
+    def setUp(self):
+        super().setUp()
+        frozen = datetime(2026, 10, 8, 12, 0, 0, 123456, tzinfo=timezone.utc)
+
+        class Frozen(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen
+
+        self._real_datetime = store.datetime
+        store.datetime = Frozen
+        self.addCleanup(self._restore_clock)
+
+    def _restore_clock(self):
+        store.datetime = self._real_datetime
+
+    def test_history_is_newest_first(self):
+        self.store.set_value("nest.health", "7000")
+        self.store.set_value("nest.health", "8000")
+        self.assertEqual(
+            [entry.summary for entry in self.store.history()],
+            ["nest.health 7000 → 8000", "nest.health 6000 → 7000"],
+        )
+
+    def test_the_oldest_entry_still_undoes_everything(self):
+        self.store.set_value("nest.health", "7000")
+        self.store.set_value("nest.health", "8000")
+        self.store.restore(self.store.history()[-1].snapshot_id)
+        self.assertIn("health = 6000", self.live.read_text(encoding="utf-8"))
+
+    def test_undoing_the_newest_entry_puts_back_the_write_before_it(self):
+        self.store.set_value("nest.health", "7000")
+        self.store.set_value("nest.health", "8000")
+        self.store.restore(self.store.history()[0].snapshot_id)
+        self.assertIn("health = 7000", self.live.read_text(encoding="utf-8"))
+
+    def test_pruning_still_drops_the_oldest_and_keeps_the_newest(self):
+        """`_prune` sorts bare stems, not filenames, so it was already right —
+        a stem is a prefix of its own `-1` and a prefix sorts first. Pinned here
+        so that it stays right for a reason rather than by coincidence."""
+        self.store.history_limit = 2
+        for health in ("7000", "8000", "9000"):
+            self.store.set_value("nest.health", health)
+        self.assertEqual(
+            [entry.summary for entry in self.store.history()],
+            ["nest.health 8000 → 9000", "nest.health 7000 → 8000"],
+        )

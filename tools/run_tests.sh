@@ -41,6 +41,46 @@ if [ ! -d "$PROJECT_ROOT/.godot" ]; then
 	IMPORT_PASSES=2
 fi
 
+# One suite at a time per worktree.
+#
+# Two runs of this script in the *same* worktree share `.godot/test_run.log`,
+# and the second one deletes it while the first is still reading it. The
+# runtime-abort guard then finds nothing where its own deliberate aborts should
+# be, and reports `test_runtime_abort_guard` failures — "the abort must be
+# reported exactly once: []" and "the engine log must be live" — which look
+# like the guard is broken rather than like the log was pulled out from under
+# it. I did this to myself while measuring this very bug, which is how it got
+# noticed.
+#
+# This is the case worth refusing loudly. Two runs in two *different*
+# worktrees are fine and are how this project is worked — that was measured,
+# not assumed — so the refusal is scoped to one worktree rather than to "a
+# Godot is running".
+#
+# The lock lives in `.godot/`, so `rm -rf .godot` clears it along with
+# everything else, and a lock left behind by a killed run is reclaimed as soon
+# as its pid is gone.
+LOCK_DIR="$PROJECT_ROOT/.godot/test_run.lock"
+if ! mkdir -p "$PROJECT_ROOT/.godot" 2>/dev/null || ! mkdir "$LOCK_DIR" 2>/dev/null; then
+	holder="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+	if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+		echo "error: a suite is already running in this worktree (pid $holder)." >&2
+		echo "       Both runs would share $PROJECT_ROOT/.godot/test_run.log, and" >&2
+		echo "       the second would delete it out from under the first — which" >&2
+		echo "       reports as test_runtime_abort_guard failures rather than as" >&2
+		echo "       the collision it is. Wait for it, or use another worktree." >&2
+		exit 3
+	fi
+	# Nobody is holding it: a previous run was killed before it could clean up.
+	rm -rf "$LOCK_DIR"
+	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+		echo "error: cannot take $LOCK_DIR." >&2
+		exit 3
+	fi
+fi
+echo "$$" > "$LOCK_DIR/pid"
+trap 'rm -rf "$LOCK_DIR"' EXIT
+
 # Give this worktree its own `user://`.
 #
 # Godot derives the user data directory from the project's *name*, so every
@@ -217,5 +257,10 @@ mkdir -p "$(dirname "$TEST_LOG")"
 rm -f "$TEST_LOG"
 export DEEP_FOUNDRY_TEST_LOG="$TEST_LOG"
 
-exec "$GODOT" --headless --path "$PROJECT_ROOT" --log-file "$TEST_LOG" \
+# Not `exec`, so the EXIT trap above still gets to drop the lock.
+set +e
+"$GODOT" --headless --path "$PROJECT_ROOT" --log-file "$TEST_LOG" \
 	--script res://tests/run_tests.gd -- "$@"
+status=$?
+set -e
+exit "$status"
