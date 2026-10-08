@@ -200,39 +200,37 @@ const CATALOGUE: Dictionary = {
 	CALL_WAVE_LEVER: ["call_wave_lever", ["impactMetal_heavy_000", "impactMetal_heavy_002"], -2.0],
 
 	# ── Waves ────────────────────────────────────────────────────────────────
-	# A warning you cannot hear is not a warning, so the klaxon is the loudest
-	# non-diegetic cue in the game.
+	# **The Telegraph cue is the quietest thing in this table, deliberately** (#42).
 	#
-	# **#35: *"the alarm when starting a wave is too STUPID"*, and the player was
-	# right.** The fallback was `forceField_003` — a sci-fi shimmer — played as a
-	# twelve-second loop, which is a cartoon rather than a warning, and the hero pick
-	# was a *trailer* alarm, a designed cinematic sting. Both fail #21's own standard
-	# of real mechanisms over designed sounds.
+	# It used to be the loudest, on the argument that a warning you cannot hear is not a
+	# warning. The player has now rejected two cues written to that argument — the second
+	# of them (#35) carefully measured, repicked to a real horn and already brought down
+	# from -4 to -9 on the finding that -4 made it the loudest thing in the entire
+	# catalogue — and their words the second time were *"the klaxon is AWFUL, just make it
+	# very subtle"*.
 	#
-	# The committed fallback is a **motor**: an electric motor spinning a chopper
-	# against a port is what a siren is, which is why one winds up and winds down.
-	# `engineCircular_004` is the only circular motor in the packs not already spoken
-	# for by the Boiler's startup or the busy Factory bed, so it is the honest stand-in
-	# — a thing with a rotor, spinning, for as long as the Telegraph runs. Only the
-	# first take is ever used, because a looping cue is opened once rather than chosen
-	# per play.
+	# So the argument is what is wrong. The Telegraph is already a countdown, a gauge and
+	# a named Wave composition on the HUD, so the sound is not carrying the warning on its
+	# own and does not have to win against the Factory to do its job. At -24 it is level
+	# with the quiet ambience bed and four decibels under the busy one — a knock from
+	# across the yard rather than a siren over your head — and what makes it noticeable
+	# there is that it is a transient against a continuous bed, which costs no loudness
+	# at all.
 	#
-	# **The hero take is now a real horn**, which is the same mechanism: a 209 Hz root,
-	# low-passed so the root is what carries, rearticulated every 2.54 s by the loop.
-	# `convert_audio.sh` has the whole repick — why #35's blind one could not have been
-	# cut at all, and why the first attempt here measured as a 2 kHz needle with the
-	# fundamental 8.6 dB below it.
+	# **The fallback is an impact now, not a motor.** #35 moved it from a sci-fi shimmer
+	# to `engineCircular_004` on the reasoning that a siren is a motor spinning a chopper,
+	# which was right about the cue it was a stand-in for. It is the wrong stand-in for
+	# this one twice over: a continuous motor is exactly the character being removed, and
+	# a clone without the bundle would get back the sustained tone the hero take no longer
+	# is. A struck plate is what the hero cue is, so a struck plate is what stands in.
 	#
-	# **-9, and the first number was -4 picked by eye.** That put the cue at -9.1 LUFS,
-	# the loudest thing in the entire catalogue, in the ear's most sensitive band, running
-	# for the whole Telegraph — which is not "a warning you cannot hear is not a warning",
-	# it is a warning nobody can think through. Now the two worlds land within 0.3 dB of
-	# each other at -17.3 hero and -17.0 fallback: the loudest *sustained* cue in the game
-	# by about fifteen dB over either bed, and eleven dB below the Nest taking a hit, which
-	# is the one sound that should still cut through it.
-	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["engineCircular_004"], -9.0],
+	# See `tools/assets/convert_audio.sh` for the cut and `CLAUDE.md` for the measurements.
+	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["impactPlate_heavy_001"], -24.0],
 	WAVE_BEGIN: ["wave_begin", ["lowFrequency_explosion_001"], -3.0],
-	BREACH_OPENS: ["breach_opens", ["impactGlass_heavy_000", "impactGlass_heavy_003"], -4.0],
+	# Down three from -4 and rolled off above 2.4 kHz in the cut (#42): still a loud
+	# one-shot, because a Breach opening is an event and being startled by one is the
+	# right answer — but no longer the brightest thing in a game of low industry.
+	BREACH_OPENS: ["breach_opens", ["impactGlass_heavy_000", "impactGlass_heavy_003"], -7.0],
 
 	# ── Weapons ──────────────────────────────────────────────────────────────
 	# Three layers on one shot. The body carries the pressure, the crack carries the

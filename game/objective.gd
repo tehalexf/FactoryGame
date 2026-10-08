@@ -27,7 +27,15 @@ extends RefCounted
 ##
 ## Walked in order and the first unmet step wins, so the line is always about the nearest
 ## thing between the player and a working production line.
-static func line(sim: Simulation) -> String:
+##
+## **The player id is here because a Run opens with the weapon out** (#42). Every build step
+## below ends in a click that only places with the Build Gun in hand, so a line that said
+## "left click to place" to somebody holding a rifle would be telling them to shoot the
+## ground. `_with_the_build_gun` names the key when it has to and says nothing when it does
+## not — which is a step's *wording* changing rather than a step of its own, because
+## "press B" is not a thing to achieve and a player who holsters an hour in must not be
+## handed a tutorial line for it.
+static func line(sim: Simulation, player_id: int) -> String:
 	if sim == null or sim.query_run_is_over():
 		return ""
 	# Once a tier has been delivered the loop has closed at least once: the player has
@@ -37,14 +45,38 @@ static func line(sim: Simulation) -> String:
 		return ""
 
 	if not _something_is_mining(sim):
-		return "Place a Miner on an ore node — wheel or 1-9 to pick, left click to place"
+		return _with_the_build_gun(
+			sim,
+			player_id,
+			"Place a Miner near an ore node — wheel or 1-9 to pick, left click to place"
+		)
 	if not _something_crafts(sim):
-		return "Place a Smelter on clear ground nearby — it turns ore into ingots"
+		return _with_the_build_gun(
+			sim, player_id, "Place a Smelter on clear ground nearby — it turns ore into ingots"
+		)
 	if not _anything_is_belted(sim):
-		return "Press C for the Belt tool, then drag from the orange arrow to the blue one"
+		return _with_the_build_gun(
+			sim,
+			player_id,
+			"Press C for the Belt tool, then drag from the orange arrow to the blue one"
+		)
 	if _anything_is_starved(sim):
 		return "Something is starved — a Belt starts past an output arrow and ends at an input"
 	return "Carry ingots to the Nest and press F — delivering is how a Run gets better"
+
+
+## A build step, with the key that puts the Build Gun in your hand on the front of it when
+## it is not already there.
+##
+## A Run opens with the weapon out (#42), so the first line a player ever reads has to name
+## `B` — and the moment they press it, the line stops naming it, because an instruction that
+## stayed would be telling them to do something they have done. Nothing is remembered to
+## make that happen: it is the same query the rest of this file is made of.
+static func _with_the_build_gun(sim: Simulation, player_id: int, step: String) -> String:
+	if sim.query_player_is_in_build_mode(player_id):
+		return step
+	var uncapitalised: String = step[0].to_lower() + step.substr(1)
+	return "Press B for the Build Gun — then %s" % uncapitalised
 
 
 ## Whether a Miner is standing on ground it can actually work. Not "is a Miner built": a

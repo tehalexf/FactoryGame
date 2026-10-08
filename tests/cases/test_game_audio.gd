@@ -387,12 +387,19 @@ func test_the_cues_a_player_hears_over_and_over_have_more_than_one_take() -> voi
 ## *up* to these figures as the Factory grows, so the ceiling is what a full Factory
 ## actually sustains rather than a worst case.
 func test_the_ambience_beds_sit_under_everything_they_are_a_bed_for() -> void:
+	# **The cues a bed carries are the one-shots**, which is what this always meant and
+	# is now what it says. It excluded the two beds by name; it excludes everything
+	# sustained, because a cue that runs continuously is in the same category a bed is
+	# and is mixed against the same question. #42 made that concrete: the Telegraph's
+	# cue runs for a minute at a time and is deliberately *at* bed level, and naming the
+	# beds rather than their category would have made that a failure here instead of the
+	# decision it is. `LOOPING_CUES` is the category and `SoundBank` already owns it.
 	var bank: SoundBank = SoundBank.new()
 	var beds: Array = [SoundBank.FACTORY_BED, SoundBank.FACTORY_BUSY]
 	var quietest_cue: float = 0.0
 	var quietest_name: String = ""
 	for cue: String in bank.cues():
-		if beds.has(cue):
+		if SoundBank.LOOPING_CUES.has(cue):
 			continue
 		if quietest_name.is_empty() or bank.gain_db(cue) < quietest_cue:
 			quietest_cue = bank.gain_db(cue)
@@ -831,6 +838,55 @@ func test_the_director_holds_no_opinion_about_the_run() -> void:
 			_names(second.cues_for_frame(sim)),
 			"two listeners of the same Run must hear the same thing"
 		)
+
+
+# ── The Telegraph is a cue, not a siren (#42) ─────────────────────────────────
+
+func test_the_telegraph_cue_is_the_quietest_thing_in_the_catalogue() -> void:
+	# The player's verdict on two successive alarms was *"the klaxon is AWFUL, just make
+	# it very subtle"*, and this is that made into a property rather than a measurement
+	# somebody took once. The Telegraph is the only cue that runs **continuously**, for a
+	# minute at a time, while a player is trying to think — so it is the one cue that must
+	# never be loud, and anything that raises it back over the ambience beds should go red
+	# here rather than in a playtest.
+	#
+	# It does not have to carry the warning on its own: `CLAUDE.md` is explicit that
+	# nothing arrives unannounced, and the countdown, the gauge and the Wave's composition
+	# are all already on the HUD. The sound's job is to make a player look up.
+	var bank: SoundBank = SoundBank.new()
+	var klaxon: float = bank.gain_db(SoundBank.TELEGRAPH_KLAXON)
+	for cue: String in SoundBank.CATALOGUE:
+		assert_true(
+			klaxon <= bank.gain_db(cue),
+			"%s is mixed at %.1f dB, under the Telegraph's %.1f" % [
+				cue, bank.gain_db(cue), klaxon
+			]
+		)
+	# At or below both beds, rather than strictly below. Level with the quiet one is the
+	# shipped answer and the right place for it: a bed is the floor of the mix, and the
+	# one cue that is itself quasi-ambient belongs on that floor rather than under it,
+	# where nothing would be heard at all.
+	assert_true(
+		klaxon <= bank.gain_db(SoundBank.FACTORY_BED)
+		and klaxon <= bank.gain_db(SoundBank.FACTORY_BUSY),
+		"and it sits at or under both ambience beds, which is what 'subtle' means here"
+	)
+
+
+func test_the_telegraph_is_a_slow_repeat_rather_than_a_held_tone() -> void:
+	# A tone held for a whole Telegraph is most of why the last two grated. The cue is a
+	# struck plate with a long tail of nothing, looped by the player — so what runs for
+	# the length of the Telegraph is a knock every few seconds, and the gaps are the part
+	# that makes it bearable.
+	#
+	# What is asserted here is the half this layer owns: it is **sustained**, so it starts
+	# and stops with `query_wave_is_telegraphed` rather than being a one-shot that might
+	# finish before the Wave lands. The sparseness is the cut's, in
+	# `tools/assets/convert_audio.sh`, and a test cannot hear it.
+	assert_true(
+		SoundBank.LOOPING_CUES.has(SoundBank.TELEGRAPH_KLAXON),
+		"the Telegraph cue is looped by the player, so it stops when the Telegraph does"
+	)
 
 
 ## #35 again, and the half of *"needs variance"* the branch could not reach: a hero

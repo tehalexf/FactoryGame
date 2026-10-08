@@ -326,8 +326,20 @@ func _sample() -> PlayerController.DeviceSample:
 	return PlayerController.DeviceSample.new()
 
 
+## A Run with the Build Gun already drawn.
+##
+## A Run opens with the weapon out since #42, and every test below this line is about what
+## the *Build Gun* makes of a click — so having it in hand is the fixture rather than the
+## subject, and it is asked for in its own tick so no test is accidentally also about the
+## swap routing the tick it happens on. `test_godot_layer_smoke` owns that claim.
+func _building(seed_value: int = 1) -> Simulation:
+	var sim: Simulation = Simulation.new(seed_value, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	return sim
+
+
 func test_the_belt_key_swaps_the_tool_on_the_build_gun_both_ways() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 
 	var pressing: PlayerController.DeviceSample = _sample()
@@ -350,7 +362,7 @@ func test_the_belt_key_swaps_the_tool_on_the_build_gun_both_ways() -> void:
 
 
 func test_a_press_with_the_belt_tool_out_commits_nothing() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
 	var controller: PlayerController = PlayerController.new()
 
@@ -372,7 +384,7 @@ func test_a_press_with_the_belt_tool_out_commits_nothing() -> void:
 
 
 func test_the_release_sends_the_route_from_where_the_press_was_to_where_the_aim_ended() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
 	var controller: PlayerController = PlayerController.new()
 
@@ -399,7 +411,7 @@ func test_the_release_sends_the_route_from_where_the_press_was_to_where_the_aim_
 
 
 func test_a_press_and_release_in_one_tick_is_one_tile_of_belt() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
 	var controller: PlayerController = PlayerController.new()
 
@@ -417,7 +429,7 @@ func test_the_right_button_flips_the_corner_instead_of_turning_a_hologram() -> v
 	# With the Belt tool out there is no hologram to turn, and the one thing about a route
 	# a player chooses is which way it bends. So the same button does the one useful thing
 	# in each hand — which is a tool deciding what the mouse means and not a gate.
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
 	var controller: PlayerController = PlayerController.new()
 
@@ -440,7 +452,7 @@ func test_the_right_button_flips_the_corner_instead_of_turning_a_hologram() -> v
 
 
 func test_a_click_with_the_machine_tool_out_still_places_a_machine() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var clicking: PlayerController.DeviceSample = _sample()
 	clicking.place_clicked = true

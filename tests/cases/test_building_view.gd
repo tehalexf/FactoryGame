@@ -16,7 +16,11 @@ func _run(sim: Simulation, ticks: int) -> void:
 # ── The previewed route ───────────────────────────────────────────────────────
 
 func test_nothing_is_previewed_until_the_belt_tool_is_out() -> void:
+	# With the Build Gun drawn: a Run opens with the weapon out since #42, and since #35
+	# a holstered gun draws no hologram at all — which is a different claim from this one
+	# and has its own test.
 	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 	assert_eq(view.belt_preview_tile_count(), 0, "the Machine tool draws a hologram instead")
@@ -195,6 +199,7 @@ func test_the_hologram_shows_the_ports_of_the_machine_about_to_land() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([
+		InputAction.set_build_mode(0, true),
 		InputAction.select_machine(0, sim.query_definitions().machine_index("smelter_mk1"))
 	])
 	view.sync(sim)
@@ -324,8 +329,8 @@ func test_the_markers_do_not_grow_the_scene_tree_as_a_factory_is_built() -> void
 
 func test_a_fresh_run_is_told_to_put_a_miner_on_a_node() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
-	assert_true(Objective.line(sim).contains("Miner"), Objective.line(sim))
-	assert_true(Objective.line(sim).contains("node"), "and where to put it")
+	assert_true(Objective.line(sim, 0).contains("Miner"), Objective.line(sim, 0))
+	assert_true(Objective.line(sim, 0).contains("node"), "and where to put it")
 
 
 func test_a_miner_on_bare_rock_has_not_done_the_first_thing() -> void:
@@ -337,7 +342,7 @@ func test_a_miner_on_bare_rock_has_not_done_the_first_thing() -> void:
 			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(20, 0, 20)
 		)
 	])
-	assert_true(Objective.line(sim).contains("Miner"), Objective.line(sim))
+	assert_true(Objective.line(sim, 0).contains("Miner"), Objective.line(sim, 0))
 
 
 func test_the_line_moves_on_as_the_opening_line_gets_built() -> void:
@@ -350,17 +355,17 @@ func test_the_line_moves_on_as_the_opening_line_gets_built() -> void:
 	sim.step([
 		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0))
 	])
-	assert_true(Objective.line(sim).contains("Smelter"), Objective.line(sim))
+	assert_true(Objective.line(sim, 0).contains("Smelter"), Objective.line(sim, 0))
 
 	sim.step([
 		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(0, 0, 5))
 	])
-	assert_true(Objective.line(sim).contains("Belt"), Objective.line(sim))
+	assert_true(Objective.line(sim, 0).contains("Belt"), Objective.line(sim, 0))
 
 	sim.step([InputAction.build_belt(0, Vector3i(1, 0, 2), Vector3i(1, 0, 4))])
 	assert_false(
-		Objective.line(sim).contains("Belt tool"),
-		"the Belt is fed at one end and lands at the other: %s" % Objective.line(sim)
+		Objective.line(sim, 0).contains("Belt tool"),
+		"the Belt is fed at one end and lands at the other: %s" % Objective.line(sim, 0)
 	)
 
 
@@ -378,8 +383,8 @@ func test_a_belt_laid_on_open_ground_does_not_count_as_a_connection() -> void:
 	])
 	sim.step([InputAction.build_belt(0, Vector3i(20, 0, 20), Vector3i(24, 0, 20))])
 	assert_true(
-		Objective.line(sim).contains("Belt tool"),
-		"a Belt nothing feeds taught the player nothing: %s" % Objective.line(sim)
+		Objective.line(sim, 0).contains("Belt tool"),
+		"a Belt nothing feeds taught the player nothing: %s" % Objective.line(sim, 0)
 	)
 
 
@@ -387,9 +392,9 @@ func test_the_line_goes_away_once_a_delivery_has_been_made() -> void:
 	# The loop has closed at least once: mined, crafted, moved and been paid for it. A hint
 	# line at the top of the screen after that is a hint line in the way.
 	var sim: Simulation = Simulation.new(1, 1)
-	assert_ne(Objective.line(sim), "", "there is something to say at the start")
+	assert_ne(Objective.line(sim, 0), "", "there is something to say at the start")
 	var stocked: Simulation = _run_with_a_tier_completed()
-	assert_eq(Objective.line(stocked), "", "and nothing to say once a tier has landed")
+	assert_eq(Objective.line(stocked, 0), "", "and nothing to say once a tier has landed")
 
 
 ## A Run whose first Delivery tier wants one plate, handed over by the player standing where
@@ -437,7 +442,7 @@ func test_the_hud_carries_the_objective_line() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	assert_true(view.hud_text().contains(Objective.line(sim)), view.hud_text())
+	assert_true(view.hud_text().contains(Objective.line(sim, 0)), view.hud_text())
 	view.free()
 
 
@@ -462,7 +467,7 @@ func test_the_brief_hud_keeps_what_the_player_is_doing_and_what_is_coming() -> v
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 	var brief: String = view.hud_brief_text()
-	assert_true(brief.contains(Objective.line(sim)), "the objective: %s" % brief)
+	assert_true(brief.contains(Objective.line(sim, 0)), "the objective: %s" % brief)
 	assert_true(brief.contains("nest"), "what is at stake: %s" % brief)
 	assert_true(brief.contains("power"), "the gauge a Factory is read off: %s" % brief)
 	assert_true(brief.contains("build gun"), "what is in their hands: %s" % brief)
@@ -573,6 +578,10 @@ func test_a_picker_cell_carries_the_icon_of_what_the_machine_makes() -> void:
 
 func test_a_number_key_puts_that_machine_on_the_build_gun() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
+	# The number row is the picker with the Build Gun out and the weapon keys with it
+	# holstered, and a Run opens holstered since #42 — so the hand this test is about
+	# is asked for rather than assumed.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var controller: PlayerController = PlayerController.new()
 	var pressing: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
 	pressing.machine_picked = 3
@@ -612,6 +621,10 @@ func test_the_same_key_equips_a_weapon_with_the_weapon_out() -> void:
 
 func test_a_number_key_past_the_end_of_the_machine_list_does_nothing() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
+	# The number row is the picker with the Build Gun out and the weapon keys with it
+	# holstered, and a Run opens holstered since #42 — so the hand this test is about
+	# is asked for rather than assumed.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var controller: PlayerController = PlayerController.new()
 	var before: String = sim.query_player_selected_machine(0)
 	var pressing: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
@@ -630,6 +643,10 @@ func test_the_number_row_is_the_one_thing_two_acts_share_and_it_shares_by_hand()
 	# button's arrangement — so it is asserted here rather than left to be noticed, and the
 	# claim is the one that matters: in either hand, one press does exactly one thing.
 	var sim: Simulation = Simulation.new(1, 1)
+	# The number row is the picker with the Build Gun out and the weapon keys with it
+	# holstered, and a Run opens holstered since #42 — so the hand this test is about
+	# is asked for rather than assumed.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var controller: PlayerController = PlayerController.new()
 	var pressing: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
 	pressing.machine_picked = 0

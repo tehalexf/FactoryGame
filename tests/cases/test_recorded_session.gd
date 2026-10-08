@@ -35,6 +35,14 @@ func _sample() -> PlayerController.DeviceSample:
 func _session() -> Array:
 	var ticks: Array = []
 
+	# **Draw the Build Gun.** A Run opens with the weapon out since #42, so the first thing
+	# a player who means to build does is press `B` — and the fixture has to do it too, or
+	# every click below is a trigger pull and the session stops being a session about
+	# building. It is the honest opening of a real one.
+	var drawing_to_build: PlayerController.DeviceSample = _sample()
+	drawing_to_build.build_mode_clicked = true
+	ticks.append(drawing_to_build)
+
 	# Walk forward, sweeping the view to the right as you go.
 	for tick: int in range(45):
 		var walking: PlayerController.DeviceSample = _sample()
@@ -48,9 +56,17 @@ func _session() -> Array:
 		settling.mouse_motion = Vector2(0.0, 11.0)
 		ticks.append(settling)
 
-	# Scroll to the next Machine, turn it a quarter, and place it.
+	# Scroll along to a crafter, turn it a quarter, and place it.
+	#
+	# **Eight steps rather than one, because a Miner no longer places on bare rock** (#42):
+	# the Build Gun snaps one onto a Node in range and sends nothing at all when there is
+	# none, so the old single step — which landed on `coal_miner_mk1` — would now record a
+	# click and build nothing. Eight reaches `smelter_mk1`, which is a crafter, is unlocked
+	# from the first tick, and is what a player standing on open ground would be reaching
+	# for anyway. What this fixture is about is a build intent that crosses, replays, and
+	# can be demolished again.
 	var scrolling: PlayerController.DeviceSample = _sample()
-	scrolling.machine_steps = 1
+	scrolling.machine_steps = 8
 	ticks.append(scrolling)
 
 	var turning: PlayerController.DeviceSample = _sample()

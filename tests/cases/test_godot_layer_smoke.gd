@@ -89,6 +89,18 @@ func _sample() -> PlayerController.DeviceSample:
 	return PlayerController.DeviceSample.new()
 
 
+## A Run with the Build Gun already drawn.
+##
+## A Run opens with the weapon out since #42, so a test about what a *click* does with the
+## Build Gun has to put it in the player's hand first. In its own tick, so that the one
+## test which is about the swap routing the tick it lands on — the holster test below — is
+## the only one making that claim.
+func _building() -> Simulation:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	return sim
+
+
 func test_every_action_the_controller_produces_is_an_input_action() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
@@ -132,7 +144,7 @@ func test_a_held_key_becomes_a_walk_intent() -> void:
 
 
 func test_a_click_builds_whatever_the_build_gun_is_aimed_at() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
 
@@ -152,7 +164,7 @@ func test_a_click_builds_whatever_the_build_gun_is_aimed_at() -> void:
 func test_a_second_click_on_the_same_spot_builds_nothing_more() -> void:
 	# A refused build is a silent no-op. The reason is on screen already, because the
 	# hologram was red before the player clicked.
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.place_clicked = true
@@ -162,7 +174,7 @@ func test_a_second_click_on_the_same_spot_builds_nothing_more() -> void:
 
 
 func test_rotating_and_placing_in_one_tick_places_the_rotation_the_player_can_see() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.rotate_steps = 1
@@ -197,7 +209,7 @@ func test_the_wheel_steps_through_the_machines_and_wraps() -> void:
 
 
 func test_a_demolish_returns_the_materials_the_build_spent() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var stock: int = sim.query_player_item(0, "iron_plate")
 
@@ -234,7 +246,7 @@ func test_survey_view_is_sent_every_tick_so_the_simulation_knows_it_is_still_hel
 
 
 func test_building_is_possible_while_surveying_because_there_is_no_mode() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var surveying: PlayerController.DeviceSample = _sample()
 	surveying.survey_held = true
@@ -264,7 +276,7 @@ func test_the_belt_key_and_a_dragged_click_lay_a_belt_through_the_whole_chain() 
 	# primary button then lays Belt: press, drag, release. This is that whole chain through
 	# the real input producer, which is what the smoke test is for; the shape of the route
 	# itself is `test_belt_routing.gd`.
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
 
@@ -325,7 +337,7 @@ func test_the_lever_key_is_an_edge_so_holding_it_does_not_call_a_wave_a_tick() -
 
 
 func test_demolishing_takes_a_belt_back_apart_too() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var swapping: PlayerController.DeviceSample = _sample()
 	swapping.belt_clicked = true
@@ -439,7 +451,10 @@ func test_a_left_click_places_in_build_mode() -> void:
 	sample.place_clicked = true
 	sample.fire_held = true
 
-	assert_true(sim.query_player_is_in_build_mode(0), "a Run opens with the Build Gun out")
+	# A Run opens with the weapon out since #42, so the Build Gun has to be drawn before a
+	# click can place. Drawn in its own tick, so what this test is about is the click.
+	sim.step([InputAction.set_build_mode(0, true)])
+	assert_true(sim.query_player_is_in_build_mode(0), "the Build Gun is out")
 	var kinds: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
 	assert_true(kinds.has(InputAction.Kind.BUILD_MACHINE), "the click placed")
 	assert_false(kinds.has(InputAction.Kind.FIRE), "and did not also fire")
@@ -448,6 +463,8 @@ func test_a_left_click_places_in_build_mode() -> void:
 func test_a_left_click_fires_in_combat_mode() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
+	# Where a Run opens since #42. Asked for anyway rather than assumed, so this test says
+	# what it is about rather than leaning on an initial value that could change again.
 	sim.step([InputAction.set_build_mode(0, false)])
 
 	var sample: PlayerController.DeviceSample = _sample()
@@ -464,6 +481,9 @@ func test_the_holster_key_toggles_and_routes_the_same_tick() -> void:
 	# in — the same rule that makes a scroll-and-click place what the player scrolled to.
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
+	# From the Build Gun, because the claim is about the swap routing the *same tick* and a
+	# Run now opens on the other side of it.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.build_mode_clicked = true
 	sample.place_clicked = true
@@ -490,6 +510,7 @@ func test_belt_laying_lives_in_build_mode() -> void:
 	# Belt tool, and would otherwise find the Build Gun holding it when they drew it.
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
+	sim.step([InputAction.set_build_mode(0, true)])
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.belt_clicked = true
 
@@ -531,7 +552,9 @@ func test_every_build_act_goes_through_the_one_hand_rule() -> void:
 	]
 
 	for act: Array in acts:
-		var sim: Simulation = Simulation.new(1, 1)
+		# `_building()`, because a Run opens with the weapon out since #42 and both halves
+		# of this test name the hand they are about rather than inheriting one.
+		var sim: Simulation = _building()
 		var controller: PlayerController = PlayerController.new()
 		var sample: PlayerController.DeviceSample = _sample()
 		sample.set(act[2] as String, true)
@@ -549,7 +572,7 @@ func test_every_build_act_goes_through_the_one_hand_rule() -> void:
 	# A Belt route is the one act that is a *gesture* rather than a click: press, drag,
 	# release, with a press and a release in one tick being the one-tile case. So it needs the
 	# Belt tool on the gun first, which is a second tick either way.
-	var sim: Simulation = Simulation.new(1, 1)
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
 	var drag: PlayerController.DeviceSample = _sample()

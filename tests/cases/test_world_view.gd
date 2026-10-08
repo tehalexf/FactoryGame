@@ -199,7 +199,12 @@ func test_the_camera_rises_and_tilts_down_in_survey_view() -> void:
 # ── The Build Gun hologram ────────────────────────────────────────────────────
 
 func test_the_hologram_stands_on_the_tile_the_build_gun_is_aimed_at() -> void:
+	# With the Build Gun drawn, since #42 opens a Run with the weapon out and #35 hides
+	# the hologram when it is. The Machine on the gun at tick 0 is `ammo_press_mk1`, a
+	# crafter, so nothing snaps and the aim is the tile — `test_build_gun` owns the
+	# Miner's snap.
 	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 
@@ -219,9 +224,10 @@ func test_the_hologram_stands_on_the_tile_the_build_gun_is_aimed_at() -> void:
 
 func test_the_hologram_is_green_on_clear_ground_and_red_on_a_machine() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	assert_false(view.hologram_is_refused(), "clear ground ahead of a fresh Run")
+	assert_false(view.hologram_is_refused(), "clear ground with the Build Gun out")
 
 	# Fill the aimed tile, then look again at the same place.
 	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
@@ -241,18 +247,20 @@ func test_the_hologram_goes_away_when_the_build_gun_is_holstered() -> void:
 	# Hidden rather than reddened, which is the one place this departs from how every
 	# other refusal is drawn. A red hologram says "not **there**" and invites the player
 	# to aim elsewhere; nowhere they aim will help, because the problem is in their hands.
+	# A Run opens with the weapon out since #42, so the walk starts from there: no
+	# hologram, draw the gun and it appears, holster and it goes again.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	assert_true(view.hologram_is_visible(), "a Run opens with the Build Gun out")
-
-	sim.step([InputAction.set_build_mode(0, false)])
-	view.sync(sim)
-	assert_false(view.hologram_is_visible(), "and the weapon takes the promise with it")
+	assert_false(view.hologram_is_visible(), "a Run opens with the weapon out")
 
 	sim.step([InputAction.set_build_mode(0, true)])
 	view.sync(sim)
-	assert_true(view.hologram_is_visible(), "and drawing it back brings it back")
+	assert_true(view.hologram_is_visible(), "and drawing the Build Gun brings the promise")
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	view.sync(sim)
+	assert_false(view.hologram_is_visible(), "and the weapon takes it away again")
 	view.free()
 
 
@@ -263,8 +271,11 @@ func test_the_hud_does_not_call_a_tile_clear_while_the_build_gun_is_away() -> vo
 	# would fill it is on their back.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
+	# Drawn first: a Run opens with the weapon out since #42, so "clear" is what the panel
+	# says once the gun is in hand rather than what it opens saying.
+	sim.step([InputAction.set_build_mode(0, true)])
 	view.sync(sim)
-	assert_true(view.hud_text().contains("clear"), "clear ground ahead of a fresh Run")
+	assert_true(view.hud_text().contains("clear"), "clear ground with the Build Gun out")
 
 	sim.step([InputAction.set_build_mode(0, false)])
 	view.sync(sim)
@@ -281,7 +292,10 @@ func test_a_refusal_is_shown_as_a_reason_and_not_only_as_a_colour() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+	# With the Build Gun drawn, because a Run opens with the weapon out since #42 and a
+	# holstered gun has a refusal of its own (#35) that would mask the one under test.
 	sim.step([
+		InputAction.set_build_mode(0, true),
 		InputAction.build_machine(0, sim.query_definitions().machine_index("miner_mk1"), aimed)
 	])
 	view.sync(sim)
@@ -1360,7 +1374,11 @@ func test_the_hud_says_a_locked_machine_is_locked_rather_than_unbuildable() -> v
 	# fixes, so the Build Gun line never collapses them into one word.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
+	# With the Build Gun drawn, since #42 opens a Run with the weapon out and the
+	# holstered refusal (#35) would mask the one under test — which is the ordering this
+	# test is about, one step further out.
 	sim.step([
+		InputAction.set_build_mode(0, true),
 		InputAction.select_machine(0, sim.query_definitions().machine_index("miner_mk2")),
 	])
 	view.sync(sim)
@@ -1632,23 +1650,27 @@ func test_the_build_gun_and_the_weapon_swap_places_rather_than_popping() -> void
 	assert_true(view.weapon_is_visible(), "a Run opens with something in hand")
 	assert_eq(
 		view.weapon_model_id(),
-		WorldView.BUILD_GUN_HELD_ID,
-		"and it is the Build Gun, because a Run opens in build mode"
+		sim.query_player_weapon(0),
+		"and it is the weapon, because a Run opens with it out (#42)"
 	)
 	assert_true(_settled(sim, view), "the opening draw finishes")
 
 	# The tick the key goes down the mode has already changed and the model has not: the
-	# Build Gun is the thing being put away, and you cannot holster a thing you have already
+	# weapon is the thing being put away, and you cannot holster a thing you have already
 	# swapped out.
-	sim.step([InputAction.set_build_mode(0, false)])
+	sim.step([InputAction.set_build_mode(0, true)])
 	view.sync(sim)
-	assert_false(sim.query_player_is_in_build_mode(0), "the mode flips instantly")
-	assert_eq(view.weapon_clip_role(), WeaponAnimator.HOLSTER, "and the Build Gun goes down")
-	assert_eq(view.weapon_model_id(), WorldView.BUILD_GUN_HELD_ID, "still the thing going away")
+	assert_true(sim.query_player_is_in_build_mode(0), "the mode flips instantly")
+	assert_eq(view.weapon_clip_role(), WeaponAnimator.HOLSTER, "and the weapon goes down")
+	assert_eq(
+		view.weapon_model_id(), sim.query_player_weapon(0), "still the thing going away"
+	)
 
-	# Then they have changed over, and the weapon is what came up.
+	# Then they have changed over, and the Build Gun is what came up.
 	assert_true(_settled(sim, view), "the swap finishes")
-	assert_eq(view.weapon_model_id(), sim.query_player_weapon(0), "and the weapon is drawn")
+	assert_eq(
+		view.weapon_model_id(), WorldView.BUILD_GUN_HELD_ID, "and the Build Gun is drawn"
+	)
 	view.free()
 
 

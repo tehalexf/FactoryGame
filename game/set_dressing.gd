@@ -9,7 +9,15 @@
 ## be a second opinion about the Map — so nothing here is told to the Simulation
 ## and nothing here carries a collider.
 ##
-## ── Three things it is careful about ─────────────────────────────────────────
+## ── Four things it is careful about ──────────────────────────────────────────
+##
+## **It is arranged, not scattered** (#42). The layout decides where the *roads*
+## are first — a lane from the Nest to every Node and every Breach — and places
+## everything else with respect to them: bays at the kerb with their long side
+## running with the traffic and every prop in one facing the same way, pipe runs
+## and catwalks *along* a lane rather than across it, and the lanes themselves
+## kept clear. See the lane and bay constants below for the argument. A yard is
+## not a distribution of props, and the first pass was exactly that.
 ##
 ## **It gets out of the player's way.** Everything inside the Map sits on a tile,
 ## and a tile the Simulation reports as built on — a Machine, a Belt, a Wall, a
@@ -99,28 +107,74 @@ const HAZARD_GAIN: float = 2.4
 const NEST_CLEARANCE_TILES: int = 8
 const NODE_CLEARANCE_TILES: int = 4
 
-## How many piles of clutter, and how many props in one. Clustered rather than
-## sprinkled, because sprinkled reads as confetti and clustered reads as a place
-## where somebody put something down and then put something else down beside it.
+## ── Lanes: what the yard is arranged *along* (#42) ──────────────────────────
 ##
-## **Counted per anchor rather than per Map**, which is the correction a render
-## forced. Spread evenly over a 129-tile square, two hundred props is one prop
-## every eighty tiles — statistically a yard and visibly an empty plain, because
-## a player spends a Run inside a thirty-metre circle around their own Factory
-## and nothing was ever in it. Anchoring the scatter on the Nest, the Nodes and
-## the Breaches puts the yard where the game is played and leaves the far corners
-## of the Map thin, which is also what a real yard looks like.
-const CLUSTERS_PER_ANCHOR: int = 9
-const CLUSTER_SIZE_LOW: int = 3
-const CLUSTER_SIZE_HIGH: int = 8
-const CLUSTER_SPREAD_TILES: int = 2
-## How far from its anchor a cluster may fall, in tiles. The low end is outside the
-## clearance, so a pile never lands on the Node a Miner wants.
-const CLUSTER_RADIUS_LOW_TILES: int = 6
-const CLUSTER_RADIUS_HIGH_TILES: int = 26
-## Piles with no anchor at all, spread over the whole Map, so the far ground is
-## worked rather than empty.
-const LOOSE_CLUSTER_COUNT: int = 40
+## The playtest's words were *"please clean up the world so it isn\'t just
+## scattered objects"*, and scattered is exactly what the first pass was: every
+## pile fell at a random angle and a random radius from its anchor, so the yard
+## had density and no **arrangement**. A real site is not a distribution of props.
+## Things line up along something, they cluster for a reason, and the reason is
+## almost always a route: stock goes down the side of the road it arrived on,
+## pipes run beside the way rather than across it, and the middle stays empty
+## because that is where the traffic is.
+##
+## So the layout now starts by deciding where the **roads** are. A lane runs from
+## the Nest to each Node and each Breach, cornered like a Belt route because the
+## grid has four directions and a diagonal road on a 2 m grid is a lie. They are
+## the one thing in this file that is kept clear outright, and everything else is
+## placed *with respect to* them — which is what turns two hundred props from a
+## scatter into a yard.
+##
+## They are also, straightforwardly, the paths a player walks. The Nest is where a
+## Run starts and the Nodes are where it goes first, so a clear axis-aligned route
+## between them is the ground a player was going to need anyway.
+const LANE_HALF_WIDTH_TILES: int = 2
+
+## How far to the side of a lane a bay stands, in tiles, measured from the lane's
+## centre line. Just outside the clear width, so stock is stacked at the kerb.
+const BAY_OFFSET_LOW_TILES: int = 3
+const BAY_OFFSET_HIGH_TILES: int = 6
+
+## ── Bays: a cluster with a shape and a reason ───────────────────────────────
+##
+## A bay is a filled rectangle of tiles, **aligned to the grid**, with its long
+## side parallel to the lane it stands beside and every prop in it sharing one
+## yaw. That last clause is most of the effect: a pile of crates each turned a
+## different quarter reads as spill, and the same crates all facing the same way
+## read as stock. The first pass turned every scattered prop at random for the
+## stated reason that a lattice reads as a lattice, which is true of a prop every
+## eighty tiles and false of six crates against a kerb.
+##
+## The rows are **sorted by height**, tall at the back. A bay's far row from the
+## lane takes `yard_gear` — racking, shelving, a skip, a pressure vessel — and the
+## rows in front take `clutter`. That is the whole of "clusters with a reason":
+## you can see what the bay is for, because you can see what is stored at the back
+## of it and what is being worked at the front.
+const BAYS_PER_LANE: int = 4
+const BAY_WIDTH_LOW_TILES: int = 3
+const BAY_WIDTH_HIGH_TILES: int = 6
+## One or two tiles deep. **A rack is a line, not a block** — a render of the first
+## attempt put a three-deep bay in the near field and it read as a wall of boxes
+## across the view, which is a different way of being in the player's way.
+const BAY_DEPTH_LOW_TILES: int = 1
+const BAY_DEPTH_HIGH_TILES: int = 2
+## How many tiles of a bay are left empty, as a share of its area rather than a
+## flat count, so a six-wide bay is as loosely packed as a three-wide one. A third:
+## a solid rectangle reads as a wall and a rectangle with holes in it reads as a
+## rack somebody has been taking things off.
+const BAY_EMPTY_IN: int = 3
+
+## How often a bay reaches past its own primary prop for something else, as one in
+## N. **A bay is mostly one thing**, which is the "cluster by purpose" half: a bay
+## of drums reads as drums waiting to go somewhere, and the same tiles drawn one
+## each from twenty-five kinds read as the scatter this is replacing. The minority
+## matters too — a rack with nothing but drums on it is a texture.
+const BAY_ODD_ONE_OUT_IN: int = 4
+
+## Bays with no lane: out in the far ground, aligned to the grid\'s own axes rather
+## than to a route, because the far corners of a Map have no traffic to line up
+## with and an axis-aligned pile still reads as placed.
+const LOOSE_BAY_COUNT: int = 26
 
 ## Stains, spills and spread rubble: flat things, placed close in and densely.
 ##
@@ -138,17 +192,18 @@ const STAIN_RADIUS_HIGH_TILES: int = 20
 ## sections are modelled at 3.0 m, its racks stand 3.37 m, and its catwalk decks
 ## are a storey up — so a run is the pack's pieces at the pack's heights, and
 ## nothing here invents a number the art does not already agree with.
-const PIPE_RUNS_PER_ANCHOR: int = 1
-const PIPE_RUN_TILES_LOW: int = 8
-const PIPE_RUN_TILES_HIGH: int = 14
-const CATWALK_RUNS_PER_ANCHOR: int = 1
+## **Per lane rather than per anchor, and fewer of them** (#42). A run used to start at
+## a random bearing from an anchor and take a random axis, so half of them crossed the
+## way a player walks and one of them was usually doing it in the opening frame. They now
+## run beside a lane and with it — see `_lay_out_pipe_runs` — and a number that was
+## tuned to fill an empty plain is too high once they are all lined up along the roads.
+const PIPE_RUNS_PER_LANE: int = 1
+const PIPE_RUN_TILES_LOW: int = 6
+const PIPE_RUN_TILES_HIGH: int = 13
+const CATWALK_RUNS_PER_LANE: int = 1
 const CATWALK_RUN_TILES_LOW: int = 5
 const CATWALK_RUN_TILES_HIGH: int = 11
 const CATWALK_DECK_METRES: float = 3.8
-
-## Loose yard gear — a bench, a rack, a skip — placed on its own rather than in a
-## pile.
-const YARD_GEAR_PER_ANCHOR: int = 4
 
 ## The perimeter, in tiles beyond the Map's own edge. The Map stops being
 ## buildable at `query_grid_half_extent_tiles()`; a fence there is what tells a
@@ -227,6 +282,30 @@ func instance_kind(index: int) -> String:
 	return (_drawn[index] as Dictionary)["kind"]
 
 
+## Which way it is facing, in radians. The readable half of #42's arrangement: a yard
+## where everything in a bay faces one way is the claim, and a yaw a test cannot see is
+## a claim nobody can assert.
+func instance_yaw(index: int) -> float:
+	if index < 0 or index >= _drawn.size():
+		return 0.0
+	return (_drawn[index] as Dictionary)["yaw"]
+
+
+## The tiles the yard keeps clear for traffic: the lanes from the Nest to every Node and
+## every Breach, out to `LANE_HALF_WIDTH_TILES` either side.
+##
+## Public because it is a fact about the yard worth asserting and worth reading — "where
+## has this left room to walk" is the half of the arrangement a player feels rather than
+## sees. A pure function of the Map, like everything else here, and it tells the
+## Simulation nothing.
+func clear_lane_tiles(sim: Simulation) -> Array:
+	var extent: int = sim.query_grid_half_extent_tiles()
+	var tiles: Array = []
+	for lane: Dictionary in _lanes(sim, extent, _anchors(sim)):
+		tiles.append_array(_lane_tiles(lane, LANE_HALF_WIDTH_TILES))
+	return tiles
+
+
 ## Whether any purchased prop was found. False on a clone without the packs, which
 ## is the ordinary case and not a failure.
 func uses_purchased_props() -> bool:
@@ -275,14 +354,18 @@ func _lay_out(sim: Simulation) -> void:
 	# change the Wave after it.
 	var rng: DeterministicRng = DeterministicRng.new(seed_value ^ 0x5E7D_8E55)
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
-	var keep_clear: Dictionary = _keep_clear(sim, extent)
 	var anchors: Array = _anchors(sim)
+	# **The roads come first and everything else is placed against them.** See the
+	# lane constants: this is the one ordering decision that turns the scatter into
+	# an arrangement, because a bay, a pipe run and a catwalk all want to know which
+	# way the traffic goes before they know where they stand.
+	var lanes: Array = _lanes(sim, extent, anchors)
+	var keep_clear: Dictionary = _keep_clear(sim, extent, lanes)
 
 	_lay_out_stains(rng, sim, extent, tile_size, anchors)
-	_lay_out_clusters(rng, sim, extent, tile_size, keep_clear, anchors)
-	_lay_out_yard_gear(rng, sim, extent, tile_size, keep_clear, anchors)
-	_lay_out_pipe_runs(rng, sim, extent, tile_size, keep_clear, anchors)
-	_lay_out_catwalks(rng, sim, extent, tile_size, keep_clear, anchors)
+	_lay_out_bays(rng, sim, extent, tile_size, keep_clear, lanes)
+	_lay_out_pipe_runs(rng, sim, extent, tile_size, keep_clear, lanes)
+	_lay_out_catwalks(rng, sim, extent, tile_size, keep_clear, lanes)
 	_lay_out_perimeter(rng, extent, tile_size)
 	_lay_out_skyline(rng, extent, tile_size)
 
@@ -305,6 +388,106 @@ func _anchors(sim: Simulation) -> Array:
 	return places
 
 
+## The roads: one route from the Nest to every other anchor, cornered on the grid.
+##
+## **This is what the yard is arranged along** (#42) — see the lane constants. The route
+## is an L rather than a diagonal for the reason a Belt route is: the grid has four
+## directions and a diagonal road on a 2 m grid is a thing a player cannot walk straight
+## down.
+##
+## A segment is `{from, to, along_x}`, with `from` and `to` sharing the axis the run is
+## *not* along. Only non-empty segments are kept, so an anchor that happens to share a row
+## with the Nest produces one leg rather than two and a zero-length one.
+func _lanes(sim: Simulation, extent: int, anchors: Array) -> Array:
+	if anchors.is_empty():
+		return []
+	var from_nest: Vector2i = anchors[0]
+	var routes: Array = []
+	for index: int in range(1, anchors.size()):
+		var to: Vector2i = anchors[index]
+		# Which leg runs first — the one choice a route has. Read off the anchor's own
+		# coordinates rather than off the stream, because this is geography: two Nodes on
+		# the same bearing should not get different answers, and a yard whose roads were
+		# rolled for reads as rolled for.
+		var corner_first_along_x: bool = ((to.x + to.y) & 1) == 0
+		var corner: Vector2i = (
+			Vector2i(to.x, from_nest.y) if corner_first_along_x
+			else Vector2i(from_nest.x, to.y)
+		)
+		_add_lane(routes, from_nest, corner, extent)
+		_add_lane(routes, corner, to, extent)
+	return routes
+
+
+## One leg, clamped to the Map and dropped if it has no length.
+func _add_lane(routes: Array, from_tile: Vector2i, to_tile: Vector2i, extent: int) -> void:
+	var a: Vector2i = Vector2i(
+		clampi(from_tile.x, -extent, extent), clampi(from_tile.y, -extent, extent)
+	)
+	var b: Vector2i = Vector2i(
+		clampi(to_tile.x, -extent, extent), clampi(to_tile.y, -extent, extent)
+	)
+	if a == b:
+		return
+	routes.append({"from": a, "to": b, "along_x": a.y == b.y})
+
+
+## Every tile a lane covers, out to `half_width` either side of its centre line.
+func _lane_tiles(lane: Dictionary, half_width: int) -> Array:
+	var a: Vector2i = lane["from"]
+	var b: Vector2i = lane["to"]
+	var along_x: bool = lane["along_x"]
+	var low: int = mini(a.x, b.x) if along_x else mini(a.y, b.y)
+	var high: int = maxi(a.x, b.x) if along_x else maxi(a.y, b.y)
+	var across: int = a.y if along_x else a.x
+	var tiles: Array = []
+	for along: int in range(low, high + 1):
+		for side: int in range(-half_width, half_width + 1):
+			tiles.append(
+				Vector2i(along, across + side) if along_x
+				else Vector2i(across + side, along)
+			)
+	return tiles
+
+
+## Somewhere alongside a lane, facing it: where a bay, a pipe run or a catwalk is built
+## from.
+##
+## Returns `{at, along_x, facing}` — where it stands, which way the traffic runs past it,
+## and the yaw that turns a prop towards the road. **`facing` is the point.** A crate
+## turned towards the road reads as stock waiting to be picked up; the same crate turned
+## at random reads as something that fell off a lorry, and two hundred of those read as
+## the complaint this ticket is answering.
+func _beside_a_lane(rng: DeterministicRng, lanes: Array, extent: int) -> Dictionary:
+	var lane: Dictionary = lanes[rng.next_below(lanes.size())]
+	var a: Vector2i = lane["from"]
+	var b: Vector2i = lane["to"]
+	var along_x: bool = lane["along_x"]
+	var low: int = mini(a.x, b.x) if along_x else mini(a.y, b.y)
+	var high: int = maxi(a.x, b.x) if along_x else maxi(a.y, b.y)
+	var across: int = a.y if along_x else a.x
+	var along: int = rng.next_range(low, high)
+	var side: int = 1 if rng.next_below(2) == 0 else -1
+	var offset: int = side * rng.next_range(BAY_OFFSET_LOW_TILES, BAY_OFFSET_HIGH_TILES)
+	var at: Vector2i = (
+		Vector2i(along, across + offset) if along_x else Vector2i(across + offset, along)
+	)
+	# Facing back at the lane: a run along X is looked at from the north or the south, a
+	# run along Z from the east or the west.
+	var facing: float = 0.0
+	if along_x:
+		facing = 0.0 if side > 0 else TAU * 0.5
+	else:
+		facing = TAU * 0.25 if side > 0 else TAU * 0.75
+	return {
+		"at": Vector2i(
+			clampi(at.x, -extent + 2, extent - 2), clampi(at.y, -extent + 2, extent - 2)
+		),
+		"along_x": along_x,
+		"facing": facing,
+	}
+
+
 ## A tile a given distance out from an anchor, in a direction drawn off the stream.
 ## The ring rather than a square, so the density around an anchor does not pile up
 ## in its corners.
@@ -320,7 +503,7 @@ func _near(rng: DeterministicRng, anchor: Vector2i, low: int, high: int, extent:
 ## The tiles the yard refuses to stand on whatever else happens: the Nest and its
 ## apron, and a ring around every Node. Computed once per layout, because a Node
 ## does not move and neither does the Nest.
-func _keep_clear(sim: Simulation, extent: int) -> Dictionary:
+func _keep_clear(sim: Simulation, extent: int, lanes: Array) -> Dictionary:
 	var clear: Dictionary = {}
 	var nest: Vector3i = sim.query_nest_tile()
 	var footprint: Vector2i = sim.query_nest_footprint()
@@ -338,6 +521,13 @@ func _keep_clear(sim: Simulation, extent: int) -> Dictionary:
 				node.z - NODE_CLEARANCE_TILES, node.z + NODE_CLEARANCE_TILES + 1
 			):
 				clear[Vector2i(x, z)] = true
+	# **The lanes.** Kept clear outright, which is the half of #42's "clear ground
+	# where a player works" that no amount of better scattering would have bought:
+	# a route is only a route if it is empty, and a player walking the Nest-to-Node
+	# line is the single commonest thing anybody does in a Run.
+	for lane: Dictionary in lanes:
+		for tile: Vector2i in _lane_tiles(lane, LANE_HALF_WIDTH_TILES):
+			clear[tile] = true
 	# The Map's own rim, so a fence panel and a crate never share a tile.
 	for along: int in range(-extent, extent + 1):
 		clear[Vector2i(along, extent)] = true
@@ -368,135 +558,198 @@ func _lay_out_stains(
 			_place_on_tile(rng, sim, "stain", tile, tile_size, 0.0)
 
 
-func _lay_out_clusters(
+## The yard's stock, in bays rather than in piles.
+##
+## A bay is a filled rectangle of tiles aligned to the grid, standing at the kerb of a
+## lane with every prop in it sharing one yaw. See the bay constants for why that is most
+## of the effect; what follows is how it is built.
+##
+## - **The long side runs with the traffic.** A bay beside an east-west lane is wide
+##   east-west, because that is how a rack is set down beside a road and because a bay
+##   lying across the road would read as a blockage.
+## - **Tall at the back.** The row furthest from the lane takes `yard_gear` — racking,
+##   shelving, a skip, a pressure vessel — and the rows in front take `clutter`. That is
+##   the whole of "clusters with a reason": what the bay is for is visible from the road.
+## - **Gaps, counted rather than rolled per tile.** A solid rectangle of boxes reads as a
+##   wall; a rectangle with three holes in it reads as a rack somebody has been taking
+##   things off.
+## - **Nothing lands on a kept-clear tile**, which now includes the lanes themselves, so a
+##   bay can never close the road it is standing beside.
+func _lay_out_bays(
 	rng: DeterministicRng,
 	sim: Simulation,
 	extent: int,
 	tile_size: float,
 	keep_clear: Dictionary,
-	anchors: Array
+	lanes: Array
 ) -> void:
-	var centres: Array = []
-	for anchor: Vector2i in anchors:
-		for which: int in range(CLUSTERS_PER_ANCHOR):
-			centres.append(
-				_near(rng, anchor, CLUSTER_RADIUS_LOW_TILES, CLUSTER_RADIUS_HIGH_TILES, extent)
+	var taken: Dictionary = {}
+	for lane: Dictionary in lanes:
+		for which: int in range(BAYS_PER_LANE):
+			var spot: Dictionary = _beside_a_lane(rng, lanes, extent)
+			_lay_out_one_bay(
+				rng, sim, extent, tile_size, keep_clear, taken,
+				spot["at"], spot["along_x"], spot["facing"]
 			)
-	for which: int in range(LOOSE_CLUSTER_COUNT):
-		centres.append(
-			Vector2i(
-				rng.next_range(-extent + 2, extent - 2), rng.next_range(-extent + 2, extent - 2)
-			)
+	# The far ground. No lane to line up with out here, so the bays take the grid's own
+	# axes — which still reads as placed, because the thing the eye objects to is not
+	# regularity but its absence.
+	for which: int in range(LOOSE_BAY_COUNT):
+		var at: Vector2i = Vector2i(
+			rng.next_range(-extent + 4, extent - 4), rng.next_range(-extent + 4, extent - 4)
+		)
+		var along_x: bool = rng.next_below(2) == 0
+		var facing: float = float(rng.next_below(2)) * TAU * 0.5
+		if not along_x:
+			facing += TAU * 0.25
+		_lay_out_one_bay(
+			rng, sim, extent, tile_size, keep_clear, taken, at, along_x, facing
 		)
 
-	var taken: Dictionary = {}
-	for centre: Vector2i in centres:
-		var wanted: int = rng.next_range(CLUSTER_SIZE_LOW, CLUSTER_SIZE_HIGH)
-		for which: int in range(wanted):
-			var tile: Vector2i = centre + Vector2i(
-				rng.next_range(-CLUSTER_SPREAD_TILES, CLUSTER_SPREAD_TILES),
-				rng.next_range(-CLUSTER_SPREAD_TILES, CLUSTER_SPREAD_TILES)
-			)
-			if keep_clear.has(tile) or taken.has(tile) or absi(tile.x) > extent or absi(tile.y) > extent:
-				continue
-			taken[tile] = true
-			_place_on_tile(rng, sim, "clutter", tile, tile_size, 0.0)
 
-
-func _lay_out_yard_gear(
+## One bay: a `width` x `depth` rectangle from `at`, filled row by row, tall row first.
+func _lay_out_one_bay(
 	rng: DeterministicRng,
 	sim: Simulation,
 	extent: int,
 	tile_size: float,
 	keep_clear: Dictionary,
-	anchors: Array
+	taken: Dictionary,
+	at: Vector2i,
+	along_x: bool,
+	facing: float
 ) -> void:
-	for anchor: Vector2i in anchors:
-		for which: int in range(YARD_GEAR_PER_ANCHOR):
-			var tile: Vector2i = _near(
-				rng, anchor, CLUSTER_RADIUS_LOW_TILES, CLUSTER_RADIUS_HIGH_TILES, extent
-			)
-			if keep_clear.has(tile):
+	var width: int = rng.next_range(BAY_WIDTH_LOW_TILES, BAY_WIDTH_HIGH_TILES)
+	var depth: int = rng.next_range(BAY_DEPTH_LOW_TILES, BAY_DEPTH_HIGH_TILES)
+	var cells: int = maxi(width * depth, 1)
+	# Which cells are empty, drawn before the walk so the number of gaps is a number.
+	# Rolling per tile instead would make it a thing to hope for, and a bay that came up
+	# solid is the wall of boxes this is here to prevent.
+	@warning_ignore("integer_division")
+	var gaps: int = maxi(cells / BAY_EMPTY_IN, 1)
+	var skipped: Dictionary = {}
+	for which: int in range(gaps):
+		skipped[rng.next_below(cells)] = true
+
+	# **What this bay is mostly made of.** One draw per bay rather than one per tile —
+	# see `BAY_ODD_ONE_OUT_IN`.
+	var mostly_clutter: String = _pick_variant(rng, "clutter")
+	var mostly_gear: String = _pick_variant(rng, "yard_gear")
+
+	# The long side runs with the traffic; the depth runs away from the lane. `backwards`
+	# is which way "away" is, read off the facing, so the tall row is the far one.
+	var along: Vector2i = Vector2i(1, 0) if along_x else Vector2i(0, 1)
+	var backwards: Vector2i = (
+		Vector2i(0, 1) if along_x else Vector2i(1, 0)
+	) * (1 if (facing < TAU * 0.25 or facing > TAU * 0.6) else -1)
+
+	var cell: int = -1
+	for row: int in range(depth):
+		# The back row is the deep one, and it is where the tall stock goes.
+		var kind: String = "yard_gear" if row == depth - 1 and depth > 1 else "clutter"
+		for column: int in range(width):
+			cell += 1
+			if skipped.has(cell):
 				continue
-			_place_on_tile(rng, sim, "yard_gear", tile, tile_size, 0.0)
+			var tile: Vector2i = at + along * column + backwards * row
+			if (
+				keep_clear.has(tile)
+				or taken.has(tile)
+				or absi(tile.x) > extent
+				or absi(tile.y) > extent
+			):
+				continue
+			taken[tile] = true
+			var primary: String = mostly_gear if kind == "yard_gear" else mostly_clutter
+			_place_on_tile(
+				rng,
+				sim,
+				kind,
+				tile,
+				tile_size,
+				facing,
+				0.0,
+				"" if rng.next_below(BAY_ODD_ONE_OUT_IN) == 0 else primary
+			)
 
 
-## A run of overhead pipe: a rack every two tiles with a section spanning between
-## them, straight along one axis. The pieces carry their own heights, so the run
-## is at the height the pack drew it at.
+## A run of overhead pipe: a rack every two tiles with a section spanning between them,
+## straight along one axis. The pieces carry their own heights, so the run is at the
+## height the pack drew it at.
+##
+## **It runs beside a lane, parallel to it, and it starts from the kerb** (#42). The old
+## version took a random point on a ring around an anchor and a random axis, which meant
+## that about half of them ran *across* the way a player was walking — and since the
+## anchors include the Nest, the commonest single thing in the opening frame of a Run was
+## a bright pipe run crossing it at head height. #39 closed with exactly that note and
+## called it layout rather than palette. This is that note acted on: a service runs the
+## length of a road, on one side of it, because that is where you put one and because it
+## leaves the view down the road clear.
 func _lay_out_pipe_runs(
 	rng: DeterministicRng,
 	sim: Simulation,
 	extent: int,
 	tile_size: float,
 	keep_clear: Dictionary,
-	anchors: Array
+	lanes: Array
 ) -> void:
-	var runs: Array = []
-	for anchor: Vector2i in anchors:
-		for which: int in range(PIPE_RUNS_PER_ANCHOR):
-			runs.append(
-				_near(rng, anchor, CLUSTER_RADIUS_LOW_TILES, CLUSTER_RADIUS_HIGH_TILES, extent)
-			)
-	for start_at: Vector2i in runs:
-		var along_x: bool = rng.next_below(2) == 0
+	if lanes.is_empty():
+		return
+	for which: int in range(PIPE_RUNS_PER_LANE * lanes.size()):
+		var spot: Dictionary = _beside_a_lane(rng, lanes, extent)
+		var along_x: bool = spot["along_x"]
 		var length: int = rng.next_range(PIPE_RUN_TILES_LOW, PIPE_RUN_TILES_HIGH)
-		var start: Vector2i = Vector2i(
-			clampi(start_at.x, -extent + 2, extent - length - 2),
-			clampi(start_at.y, -extent + 2, extent - length - 2)
-		)
+		var step_by: Vector2i = Vector2i(1, 0) if along_x else Vector2i(0, 1)
+		# The pack's pipe sections are modelled running along +X, so a run along Z is the
+		# quarter turn. Not `spot["facing"]`, which turns a prop to *look at* the lane —
+		# a pipe is laid along it.
 		var yaw: float = 0.0 if along_x else TAU * 0.25
+		var start_at: Vector2i = spot["at"]
 		for step: int in range(length):
-			var tile: Vector2i = start + (
-				Vector2i(step, 0) if along_x else Vector2i(0, step)
-			)
-			if keep_clear.has(tile):
+			var tile: Vector2i = start_at + step_by * step
+			if keep_clear.has(tile) or absi(tile.x) > extent or absi(tile.y) > extent:
 				continue
 			_place_on_tile(rng, sim, "pipe_span", tile, tile_size, yaw)
 			if step % 2 == 0:
 				_place_on_tile(rng, sim, "pipe_leg", tile, tile_size, yaw)
-			# A run comes up out of the ground at one end and turns at the other, so
-			# it reads as plumbing rather than as a length of pipe lying in the air.
+			# A run comes up out of the ground at one end and turns at the other, so it
+			# reads as plumbing rather than as a length of pipe lying in the air.
 			if step == 0:
 				_place_on_tile(rng, sim, "pipe_riser", tile, tile_size, yaw)
 			elif step == length - 1:
 				_place_on_tile(rng, sim, "pipe_elbow", tile, tile_size, yaw)
-			# A lamp every eight metres of pipe rack. They are the one thing in the
-			# yard that is lit by its own emission map rather than by the sun, which
-			# is what makes dusk read as dusk rather than as underexposure.
+			# A lamp every eight metres of pipe rack. They are the one thing in the yard
+			# lit by its own emission map rather than by the sun, which is what makes dusk
+			# read as dusk rather than as underexposure — and strung along a road they
+			# light the road, which is what yard lighting is for.
 			if step % 4 == 2:
 				_place_on_tile(rng, sim, "lamp", tile, tile_size, yaw)
 
 
+## A catwalk: a deck a storey up with a railing on it, on legs. Beside a lane and running
+## with it, for the reason a pipe run is — and a catwalk across a road at 3.8 m is the one
+## prop in the set that can hide a Machine behind it.
 func _lay_out_catwalks(
 	rng: DeterministicRng,
 	sim: Simulation,
 	extent: int,
 	tile_size: float,
 	keep_clear: Dictionary,
-	anchors: Array
+	lanes: Array
 ) -> void:
-	var runs: Array = []
-	for anchor: Vector2i in anchors:
-		for which: int in range(CATWALK_RUNS_PER_ANCHOR):
-			runs.append(
-				_near(rng, anchor, CLUSTER_RADIUS_LOW_TILES, CLUSTER_RADIUS_HIGH_TILES, extent)
-			)
-	for start_at: Vector2i in runs:
-		var along_x: bool = rng.next_below(2) == 0
+	if lanes.is_empty():
+		return
+	for which: int in range(CATWALK_RUNS_PER_LANE * lanes.size()):
+		var spot: Dictionary = _beside_a_lane(rng, lanes, extent)
+		var along_x: bool = spot["along_x"]
 		var length: int = rng.next_range(CATWALK_RUN_TILES_LOW, CATWALK_RUN_TILES_HIGH)
-		var start: Vector2i = Vector2i(
-			clampi(start_at.x, -extent + 2, extent - length - 2),
-			clampi(start_at.y, -extent + 2, extent - length - 2)
-		)
-		# The pack's catwalk deck runs along its own +Z, so a run along X is the
-		# quarter turn and a run along Z is none.
+		var step_by: Vector2i = Vector2i(1, 0) if along_x else Vector2i(0, 1)
+		# The pack's catwalk deck runs along its own +Z, so a run along X is the quarter
+		# turn and a run along Z is none — the opposite of the pipe sections above.
 		var yaw: float = TAU * 0.25 if along_x else 0.0
 		for step: int in range(length):
-			var tile: Vector2i = start + (
-				Vector2i(step, 0) if along_x else Vector2i(0, step)
-			)
-			if keep_clear.has(tile):
+			var tile: Vector2i = spot["at"] + step_by * step
+			if keep_clear.has(tile) or absi(tile.x) > extent or absi(tile.y) > extent:
 				continue
 			_place_on_tile(rng, sim, "catwalk_span", tile, tile_size, yaw, CATWALK_DECK_METRES)
 			_place_on_tile(rng, sim, "railing", tile, tile_size, yaw, CATWALK_DECK_METRES)
@@ -559,20 +812,30 @@ func _place_on_tile(
 	tile: Vector2i,
 	tile_size: float,
 	yaw: float,
-	lift: float = 0.0
+	lift: float = 0.0,
+	variant: String = ""
 ) -> void:
 	var centre: FixedVec2 = sim.query_tile_centre_metres(Vector3i(tile.x, 0, tile.y))
 	var at: Vector3 = Vector3(
 		Fixed.to_float(centre.x), lift, Fixed.to_float(centre.z)
 	)
-	# A quarter turn off the grid for anything scattered, so a yard of crates does
-	# not read as a lattice. A run keeps the yaw it was given.
+	# **A stain, and nothing else, takes a random quarter turn.** Clutter and yard gear
+	# used to take one too, on the argument that a yard of crates all facing one way reads
+	# as a lattice. That was right about a prop every eighty tiles and wrong about six
+	# crates in a bay: #42's complaint was that the world is *scattered*, and a pile whose
+	# every member faces a different way is the most scattered thing it is possible to
+	# draw. They now keep the yaw their bay was given, which is what turns a pile into
+	# stock. A spill has no front, so it keeps the turn.
 	var turn: float = yaw
-	if kind == "clutter" or kind == "yard_gear" or kind == "stain":
+	if kind == "stain":
 		turn = float(rng.next_below(4)) * TAU * 0.25
+	# A caller that already knows what it wants — a bay, which is mostly one prop — says
+	# so; everything else takes a fresh draw. The draw happens either way, so that passing
+	# a variant does not change the stream and move every prop placed after it.
+	var drawn: String = _pick_variant(rng, kind)
 	_placements.append({
 		"kind": kind,
-		"variant": _pick_variant(rng, kind),
+		"variant": drawn if variant.is_empty() else variant,
 		"where": at,
 		"yaw": turn,
 		"scale": 1.0,

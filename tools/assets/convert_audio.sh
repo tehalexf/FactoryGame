@@ -241,53 +241,63 @@ cue call_wave_lever "OBJFurn_Barber Chair, Foot Pump" \
   --duration 1.3 --semitones -9 --search 0:8
 
 # ── Waves ─────────────────────────────────────────────────────────────────────
-# The Telegraph. A warning you cannot hear is not a warning, so this plays for
-# exactly as long as the Telegraph does and stops with it.
+# The Telegraph, and **the third attempt at it, which is not an alarm** (#42).
 #
-# **Repicked twice, and the second time with the bundle in front of it.** #35's
-# verdict was *"the alarm when starting a wave is too STUPID"*, and what the player
-# heard was `EffectiveTrailer_Alarms_Vol2_QuarterNotes` — a *trailer* alarm, a
-# designed cinematic sting, which means a film is starting rather than *get to your
-# gun*. #35 repicked it blind to the factory-hall recording and that pick was wrong
-# in two measurable ways: `--semitones` on a `--mode loop` is refused outright
-# ("a transposed loop has no stable seam"), so the cue would not have been cut at
-# all; and that recording's alarm is a 791 Hz tone standing 25-38 dB above its own
-# neighbours for 0-33 s and 51-64 s of its 68 s — which is to say the alarm is
-# *already inside* `factory_busy`, and a klaxon cut from the same hall would have
-# been indistinguishable from the bed it plays over.
+# The player's verdict on the second was *"the klaxon is AWFUL, just make it very
+# subtle"*. The first was a trailer alarm in quarter notes — a designed cinematic
+# sting, which is the thing this file's own standard rules out. The second (#35, and
+# the full working is in that commit) was a motorcycle horn transposed an octave down
+# to a 209 Hz fundamental and low-passed at 700 Hz, which moved its centroid from
+# 2705 Hz to 495 and its strongest third octave from 2 kHz to 250. It is a careful
+# piece of work, every number in it is right, and the player hated it too. Two goes at
+# "the right alarm" is enough evidence that **the category is wrong**, not the pick
+# inside it — the measurement that mattered was never the spectrum, it was that the
+# thing ran continuously at the loudest level in the game.
 #
-# A klaxon is an **electromagnetic diaphragm horn** — the same mechanism as a
-# vehicle horn, which is why both are a single hard tone that starts and stops
-# rather than a melody. So it is a motorcycle horn, an octave down: 419 Hz measured
-# at 63 dB of prominence becomes 209 Hz, which is a horn the size of a building.
+# What a siren does is demand attention, continuously, for as long as it runs, and
+# nothing in this game needs that: the Telegraph is already on the HUD with a
+# countdown, a gauge and the Wave's composition on it (CLAUDE.md, "nothing arrives
+# unannounced"). The audio does not have to carry the warning on its own. It has to
+# make a player *look up*.
 #
-# **And then low-passed at 700 Hz, which is the part that was wrong first time.** A
-# vehicle horn is piercing because its harmonics carry more energy than its root —
-# transposed a fifth and left alone, the cut's strongest third octave was 2 kHz, with
-# the fundamental 8.6 dB *below* it and the whole cue measuring a 2705 Hz centroid. A
-# 2 kHz needle in the ear's most sensitive band, sustained for a whole Telegraph, is
-# not a big horn; it is a small one held closer. Transposition moves a spectrum and
-# does not re-balance it, so the balance has to be filtered: at an octave down with a
-# 700 Hz low-pass the 250 Hz third octave is the strongest by 6 dB, above 2 kHz falls
-# from -12.1 to -38.8, and the centroid lands at 495 Hz. Enough harmonic left to cut
-# through a Factory, not enough to be a whistle.
+# So it is a **struck plate heard from across the yard**: a geofon hit, which is a
+# low metal thud with a short ring and a long tail of nothing. That is what a works
+# alarm was before electricity — somebody hitting a length of rail with a hammer —
+# so it belongs in a 1930s foundry in a way a vehicle horn never did, and it is
+# low, dull and over almost immediately, which are the three things a siren is not.
 #
-# **Cut as a one-shot and looped by `LOOPING_CUES`, not as `--mode loop`.** A loop
-# crossfades its own tail over its own head, which is right for a bed and fatal for
-# a klaxon: it would fade *in* the one thing a warning needs, its attack. The whole
-# recording transposed is 2.54 s, so looping the file rearticulates the horn every
-# two and a half seconds — blast, gap, blast, which is what a real klaxon does and
-# what no crossfaded bed could. The cut ends at -122 dB, so the loop is a
-# rearticulation rather than a click.
-cue telegraph_klaxon "VEHHorn_Honda CB500F Horn Long 02" \
-  --duration 2.54 --semitones -12 --lowpass 700 --search 0:1
+# Cut long and left mostly empty on purpose. The hit is under a second and the file
+# runs five, so `LOOPING_CUES` rearticulates it about every five seconds: a slow,
+# quiet knock that keeps going until the Wave arrives, rather than a tone held
+# across the whole Telegraph. The gap is the point — a sound that stops is a sound a
+# player can think over.
+#
+# Filtered hard and low. 320 Hz low-pass takes off the metallic ring that makes a
+# struck plate read as *near*, and a 45 Hz high-pass takes off the subsonic thump
+# that would otherwise eat headroom nobody can hear. What is left is the body of the
+# hit: dull, distant and below everything the Factory is doing. The level is in
+# `game/sound_bank.gd` and is the other half of this; see the note there.
+cue telegraph_klaxon "DSGNImpt_Metal Hit Thud Thump Low Ring Geofon 1" \
+  --duration 5.0 --start 0.0 --lowpass 600 --highpass 90 --channels 2
 
 cue wave_begin "Cinematic Horn Braam, Epic, Cinematic, Dark, Instrument, Huge-32" \
   --duration 3.0 --search 0:5
 
 # A Breach opening. Heavy designed smash, down a fourth: the ground giving way.
+#
+# **Rolled off above 2.4 kHz** (#42). There is no separate Breach klaxon — the only
+# sustained warning in the game is the Telegraph's, above — but this is the nearest
+# thing to one and it had the same defect for the same reason: the cut measured a
+# 4610 Hz centroid, which is a bright splattery crack sitting squarely in the ear's
+# most sensitive band, in a game whose whole palette is low industrial. The source
+# is a gore splatter and it was audibly a gore splatter at the top end.
+#
+# It stays a **loud one-shot**, and that is the difference from the klaxon: a Breach
+# opening is an event, it happens once, and being startled by it is the correct
+# response. What was wrong was the band, not the level — so the level moved three
+# decibels and the top moved an octave.
 cue breach_opens "GORESplt_Gore Designed Transient Heavy Impact Smash" \
-  --duration 2.0 --semitones -5 --search 0:4
+  --duration 2.0 --semitones -5 --lowpass 2400 --search 0:4
 
 # ── Weapons: layered fire, reload, impact ─────────────────────────────────────
 # Fire is **three cues played together**, because one file never sounds like a gun:

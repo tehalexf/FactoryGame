@@ -387,6 +387,81 @@ Three things it is careful about:
   Hazard colour is not gone, it is **placed**: two prop ids wear the palette's own
   `HazardYellow` and nothing else in the yard does.
 
+**#42 changed both of those again, and both changes came out of a render.** The playtest
+said four things about the world and two of them are here.
+
+*"The textures don't look so tiled"* and *"the ground should be slightly bumpy/textured like
+real dirt"* are one file. Each generated map was read **once, at one density, on one axis** —
+blending three of them over noise hides where one ends and the next begins and does nothing
+at all about the fact that each repeats on a perfect lattice, which is what the eye was
+actually finding. `detiled()` reads each map **twice**, once at its stated density and once
+turned 21 degrees and scaled by the golden ratio so the two lattices are incommensurate, and
+warps the coordinate on a slow noise ahead of both so the lattice itself wanders. The
+crossfade between the two reads is deliberately **narrow**: two decorrelated reads of one
+texture average to half its variance, so a wide band de-tiles the ground by flattening it,
+which is one wrong answer traded for another.
+
+And the ground wrote `ALBEDO`, `ROUGHNESS`, `METALLIC` and `SPECULAR` — **no normal at
+all**. However worn the picture was, the surface was geometrically a sheet of glass: one
+normal over the whole Map, so a 23-degree sun fell on every square metre identically.
+`assets/generated/` is albedo-only and there is no normal map to load, so the relief is
+**derived**: a three-octave world-space value-noise height field, its gradient taken by four
+extra evaluations a fragment, bending the world normal and only then going to view space —
+which needs no tangent frame and no UVs, and a `NORMAL_MAP` would need both. Each octave is
+turned off the one below it, because three octaves of a square-lattice noise sharing an axis
+would put exactly the grid back that the rest of the file removes.
+
+**The thing that cost three renders: what is visible is the slope, not the height.** The
+first attempt was "two centimetres of bump, features about a metre" — reasoned, physical,
+and a one-degree tilt that the sun cannot find. It rendered as the same sheet of glass and
+read, on the screenshot, as no change at all. The number that matters is
+`bump_height_metres` **over** `bump_metres`, and the shipped pair was bracketed by looking:
+0.12 is visibly gravel, 0.03 is invisible, 0.075 is a yard. A diagnostic render that wrote
+the slope into `ALBEDO`, and then one that forced an absurd constant normal, are what
+separated "the maths is too subtle" from "the plumbing does not work" — worth remembering,
+because from the first image alone those two look identical.
+
+*"Please clean up the world so it isn't just scattered objects"* is `set_dressing.gd`, and
+#39's own closing note had already said the remaining problem was **layout rather than
+palette** and named the symptom: pipe runs crossing the first few metres of view. The first
+pass had density and no **arrangement** — every pile fell at a random bearing and radius
+from its anchor and every prop in it took its own random quarter turn. A real site is not a
+distribution of props. Things line up along something, and the something is almost always a
+route.
+
+So the layout now decides where the **roads** are before it places anything: a lane from the
+Nest to each Node and each Breach, cornered on the grid like a Belt route. Three things hang
+off that.
+
+- **The lanes are kept clear outright**, which is the half of "clear ground where a player
+  works" that no amount of better scattering would have bought. They are also, plainly, the
+  paths a player walks: the Nest is where a Run starts and the Nodes are where it goes.
+- **A cluster became a bay**: a filled rectangle of tiles, aligned to the grid, standing at
+  a lane's kerb, long side running with the traffic, **every prop in it sharing one yaw**,
+  with a counted number of gaps and the tall stock — racking, shelving, a skip — in the row
+  furthest from the road. That last pair is the whole of "clusters with a reason": you can
+  see what the bay is for from the road. And the shared yaw is most of the effect — a pile
+  whose every member faces a different way is the most scattered thing it is possible to
+  draw, which is what the old random quarter turn was producing. A spill still takes a
+  random turn, because a spill has no front.
+- **A pipe run runs beside a lane and along it**, never across it. The old version took a
+  random axis from a random point on a ring around an anchor, and since the anchors include
+  the Nest, about half of them crossed the opening view at head height. A service runs the
+  length of a road on one side of it, which is where you put one and which leaves the view
+  down the road clear. Catwalks the same, and more so: a deck at 3.8 m across a road is the
+  one prop in the set that can hide a Machine behind it.
+
+**The pictures are committed and they are the argument.**
+[`docs/images/playtest2_yard_before.png`](docs/images/playtest2_yard_before.png) against
+[`_after`](docs/images/playtest2_yard_after.png) is the eye-level view: a bright pipe run
+on a diagonal across the near field, props dotted at random behind it, becoming a clear
+working ground with the yard lined up along its roads.
+[`playtest2_ground_before.png`](docs/images/playtest2_ground_before.png) against
+[`_after`](docs/images/playtest2_ground_after.png) is the same pair at standing height and
+is mostly about the floor: a smooth sheet with a texture printed on it, becoming ground.
+`tools/visual/shot.sh out.png eye|ground` rebuilds them, and every finding above came from
+reading one of them — none from reading the code.
+
 **The light** kept #25's shape — ambient and reflections off the sky, filmic
 tonemap, SSAO, depth fog — and changed four things. The sun dropped from 41 to 23
 degrees, which is what makes the hour *stated* rather than merely not
@@ -564,6 +639,57 @@ RMS that rumble dominated. The *busy* bed turned out to have a real alarm tone i
 repository can listen. Everything above is spectrum, envelope and level, which is enough to
 catch a cue that is the wrong object or the wrong loudness and is not enough to catch one
 that is merely unpleasant.
+
+### The Telegraph is a cue, not a siren
+
+Three attempts, and the third one is a different category rather than a better pick
+inside the same one. The first was a trailer alarm in quarter notes — a designed
+cinematic sting, which this file's own standard rules out. The second was measured and
+argued for at length: a motorcycle horn an octave down, low-passed to 700 Hz so the
+fundamental led, cut as a one-shot so the attack survived. The player heard it and said
+**"the klaxon is AWFUL, just make it very subtle"**.
+
+Two goes at "the right alarm" is enough evidence that the category is wrong. **A siren's
+job is to demand attention continuously, and nothing here needs that.** The Telegraph is
+already a countdown, a gauge and the Wave's named composition on the HUD — "nothing
+arrives unannounced" is satisfied before the audio says a word — so the sound's job is to
+make a player *look up*, not to warn them. It can be a knock.
+
+So it is a **geofon hit**: a struck steel plate, which is what a works alarm was before
+electricity, and which is a short dull thud with a long tail of nothing. Cut five seconds
+long and left mostly empty, high-passed at 90 Hz and low-passed at 600, and still in
+`LOOPING_CUES` so it rearticulates about every five seconds and stops on the tick the
+Telegraph does. The gaps are the point: a sound that stops is one a player can think over.
+
+Measured, with each cue's catalogue gain applied, because "subtle" has to be a number:
+
+| cue | gain | integrated | centroid | peak |
+|---|---|---|---|---|
+| Telegraph, #35's | −9 dB | −19.0 LUFS | 953 Hz | −10.1 dBFS |
+| **Telegraph, now** | **−24 dB** | **−45.3 LUFS** | **148 Hz** | **−25.2 dBFS** |
+| `factory_bed` | −24 dB | −44.4 LUFS | 565 Hz | −31.8 dBFS |
+| `factory_busy` | −20 dB | −42.9 LUFS | 1920 Hz | −23.3 dBFS |
+| `turret_fire` | −12 dB | −26.0 LUFS | 332 Hz | −12.9 dBFS |
+| `breach_opens` | −7 dB | −29.2 LUFS | 1996 Hz | −8.0 dBFS |
+| `wave_begin` | −3 dB | −17.8 LUFS | 335 Hz | −3.9 dBFS |
+
+It is **genuinely quiet**, said plainly rather than hedged: 26 LU quieter than the cue the
+player called awful, 15 dB down at the peak, and an octave and a half lower in centroid.
+Integrated it is below *both* ambience beds; what keeps it audible is the one number where
+it is not, its peak, which stands 6.6 dB over the quiet bed's — because a transient against
+a continuous bed costs almost no loudness to hear.
+`test_the_telegraph_cue_is_the_quietest_thing_in_the_catalogue` holds it there, and
+`test_the_ambience_beds_sit_under_everything_they_are_a_bed_for` was widened from the two
+beds by name to `LOOPING_CUES` so that a cue which is itself quasi-ambient can sit on the
+floor with them instead of failing for it.
+
+**There is no separate Breach klaxon** — the Telegraph's is the only sustained warning in
+the game. The nearest thing is `breach_opens`, and it had the same defect from the same
+instinct: a 4610 Hz centroid, which is a bright splattery crack in the ear's most
+sensitive band, in a game whose palette is low industry. Rolled off above 2.4 kHz and down
+three decibels, to a 1996 Hz centroid. It stays a **loud one-shot**, and that is the
+difference: a Breach opening happens once and being startled by it is the right response.
+What was wrong there was the band, not the level.
 
 The recordings are long source material rather than game SFX, so
 `tools/assets/convert_audio.sh` is the recipe — which recording becomes which cue
@@ -1860,6 +1986,18 @@ happens to use.
 
 ### Build mode is a hand, not a gate
 
+**A Run opens with the weapon out** (#42, the player's own words: *"the knife being out
+should be the default state"*). It used to open in build mode on the argument that the
+first thing a Run asks of a player is a Factory; it asks for that second. What a player
+does on the first tick is look at a world with things in it that can kill them. The Build
+Gun is one keypress away and nothing is gated either way, so this is one line of initial
+state — `_player_build_mode.fill(0)` — and not a restriction. What had to move with it is
+worth knowing, because all of it is the same mistake in different places: `Objective.line`
+now takes a player and prefixes the holster key onto a build step when the Build Gun is not
+in hand; `test_recorded_session`'s fixture presses `B` before it builds anything, or every
+click in it is a trigger pull; and every controller-driven build test grew a `_building()`
+fixture that draws the gun first.
+
 `B` holsters the Build Gun and draws the weapon, or the other way round. **Left click
 places in build mode and fires in combat mode**, which is what #15's note said the real
 answer was — it put the trigger on left mouse and shoved placing onto `E`, which its own
@@ -2018,6 +2156,65 @@ the only version that leaves the hash alone. `_apply_build_machine` consults the
 function, so what a player is told and what the Simulation does are one rule and not two.
 The wording lives in `game/build_gun.gd`, because a `Refusal` is a fact and a sentence
 about it is presentation.
+
+### A Miner snaps onto a Node, and the snap belongs to the aim
+
+#42, and the strongest thing in the second playtest: *"miners should snap to the nearest
+node (within range) or show red"*. A Node is one tile and a Miner is four, so placing one
+meant covering a flat marker on a textured floor with the corner of a footprint — which
+makes the **first thing anybody builds the fiddliest thing in the game**, and makes its
+failure mode silent: a Miner one tile off a Node is placed, paid for, and does nothing, for
+ever, with nothing on screen saying why.
+
+So with a Miner on the Build Gun, an aim within `BuildGun.MINER_SNAP_RANGE_TILES` of a Node
+that Miner **could really work** puts the footprint on that Node, centred; an aim with no
+such Node in range is red with words; and a Node whose Depth the Miner's `max_depth` does
+not reach gets its own sentence, because the answer to that one is the next Miner up rather
+than aiming somewhere else.
+
+**The snap is the aim's job, not the Simulation's, and that is the decision in this
+ticket.** The alternative — `_apply_build_machine` moves the tile in the intent before
+placing — replays perfectly well, because the arithmetic is integer. What it does is make
+the Simulation **silently relocate an intent**, which is the one thing this codebase has
+refused everywhere else: `WRONG_SLOT` exists because a misfitted component is "refused
+rather than redirected… silently moving it somewhere else would make a recorded script lie
+about what happened", and `SET_BUILD_MODE` carries a resulting mode so a script "describes
+what the player ended up holding without being replayed to find out". A `BUILD_MACHINE`
+whose tile the Simulation moves breaks both sentences, and moves every Miner in every
+fixture and every recorded session ever made.
+
+Aiming, meanwhile, has always lived in `game/`, and `REACH_METRES` is the exact precedent:
+a player pointing at the horizon gets a build at sixteen metres, not an `OUT_OF_REACH`
+refusal, because `BuildGun.aimed_tile` decided where the gun was pointing before anything
+crossed the boundary. `BuildGun.snap_to_a_node` decides the same thing with one more fact in
+hand, so **what crosses is a tile, as it always was, and the replay is byte-identical by
+construction** rather than by the snap being careful.
+
+Three consequences worth holding on to:
+
+- **The hologram and the placement are one call.** `PlayerController` and
+  `WorldView._sync_hologram` both read `BuildGun.placement`, the same arrangement
+  `query_build_refusal` has. The port markers and the HUD line read it too, because a
+  hologram standing on the Node with its arrows at the crosshair is the same bug wearing a
+  different hat.
+- **The rule is not copied.** Whether a Miner's Recipe produces a Node's Resource, and
+  whether its `max_depth` reaches that Depth, are two new queries —
+  `query_node_yields_for` and `query_node_is_within_depth_of` — both one line over the
+  private helpers `_machine_has_its_inputs` and `_miner_reaches` already use. Nothing in the
+  Simulation reads them; they exist so that `game/` does not have to know the rule.
+- **An aim with nowhere to put a Miner sends no intent at all**, exactly as an aim past
+  `REACH_METRES` never sent a build at the horizon. The Simulation keeps no opinion about a
+  Miner on bare rock — `_machine_has_its_inputs` still calls one starved, and a test or a
+  co-op client can still place one — which is what keeps this a property of the Build Gun
+  rather than a new gate.
+
+Range is a constant in `game/` rather than a key in `content/tuning.toml`, for the reason
+`REACH_METRES` is: the Simulation does not read it, and a tuning key the Simulation does not
+read is a key `Definitions` warns about.
+
+Not generalised past Miners. A Smelter dragged towards ore would be a Machine moving under a
+player's aim for no reason, and nothing else in `content/machines.csv` has a tile it has to
+be standing on.
 
 ### Materials
 
