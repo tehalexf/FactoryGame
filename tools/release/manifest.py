@@ -104,15 +104,60 @@ def audio_files(repo_root: Path) -> list[str]:
     `cue <name> <source fragment> [worker arguments...]` is the recipe's whole
     dialect. A continuation line, an indented flag or a comment is not a
     declaration, so only a line that *starts* with `cue ` and a non-blank name
-    counts.
+    counts — but a declaration may be *continued* across lines with a trailing
+    backslash, and `--takes` is usually on the continuation, so the lines are
+    joined before they are read.
+
+    **`--takes N` writes N files and not one**: `name.ogg`, `name_2.ogg` …
+    `name_N.ogg`. Those extra takes are the whole of what answers #35's *"needs
+    variance"* on a machine that has the bundle, and they are the one thing in
+    this manifest a build could drop without looking broken — the cue would still
+    resolve, still play, and sound exactly like the single-take cue the report was
+    about. So they are listed here, which is what makes
+    `test_one_missing_cue_fails_the_whole_build` true of a take rather than only
+    of a cue.
+
+    Three places have to agree on these names: `cue()` writes them,
+    `SoundBank._hero_paths` walks them, and this lists them for the build to be
+    verified against. This was the one that did not.
     """
     recipe = repo_root / "tools/assets/convert_audio.sh"
-    names = set()
-    for line in recipe.read_text().splitlines():
-        match = re.match(r"^cue (\S+)", line)
-        if match:
-            names.add(match.group(1))
+    names: set[str] = set()
+    for declaration in _joined_lines(recipe.read_text()):
+        match = re.match(r"^cue (\S+)", declaration)
+        if not match:
+            continue
+        name = match.group(1)
+        takes = re.search(r"--takes\s+(\d+)", declaration)
+        count = int(takes.group(1)) if takes else 1
+        names.add(name)
+        # Take 1 keeps the unnumbered name, so the numbering starts at 2 — the
+        # same bargain `convert_audio.sh` makes so that raising `--takes` adds
+        # files rather than renaming the ones already cut.
+        for take in range(2, count + 1):
+            names.add(f"{name}_{take}")
     return sorted(f"{AUDIO_DIRECTORY}/{name}.ogg" for name in names)
+
+
+def _joined_lines(source: str) -> list[str]:
+    """`source`'s lines, with backslash continuations folded into one line each.
+
+    A shell declaration spread over three lines is one declaration, and reading
+    it a line at a time sees the name on the first and the flags on the second —
+    which is how `--takes` went unnoticed here while `cue()` was already acting on
+    it.
+    """
+    joined: list[str] = []
+    pending = ""
+    for line in source.splitlines():
+        if line.rstrip().endswith("\\"):
+            pending += line.rstrip()[:-1]
+            continue
+        joined.append(pending + line)
+        pending = ""
+    if pending:
+        joined.append(pending)
+    return joined
 
 
 def prop_files(repo_root: Path) -> list[str]:

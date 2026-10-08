@@ -86,6 +86,13 @@ failed=0
 # library, which is a note rather than an error, and more than one means the
 # recipe is ambiguous and has to be narrowed — a cue silently taking a different
 # recording than the one written down here would make this file a lie.
+#
+# **`--takes N` writes N files, not one**: `name.ogg`, `name_2.ogg` … `name_N.ogg`,
+# cut from the N loudest separate takes in the recording, strongest first. That is
+# how a hero cue gets the variation the committed fallbacks have had all along —
+# `game/sound_bank.gd` walks the numbered suffixes and `tick % count` picks one.
+# Strongest first means the unnumbered file is the cut a single-take recipe would
+# have made, so raising `--takes` adds files rather than changing the ones there.
 cue() {
   local name="$1"; shift
   local fragment="$1"; shift
@@ -115,12 +122,35 @@ cue() {
     return 0
   fi
 
-  if python3 "$worker" --input "${matches[0]}" --output "$out_dir/$name.ogg" \
-      --ffmpeg "$ffmpeg" "$@"; then
-    written=$((written + 1))
-  else
-    failed=$((failed + 1))
-  fi
+  # How many takes this cue asked for, so the loop below knows how many files to
+  # write. The worker is the authority on what `--takes` means; this only has to
+  # know the count.
+  local takes=1
+  local index=1
+  while [ $index -le $# ]; do
+    if [ "${!index}" = "--takes" ]; then
+      local value=$((index + 1))
+      takes="${!value}"
+    fi
+    index=$((index + 1))
+  done
+
+  # A cue whose take count came *down* must not leave the takes it no longer has
+  # behind: `sound_bank.gd` resolves a hero cue by walking the numbered suffixes
+  # until one is missing, so an orphan would go on being played.
+  rm -f "$out_dir/$name"_[0-9]*.ogg
+
+  local take
+  for take in $(seq 1 "$takes"); do
+    local suffix=""
+    [ "$take" -gt 1 ] && suffix="_$take"
+    if python3 "$worker" --input "${matches[0]}" --output "$out_dir/$name$suffix.ogg" \
+        --ffmpeg "$ffmpeg" --take "$take" "$@"; then
+      written=$((written + 1))
+    else
+      failed=$((failed + 1))
+    fi
+  done
 }
 
 mkdir -p "$out_dir"
@@ -211,10 +241,46 @@ cue call_wave_lever "OBJFurn_Barber Chair, Foot Pump" \
   --duration 1.3 --semitones -9 --search 0:8
 
 # ── Waves ─────────────────────────────────────────────────────────────────────
-# The Telegraph. A warning you cannot hear is not a warning, so this is a loop
-# that runs for exactly as long as the Telegraph does and stops with it.
-cue telegraph_klaxon "EffectiveTrailer_Alarms_Vol2_QuarterNotes" \
-  --mode loop --start 2.0 --duration 4.0 --seam 0.4 --channels 2
+# The Telegraph. A warning you cannot hear is not a warning, so this plays for
+# exactly as long as the Telegraph does and stops with it.
+#
+# **Repicked twice, and the second time with the bundle in front of it.** #35's
+# verdict was *"the alarm when starting a wave is too STUPID"*, and what the player
+# heard was `EffectiveTrailer_Alarms_Vol2_QuarterNotes` — a *trailer* alarm, a
+# designed cinematic sting, which means a film is starting rather than *get to your
+# gun*. #35 repicked it blind to the factory-hall recording and that pick was wrong
+# in two measurable ways: `--semitones` on a `--mode loop` is refused outright
+# ("a transposed loop has no stable seam"), so the cue would not have been cut at
+# all; and that recording's alarm is a 791 Hz tone standing 25-38 dB above its own
+# neighbours for 0-33 s and 51-64 s of its 68 s — which is to say the alarm is
+# *already inside* `factory_busy`, and a klaxon cut from the same hall would have
+# been indistinguishable from the bed it plays over.
+#
+# A klaxon is an **electromagnetic diaphragm horn** — the same mechanism as a
+# vehicle horn, which is why both are a single hard tone that starts and stops
+# rather than a melody. So it is a motorcycle horn, an octave down: 419 Hz measured
+# at 63 dB of prominence becomes 209 Hz, which is a horn the size of a building.
+#
+# **And then low-passed at 700 Hz, which is the part that was wrong first time.** A
+# vehicle horn is piercing because its harmonics carry more energy than its root —
+# transposed a fifth and left alone, the cut's strongest third octave was 2 kHz, with
+# the fundamental 8.6 dB *below* it and the whole cue measuring a 2705 Hz centroid. A
+# 2 kHz needle in the ear's most sensitive band, sustained for a whole Telegraph, is
+# not a big horn; it is a small one held closer. Transposition moves a spectrum and
+# does not re-balance it, so the balance has to be filtered: at an octave down with a
+# 700 Hz low-pass the 250 Hz third octave is the strongest by 6 dB, above 2 kHz falls
+# from -12.1 to -38.8, and the centroid lands at 495 Hz. Enough harmonic left to cut
+# through a Factory, not enough to be a whistle.
+#
+# **Cut as a one-shot and looped by `LOOPING_CUES`, not as `--mode loop`.** A loop
+# crossfades its own tail over its own head, which is right for a bed and fatal for
+# a klaxon: it would fade *in* the one thing a warning needs, its attack. The whole
+# recording transposed is 2.54 s, so looping the file rearticulates the horn every
+# two and a half seconds — blast, gap, blast, which is what a real klaxon does and
+# what no crossfaded bed could. The cut ends at -122 dB, so the loop is a
+# rearticulation rather than a click.
+cue telegraph_klaxon "VEHHorn_Honda CB500F Horn Long 02" \
+  --duration 2.54 --semitones -12 --lowpass 700 --search 0:1
 
 cue wave_begin "Cinematic Horn Braam, Epic, Cinematic, Dark, Instrument, Huge-32" \
   --duration 3.0 --search 0:5
@@ -243,9 +309,48 @@ cue weapon_impact "DSGNImpt_Metal Hit Thud Thump Low Ring Geofon" \
   --duration 1.0 --search 0:3
 
 # The Pneumatic Wrench, which is the one weapon that swings rather than shoots.
-cue weapon_swing "METLFric_SWING SCRAPE Swift Melee Weapon Swing" --duration 0.7 --search 0:4
-cue weapon_hit "METLImpt_METAL SWING HIT Weapon Swing To Metallic Body" \
-  --duration 1.2 --search 0:4
+#
+# **#35: *"knife sound is too loud and too generic (needs variance)"*, and all three
+# words were about the hero take.** What the player heard was
+# `METLFric_SWING SCRAPE Swift Melee Weapon Swing With A Long Blade 14` out of a
+# melee-weapon SFX pack — one cut, at a gain that put it 0.6 dB *above* the hit it
+# lands (both measured as the loudest 85 ms window plus the gain: -16.8 against
+# -16.2). A blade whoosh out of a designed melee pack is the definition of generic,
+# and a wrench has no blade.
+#
+# **The swing and the hit are the two halves of one recorded gesture**, because that
+# is what they are: a heavy weapon swung to a thud, recorded 21 times, one every three
+# seconds, each take preceded by digital silence. The swing is the air before the thud
+# and the hit is the thud, out of the same take. A player who swings and misses hears
+# the first half; a player who connects hears both, in the order the microphone did.
+#
+# **Why this recording.** "Generic" turns out to be measurable, and what it measures is
+# low-end content and spectral flatness. Four-band RMS below 80 Hz, and flatness of the
+# resulting cut: the long-blade whoosh the player heard, -46.4 dB and 0.465 — a bright
+# hiss, 28 dB more energy above 2 kHz than below 80, and one transient in the whole
+# file, so it could not have had variance even in principle. A tape measure's spring,
+# tried as the honest-tool answer, is thinner still at -71.7. A metal object swung past
+# a microphone, which is the best standalone whoosh in the bundle, gets to 0.158-0.190
+# flatness but sits at a 5704-6001 Hz centroid and has no separable takes, so its three
+# cuts measured within 300 Hz of each other — three slices of one gust, which is the
+# thing `wav_to_cue.py`'s own take-finding exists to refuse. This gesture's approach
+# measures 0.078-0.108 flatness at a 2129-3101 Hz centroid: the only candidate with
+# mass in it.
+#
+# **`--lead auto`, and the fixed lead it replaced is worth writing down.** The approach
+# is inside the take, and its length is a property of the performance rather than of
+# this file: 80 to 144 ms across these takes. A stated `--lead 0.22` was tried first
+# and is wrong on every take but one — it reached back past the start of the gesture
+# into the silence between takes, and shipped four cues that were 73-91% digital
+# silence followed by the leading edge of the thud they were supposed to lead into.
+# `--duration` is now the cap and the cue is as long as the air actually is.
+cue weapon_swing "SWSH_SWING IMPACTS Quick Heavy Weapon Swing To Thud Impact" \
+  --takes 5 --duration 0.22 --lead auto --semitones -4 --search 0:62
+
+# What the wrench lands on, which is the half of a melee hit that should carry the
+# weight: the same five takes of the same recording, from the onset on.
+cue weapon_hit "SWSH_SWING IMPACTS Quick Heavy Weapon Swing To Thud Impact" \
+  --takes 5 --duration 1.0 --search 0:62
 
 # Trigger down, nothing in the pockets.
 cue weapon_dry "MECHClik_USALightSwitch_On05" --duration 0.24 --search 0:1
@@ -253,12 +358,39 @@ cue weapon_dry "MECHClik_USALightSwitch_On05" --duration 0.24 --search 0:1
 # ── Machinery ambience that scales with the Factory ───────────────────────────
 # Two beds, crossfaded by how much Factory there is. The quiet one is a tonal
 # machinery roomtone and plays from the first Machine; the loud one is a busy
-# factory hall with alarms and machines in it and comes up as the Factory grows,
-# so **growth is audible** (issue #21). `AudioDirector.ambience_db` is the mix.
+# factory hall and comes up as the Factory grows, so **growth is audible**
+# (issue #21). `AudioDirector.ambience_db` is the mix.
+#
+# **#35: *"the middle core hum is too loud"*, and the spectrum says it exactly.**
+# The quiet bed as the player heard it put 94% of its energy below 200 Hz — third
+# octaves at 52, 58 and 57 dB at 32, 63 and 125 Hz against 32 dB at 500 — which is
+# not a room, it is a **hum**, and a hum with no position attaches itself to the one
+# structure in the middle of the Map. Levels alone could not fix that: a drone turned
+# down is a quieter drone.
+#
+# So the high-pass goes from 35 Hz to 200. The recording keeps its machinery and
+# loses the rumble under it, which is what turns a tone a player localises into a
+# room they stand in. 35 Hz is the default because these are field recordings with
+# handling noise in them; this one's low end *is* the defect.
 cue factory_bed "AMBRoom_Factory Loop Heavy Machinery Tonal Roomtone" \
-  --mode loop --start 4.0 --duration 24.0 --channels 2
+  --mode loop --start 4.0 --duration 24.0 --highpass 200 --channels 2
+
+# **And the busy bed has an alarm in it, measured rather than inferred.** A 791 Hz
+# tone stands 25-38 dB above its own third-octave neighbours through 0-33 s and
+# 51-64 s of this 68 s recording, and #35's `--start 20.0` cut sat in the middle of
+# the first of those — so a Factory at full tilt ran a continuous alarm tone under
+# everything, which is the other half of what "too loud a hum" describes and would
+# have made the Telegraph's own klaxon meaningless. 34-50 s is the one stretch where
+# that tone is under 16 dB of prominence, so the window is 34.0 for 14 s with its
+# 1.5 s seam landing at 49.5 — inside the quiet stretch at both ends.
+#
+# That window is **peak-bound rather than RMS-bound**: a factory hall holds clangs and
+# voices, so its crest is high and the -3 dBFS ceiling stops the RMS normalisation
+# reaching its -22 target, landing at -25.6. Raising the target buys nothing and
+# raising the ceiling buys one dB, so the busy bed's level is set by its gain in
+# `sound_bank.gd` and not here. Worth knowing before trying to fix it in the cut.
 cue factory_busy "AMBInd_Factory Hall Busy Alarm Machines Voices" \
-  --mode loop --start 20.0 --duration 24.0 --channels 2
+  --mode loop --start 34.0 --duration 14.0 --seam 1.5 --channels 2
 
 # A Machine landing on the grid. A large metal box dragged, on a geophone, down a
 # minor third: weight settling.
@@ -284,12 +416,51 @@ cue nest_damaged "DSGNTonl_Designed Metal Bowed Screech Tonal Reverb" \
 cue run_over "Transition Braam Slow Dark Creepy" --duration 4.0 --search 0:2
 
 # ── Enemies and the player ────────────────────────────────────────────────────
-cue enemy_attack "CREAInsc_Insectoid Creature Tremble Attack" --duration 1.0 --search 0:6
-cue enemy_death "CREAEthr_Ethereal Entity Grim Pain Long" --duration 1.2 --search 0:6
+# **#35: *"crawler hurt and death sound is too weird"*, and both cues were designed
+# creature vocals.** The attack was `CREAInsc_Insectoid Creature Tremble Attack` —
+# measured centroid 4986 Hz, a thin shriek — and the death was
+# `CREAEthr_Ethereal Entity Grim Pain Long`, which is a *ghost*. "Weird" is the right
+# word for a ghost dying in front of something with a carapace, and #35 repicked both
+# onto the insectoid vocal without the bundle to check it, which keeps the thinner
+# half of the problem.
+#
+# A Crawler is a **carapace**, and a carapace is dry, hard and brittle. So both ends
+# of its life are real objects rather than designed voices, which is #21's own
+# standard: a wooden spear-and-stick strike for the bite, down a tone, out of a
+# library with nine separable takes in eleven seconds — because a Wave is dozens of
+# bites a second and one sample is a machine gun. And for the death, ice snapping:
+# three takes of something brittle and structural giving way, down a major third. The
+# same family the committed fallbacks landed on (`impactWood_*`), so the two worlds
+# now describe the same animal.
+cue enemy_attack "WEAPBlnt_Spear And Stick Impact, Wooden MKH 2" \
+  --takes 5 --duration 0.6 --semitones -2 --search 0:12
+cue enemy_death "ice, crack, ice block snapping-001" \
+  --takes 3 --duration 0.9 --semitones -4 --search 0:6
 cue player_hurt "HMNBrth_Police Officer Gasp Vocal Male Shocked Alert" \
   --duration 0.44 --search 0:1
 cue player_down "VOXReac_Construction Kit Male Flutter Death Vocal" \
   --duration 1.6 --search 0:4
+
+# **#35: *"sound for jump is too comical"*.** There is no jump cue and never was —
+# what a player hears when they jump is the landing, on the tick they get their feet
+# back, and until now that cue had **no hero take at all**: the bundle ships no
+# footsteps, so it was Kenney's and #35 fixed it there. But a landing is not a
+# footstep: it is a **body** arriving, and the spectrum of the one the player called
+# comical says why they called it that — the Kenney `impactSoft_heavy` it was has a
+# centroid of 72-143 Hz and an 85% rolloff at 102-255 Hz, which is a low boof with no
+# surface in it at all.
+#
+# A body landing is mass first and contact detail second, so the pick is the recording
+# whose bands fall monotonically from the bottom up: below 80 Hz **-19.7**, 80-250
+# -26.4, 250 Hz-2 kHz -32.9, above 2 kHz -39.8. Four separable takes within 0.6 dB of
+# each other, down a minor third. A steel stairwell door was tried first and measured
+# 16 dB the wrong way round — -52.2 below 80 Hz against -36.2 above 2 kHz — and -3
+# semitones does not move a 3.8 kHz centroid into bootfall territory.
+#
+# `FOOTSTEP` still has no hero take and still should not: a walk cycle is five light
+# scuffs and nothing in the bundle is one.
+cue player_land "FGHTImpt_4 x Punch, Body 02" \
+  --takes 4 --duration 0.5 --semitones -3 --search 0:5
 
 echo
 echo "Wrote $written cue(s) to $out_dir; skipped $skipped; failed $failed."

@@ -92,6 +92,7 @@ per_craft = 2
 per_craft_per_depth = 1
 decay_per_minute = 240
 wave_interval_baseline_seconds = 150
+first_wave_interval_seconds = 50
 wave_interval_minimum_seconds = 40
 per_second_sooner = 20
 [depth]
@@ -707,3 +708,55 @@ func _only_of_kind(actions: Array, kind: int) -> InputAction:
 				fail("two %d actions in one tick" % kind)
 			found = action
 	return found
+
+
+# ── Build mode is a hand, not a gate ─────────────────────────────────────────
+# #35, from the first playtest: *"the hologram is still visible in gun mode"* and
+# *"the hologram should not be placable in gun mode"*. Build mode landed in #29 and the
+# hologram never heard about it.
+#
+# The fix cannot live in the Simulation. **Building is never gated** — nothing behind the
+# façade asks whether building is permitted, and
+# `test_nothing_in_the_simulation_asks_the_mode_for_permission` holds that line. What the
+# mode decides is what the left mouse button *means* and what is in the player's hands,
+# which is `game/`'s business from end to end. So the projection lives on `BuildGun`,
+# where the aim already lives, and it is the single thing both the renderer and the
+# controller consult: `BuildGun.hand_refusal` is the rule, `BuildGun.build_refusal`
+# composes it with the Simulation's own, and neither caller reads the mode for itself.
+
+func test_the_build_gun_refuses_a_placement_when_it_is_not_in_the_players_hands() -> void:
+	var sim: Simulation = _sim()
+	assert_eq(
+		BuildGun.build_refusal(sim, 0, false, _index(sim, "press_mk1"), Vector3i(0, 0, 0), 0),
+		Simulation.Refusal.BUILD_GUN_IS_HOLSTERED,
+		"a player holding a rifle is not aiming a Build Gun"
+	)
+
+
+func test_the_build_gun_reports_the_simulations_own_refusal_when_it_is_in_hand() -> void:
+	var sim: Simulation = _sim()
+	var press: int = _index(sim, "press_mk1")
+	assert_eq(
+		BuildGun.build_refusal(sim, 0, true, press, Vector3i(0, 0, 0), 0),
+		Simulation.Refusal.NONE,
+		"clear ground with the gun out"
+	)
+	sim.step([InputAction.build_machine(0, press, Vector3i(0, 0, 0))])
+	assert_eq(
+		BuildGun.build_refusal(sim, 0, true, press, Vector3i(0, 0, 0), 0),
+		Simulation.Refusal.OCCUPIED,
+		"and the Simulation's reason, unaltered, when there is one"
+	)
+
+
+func test_the_hand_is_checked_before_the_ground() -> void:
+	# Which reason wins when both apply. What is in your hands is the more immediate
+	# fact and the one a player fixes with one key, so it is reported first — the same
+	# ordering `test_the_ground_is_checked_before_the_wallet` settles further up.
+	var sim: Simulation = _sim()
+	var press: int = _index(sim, "press_mk1")
+	sim.step([InputAction.build_machine(0, press, Vector3i(0, 0, 0))])
+	assert_eq(
+		BuildGun.build_refusal(sim, 0, false, press, Vector3i(0, 0, 0), 0),
+		Simulation.Refusal.BUILD_GUN_IS_HOLSTERED
+	)

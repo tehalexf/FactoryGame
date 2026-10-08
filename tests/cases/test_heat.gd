@@ -78,6 +78,12 @@ const SCHEDULE_TUNING: Array = [
 	["per_craft_per_depth = 1", "per_craft_per_depth = 0"],
 	["decay_per_minute = 240", "decay_per_minute = 0"],
 	["telegraph_seconds = 12", "telegraph_seconds = 1"],
+	# The first Wave of a Run is deliberately sooner than the ones after it (#35), and the
+	# tests below are about the Heat → interval *curve* rather than about a Run's opening
+	# ramp — so the fixture puts the first interval back on the baseline and the curve is
+	# read at one value throughout. `test_the_first_wave_is_sooner_than_the_baseline` is
+	# where the ramp itself is asserted.
+	["first_wave_interval_seconds = 90", "first_wave_interval_seconds = 150"],
 ]
 
 
@@ -349,7 +355,98 @@ func test_a_cold_factory_waits_the_full_baseline_for_its_first_wave() -> void:
 	assert_eq(
 		sim.query_wave_interval_ticks(),
 		150 * Simulation.TICKS_PER_SECOND,
-		"heat.wave_interval_baseline_seconds, because a Run opens cold"
+		"heat.wave_interval_baseline_seconds — this fixture puts the first interval there"
+	)
+
+
+func test_the_first_wave_is_sooner_than_the_baseline() -> void:
+	# #35, in the player's words: *"crawlers dont seem to be coming"*. They were — two and a
+	# half minutes out, in silence, on a Run whose most interesting thing is a Crawler.
+	#
+	# A shorter **first** interval rather than a shorter interval generally, because #26
+	# measured the whole Heat → interval curve against played Runs and the curve is not what
+	# was wrong. What was wrong is that a Run opens cold, so the baseline doubled as the
+	# length of the one gap nobody has had the chance to shorten yet.
+	var sim: Simulation = _threat_sim([
+		PackedStringArray(["first_wave_interval_seconds = 150", "first_wave_interval_seconds = 45"])
+	])
+	assert_eq(
+		sim.query_wave_interval_ticks(),
+		45 * Simulation.TICKS_PER_SECOND,
+		"heat.first_wave_interval_seconds, because no Wave has arrived yet"
+	)
+
+
+func test_every_wave_after_the_first_waits_the_full_baseline() -> void:
+	# The other half: the opening ramp is one gap and not a new curve. Once a Wave has
+	# arrived, the Factory is on the schedule #26 measured.
+	var sim: Simulation = _threat_sim([
+		PackedStringArray(["first_wave_interval_seconds = 150", "first_wave_interval_seconds = 45"])
+	])
+	for _tick: int in range(50 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
+		if sim.query_wave_number() > 0:
+			break
+	assert_eq(sim.query_wave_number(), 1, "the first Wave arrived inside its short gap")
+	assert_eq(
+		sim.query_wave_interval_ticks(),
+		150 * Simulation.TICKS_PER_SECOND,
+		"and the gap to the second one is the baseline"
+	)
+
+
+func test_the_shipped_first_wave_is_well_inside_the_baseline() -> void:
+	# The claim the report is actually about, made against the shipped file rather than
+	# against a fixture: a first-run player meets a Crawler early enough to learn the loop.
+	#
+	# A minute and a half is the band rather than a tick, for the reason the whole of
+	# `test_balance` asserts bands: the figure is `tools/balance/measure.sh`'s to move and a
+	# test that pinned it would make every legitimate tuning change a red suite. What is
+	# worth pinning is that it is **much** shorter than the gap between later Waves and
+	# still longer than its own Telegraph — a first Wave that arrived before its warning
+	# finished would be the ambush the Telegraph exists to prevent.
+	var sim: Simulation = Simulation.new(12, 1, _content(), _threat_layout())
+	var seconds: float = (
+		float(sim.query_wave_interval_ticks()) / float(Simulation.TICKS_PER_SECOND)
+	)
+	assert_true(
+		seconds <= 90.0,
+		"the first Wave should be inside a minute and a half, got %fs" % seconds
+	)
+	var baseline: float = (
+		float(sim.query_definitions().heat_wave_interval_baseline_seconds) / float(Fixed.ONE)
+	)
+	assert_true(
+		seconds * 3.0 < baseline * 2.0,
+		(
+			"and comfortably inside the baseline it used to share: %fs against %fs"
+			% [seconds, baseline]
+		)
+	)
+	assert_true(
+		seconds > float(sim.query_definitions().wave_telegraph_seconds) / float(Fixed.ONE),
+		"and longer than its own Telegraph, got %fs" % seconds
+	)
+
+
+func test_a_factory_that_produces_meets_its_first_wave_sooner_than_an_idle_one() -> void:
+	# The other half of the opening lesson, and the reason the first gap is shortened rather
+	# than replaced by a fixed delay: **what a player builds in the first minute pulls the
+	# first Wave towards them**, exactly as it pulls every later one. A fixed opening timer
+	# would have taught the opposite — that the opening minute is free.
+	var working: Simulation = Simulation.new(12, 1, _content(_power_to_spare()), _threat_layout())
+	var idle: Simulation = Simulation.new(12, 1, _content(_power_to_spare()), _threat_layout())
+	_build_miner(working, 0)
+	for _tick: int in range(20 * Simulation.TICKS_PER_SECOND):
+		working.step([])
+		idle.step([])
+	assert_true(working.query_heat() > 0, "the Miner made some noise")
+	assert_true(
+		working.query_ticks_until_next_wave() < idle.query_ticks_until_next_wave(),
+		(
+			"producing brought the first Wave in: %d ticks against the idle Run's %d"
+			% [working.query_ticks_until_next_wave(), idle.query_ticks_until_next_wave()]
+		)
 	)
 
 
@@ -833,8 +930,9 @@ func test_determinism_a_wave_pulled_in_by_heat_replays_identically() -> void:
 	var sim: Simulation = Simulation.new(22, 1)
 	var script: InputScript = InputScript.new()
 	script.add_tick(_three_miners(sim))
-	# Long enough to cover the arrival and the Telegraph in front of it. A cold Factory's
-	# first Wave is at tick 9000 exactly; this one is at 8638, because Heat brought it in.
+	# Long enough to cover the arrival and the Telegraph in front of it, with room to spare:
+	# what is asserted is that a Heat-shortened arrival replays, not where it lands. The
+	# figures themselves are `tools/balance/measure.sh`'s business.
 	script.add_idle_ticks(150 * Simulation.TICKS_PER_SECOND)
 
 	var recording: ReplayRecording = DeterminismHarness.record(script, 22, 1)
@@ -848,20 +946,29 @@ func test_determinism_the_fixture_really_did_pull_the_wave_in() -> void:
 	var cold: Simulation = Simulation.new(22, 1)
 	cold.step([])
 
-	# 8800 ticks: past the working Factory's arrival at 8638 and short of the idle one's at
-	# 9000, so the gap between them is the whole of what Heat bought the Enemy.
-	for i: int in range(8800 - 1):
+	# Measured rather than written down, because the tick a Wave lands on is a function of
+	# four tuning keys and #35 moved one of them: what this test is about is the *gap*
+	# between a working Factory's arrival and an idle one's, which is the whole of what Heat
+	# bought the Enemy. `tools/balance/measure.sh` is where the figures live.
+	var hot_tick: int = -1
+	var cold_tick: int = -1
+	for i: int in range(150 * Simulation.TICKS_PER_SECOND):
 		hot.step([])
 		cold.step([])
+		if hot_tick < 0 and hot.query_wave_number() > 0:
+			hot_tick = hot.query_tick()
+		if cold_tick < 0 and cold.query_wave_number() > 0:
+			cold_tick = cold.query_tick()
+		if hot_tick >= 0 and cold_tick >= 0:
+			break
 
 	assert_eq(cold.query_heat(), 0, "the idle Factory never made a sound")
-	assert_eq(
-		cold.query_wave_number(),
-		0,
-		"so its first Wave is still 200 ticks out, at the full 9000-tick baseline"
-	)
 	assert_true(hot.query_heat() > 0, "the working Factory is hot: %d" % hot.query_heat())
-	assert_eq(hot.query_wave_number(), 1, "and has already been attacked for it")
+	assert_true(hot_tick > 0 and cold_tick > 0, "both Runs were attacked eventually")
+	assert_true(
+		hot_tick < cold_tick,
+		"Heat brought the Wave in: hot at tick %d against idle at %d" % [hot_tick, cold_tick]
+	)
 	assert_true(
 		hot.query_wave_interval_ticks() < cold.query_wave_interval_ticks(),
 		"because Heat shortened its gap: %d against %d"

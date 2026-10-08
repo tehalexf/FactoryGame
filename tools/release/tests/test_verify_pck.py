@@ -10,6 +10,7 @@ is indistinguishable from no release check, and the whole premise of this direct
 is that the failure it guards against produces a build that looks fine.
 """
 
+import re
 import sys
 import tempfile
 import unittest
@@ -100,9 +101,32 @@ class AnIncompleteBuildIsCaught(unittest.TestCase):
     def test_the_counts_are_reported_even_when_it_passes(self) -> None:
         # So a build log says how much got bundled rather than only whether the
         # check was happy, which is what makes a regression visible in a diff.
+        #
+        # The expected counts come from the manifest rather than being written out,
+        # because the figure moves whenever a cue is added or a cue gains a take —
+        # #35 took audio from 37 to 54 by giving five cues several takes each — and a
+        # hand-copied total makes that ordinary act fail a release test for no
+        # reason. What is asserted is that every group reports "n of n", which is
+        # the claim: nothing missing, and the count said out loud.
         _, said = self._report(complete_pack())
-        self.assertIn("audio: 37 of 37 bundled", said)
-        self.assertIn("weapons: 3 of 3 bundled", said)
+        groups = manifest.expected_bundle(REPO)
+        self.assertIn("audio", groups, "the audio group is the one #35 is about")
+        for name, group in groups.items():
+            total = len(group.files)
+            self.assertIn(f"{name}: {total} of {total} bundled", said)
+        self.assertGreater(
+            len(groups["audio"].files),
+            len(
+                [
+                    path
+                    for path in groups["audio"].files
+                    if not re.search(r"_\d+\.ogg$", path)
+                ]
+            ),
+            "the numbered takes are in the manifest, so a build is verified to carry"
+            " them — a cue that shipped only its first take would answer #35's"
+            " 'needs variance' with the sound that prompted it",
+        )
 
 
 class TheRealExportedBuild(unittest.TestCase):

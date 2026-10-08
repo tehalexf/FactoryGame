@@ -399,9 +399,11 @@ func test_asking_for_the_mode_you_are_already_in_does_nothing_at_all() -> void:
 
 
 func test_the_holster_plays_out_over_the_tuned_duration() -> void:
-	# `player.holster_seconds` is 0.2 — twelve ticks — and the blend peaks half way
-	# through, which is the moment the old thing has gone down and the new thing has not
-	# yet come up.
+	# `player.holster_seconds` is 0.06 — three or four ticks, after #35's playtest asked
+	# for an instant swap — and the blend peaks half way through, which is the moment the
+	# old thing has gone down and the new thing has not yet come up. The loop below is
+	# deliberately longer than the span: what is asserted is that the swap *finishes*, not
+	# how many ticks it takes, so turning the key is not a test edit.
 	#
 	# **The renderer does not read this**, and has not since #28's view model landed: a
 	# `holster` and a `draw` are clips there, timed off the lengths of the model on screen.

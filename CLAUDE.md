@@ -7,6 +7,8 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 ## Commands
 
 ```bash
+tools/assets/link_licensed.sh    # point this checkout's assets_licensed/ at the one with the packs
+tools/assets/link_licensed.sh --check  # what purchased packs can this checkout actually see?
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
@@ -44,6 +46,25 @@ writes, snapshots before every write, and marks what differs from the shipped
 defaults. `python3 tools/tuning_dashboard.py --check` reports the same thing
 without a browser.
 
+**Adding or renaming a key in `content/tuning.toml` means re-baselining the dashboard's
+own copy**, with `python3 tools/tuning_dashboard.py --adopt-defaults`, as the genuine
+last step after the numbers have settled.
+`tools/tuning/tests/test_store.py::test_the_shipped_defaults_match_the_shipped_tuning_file`
+asserts the two files declare the same keys, and it is the only thing that notices —
+`tools/tuning/run_tests.sh` is a separate suite from the engine's, so a key added without
+the re-baseline leaves the Godot suite green and that one red. #34 did exactly that and it
+sat red on `integration/milestone-1` for hours, because at the time CI ran only the asset
+suite. #40 fixed the CI half; this is the half a person has to remember.
+
+**It is also a merge trap, and the shape is worth knowing.** The defaults file is a
+*generated copy of a branch's own tuning file*, so two branches that each added a key each
+re-baseline it, and the merge then has two mechanically-plausible versions of a file that is
+supposed to be derived. Taking either side wholesale is wrong whenever the other side also
+moved a value. The resolution is never to hand-merge it: take whichever side, then **re-run
+`--adopt-defaults` and let it be regenerated from the merged `content/tuning.toml`**, and
+check 'same keys, same values' rather than reading the diff. A textual merge that happens to
+come out right is luck and not a method.
+
 `tools/run_tests.sh` exits 0 when green and non-zero on any failure, load error,
 or an unfiltered run that executed no tests. Set `GODOT=/path/to/godot` to use a
 specific binary.
@@ -78,7 +99,19 @@ import pass rebuilds, so a newly added class otherwise fails with a confusing
 | Godot | 4.7.2 stable | On `PATH` as `godot`. ADR 0001 originally said 4.6; amended. |
 | scons | 4.11.1 | For GDExtension builds. Not needed yet. |
 | Blender | 5.2.2 LTS | Art pipeline. glTF 2.0 ships; FBX is intake only. |
+| ffmpeg | **7 or newer** | Audio cue cutting. A hard floor, not a preference — see below. |
 | jj (Jujutsu) | 0.46.0 | Optional. Colocated onto git — the section below, and read its licence rule before you commit anything through it. |
+
+**The ffmpeg floor is a real requirement and it bites silently.** On 6.x —  which is
+what ubuntu-24.04 ships — `wav_to_cue.py --mode loop` **exits 0 and writes a
+0.048-second file where twenty-four seconds were asked for**: something in the
+`asplit`/`atrim`/`asetpts`/`amix` seam behaves differently, so an ambience bed comes
+out almost empty rather than wrong and obvious. #40 found it by turning CI on and
+pinned 8.1.3 in `.github/ci/toolchain.env`; `wav_to_cue.FFMPEG_MINIMUM_MAJOR` then
+makes it a property of the **tool** rather than of CI, because a requirement that
+lives only in a workflow file is one a developer runs straight past. The cutter now
+refuses a 6.x by name on every invocation, and a build with no release number — a
+nightly — is allowed through as "cannot tell" rather than guessed at.
 
 GDScript, not C#. C++ via GDExtension only when profiling demands it.
 
@@ -380,6 +413,54 @@ it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
 float-based.
 
+## The purchased packs, and why your checkout probably cannot see them
+
+**An empty `assets_licensed/` means "not linked". It never means "not purchased".**
+
+Read that before concluding anything from that directory, because the mistake has
+already been made and it was expensive. `assets_licensed/` is gitignored — the
+repository is public and nothing in there may be redistributed (docs/ASSETS.md) — and
+a **git worktree is a checkout of tracked files, so it never has it**. Every agent
+this project has spawned has worked in a worktree. Every one of them has opened an
+empty quarantine. One of them reasoned from that emptiness that the packs were not on
+this machine, concluded that a playtest's audio complaints must therefore have been
+about the committed Kenney fallbacks, and fixed the fallbacks — while the 37 hero cues
+sat in the main checkout, in the player's Windows build, being the sounds the player
+was actually describing.
+
+So, first thing in a new worktree:
+
+```bash
+bash tools/assets/link_licensed.sh          # one symlink per pack, from the main checkout
+bash tools/assets/link_licensed.sh --check  # or just ask, and change nothing
+```
+
+`--check` exits non-zero on an empty quarantine, so it is usable as a precondition in
+a script that is about to claim something about an asset.
+
+Three things about it worth knowing rather than rediscovering:
+
+- **It links each pack, not the directory.** `assets_licensed/.gdignore` is *tracked*
+  — it is the one file in the quarantine that must be in git, because without it
+  Godot's importer walks gigabytes of third-party Unity projects and WAV libraries —
+  so replacing the directory with a symlink shows up as deleting a tracked file.
+  Per-pack links leave it alone and `git status` stays clean, because everything under
+  `assets_licensed/` is ignored anyway.
+- **Godot follows the links**, and the converters and `game/sound_bank.gd` need no
+  change to see them: `res://assets_licensed/generated/audio/...` resolves through a
+  symlink exactly as through a directory.
+- **The licence guard is undiminished**, and this was checked rather than assumed. Git
+  refuses to add a path *"beyond a symbolic link"*, so no asset bytes can be staged
+  through one; staging a link itself is caught by
+  `tools/assets/check_licensed_staged.py` like any other quarantined path. Do not work
+  around either.
+
+The converters themselves are honest about absence — `convert_audio.sh`,
+`convert_weapons.sh` and `convert_props.sh` all print a note and exit 0 with no
+bundle, and the game runs without any of it. That is the point of the design and it is
+also what makes the blind spot so quiet: **nothing fails when you cannot see the
+packs**. It just stops being the game the player played.
+
 ## Sound
 
 **No diegetic control ships silent.** DESIGN.md is explicit about why — IRON
@@ -415,6 +496,74 @@ Three rules, each with a test:
 - **A cue resolves or it is a load error.** Cue names are constants, the catalogue
   is data, and the asset suite fails if `convert_audio.sh` cuts a cue the game
   never plays.
+
+**The mix was reasoned and never heard, and the first playtest said so.** #21's author
+wrote the gain column against a table of what ought to be louder than what and recorded
+the expectation of being wrong; #35 is five reports of exactly where. Four of them were
+volume or variance and are fixed by the numbers — the beds were 3 dB *above* a footstep,
+the wrench's swing had one take at the volume of a Machine being built — and two were the
+wrong recording chosen rather than the wrong level: a klaxon built out of a *trailer* alarm
+and a Crawler that died as an "ethereal entity". Those two are repicks in
+`convert_audio.sh`, and **neither has been auditioned**, because nothing in this repository
+can listen and the bundle is absent from most clones.
+
+Two rules came out of it, both now tests:
+
+- **A bed is the floor of the mix.** `test_the_ambience_beds_sit_under_everything_they_are_a_bed_for`
+  asserts the two Factory ambiences are quieter than the quietest one-shot in the
+  catalogue, rather than asserting two numbers — so a later cue that goes quieter than a
+  bed fails instead of disappearing underneath it.
+- **A cue a player hears dozens of times a Wave has more than one take.** The mechanism was
+  always there; what was missing was anybody checking which cues used it.
+  `test_the_cues_a_player_hears_over_and_over_have_more_than_one_take` names them.
+
+### The same five reports, done again against the hero takes
+
+The paragraph above is what the mix looked like from inside a worktree, where the packs are
+invisible — see "The purchased packs" above for why, and read that before trusting any claim
+about an asset. **All five reports were about the hero cues**, which the main checkout has 37
+of and the player's build had all of. So the fallback work stands, as what a clone hears, and
+the five were done again against the files the player was describing. Three things came out
+of it that outlive the five cues:
+
+- **A hero cue has takes now.** `convert_audio.sh --takes N` cuts the N loudest separable
+  takes of a recording to `name.ogg`, `name_2.ogg` …, and `SoundBank._hero_paths` walks those
+  numbered suffixes. `tick % count` never knew which world it was choosing in. The takes are
+  *measured*, not written down — greedy peak picking on a non-cumulative envelope, strongest
+  first so raising the count appends — and **a recording with fewer separable takes than the
+  recipe asked for is an error naming both numbers**, because the one thing several takes must
+  be is different. That error fired twice while the five were being cut and both times it was
+  right.
+- **`--lead auto` lets one recorded gesture become two cues.** A real swing-to-impact is
+  air and then a thud, and the game plays those as two cues; the swing is cut as the air
+  ending where the thud begins, and the hit is the same take from the onset on. Two halves
+  of one event beat two libraries that have never met. **The lead is measured, not
+  stated**, for the same reason the in-point is: the approach is *inside* the take and its
+  length is a property of the performance — 80 to 144 ms across one library's takes — so a
+  recipe naming one number is wrong on every take but one. A fixed `--lead 0.22` against a
+  113 ms mean was tried first and shipped four cues that were 73-91% digital silence
+  followed by the leading edge of the thud they were supposed to lead into.
+- **The gain column is per source where the two sources are not the same loudness.** One gain
+  per cue assumes a hero cut and a Kenney take of the same event measure alike, which is true
+  of the one-shots (both are peak-normalised) and false of the ambience beds by ten dB — a bed
+  is RMS-normalised under a peak ceiling, where Kenney ships a mastered loop at full scale. So
+  a catalogue entry may carry a fourth number, the gain for when the hero take is playing, and
+  `gain_db` is its only reader. **This is why a mix number set in one world cannot be trusted
+  in the other**, and it is the generalisation of the mistake that produced this section.
+
+**"Too loud" is a measurement.** Every figure in `sound_bank.gd`'s `#35` notes is the file's
+loudest 85 ms window plus its gain — what a player hears — because every hero one-shot peaks
+within a dB of every other by construction, so a peak reading can only say they are all the
+same. Measured that way the wrench's swing was 0.6 dB *above* the hit it lands; the "generic"
+in the same report was 31 dB of missing low end; and the "hum" was 94% of a bed's energy below
+200 Hz, which no amount of turning down could have fixed, because the bed is normalised on the
+RMS that rumble dominated. The *busy* bed turned out to have a real alarm tone inside it,
+25-38 dB above its neighbours, running continuously under a working Factory.
+
+**What still cannot be judged here: whether any of it sounds good.** Nothing in this
+repository can listen. Everything above is spectrum, envelope and level, which is enough to
+catch a cue that is the wrong object or the wrong loudness and is not enough to catch one
+that is merely unpleasant.
 
 The recordings are long source material rather than game SFX, so
 `tools/assets/convert_audio.sh` is the recipe — which recording becomes which cue
@@ -1281,6 +1430,15 @@ they get hunted (DESIGN.md).
   means Heat measures throughput *in excess of what the Nest can hide*, and that rises
   without bound as the Factory does. `heat.decay_per_minute = 0` is a legal value: a Map
   where Heat only climbs is balance, not a broken file.
+- **The first gap of a Run is its own number**, `heat.first_wave_interval_seconds`, and
+  everything else about it is identical: Heat shortens it, the minimum floors it, the
+  Telegraph gates the arrival. The baseline used to double as the opening gap, which put the
+  first Wave 150 seconds out and made #35's playtest report *"crawlers dont seem to be
+  coming"* — they were, in silence, for longer than most people will wait, for the most
+  interesting thing in the game. The opening gap is the **one interval a player has had no
+  chance to shorten**: every later one is the Factory's own doing, and this one is spent with
+  no Heat to spend it with. Shipped at 90 after measuring 50 and finding it too short — the
+  figure and why are under "The joint balance pass", below.
 - **The interval is derived every tick rather than stored**, so a hot Factory is hunted
   *sooner* and not merely harder — and sooner *now*. `_wave_elapsed_ticks` counts up and
   `_wave_interval_ticks()` is a function of current Heat, so switching a line on pulls the
@@ -1731,6 +1889,32 @@ decides is **which Input Action `game/player_controller.gd` produces from one bu
 which object `WorldView` draws in the player's hands. Switching is instant, unlimited, and
 works mid-Wave, mid-burst and in Survey View.
 
+- **The rule has one home, and #35 is why.** The first playtest reported the hologram *"still
+  visible in gun mode"* and *"should not be placable in gun mode"*, and both came of the same
+  shape: `_sync_hologram` asked `query_build_refusal`, which cannot know what is in a
+  player's hands and must not, while `actions_for_tick` carried four separate inline
+  `and in_build_mode` tests. Four checks on one side and none on the other is exactly the
+  disagreement `query_build_refusal` exists to prevent, and it showed up as a green hologram
+  over a click that did nothing. So the rule is now **`BuildGun.hand_refusal`**, returning
+  `Refusal.BUILD_GUN_IS_HOLSTERED`, and `BuildGun.build_refusal` composes it with the
+  Simulation's own. The hologram, the HUD panel and all four build acts go through that one
+  function, and nothing else reads the mode to decide whether a build act happens.
+- **It is the one `Refusal` nothing behind the façade returns**, and spelling it in the
+  Simulation's enum anyway is deliberate: `Refusal` is the vocabulary `BuildGun.refusal_text`
+  translates, and a second enum for one value would be two vocabularies for one HUD line.
+  The *decision* never crosses the boundary — `build_refusal` lives in `game/`, no build path
+  consults the mode, and `test_holding_a_rifle_does_not_stop_a_player_building` asserts from
+  the other side that an intent that reaches `step` is applied whatever is in the hands.
+  Holding a rifle does not stop a player building; it stops **this input** from placing.
+- **The hologram is hidden rather than reddened, and only for this reason.** A red hologram
+  says "not *there*" and invites a player to aim somewhere else; a holstered Build Gun is a
+  fact about their hands and nowhere they aim will help. A promise nobody can keep is better
+  not made than made in red.
+- **`BuildGun.hand_refusal` takes the mode as an argument rather than reading it**, which is
+  the one subtle part. The controller routes by the mode the player will be in once *this
+  tick's* `B` has applied; the renderer draws the mode the Simulation is holding now. Those
+  differ on exactly one tick of a swap and both are right, so the rule is a function of the
+  mode and each caller supplies the one it means.
 - **It is Simulation state anyway**, for three reasons that have nothing to do with
   permission: what somebody is holding is a fact about them in the same way their wallet
   is, a recorded replay has to reproduce a swap or every click after it means something
@@ -1749,8 +1933,19 @@ works mid-Wave, mid-burst and in Survey View.
   reads the mode and `WeaponViewmodel` plays the `holster`, swaps the model and plays the
   `draw`. The two queries stay here because `test_movement_weight.gd` pins them and they are
   the authoritative answer for anything that is not this renderer, but nothing in `game/`
-  reads them. `player.holster_seconds` is likewise still tuning the Simulation holds and no
-  longer what the swap you see is timed by. See "The weapon in frame", below.
+  reads them. See "The weapon in frame", below.
+- **`player.holster_seconds` is the budget for the swap you see, and until #35 it was read by
+  nobody.** That is the third of the playtest's build-mode reports — *"swapping modes should
+  be instant, not taking so long"* — and the player had already turned this key down and
+  watched nothing happen, which was the bug rather than a misunderstanding. What they were
+  waiting through was `WeaponAnimator.DEFAULT_SECONDS`: 0.3 s of `holster` plus 0.4 s of
+  `draw`, seven tenths of a second on any clone without the purchased arms, timed off clip
+  lengths the key has no part in. So `WeaponAnimator.Facts.swap_seconds` now carries it and
+  each half of a swap is capped at half of it — **a ceiling, not a duration**, so the clips
+  still decide the shape of a swap and a pack whose `PutAway` is already brisk is left alone.
+  Shipped at **0.06**, three or four ticks, which reads as a cut with a hand in it. 0 is a
+  hard cut. Split evenly rather than by the clips' relative lengths, because otherwise how
+  long a swap takes would depend on which pack is installed.
 - **The primary button is read both ways every tick.** `sample_devices` cannot know which
   mode anybody is in, so it samples the *edge* (one click is one Machine) and the *held
   state* (a trigger is not a click) and `actions_for_tick` picks. A player who presses `B`
@@ -2777,41 +2972,62 @@ belong here, and a test that pinned the tick would turn every legitimate tuning 
 red suite. It costs the suite about two minutes, which is why it caches a played Run and reads
 it from several methods.
 
-### The table, measured 2026-10-07
+### The table, measured 2026-10-08
 
-Seeds 7, 11 and 29, identical on all three except `rifle_picket`, which spreads three seconds —
-see "What the seed can reach", below. **Every column is the same scenarios through the same
-harness.** The first two differ by four numbers in one content file and nothing else; the third
-adds #30's collision and #34's Breaker approach; the fourth adds #37's two changes and
-**moved not one of the eight rows**, which is the control that change deserved. See "What
-collision cost the two sorties", "What #34 cost the table" and "What #37 cost the table", below.
+Seeds 7, 11 and 29, and **every scenario ends on the same tick on all three.** `rifle_picket`,
+the one row that has ever spread, now differs only in peak Heat — 6186, 6178, 6174 — and not in
+when it ends. See "What the seed can reach", below.
 
-| Scenario | #26 before | #26 after | #34 | **#37** | Wave | Peak Heat | What killed it, now |
-|---|---|---|---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | **4m22s** | 1 | 0 | undefended: the first Wave alone |
-| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | **4m04s** | 1 | 782 | undefended, and *sooner than `bare`* |
-| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | **29m07s** | 35 | 6788 | **three Siege Hulks**, 96 rounds still in it |
-| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | **20m21s** | 25 | 6841 | the same, **30% sooner** than `competent` |
-| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
-| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
-| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | **32m22s** | 39 | 6724 | the same, 3m15s *later* — the longest Run measured |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m13s | **27m16s** | 32 | 5862 | swarmed, 1m51s sooner than `competent` |
-| `artillery` — grows a Silo and fires it | — | — | — | **16m10s** | 21 | 5584 | swarmed, **44% sooner** than `competent` |
+**Every column is the same scenarios through the same harness.** The first two differ by four
+numbers in one content file and nothing else. The third adds #30's collision and #34's Breaker
+approach. The fourth adds #37's two rules and the ninth scenario they made measurable, and moved
+not one of the eight rows of record. The fifth adds #35's separate
+`heat.first_wave_interval_seconds`, and it is **one fresh run of `tools/balance/measure.sh` on
+the merged tree** — because #34, #37 and #35 each re-measured on their own branch, the schedule's
+two ends belong to different tickets, and hand-merging three tables would record figures no Run
+ever produced. See "What collision cost the two sorties", "What #34 cost the table", "What #37
+cost the table" and "What the shorter first Wave cost", below.
 
-Re-measured again after #36 landed and **every row is bit-identical**, which is what #36's
-additive shape predicted: it gave a player a Belt-routing tool and a port table to aim it with
-and changed nothing the scenarios drive, because a scenario issues `BUILD_BELT` directly.
+| Scenario | #26 before | #26 after | #34 | #37 | **merged** | Wave | Peak Heat | What killed it, now |
+|---|---|---|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
+| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | **28m02s** | 34 | 6186 | swarmed, 46s sooner than `competent` |
+| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | **16m10s** | 21 | 5584 | swarmed, **44% sooner** than `competent` |
 
-`rifle_picket`'s 27m13s was a transcription error in #34's column: the figure the harness has
-printed on seed 7 throughout is **27m16s**, and the three-second seed spread is 27m16s against
-27m13s on seeds 11 and 29 rather than the other way round. Corrected here rather than quietly,
-because the whole point of this table is that somebody can re-derive it.
+**#36 moved no row of this table, and that was the control its shape predicted**: it gave a
+player a Belt-routing tool and a port table to aim it with, and a scenario issues `BUILD_BELT`
+directly rather than dragging a mouse.
 
-**The loop the spec asks for lands.** Build nothing and lose in four minutes. Build the opening
-Factory and get twenty-nine, lost to a boss with a name and an answer. Walk out and clear a Hive
+`rifle_picket`'s **27m16s** in the #34 column corrects a transcription error — 27m13s is the
+figure on seeds 11 and 29, and seed 7, which the table quotes throughout, printed 27m16s.
+Corrected openly rather than quietly, because the whole value of this table is that somebody can
+re-derive it.
+
+**Which ticket owns which row.** The last column is legible once you know that a Run has two ends
+and different tickets own them. #35 shortened the *first* Wave interval, so it moves the rows that
+end during the first Wave and nothing else: `bare` and `opening_line` lose a minute each, and they
+are the only rows where #35's own branch figures survive the merge intact. #34 changed the *late*
+tiers, so it moves the rows that reach them — every long Run now ends with a Siege Hulk standing
+rather than having run dry. #37 made a Silo powerable, which did not move a row but added the row
+a Silo was always missing. And the three rows that end in between — `over_producer`, `fortified`,
+`deep_digger` — are **bit-identical across the last three columns**, because a Factory that dies
+at minute twenty never notices where the first Wave started.
+
+`competent` is the one row #34 and #35 both touch: 28m48s, nineteen seconds short of #34's
+29m07s, which is what #35's earlier first Wave costs it and no more.
+
+
+**The loop the spec asks for lands.** Build nothing and lose in three minutes. Build the opening
+Factory and get twenty-eight, lost to a boss with a name and an answer. Walk out and clear a Hive
 and get thirty-two, the best Run measured. Spend the lever's plate on a Miner nothing collects
 and lose a third of it. Dig to Depth 2 early and lose two thirds. Stand at the Nest spending the
-Turret's own rounds and lose two minutes.
+Turret's own rounds and lose forty-six seconds.
 
 What the *before* column says on its own is the thing #26 was opened about: **the better a
 Factory was, the shorter its Run.** `fortified` — the only scenario that actually defends its
@@ -2868,8 +3084,10 @@ walk is about 104 m rather than 90, and the Run is **29m36s against #26's 29m37s
 which is the right size for an answer to "what did a 14 m detour cost". The claim it was
 measuring — clearing a Hive lengthens a Run — is unchanged.
 
-`rifle_picket` was not re-routed and moved much further: **26m32s against 24m59s**, and its
-cause changed from *swarmed* to *ran dry*. Nothing about the scenario changed; it walks to
+`rifle_picket` was not re-routed and moved much further: **26m32s against 24m59s** at the time
+of that measurement, and its cause changed from *swarmed* to *ran dry*. (#35's schedule has
+since moved it again, to 26m52s, and flipped the claim it was guarding — see "What the shorter
+first Wave cost", below.) Nothing about the scenario changed; it walks to
 (-3, -3) beside the Nest and fires down the lane the Breach feeds, and with the Nest solid the
 player's open-loop overshoot now settles somewhere slightly different, which moves where every
 one of his rounds goes for the rest of the Run. **The claim still holds and its margin is
@@ -2880,9 +3098,85 @@ Ammunition change could flip it. If it flips, the honest response is the same as
 what was measured, not what was expected.
 
 **No balance number was changed to accommodate any of this.** `content/waves.csv` and
-`content/tuning.toml` are exactly as #26 left them.
+`content/tuning.toml` were exactly as #26 left them; the one subsequent change to either is
+#35's `heat.first_wave_interval_seconds`, which is below and was itself measured rather than
+argued.
+
+### What the shorter first Wave cost
+
+**#35, and the one place the playtest's nine reports touched balance.** The report was
+*"crawlers dont seem to be coming"*, which was not a bug: `heat.wave_interval_baseline_seconds`
+doubled as the opening gap, so a new player waited 150 seconds in silence for the most
+interesting thing in the game. `heat.first_wave_interval_seconds` separates them, and the
+figure came out of this harness rather than out of an argument.
+
+**50 was measured first and was wrong, in a way worth recording.** `deep_digger` went from
+10m48s to **2m46s** — wave 3, peak Heat 25, browned out for 97% of the Run. That scenario pulls
+the call-early lever once a minute from minute one, and a natural Wave arriving at 45 seconds
+lands *in front of* the first pull, so the levers stack Waves onto a Factory that has not made
+a round yet. The general lesson is the shape of the number rather than the number: **the
+opening gap has to outlast the first thing a player can do about it**, and the first thing a
+player can do about it is the lever.
+
+At **90** the natural Wave still falls after the first minute. Measured against #34's column —
+which is the right comparison now, since this branch was merged on top of it — the change costs
+exactly what its shape predicts:
+
+| Scenario | #34 | merged | #35's doing |
+|---|---|---|---|
+| `bare` | 4m22s | 3m22s | −60s |
+| `opening_line` | 4m04s | 3m12s | −52s |
+| `competent` | 29m07s | 28m48s | −19s |
+| `over_producer` | 20m21s | 20m21s | — |
+| `fortified` | 28m45s | 28m45s | — |
+| `deep_digger` | 10m48s | 10m48s | — |
+| `hive_sortie` | 32m22s | 32m05s | −17s |
+| `rifle_picket` | 27m16s | 28m02s | **+46s** |
+
+The two undefended rows lose a minute, because the first Wave is the only Wave they see. Three
+rows do not move at all: a Factory that dies at minute twenty never notices where the first Wave
+started. The long rows lose under twenty seconds. Nothing in `content/waves.csv` was touched, so
+the curve #26 measured is intact and what moved is only where it starts.
+
+`rifle_picket` going the *other* way by 46 seconds is the one figure here that is not obvious,
+and it is the same mechanism as everything else in this row's history: moving the schedule's
+phase moves where every round the picket fires goes, and this time it moved them somewhere that
+bought time rather than cost it.
+
+**And building is still what summons it**, which is why this is a shorter first *interval*
+rather than a fixed opening timer. `opening_line` carries 615 Heat by its first Wave, which at
+`heat.per_second_sooner` takes about 25 seconds off the 90 — so a player who builds the opening
+line meets Crawlers at around 65 seconds and one who builds nothing waits the full 90. That is
+the mechanic's own lesson arriving in the first minute instead of the third, and
+`test_heat.test_a_factory_that_produces_meets_its_first_wave_sooner_than_an_idle_one` pins it.
+
+**`rifle_picket`'s sign has now moved four times, and that is the finding.** #26 measured a
+rifleman at the Nest costing two minutes. #30's collision took it to 28 seconds. #34's Breaker
+approach took it back out to 1m51s. Measured on #35's own branch it crossed zero — 26m52s
+against `competent`'s 26m42s, ten seconds the *other* way. **Merged, it is 46 seconds and back
+on the original side**: 28m02s against 28m48s.
+
+Four tickets, four signs or magnitudes, and **not one of them changed anything about the
+Ammunition economy.** The mechanism #17 asked about is still real and still arithmetic: a Bolt
+Rifle spends 75 rounds a minute out of a store a Press fills at 37. What the harness cannot do
+is turn that into an end-to-end cost, because the quantity it would be measuring is smaller than
+the phase noise of a schedule that other tickets keep re-phasing. So
+`test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press` asserts the claim the
+figures actually support — a rifleman is **neither free nor ruinous**, within 90 seconds of
+`competent` either way — and a later Ammunition change that made the rifle genuinely cheap or
+genuinely fatal fails it. **Do not re-tune Ammunition off this row's margin**; it is not
+measuring what it looks like it is measuring.
 
 ### What #34 cost the table
+
+> **Read this as the record of one step, not as the current figures.** Every number below is
+> #34's column in the table above, measured on #34's own branch against #26's. #35's first-Wave
+> interval then merged on top and moved five of these rows again — see "What the shorter first
+> Wave cost" for that delta and the **merged** column for where they actually stand. The two
+> claims here that the merge changed in kind rather than in degree are `rifle_picket`, whose
+> 1m51s is now 46s and whose *sign* has since moved twice more, and `fortified`, whose
+> twenty-two-second margin is now three seconds. The reasoning is what this section is for and
+> the reasoning is unaffected.
 
 **#34 changed where a Breaker walks and nothing else, and it moved six of the eight rows.** No
 number in `content/waves.csv` was touched and the one number it added — 
@@ -2915,7 +3209,7 @@ that does to a Run:
   for either row.** The honest reading is that `fortified`'s row was measuring the workaround to
   a bug, and the workaround is now worth nothing.
 - **`over_producer` and `rifle_picket` both moved by about forty-five seconds** and both claims
-  got *stronger*. Over-producing costs 30% of the Run rather than 27%; the rifleman costs 1m54s
+  got *stronger*. Over-producing costs 30% of the Run rather than 27%; the rifleman costs 1m51s
   rather than 28s. Same reason in both cases: a Factory that keeps its Machines has further to
   fall, so the thing it wasted is measured against a longer Run.
 - **`bare`, `opening_line` and `deep_digger` did not move at all.** None of them reaches
@@ -2983,13 +3277,20 @@ Two consequences worth knowing before anybody quotes a variance:
 
 - **The three seeds in the measurement are a demonstration, not a sample.** There is no
   distribution to sample until a player opens fire — and `rifle_picket` is the one row that
-  does. #26 measured it identical across all three seeds; with #30's collision in, it is
-  26m32s on seed 7 against 26m29s on seeds 11 and 29. **Three seconds in twenty-six minutes,
-  and only on the row that fires a ranged weapon**, is the claim surviving rather than failing:
-  the spread still moves where the rounds go rather than how long the Nest stands. Every other
-  row is bit-identical across seeds, and
-  `test_balance.test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed` asserts
-  that on `competent`.
+  does. #26 measured it identical across all three seeds; with #30's collision in it was 26m32s
+  on seed 7 against 26m29s on seeds 11 and 29; on #35's branch it spread eleven seconds. **On
+  the merged schedule the spread in Run length is back to zero**: 28m02s on all three seeds, and
+  the only figure that still differs is peak Heat — 6186, 6178 and 6174. That is the claim in
+  its clearest form yet. The seeded RNG moves *where the rounds go*, which moves how much Heat
+  the Factory had made by the end, and it does not move how long the Nest stands. Every row in
+  the table is now bit-identical across seeds in end tick, and
+  `test_balance.test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed` asserts that
+  on `competent`.
+
+  Worth not over-reading: the spread going to zero is not an improvement anybody made. It is
+  where this schedule's phase happens to put the last Wave, and the next ticket that re-phases
+  the schedule may well split the three seeds again. The *property* — scatter moves rounds, not
+  Run length — is the thing to hold on to, and it is what the test asserts.
 - **`Simulation.hash()` cannot be used as the evidence**, which is a trap worth naming because
   it looks like it should be: the hash feeds `_rng.state`, which is seeded, so two seeds differ
   in hash from tick 0 whether or not a draw is ever taken.

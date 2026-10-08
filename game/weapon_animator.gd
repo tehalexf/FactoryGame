@@ -87,6 +87,20 @@ class Facts extends RefCounted:
 	## player's hands is one struct and one call rather than two.
 	var reach_metres: float = 0.0
 	var survey_blend: float = 0.0
+	## `player.holster_seconds`, out of `query_definitions`: how long the **whole**
+	## visible swap may take, in seconds, counting the stow and the draw together.
+	##
+	## **A budget, not a duration.** The clips decide the shape of a swap and this
+	## decides how long a player waits for it, which is why it is a ceiling on each
+	## half rather than a replacement for either: a pack whose `PutAway` is already
+	## brisk is left alone, and the 0.66 s stows the purchased packs ship are cut to
+	## fit. #35's playtest asked for an instant swap, reached for this key, and got
+	## nothing — because #28 had timed the swap off the clip lengths alone and left
+	## the key read by nobody on this side of the boundary. 0 is a hard cut.
+	##
+	## Negative means "no budget, the clips decide", which is what a `Facts` nobody
+	## filled in says — so `WeaponAnimator`'s own tests still measure clip lengths.
+	var swap_seconds: float = -1.0
 
 
 ## What should be on screen.
@@ -138,6 +152,21 @@ func has_clip(role: String) -> bool:
 	return _lengths.has(role)
 
 
+## How long one half of a swap may run for, in seconds: the clip's own length, or half
+## the tuned budget when that is shorter.
+##
+## Half each, and evenly, because a holster is symmetric — one thing goes down and the
+## other comes up, and `query_player_holster_blend` already describes the same transition
+## with one number for both halves for the same reason. Splitting it by the clips'
+## relative lengths would make the swap's *timing* depend on which pack is installed,
+## which is exactly what #35 found intolerable.
+func _swap_half_seconds(role: String, facts: Facts) -> float:
+	var clip: float = clip_seconds(role)
+	if facts.swap_seconds < 0.0:
+		return clip
+	return minf(clip, facts.swap_seconds * 0.5)
+
+
 ## What the weapon should be doing this tick.
 func cue(facts: Facts) -> Cue:
 	if facts.weapon.is_empty():
@@ -157,13 +186,13 @@ func cue(facts: Facts) -> Cue:
 			_begin(HOLSTER, facts.tick)
 	if _role == HOLSTER:
 		var stowing: float = _seconds_since(facts.tick, _role_started_tick)
-		if stowing < clip_seconds(HOLSTER):
+		if stowing < _swap_half_seconds(HOLSTER, facts):
 			return _cue(HOLSTER, stowing, false)
 		_shown_weapon = facts.weapon
 		_begin(DRAW, facts.tick)
 	if _role == DRAW:
 		var drawing: float = _seconds_since(facts.tick, _role_started_tick)
-		if drawing < clip_seconds(DRAW):
+		if drawing < _swap_half_seconds(DRAW, facts):
 			return _cue(DRAW, drawing, false)
 
 	_note_the_magazine(facts)

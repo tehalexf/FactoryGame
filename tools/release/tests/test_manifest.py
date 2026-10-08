@@ -58,12 +58,42 @@ class ExpectedBundleAgainstTheRealConverters(unittest.TestCase):
         )
 
     def test_audio_is_the_whole_catalogue_rather_than_a_sample(self) -> None:
-        # Every `cue` line in the recipe, and nothing else. The count is the claim:
-        # a parse that quietly matched half of them would still look plausible.
-        recipe = (REPO / "tools/assets/convert_audio.sh").read_text().splitlines()
-        declared = [line for line in recipe if line.startswith("cue ")]
-        self.assertEqual(len(self.bundle["audio"].files), len(declared))
-        self.assertGreater(len(declared), 20)
+        # Every cue the recipe declares is in the bundle, and the bundle holds
+        # nothing that is not one. Coverage is the claim: a parse that quietly
+        # matched half of them would still look plausible.
+        #
+        # **A cue is not a file.** `--takes N` writes `name.ogg` *plus*
+        # `name_2.ogg` … `name_N.ogg`, so a cue with takes contributes several and a
+        # count of `cue` lines is the wrong total — which is exactly the bug this
+        # caught in `audio_files`. The recipe's arithmetic is not redone here,
+        # because this class does not reach into the parsing and
+        # `ParsingIsPinnedAgainstFixtureRecipes` pins it against a fixture. What is
+        # asserted instead is the shape: every declared cue is present, every extra
+        # file is a numbered take of a declared cue, and there are extras.
+        declared = {
+            line.split()[1]
+            for line in (REPO / "tools/assets/convert_audio.sh").read_text().splitlines()
+            if line.startswith("cue ") and len(line.split()) > 1
+        }
+        self.assertGreater(len(declared), 20, "the recipe is not a stub")
+
+        stems = {Path(path).stem for path in self.bundle["audio"].files}
+        self.assertEqual(
+            set(), declared - stems, "cues the recipe cuts but the bundle omits"
+        )
+
+        takes = stems - declared
+        for stem in sorted(takes):
+            with self.subTest(stem):
+                base, _, number = stem.rpartition("_")
+                self.assertIn(
+                    base, declared, "a file in the bundle that is nobody's cue"
+                )
+                self.assertTrue(number.isdigit(), "an extra file is a numbered take")
+                self.assertGreaterEqual(
+                    int(number), 2, "take 1 keeps the unnumbered name"
+                )
+        self.assertTrue(takes, "several cues have more than one take; see #35")
 
     def test_props_carry_the_shared_atlas_and_the_conversion_record(self) -> None:
         files = self.bundle["props"].files
@@ -184,6 +214,33 @@ class ParsingIsPinnedAgainstFixtureRecipes(unittest.TestCase):
             [
                 "assets_licensed/generated/audio/bell.ogg",
                 "assets_licensed/generated/audio/klaxon.ogg",
+            ],
+        )
+
+    def test_takes_are_counted_as_the_several_files_they_are(self) -> None:
+        # `--takes N` writes N files and take 1 keeps the unnumbered name, so the
+        # bundle has to expect `swing.ogg`, `swing_2.ogg`, `swing_3.ogg` — not one
+        # `swing.ogg` and a silent gap where the variance went. A build missing
+        # `swing_3.ogg` would still run, still play a swing, and sound exactly like
+        # the one-take cue #35 was filed about, which is why this is verified.
+        #
+        # The flag sits on the **continuation**, which is how it went unread: a
+        # declaration spread over three lines is one declaration.
+        self._recipe(
+            "convert_audio.sh",
+            'cue swing "Some_Tool" \\\n  --takes 3 --duration 0.4\n'
+            'cue single "Some_Bell" --duration 1.0\n'
+            'cue two "Some_Door" --takes 2\n',
+        )
+        self.assertEqual(
+            manifest.audio_files(self.root),
+            [
+                "assets_licensed/generated/audio/single.ogg",
+                "assets_licensed/generated/audio/swing.ogg",
+                "assets_licensed/generated/audio/swing_2.ogg",
+                "assets_licensed/generated/audio/swing_3.ogg",
+                "assets_licensed/generated/audio/two.ogg",
+                "assets_licensed/generated/audio/two_2.ogg",
             ],
         )
 

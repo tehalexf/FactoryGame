@@ -233,6 +233,49 @@ func test_the_hologram_is_green_on_clear_ground_and_red_on_a_machine() -> void:
 	view.free()
 
 
+func test_the_hologram_goes_away_when_the_build_gun_is_holstered() -> void:
+	# #35, in the player's words: *"the hologram is still visible in gun mode"*. The
+	# hologram is a promise that the next click will place something, so with a rifle in
+	# frame it is promising something the next click will not do.
+	#
+	# Hidden rather than reddened, which is the one place this departs from how every
+	# other refusal is drawn. A red hologram says "not **there**" and invites the player
+	# to aim elsewhere; nowhere they aim will help, because the problem is in their hands.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.hologram_is_visible(), "a Run opens with the Build Gun out")
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	view.sync(sim)
+	assert_false(view.hologram_is_visible(), "and the weapon takes the promise with it")
+
+	sim.step([InputAction.set_build_mode(0, true)])
+	view.sync(sim)
+	assert_true(view.hologram_is_visible(), "and drawing it back brings it back")
+	view.free()
+
+
+func test_the_hud_does_not_call_a_tile_clear_while_the_build_gun_is_away() -> void:
+	# The other half of #35's first report, and the reason the rule had to become one
+	# function rather than a visibility flag on the hologram: the panel reads out of the
+	# same projection, so it cannot tell a player the tile is clear while the thing that
+	# would fill it is on their back.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.hud_text().contains("clear"), "clear ground ahead of a fresh Run")
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	view.sync(sim)
+	assert_false(view.hud_text().contains("— clear"), "and nothing is clear for a rifle")
+	assert_true(
+		view.hud_text().contains("holstered"),
+		"the panel names what is in the way, which is what is in the hands"
+	)
+	view.free()
+
+
 func test_a_refusal_is_shown_as_a_reason_and_not_only_as_a_colour() -> void:
 	# The acceptance criterion: refused *with a visible reason*, not silently.
 	var sim: Simulation = Simulation.new(1, 1)
@@ -1531,6 +1574,44 @@ func test_the_weapon_drops_out_of_frame_while_the_player_is_down() -> void:
 	assert_true(_settled(sim, view), "the weapon is out")
 	assert_true(view.weapon_is_visible())
 	assert_true(sim.query_player_is_alive(0), "and the player is on their feet to start with")
+	view.free()
+
+
+func test_the_swap_is_over_within_the_tuned_budget() -> void:
+	# #35, in the player's words: *"swapping modes should be instant, not taking so long"*.
+	#
+	# They reached for `player.holster_seconds` first and nothing changed, which was correct
+	# and was the bug: #28 timed the swap off the `holster` and `draw` clip lengths of the
+	# model on screen, so what you actually waited through was
+	# `WeaponAnimator.DEFAULT_SECONDS` — 0.3 s down plus 0.4 s up, seven tenths of a second
+	# — while the tuning key a tuner would reach for was read by nothing in `game/` at all.
+	#
+	# So the key is the **budget** for the visible swap and the clips decide its shape
+	# inside that. Asserted against the tuning rather than against a number written here,
+	# because the whole point is that turning the key down is what makes the swap quicker.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	var budget: float = Fixed.to_float(sim.query_definitions().player_holster_seconds)
+	# One tick of slack either side of the budget: the swap begins on the tick the intent
+	# lands and the clip boundary is a float compared against whole ticks.
+	var ticks: int = int(ceilf(budget * float(Simulation.TICKS_PER_SECOND))) + 2
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	for _tick: int in range(ticks):
+		sim.step([])
+		view.sync(sim)
+
+	assert_eq(
+		view.weapon_model_id(),
+		sim.query_player_weapon(0),
+		"%d ticks is the whole budget, and the weapon should be the thing in frame" % ticks
+	)
+	assert_false(
+		[WeaponAnimator.HOLSTER, WeaponAnimator.DRAW].has(view.weapon_clip_role()),
+		"and nothing should still be going down or coming up, got %s" % view.weapon_clip_role()
+	)
 	view.free()
 
 

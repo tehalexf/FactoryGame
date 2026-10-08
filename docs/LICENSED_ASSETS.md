@@ -452,14 +452,14 @@ And the rest, by what it is for:
 
 | Cue group | Recordings |
 |---|---|
-| Telegraph klaxon | `Federico Soler - Effective Trailer Alarms` (quarter notes), as a **loop** that runs for exactly as long as the Telegraph does |
+| Telegraph klaxon | `Victor Ermakov - Industrial Ambiences` / the alarm in the busy factory hall, down a fifth, as a **loop** that runs for exactly as long as the Telegraph does. **Repicked for #35**, whose playtest said the klaxon was "too STUPID": it was `Federico Soler - Effective Trailer Alarms` in quarter notes, which is a designed cinematic sting and fails this table's own standard of real mechanisms. A klaxon has to mean *get to your gun*; a trailer alarm means a film is starting. The in-point has **not been auditioned** — nobody with the bundle has heard the cut |
 | Wave arriving, Breach opening | `Jake Fielding - Cinematic Horn Braams`; `Epic Stock Media - Halloween Game` heavy smash, down a fourth |
 | Weapon fire (three layers), reload, impact | `Effective Trailer Booms` + `Epic Stock Media - HD Game Materials` metal hit + `Colossal Impacts` debris wash; `HD Lock And Mechanism` spring clatter; `The Noisery - Moaning Metal` geophone thud |
 | Melee — the Pneumatic Wrench | `David Dumais Audio - Melee Weapons Pack 2`, swing and metallic body hit |
 | Factory ambience, two beds | `Epic Stock Media - Strange Game Ambient Loops 3` machinery roomtone (the quiet one) and `Victor Ermakov - Industrial Ambiences` busy factory hall (the loud one), crossfaded by how much Factory is **working** |
 | Machines built, damaged, destroyed; Turret fire | `344 Audio - Extreme Winds` large metal box on a geophone; `Moaning Metal` low scrape; `Epic Stock Media - Anime Game` blast; `344 Audio - Haunting Ambiences Vol 3` metal bangs |
 | The Nest taking a hit | `Moaning Metal` bowed screech with a long reverb — the structure itself complaining |
-| Enemies, the player | `SoundBits - Vox Bestiae` insectoid attack and ethereal pain; `Epic Stock Media - AAA Game Character Police Officer` gasp; `Humanoid Creatures Vol 4` death vocal |
+| Enemies, the player | `SoundBits - Vox Bestiae` insectoid tremble-attack, and a longer cut of the same recording a fourth down for the death; `Epic Stock Media - AAA Game Character Police Officer` gasp; `Humanoid Creatures Vol 4` death vocal. **Repicked for #35**: the Crawler's death was `Vox Bestiae`'s *ethereal entity* in grim pain, which is a ghost rather than a thing with a carapace, and the playtest's word for it was "too weird". The same animal at both ends of its life is the fix; the death's cut is **not auditioned** |
 
 Four of the recipe's cues had to have their durations cut to the length of the
 source — the counting machine (0.3 s), the light switch (0.26 s), the officer's
