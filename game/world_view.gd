@@ -328,6 +328,35 @@ var _hud: Label = null
 var _hud_layer: CanvasLayer = null
 var _camera: Camera3D = null
 
+## What the HUD could say, and what it is saying.
+##
+## **Fifty-three appended lines, drawn over the Factory they describe.** Every one of them
+## earned its place when it arrived and the sum of them is a wall. So the wall is still
+## assembled — `hud_text` is it, and the suite still asserts against it — and what is
+## *shown* is `_hud_brief`: what the player is doing, what is coming, and what is in
+## trouble. The rest is one key away.
+##
+## The toggle is **not an Input Action**, for the reason saving is not: it does nothing to
+## the Run, it leaves the hash where it was, and a replay has nothing to reproduce.
+var _hud_full: String = ""
+var _hud_brief: String = ""
+var _hud_detailed: bool = false
+
+## The Machine picker: a cell per Machine and one for the Belt tool, each with the icon of
+## what the Machine makes, the key that reaches it, its build cost, and whether a Delivery
+## still has it locked.
+##
+## Built once per definition set and repainted every frame, which is the same bargain the
+## Machine bodies strike: what changes a lot is the selection and the lock state, and
+## neither needs a node rebuilt.
+var _picker: HBoxContainer = null
+var _picker_cells: Array[PanelContainer] = []
+var _picker_labels: PackedStringArray = PackedStringArray()
+var _picker_icon_paths: PackedStringArray = PackedStringArray()
+var _picker_locked: PackedInt64Array = PackedInt64Array()
+var _picker_selected: int = -1
+var _picker_built_for: int = -1
+
 ## The previewed Belt route: one flat slab a tile, in two buffers — the tiles that would be
 ## laid and the tiles that would be refused.
 ##
@@ -449,6 +478,29 @@ const FLOW_ARROW_LIFT_METRES: float = 0.08
 ## The grid is not drawn out here — `game/ground.gdshader` paints markings only inside
 ## the Map — so there is no question about which part can be built on.
 const GROUND_APRON_TILES: int = 96
+
+## Where the generated Item icons live. #20 produced ten of them and nothing used one; a
+## Machine's glyph is the Item it makes, which is what a player is actually hunting for when
+## they go looking for a Smelter — and it means a new Machine gets a picture by having a
+## Recipe rather than by somebody drawing one.
+const ICON_DIRECTORY: String = "res://assets/generated/icons"
+
+## How far off the bottom of the screen the Machine picker sits, and how big its icons are.
+## Judged in a render: small enough to stay out of the way of the Factory, big enough that
+## the glyph is a glyph and not a smudge.
+const PICKER_MARGIN_PIXELS: float = 12.0
+const PICKER_ICON_PIXELS: float = 40.0
+
+## The picker's three states. The selected cell is lit, the rest are dim, and a cell the Run
+## has not unlocked is greyed as well — locked and unselected are different things and a
+## player must be able to see both at once.
+const PICKER_SELECTED_TINT: Color = Color(1.0, 0.86, 0.5, 1.0)
+const PICKER_RESTING_TINT: Color = Color(1.0, 1.0, 1.0, 0.55)
+const PICKER_LOCKED_TINT: Color = Color(0.5, 0.5, 0.55, 0.65)
+
+## How many Machines in trouble the brief HUD will name before it counts them instead. Lower
+## than the full list's: the brief is read at a glance mid-Wave.
+const BRIEF_MACHINES_LISTED: int = 3
 
 ## How many Machines the HUD will name before it starts counting them instead. A line a
 ## Machine is readable at four and is a wall of text over the Factory at fifty, so the
@@ -661,11 +713,37 @@ func turret_gauge_position(slot: int) -> Vector3:
 	return _turret_gauge_backings[slot].position
 
 
-## What the HUD is showing. The Items the Factory is holding, and how many.
+## Everything the HUD could say, as one block of text.
+##
+## **The whole wall, whether or not it is on screen.** It is what the suite asserts against
+## and what `set_hud_detailed(true)` puts up; `hud_brief_text` is the triage and
+## `shown_hud_text` is whichever of the two a player is actually reading.
 func hud_text() -> String:
-	if _hud == null:
-		return ""
-	return _hud.text
+	return _hud_full
+
+
+## What the HUD is showing: the brief, or the wall if the player asked for it.
+func shown_hud_text() -> String:
+	return "" if _hud == null else _hud.text
+
+
+## The triaged HUD: what the player is doing, what is coming, and what is in trouble.
+func hud_brief_text() -> String:
+	return _hud_brief
+
+
+## Whether the player has asked for the whole wall.
+func hud_is_detailed() -> bool:
+	return _hud_detailed
+
+
+## Shows or hides the rest of the HUD. **Not an Input Action**, for the reason saving is
+## not one: it does nothing to the Run, it leaves the hash where it was, and a replay has
+## nothing to reproduce. `Main` reads the key where it reads Escape.
+func set_hud_detailed(detailed: bool) -> void:
+	_hud_detailed = detailed
+	if _hud != null:
+		_hud.text = _hud_full if _hud_detailed else _hud_brief
 
 
 ## Which body a Machine drew, as a `res://` path, or `""` where it fell back to a
@@ -1754,6 +1832,13 @@ func _sync_hud(sim: Simulation) -> void:
 		lines.append("THE NEST HAS FALLEN — reached wave %d" % sim.query_wave_number())
 	lines.append_array(_telegraph_lines(sim))
 	lines.append_array(_breach_opening_lines(sim))
+	# The one line that makes the opening teach itself, in both HUDs: the brief is what a
+	# player reads, and the wall is everything the HUD could say, so it cannot be missing
+	# from the wall. Empty once the first Delivery has landed, and an empty line is not
+	# appended.
+	var objective: String = Objective.line(sim)
+	if not objective.is_empty():
+		lines.append(objective)
 	lines.append("tick %d" % sim.query_tick())
 	# What the Run is about, the pressure on it, and what is on the Map. Read out of the
 	# queries every frame, so none of it can be stale.
@@ -1952,7 +2037,269 @@ func _sync_hud(sim: Simulation) -> void:
 	if sim.query_wall_count() > 0:
 		lines.append("walls %d — %d damaged" % [sim.query_wall_count(), breached])
 
-	_hud.text = "\n".join(lines)
+	_hud_full = "\n".join(lines)
+	_hud_brief = "\n".join(_brief_lines(sim))
+	_hud.text = _hud_full if _hud_detailed else _hud_brief
+	_sync_picker(sim)
+
+
+## The Machine picker: a cell per Machine and one for the Belt tool, along the bottom of the
+## screen, with the icon of what each Machine makes, the key that reaches it, what it costs
+## and whether a Delivery still has it locked.
+##
+## **Machine selection used to be blind mouse-wheeling** through a list with the name in a
+## line of text, which meant a player hunting for the Smelter scrolled until the word
+## changed. A row of pictures is the fix, and the pictures already existed — #20 generated
+## ten Item icons and nothing used one.
+##
+## A Machine's glyph is **the Item its Recipe makes**, so a Smelter shows an ingot. That is
+## the thing a player is actually hunting for, and it means a Machine added as a row gets a
+## picture without anybody drawing one. A Machine that makes no Item — a Turret, a generator,
+## a Silo — has no glyph and reads by its name, which is honest: there is no picture of
+## damage.
+##
+## Rebuilt only when the definition set changes, repainted every frame. The nodes are a
+## handful and the Machine list is ten long, so this is the one place in the view where a
+## node per thing is the right shape.
+func _sync_picker(sim: Simulation) -> void:
+	var definitions: Definitions = sim.query_definitions()
+	if _picker == null:
+		_picker = HBoxContainer.new()
+		_picker.add_theme_constant_override("separation", 6)
+		_picker.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+		_picker.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		_picker.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		_picker.offset_bottom = -PICKER_MARGIN_PIXELS
+		_hud_layer.add_child(_picker)
+
+	if _picker_built_for != sim.query_definition_generation():
+		_build_picker_cells(sim, definitions)
+		_picker_built_for = sim.query_definition_generation()
+
+	# What is in hand, and what the Run has earned, every frame — both are state and neither
+	# is remembered here.
+	_picker_selected = (
+		definitions.machine_count() if sim.query_player_is_laying_belt(VIEWED_PLAYER)
+		else sim.query_player_selected_machine_index(VIEWED_PLAYER)
+	)
+	for index: int in range(_picker_cells.size()):
+		var locked: bool = (
+			index < definitions.machine_count() and not sim.query_machine_is_unlocked(index)
+		)
+		_picker_locked[index] = 1 if locked else 0
+		var cell: PanelContainer = _picker_cells[index]
+		cell.modulate = PICKER_LOCKED_TINT if locked else Color.WHITE
+		cell.self_modulate = (
+			PICKER_SELECTED_TINT if index == _picker_selected else PICKER_RESTING_TINT
+		)
+	_picker.visible = sim.query_player_is_in_build_mode(VIEWED_PLAYER)
+
+
+## Builds one cell per Machine, and the Belt tool's, from the definition set.
+func _build_picker_cells(sim: Simulation, definitions: Definitions) -> void:
+	for spare: PanelContainer in _picker_cells:
+		_picker.remove_child(spare)
+		spare.queue_free()
+	_picker_cells.clear()
+	_picker_labels = PackedStringArray()
+	_picker_icon_paths = PackedStringArray()
+	_picker_locked = PackedInt64Array()
+
+	for index: int in range(definitions.machine_count()):
+		var machine: MachineDefinition = definitions.machine_at(index)
+		_add_picker_cell(
+			_picker_key_label(index),
+			machine.display_name,
+			_cost_text(machine),
+			_icon_path_for(definitions, machine)
+		)
+	# The Belt, last and apart, because it is not a Machine: no row in
+	# `content/machines.csv`, no Recipe, no cost, and its own key.
+	_add_picker_cell("C", "Belt", "free", "")
+
+
+## Which key reaches a cell. Ten of them — `1` to `9` and `0` — which is the whole of the
+## shipped Machine list and as many as a hand reaches without looking. Past that a player
+## scrolls, which still works and always did.
+func _picker_key_label(index: int) -> String:
+	if index < 9:
+		return str(index + 1)
+	if index == 9:
+		return "0"
+	return "·"
+
+
+## What a Machine costs, in the `item:count` form its row is written in. "free" where the
+## column is empty, because a blank cell reads as a bug.
+func _cost_text(machine: MachineDefinition) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for slot: int in range(machine.build_cost_items.size()):
+		parts.append("%s %d" % [machine.build_cost_items[slot], machine.build_cost_counts[slot]])
+	return "free" if parts.is_empty() else ", ".join(parts)
+
+
+## The icon of the first Item a Machine's Recipe produces, or "" for one that produces none.
+func _icon_path_for(definitions: Definitions, machine: MachineDefinition) -> String:
+	var recipe: RecipeDefinition = definitions.recipe(machine.recipe_id)
+	if recipe == null or recipe.output_count() == 0:
+		return ""
+	var item_id: String = definitions.item_id(recipe.output_item(0))
+	if item_id.is_empty():
+		return ""
+	var path: String = "%s/%s.png" % [ICON_DIRECTORY, item_id]
+	return path if ResourceLoader.exists(path) else ""
+
+
+func _add_picker_cell(key: String, name: String, cost: String, icon_path: String) -> void:
+	var cell: PanelContainer = PanelContainer.new()
+	var column: VBoxContainer = VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	cell.add_child(column)
+
+	# The icon slot is there whether or not there is an icon to put in it. A render showed
+	# why: without it the cells with a picture are taller than the cells without, and a row
+	# of hotbar cells whose captions sit at six different heights reads as broken rather
+	# than as sparse.
+	var picture: TextureRect = TextureRect.new()
+	if not icon_path.is_empty():
+		picture.texture = load(icon_path)
+	picture.custom_minimum_size = Vector2(PICKER_ICON_PIXELS, PICKER_ICON_PIXELS)
+	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	column.add_child(picture)
+
+	var caption: Label = Label.new()
+	caption.text = "[%s] %s\n%s" % [key, name, cost]
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(caption)
+
+	_picker.add_child(cell)
+	_picker_cells.append(cell)
+	_picker_labels.append(caption.text)
+	_picker_icon_paths.append(icon_path)
+	_picker_locked.append(0)
+
+
+## How many cells the picker has: one per Machine, plus the Belt tool. For the smoke test.
+func machine_picker_cell_count() -> int:
+	return _picker_cells.size()
+
+
+## What a cell says: its key, its name and what it costs. For the smoke test.
+func machine_picker_label(cell: int) -> String:
+	if cell < 0 or cell >= _picker_labels.size():
+		return ""
+	return _picker_labels[cell]
+
+
+## The icon a cell carries, or "" where the Machine makes no Item. For the smoke test.
+func machine_picker_icon_path(cell: int) -> String:
+	if cell < 0 or cell >= _picker_icon_paths.size():
+		return ""
+	return _picker_icon_paths[cell]
+
+
+## Whether a Delivery still has a cell's Machine locked. For the smoke test.
+func machine_picker_is_locked(cell: int) -> bool:
+	if cell < 0 or cell >= _picker_locked.size():
+		return false
+	return _picker_locked[cell] != 0
+
+
+## Which cell is in the player's hands — a Machine's index, or the Belt cell past the end of
+## the Machine list. For the smoke test.
+func machine_picker_selected() -> int:
+	return _picker_selected
+
+
+## The HUD a player actually reads: what they are doing, what is coming, and what is wrong.
+##
+## **Six things, in the order a player needs them**, against the fifty-three the full HUD
+## assembles. The test of each line is whether it changes what the player does in the next
+## few seconds — which is why the Wave banner and the objective are at the top, why the
+## Machines in trouble are named and the healthy ones are not counted at all, and why the
+## Gear table, the Silo dial, the Nest's store and the per-Item totals are behind the key.
+##
+## Nothing here is a second copy of a decision. The urgent banners, the build-gun lines and
+## the route line are the same helpers the full HUD calls; the trouble summary is a *shorter
+## sentence about the same queries*, not a reimplementation of the long one — it names ids
+## and states, where the full list adds buffers, Heat, magazines and health.
+func _brief_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	if sim.query_run_is_over():
+		lines.append("THE NEST HAS FALLEN — reached wave %d" % sim.query_wave_number())
+	lines.append_array(_telegraph_lines(sim))
+	lines.append_array(_breach_opening_lines(sim))
+
+	# The one line that makes the opening teach itself. Empty once it has, and an empty
+	# line is not appended — a blank row at the top of the screen is one more thing to read.
+	var objective: String = Objective.line(sim)
+	if not objective.is_empty():
+		lines.append(objective)
+
+	lines.append(
+		"nest %d/%d — wave %d — next in %ds — crawlers %d"
+		% [
+			sim.query_nest_health(),
+			sim.query_nest_max_health(),
+			sim.query_wave_number(),
+			sim.query_ticks_until_next_wave() / Simulation.TICKS_PER_SECOND,
+			sim.query_enemy_count(),
+		]
+	)
+	lines.append(
+		"power %d/%d kW — %d%%"
+		% [
+			sim.query_power_supply_kw(),
+			sim.query_power_demand_kw(),
+			roundi(Fixed.to_float(sim.query_power_ratio()) * 100.0),
+		]
+	)
+	lines.append_array(_build_gun_lines(sim))
+	lines.append_array(_trouble_lines(sim))
+	lines.append("[H] details")
+	return lines
+
+
+## What is wrong with the Factory, in as few words as will still get somebody to the right
+## Machine: the ones in trouble by id and state, then a count of the rest.
+##
+## **Triage is not silence.** The whole reason the wall existed is that a player mid-Wave has
+## to know which Machine is in trouble; what was wrong with it was the forty lines around
+## that one. Damaged outranks starved outranks throttled, which is the same order the full
+## list uses and for the same reason — they are three different fixes.
+func _trouble_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var named: PackedStringArray = PackedStringArray()
+	var unnamed: int = 0
+	for index: int in range(sim.query_machine_count()):
+		var state: String = ""
+		if sim.query_machine_health(index) < sim.query_machine_max_health(index):
+			state = "DAMAGED"
+		elif sim.query_machine_is_starved(index):
+			state = "starved"
+		elif sim.query_machine_is_throttled(index):
+			state = "throttled"
+		elif sim.query_machine_is_turret(index) and sim.query_turret_ammunition(index) == 0:
+			state = "DRY"
+		if state.is_empty():
+			continue
+		if named.size() >= BRIEF_MACHINES_LISTED:
+			unnamed += 1
+			continue
+		named.append("%s %s" % [sim.query_machine_id(index), state])
+
+	var dangling: int = dangling_marker_count()
+	if named.is_empty() and dangling == 0:
+		return lines
+
+	var sentence: String = ", ".join(named) if not named.is_empty() else "all machines fed"
+	if unnamed > 0:
+		sentence += " and %d more" % unnamed
+	if dangling > 0:
+		sentence += " — %d belt end%s lead nowhere" % [dangling, "" if dangling == 1 else "s"]
+	lines.append(sentence)
+	return lines
 
 
 ## The Silo: the dial a player is carrying, whether the thing in front of them would take it,

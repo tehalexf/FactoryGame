@@ -92,6 +92,34 @@ const KEY_WEAPON_FIRST: Key = KEY_1
 ## without looking; a fifth weapon would want the Gear menu rather than `KEY_5`.
 const WEAPON_KEY_COUNT: int = 3
 
+## **The number row reads both ways, and which one it means is what the hand decides.**
+##
+## With the Build Gun out, `1` to `9` and `0` put the first ten Machines on it — the Machine
+## picker along the bottom of the screen is that row, with the key printed on each cell. With
+## the weapon out, the same keys are the weapon and Gear-slot keys below.
+##
+## That is the arrangement the primary button already has: `sample_devices` cannot know which
+## mode anybody is in, so it records the *digit*, and `actions_for_tick` decides what it
+## meant. Machine selection used to be blind mouse-wheeling through a list; the wheel still
+## works and always will, and this is the way to reach a Machine without hunting for it.
+##
+## Ten, because the shipped Machine list is ten long and ten is as many as a hand reaches
+## without looking. An eleventh Machine is a scroll away, which is where every Machine was.
+const PICK_KEY_COUNT: int = 10
+
+## The tenth picker key, which is `0` rather than a tenth digit: the row runs `1` to `9` and
+## then wraps to the key at the end of it, the way every hotbar has since Doom.
+const KEY_PICK_TENTH: Key = KEY_0
+
+## Showing the rest of the HUD. Gathered here with the rest so the rebinding ticket has one
+## file to change, and deliberately **not** read by `sample_devices` — `Main._input` handles
+## it where it handles Escape and the save keys.
+##
+## Not an Input Action, for the reason saving is not one: it does nothing to the Run, it
+## leaves the hash where it was, and a replay has nothing to reproduce. What it changes is
+## how much of what the HUD could say is on the screen.
+const KEY_HUD_DETAIL: Key = KEY_H
+
 ## The slot keys. One per interned Gear slot, in the sorted order the table interns them
 ## in, each cycling through the components that fit it — so `KEY_4` is the first slot,
 ## `KEY_5` the second, and a fourth slot added as a row gets `KEY_7` for free.
@@ -276,6 +304,12 @@ class DeviceSample extends RefCounted:
 	## Which weapon frame was asked for this tick, as an index into the definition set's
 	## weapon frames, or -1. An edge: one press is one swap.
 	var weapon_chosen: int = -1
+	## Which cell of the Machine picker was asked for this tick, as an index into the
+	## definition set's Machines, or -1. An edge, and **the same keypresses `weapon_chosen`
+	## and `slot_cycled` carry**: the polling cannot know which hand the player is in, so it
+	## records all three readings and `actions_for_tick` picks. The primary button's two
+	## readings are the same arrangement.
+	var machine_picked: int = -1
 	## Which Gear slot's component was cycled this tick, as a slot index, or -1. An edge.
 	var slot_cycled: int = -1
 	## Signed quarter turns of hologram rotation asked for this tick.
@@ -301,6 +335,7 @@ var _withdraw_clicked: bool = false
 var _wall_clicked: bool = false
 var _weapon_chosen: int = -1
 var _slot_cycled: int = -1
+var _machine_picked: int = -1
 var _silo_shell_cycled: bool = false
 var _silo_charges_cycled: bool = false
 var _load_silo_clicked: bool = false
@@ -384,6 +419,12 @@ func note_event(event: InputEvent) -> void:
 				_weapon_chosen = key.keycode - KEY_WEAPON_FIRST
 			elif key.keycode >= KEY_SLOT_FIRST and key.keycode < KEY_SLOT_FIRST + SLOT_KEY_COUNT:
 				_slot_cycled = key.keycode - KEY_SLOT_FIRST
+			# The second reading of the number row, recorded whatever the first one made of
+			# it, because the polling must not know which hand the player is in.
+			if key.keycode == KEY_PICK_TENTH:
+				_machine_picked = PICK_KEY_COUNT - 1
+			elif key.keycode >= KEY_1 and key.keycode < KEY_1 + PICK_KEY_COUNT - 1:
+				_machine_picked = key.keycode - KEY_1
 
 
 ## Reads the devices for one tick and drains the buffer, so nothing is spent twice.
@@ -427,6 +468,7 @@ func sample_devices() -> DeviceSample:
 	sample.wall_clicked = _wall_clicked
 	sample.weapon_chosen = _weapon_chosen
 	sample.slot_cycled = _slot_cycled
+	sample.machine_picked = _machine_picked
 	sample.silo_shell_cycled = _silo_shell_cycled
 	sample.silo_charges_cycled = _silo_charges_cycled
 	sample.load_silo_clicked = _load_silo_clicked
@@ -446,6 +488,7 @@ func sample_devices() -> DeviceSample:
 	_wall_clicked = false
 	_weapon_chosen = -1
 	_slot_cycled = -1
+	_machine_picked = -1
 	_silo_shell_cycled = false
 	_silo_charges_cycled = false
 	_load_silo_clicked = false
@@ -496,6 +539,17 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			else Simulation.BUILD_TOOL_BELT
 		)
 		actions.append(InputAction.set_build_tool(player_id, build_tool))
+
+	# The number row, with the Build Gun out. Before the wheel and before the click, so a
+	# player who presses a key and clicks in one tick places what they pressed — the rule
+	# that already makes a scroll-and-click place what the player scrolled to.
+	if (
+		sample.machine_picked != -1
+		and in_build_mode
+		and sample.machine_picked < sim.query_definitions().machine_count()
+	):
+		actions.append(InputAction.select_machine(player_id, sample.machine_picked))
+		build_tool = Simulation.BUILD_TOOL_MACHINE
 
 	if sample.machine_steps != 0:
 		var chosen: int = _stepped_machine(sim, player_id, sample.machine_steps)
@@ -578,12 +632,12 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 
 	# Gear comes before the trigger, so a player who swaps and shoots in one tick shoots
 	# what they swapped to — the same rule that puts `select_machine` before `build_machine`.
-	if sample.weapon_chosen != -1:
+	if sample.weapon_chosen != -1 and not in_build_mode:
 		var weapon: int = sim.query_definitions().weapon_gear_index(sample.weapon_chosen)
 		if weapon != -1:
 			actions.append(InputAction.equip_weapon(player_id, weapon))
 
-	if sample.slot_cycled != -1:
+	if sample.slot_cycled != -1 and not in_build_mode:
 		var next_component: int = _next_component(sim, player_id, sample.slot_cycled)
 		if next_component != -2:
 			actions.append(

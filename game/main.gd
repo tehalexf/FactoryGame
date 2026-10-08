@@ -121,6 +121,12 @@ func _input(event: InputEvent) -> void:
 			save_run()
 		elif key.keycode == PlayerController.KEY_LOAD and not key.echo:
 			load_run()
+		# How much of the HUD is on screen, here for the reason saving is here: it does
+		# nothing to the Run, it leaves the hash where it was, and a replay has nothing to
+		# reproduce. The brief is the default and this is the rest of the wall.
+		elif key.keycode == PlayerController.KEY_HUD_DETAIL and not key.echo:
+			if _world_view != null:
+				_world_view.set_hud_detailed(not _world_view.hud_is_detailed())
 	if event is InputEventMouseButton and (event as InputEventMouseButton).pressed:
 		_capture_the_mouse()
 

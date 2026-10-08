@@ -315,3 +315,348 @@ func test_the_markers_do_not_grow_the_scene_tree_as_a_factory_is_built() -> void
 	assert_eq(view.get_child_count(), nodes, "six Belts, no new nodes")
 	assert_eq(view.dangling_marker_count(), 12, "and all twelve ends marked")
 	view.free()
+
+
+# ── The one objective line ────────────────────────────────────────────────────
+# A Run opens on bare ground with 80 plate and no idea what to do. The line is a pure
+# function of the Run's state, so there is nothing to enter, nothing to skip, and it comes
+# back if the thing it was about stops being true.
+
+func test_a_fresh_run_is_told_to_put_a_miner_on_a_node() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	assert_true(Objective.line(sim).contains("Miner"), Objective.line(sim))
+	assert_true(Objective.line(sim).contains("node"), "and where to put it")
+
+
+func test_a_miner_on_bare_rock_has_not_done_the_first_thing() -> void:
+	# Telling a player they have done a step they have not is worse than saying nothing: a
+	# Miner off its Node banks no progress at all, and the line has to agree with that.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(20, 0, 20)
+		)
+	])
+	assert_true(Objective.line(sim).contains("Miner"), Objective.line(sim))
+
+
+func test_the_line_moves_on_as_the_opening_line_gets_built() -> void:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var definitions: Definitions = sim.query_definitions()
+
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0))
+	])
+	assert_true(Objective.line(sim).contains("Smelter"), Objective.line(sim))
+
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(0, 0, 5))
+	])
+	assert_true(Objective.line(sim).contains("Belt"), Objective.line(sim))
+
+	sim.step([InputAction.build_belt(0, Vector3i(1, 0, 2), Vector3i(1, 0, 4))])
+	assert_false(
+		Objective.line(sim).contains("Belt tool"),
+		"the Belt is fed at one end and lands at the other: %s" % Objective.line(sim)
+	)
+
+
+func test_a_belt_laid_on_open_ground_does_not_count_as_a_connection() -> void:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0))
+	])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(0, 0, 5))
+	])
+	sim.step([InputAction.build_belt(0, Vector3i(20, 0, 20), Vector3i(24, 0, 20))])
+	assert_true(
+		Objective.line(sim).contains("Belt tool"),
+		"a Belt nothing feeds taught the player nothing: %s" % Objective.line(sim)
+	)
+
+
+func test_the_line_goes_away_once_a_delivery_has_been_made() -> void:
+	# The loop has closed at least once: mined, crafted, moved and been paid for it. A hint
+	# line at the top of the screen after that is a hint line in the way.
+	var sim: Simulation = Simulation.new(1, 1)
+	assert_ne(Objective.line(sim), "", "there is something to say at the start")
+	var stocked: Simulation = _run_with_a_tier_completed()
+	assert_eq(Objective.line(stocked), "", "and nothing to say once a tier has landed")
+
+
+## A Run whose first Delivery tier wants one plate, handed over by the player standing where
+## a Run starts them — on the Nest's own crown, which is within reach of its counter.
+##
+## The shipped chain wants twenty coal, which is a Coal Miner and several minutes. The tier
+## is replaced rather than the clock wound forward, which is the substitution several suites
+## already make: what is under test is the objective line going quiet, not the shipped chain.
+func _run_with_a_tier_completed() -> Simulation:
+	var deliveries: String = (
+		"id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems\n"
+		+ "t01_first_crate,First Crate,1,iron_plate:1,miner_mk2,,\n"
+	)
+	# The hand-over reach widened, so the fixture does not have to walk the player to the
+	# Nest to prove something that is not about walking. Progression is physical and the
+	# reach is the rule that makes it so; `test_delivery` is where that rule is asserted.
+	var tuning: String = FileAccess.get_file_as_string("res://content/tuning.toml").replace(
+		"delivery_reach_metres = 5", "delivery_reach_metres = 80"
+	)
+	var definitions: Definitions = Definitions.parse(
+		FileAccess.get_file_as_string("res://content/machines.csv"),
+		FileAccess.get_file_as_string("res://content/recipes.csv"),
+		tuning,
+		FileAccess.get_file_as_string("res://content/waves.csv"),
+		deliveries,
+		FileAccess.get_file_as_string("res://content/gear.csv"),
+		FileAccess.get_file_as_string("res://content/stratagems.csv")
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	var sim: Simulation = Simulation.new(1, 1, definitions)
+	# Depth 1 is the shallowest a tier can be gated at, and Depth is derived from the Factory
+	# — a Miner actually working a Node — so the tier needs one standing before it will take
+	# anything. Which is the chain doing its job.
+	sim.step([
+		InputAction.build_machine(
+			0, definitions.machine_index("miner_mk1"), sim.query_node_tile(0)
+		)
+	])
+	sim.step([InputAction.deliver_to_nest(0)])
+	assert_true(sim.query_delivery_is_complete(0), "the premise of the assertion above")
+	return sim
+
+
+func test_the_hud_carries_the_objective_line() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.hud_text().contains(Objective.line(sim)), view.hud_text())
+	view.free()
+
+
+# ── A triaged HUD, and a Machine picker ──────────────────────────────────────
+# Fifty-three appended lines drawn over the Factory they describe. `hud_text` is still the
+# whole of what the HUD can say and the existing suite still asserts against it; what is
+# *shown* is the brief, and the wall is behind a key.
+
+func test_the_brief_hud_is_a_fraction_of_the_full_one() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var brief: int = view.hud_brief_text().split("\n").size()
+	var full: int = view.hud_text().split("\n").size()
+	assert_true(brief < full / 2, "brief %d lines against %d" % [brief, full])
+	assert_true(brief > 0, "and it still says something")
+	view.free()
+
+
+func test_the_brief_hud_keeps_what_the_player_is_doing_and_what_is_coming() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var brief: String = view.hud_brief_text()
+	assert_true(brief.contains(Objective.line(sim)), "the objective: %s" % brief)
+	assert_true(brief.contains("nest"), "what is at stake: %s" % brief)
+	assert_true(brief.contains("power"), "the gauge a Factory is read off: %s" % brief)
+	assert_true(brief.contains("build gun"), "what is in their hands: %s" % brief)
+	view.free()
+
+
+func test_the_rest_is_behind_a_key_and_the_key_says_so() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_false(view.hud_is_detailed(), "a Run opens on the brief")
+	assert_eq(view.shown_hud_text(), view.hud_brief_text())
+	assert_true(view.hud_brief_text().to_lower().contains("details"), "and names the key")
+
+	view.set_hud_detailed(true)
+	view.sync(sim)
+	assert_true(view.hud_is_detailed())
+	assert_eq(view.shown_hud_text(), view.hud_text(), "the whole wall, on request")
+	view.free()
+
+
+func test_a_machine_in_trouble_reaches_the_brief_even_so() -> void:
+	# Triage is not silence. The whole reason the wall existed is that a player mid-Wave has
+	# to know which Machine is in trouble; what was wrong was the forty lines around it.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(20, 0, 20)
+		)
+	])
+	_run(sim, 2)
+	view.sync(sim)
+	assert_true(sim.query_machine_is_starved(0), "the premise")
+	assert_true(view.hud_brief_text().contains("starved"), view.hud_brief_text())
+	view.free()
+
+
+func test_the_picker_has_a_cell_for_every_machine_and_one_for_the_belt() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(
+		view.machine_picker_cell_count(),
+		sim.query_definitions().machine_count() + 1,
+		"every Machine, and the Belt tool beside them"
+	)
+	view.free()
+
+
+func test_a_picker_cell_says_what_it_is_what_it_costs_and_whether_it_is_locked() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	assert_true(view.machine_picker_label(miner).contains("Miner Mk1"), view.machine_picker_label(miner))
+	assert_true(view.machine_picker_label(miner).contains("8"), "the plate it costs")
+	assert_false(view.machine_picker_is_locked(miner), "a Run opens able to build one")
+
+	var deep: int = sim.query_definitions().machine_index("miner_mk2")
+	assert_true(view.machine_picker_is_locked(deep), "and unable to build this one")
+	view.free()
+
+
+func test_the_picker_marks_what_is_on_the_build_gun() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var smelter: int = sim.query_definitions().machine_index("smelter_mk1")
+	sim.step([InputAction.select_machine(0, smelter)])
+	view.sync(sim)
+	assert_eq(view.machine_picker_selected(), smelter)
+
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	view.sync(sim)
+	assert_eq(
+		view.machine_picker_selected(),
+		sim.query_definitions().machine_count(),
+		"the Belt cell is the last one, and the Belt tool is what is in hand"
+	)
+	view.free()
+
+
+func test_a_picker_cell_carries_the_icon_of_what_the_machine_makes() -> void:
+	# The icons #20 generated and nothing used. A Machine's glyph is the Item it produces,
+	# which is the thing a player is actually looking for when they go hunting for a
+	# Smelter — and it means a new Machine gets a picture by having a Recipe rather than by
+	# somebody drawing one.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	assert_true(
+		view.machine_picker_icon_path(miner).contains("iron_ore"),
+		"a Miner digs ore, so ore is its glyph: %s" % view.machine_picker_icon_path(miner)
+	)
+	# #20 generated ten icons and the content has grown Items since — `iron_plate` is one
+	# with no picture. A Machine whose output has no icon reads by its name rather than by a
+	# broken one, which is the rule a Machine with no generated body already obeys.
+	var smelter: int = sim.query_definitions().machine_index("smelter_mk1")
+	assert_eq(view.machine_picker_icon_path(smelter), "", "no iron_plate icon exists yet")
+	view.free()
+
+
+# ── Reaching a Machine with a key ─────────────────────────────────────────────
+# The number row reads both ways and the hand decides which, exactly as the primary button
+# does. With the Build Gun out it is the picker; with the weapon out it is the weapon and
+# Gear-slot keys it always was.
+
+func test_a_number_key_puts_that_machine_on_the_build_gun() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var pressing: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	pressing.machine_picked = 3
+	# The same keypress carries the weapon reading too, because the polling cannot know
+	# which hand the player is in. This is the tick where that is decided.
+	pressing.weapon_chosen = 0
+
+	sim.step(controller.actions_for_tick(sim, 0, pressing))
+	assert_eq(
+		sim.query_player_selected_machine_index(0),
+		3,
+		"the fourth cell of the picker is what the fourth key reaches"
+	)
+
+
+func test_the_same_key_equips_a_weapon_with_the_weapon_out() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	sim.step([InputAction.set_build_mode(0, false)])
+	var before: String = sim.query_player_selected_machine(0)
+
+	var pressing: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	pressing.machine_picked = 3
+	pressing.weapon_chosen = 0
+	sim.step(controller.actions_for_tick(sim, 0, pressing))
+	assert_eq(
+		sim.query_player_selected_machine(0),
+		before,
+		"the Build Gun is holstered, so the number row is not its picker"
+	)
+	assert_eq(
+		sim.query_player_weapon_index(0),
+		sim.query_definitions().weapon_gear_index(0),
+		"it equipped the first weapon frame instead"
+	)
+
+
+func test_a_number_key_past_the_end_of_the_machine_list_does_nothing() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var before: String = sim.query_player_selected_machine(0)
+	var pressing: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	pressing.machine_picked = PlayerController.PICK_KEY_COUNT - 1
+	sim.step(controller.actions_for_tick(sim, 0, pressing))
+	if sim.query_definitions().machine_count() <= PlayerController.PICK_KEY_COUNT - 1:
+		assert_eq(sim.query_player_selected_machine(0), before, "nothing to select")
+	else:
+		assert_ne(sim.query_player_selected_machine(0), before, "the tenth Machine")
+
+
+func test_the_number_row_is_the_one_thing_two_acts_share_and_it_shares_by_hand() -> void:
+	# `test_no_two_actions_share_a_key` reads the key constants and would not see this,
+	# because the picker does not have constants of its own: it reads the same `1`-`9` the
+	# weapon and slot keys do, plus `0`. That sharing is deliberate and is the primary
+	# button's arrangement — so it is asserted here rather than left to be noticed, and the
+	# claim is the one that matters: in either hand, one press does exactly one thing.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var pressing: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	pressing.machine_picked = 0
+	pressing.weapon_chosen = 0
+	pressing.slot_cycled = 0
+
+	var in_build: Array = controller.actions_for_tick(sim, 0, pressing)
+	assert_eq(_count_of(in_build, InputAction.Kind.SELECT_MACHINE), 1)
+	assert_eq(_count_of(in_build, InputAction.Kind.EQUIP_WEAPON), 0)
+	assert_eq(_count_of(in_build, InputAction.Kind.FIT_COMPONENT), 0)
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	var in_combat: Array = controller.actions_for_tick(sim, 0, pressing)
+	assert_eq(_count_of(in_combat, InputAction.Kind.SELECT_MACHINE), 0)
+	assert_eq(_count_of(in_combat, InputAction.Kind.EQUIP_WEAPON), 1)
+	# Not the slot: a fresh Run has unlocked no components, and a ring with nothing in it
+	# sends no intent at all. What matters here is that the *picker* did not fire.
+
+	assert_true(
+		PlayerController.KEY_HUD_DETAIL != PlayerController.KEY_PICK_TENTH,
+		"and the two keys #36 did add are not each other"
+	)
+
+
+func _count_of(actions: Array, kind: int) -> int:
+	var found: int = 0
+	for action: InputAction in actions:
+		if action.kind == kind:
+			found += 1
+	return found
