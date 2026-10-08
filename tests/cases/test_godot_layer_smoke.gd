@@ -201,17 +201,31 @@ func test_the_wheel_steps_through_the_machines_and_wraps() -> void:
 	var count: int = sim.query_definitions().machine_count()
 	assert_true(count >= 2, "the premise of the rest")
 
-	var ids: PackedStringArray = sim.query_definitions().machine_ids()
+	# **The wheel walks the chain, not the alphabet** (#53). It and the number row are two
+	# ways of reaching the same row of cells, so they walk the same order — otherwise one
+	# click off the Miner lands on whatever sorts next by id.
+	var definitions: Definitions = sim.query_definitions()
+	# A Run opens with whatever Machine sits at index 0 of the sorted table on the Build
+	# Gun, which is not where the chain starts — so where a step *lands* is read off the
+	# cell the Build Gun is on rather than assumed to be the second cell.
+	var opened_on: int = BuildChain.cell_of(
+		definitions, sim.query_player_selected_machine_index(0)
+	)
+	var next_along: String = definitions.machine_at(
+		BuildChain.order(definitions)[opened_on + 1]
+	).id
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.machine_steps = 1
 	sim.step(controller.actions_for_tick(sim, 0, sample))
-	assert_eq(sim.query_player_selected_machine(0), ids[1], "one step is the next by id")
+	assert_eq(
+		sim.query_player_selected_machine(0), next_along, "one step is the next in the chain"
+	)
 
 	# A full lap of the list comes back to where it started, rather than running off the
 	# end of the Machine table.
 	for step: int in range(count):
 		sim.step(controller.actions_for_tick(sim, 0, sample))
-	assert_eq(sim.query_player_selected_machine(0), ids[1], "stepping all the way wraps")
+	assert_eq(sim.query_player_selected_machine(0), next_along, "stepping all the way wraps")
 
 
 func test_a_demolish_returns_the_materials_the_build_spent() -> void:

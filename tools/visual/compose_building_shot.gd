@@ -264,6 +264,17 @@ func _shortest_turn(turns: float) -> float:
 ## renderer should be told about: [active, anchor, corner axis].
 func _set_up_the_shot(sim: Simulation, view: WorldView, preset: String) -> Array:
 	var definitions: Definitions = sim.query_definitions()
+	# **The Build Gun has to be in the player's hands, and #53 is how we found out it was
+	# not.** A Run opens holstered since #42, and nothing here ever drew it — so from that
+	# ticket onward the two building presets rendered a player who cannot build: no hologram,
+	# no hotbar, and a HUD line saying "[B] to draw it". The committed `building_placing.png`
+	# is older than that and the tool could no longer reproduce it, which is the failure mode
+	# this whole shot script exists to catch, caught in the script itself.
+	#
+	# Not the running preset: that one is a shot of a Factory working, and a hotbar across
+	# the bottom of it is the Build Gun in the way of the subject.
+	if preset != "running":
+		_step(sim, [InputAction.set_build_mode(0, true)])
 	if preset == "placing":
 		_step(sim, [
 			InputAction.select_machine(0, definitions.machine_index("smelter_mk1")),

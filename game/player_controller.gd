@@ -556,13 +556,16 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# The number row, with the Build Gun out. Before the wheel and before the click, so a
 	# player who presses a key and clicks in one tick places what they pressed — the rule
 	# that already makes a scroll-and-click place what the player scrolled to.
-	if (
-		sample.machine_picked != -1
-		and gun_in_hand
-		and sample.machine_picked < sim.query_definitions().machine_count()
-	):
-		actions.append(InputAction.select_machine(player_id, sample.machine_picked))
-		build_tool = Simulation.BUILD_TOOL_MACHINE
+	# **The key names a cell of the hotbar, and the cell names the Machine.** Since #53 the
+	# hotbar is ordered by the chain rather than by Machine id, so `1` is the Miner and not
+	# the Ammo Press — and the mapping is `BuildChain`'s, read here and by the cell the key is
+	# printed on. Two readings of one derivation, because a controller with its own idea of
+	# the order would put a player's key press on the Machine printed three cells away.
+	if sample.machine_picked != -1 and gun_in_hand:
+		var picked: int = _machine_in_cell(sim, sample.machine_picked)
+		if picked != -1:
+			actions.append(InputAction.select_machine(player_id, picked))
+			build_tool = Simulation.BUILD_TOOL_MACHINE
 
 	# **The wheel reads by hand, exactly as the number row above it does.** A player
 	# holding a rifle who scrolls is not choosing a Machine — they have no hologram to
@@ -993,14 +996,28 @@ func _nearest_downed(sim: Simulation, player_id: int) -> int:
 
 ## The Machine `steps` along from the one on the Build Gun, wrapping at both ends, or -1
 ## when the definitions carry no Machines to step through.
+##
+## **Stepped along the chain, not along the Machine table.** The wheel and the number row are
+## two ways of reaching the same row of cells, so they walk the same order — otherwise a
+## player who scrolls one click off the Miner lands on whatever sorts next by id, which is
+## the thing #53 was opened about.
 func _stepped_machine(sim: Simulation, player_id: int, steps: int) -> int:
-	var count: int = sim.query_definitions().machine_count()
-	if count == 0:
+	var definitions: Definitions = sim.query_definitions()
+	var order: PackedInt64Array = BuildChain.order(definitions)
+	if order.is_empty():
 		return -1
-	var current: int = sim.query_player_selected_machine_index(player_id)
+	var current: int = BuildChain.cell_of(
+		definitions, sim.query_player_selected_machine_index(player_id)
+	)
 	if current == -1:
 		current = 0
-	return posmod(current + steps, count)
+	return order[posmod(current + steps, order.size())]
+
+
+## Which Machine the hotbar's `cell` is about, or -1 for a cell past the end of the row.
+func _machine_in_cell(sim: Simulation, cell: int) -> int:
+	var order: PackedInt64Array = BuildChain.order(sim.query_definitions())
+	return -1 if cell < 0 or cell >= order.size() else order[cell]
 
 
 ## One `WITHDRAW_FROM_NEST` intent per Item the Machine on the Build Gun is still short of,
