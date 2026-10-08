@@ -122,6 +122,35 @@ const SIEGE_HULK_SIZE_METRES: float = 4.0
 const SIEGE_HULK_HULL: Color = Color(0.17, 0.18, 0.19)
 const SIEGE_HULK_VENT: Color = Color(0.95, 0.42, 0.10)
 
+## How far behind its centre a Siege Hulk's vent is modelled, in **body heights** — the same
+## normalised units `EnemyBodies` bakes a character into, so the weak point is a fraction of
+## the Hulk and stays on its back whatever `siege_hulk.hit_height_metres` is tuned to.
+const SIEGE_HULK_VENT_OFFSET: float = 0.30
+
+## The shader that skins an Enemy out of its body's texture of bone poses. One file, shared by
+## every kind and every surface, because what differs between a Crawler and a Breaker is which
+## texture and which tint — not how a vertex gets where it goes.
+const ENEMY_SKIN_SHADER: String = "res://game/enemy_skin.gdshader"
+
+## The eyes, which the committed characters carry as their own `Glow` material. An ember
+## rather than a colour out of the HUD's vocabulary: red is load-bearing on a Turret's dry
+## magazine and amber on a starved Machine, and an Enemy must not borrow either.
+##
+## **Measured, and currently invisible.** The KayKit skulls are closed meshes and their 80
+## glow vertices sit 0.13 to 0.19 m *behind* the front of the skull, so the eye sockets a
+## player sees are brow and cheek rather than openings and nothing of this reaches the
+## screen. That is a property of the art and not of the plumbing — putting the same emission
+## on the body surface renders four glowing skeletons with full bloom — so the wiring stays,
+## and the day a character ships with its glow geometry exposed it lights up for nothing.
+##
+## It is recorded here rather than worked around because every workaround is worse: moving an
+## artist's vertices outward is the renderer editing the model, and `depth_test_disabled`
+## would draw a Crawler's eyes through the Factory wall it is standing behind. The honest
+## consequence is that **the swarm has no distance-readability aid**, which is the open half
+## of this ticket — see `docs/ASSET_PIPELINE.md` section 11.
+const ENEMY_EYE_COLOUR: Color = Color(1.0, 0.42, 0.10)
+const ENEMY_EYE_ENERGY: float = 6.0
+
 ## How big a Hive is, in metres, and what colour. A mound rather than a building: it is the
 ## Enemy's, not the players', so it reads as grown rather than welded.
 const HIVE_SIZE_METRES: float = 4.0
@@ -229,19 +258,55 @@ var _belt_transforms: PackedFloat32Array = PackedFloat32Array()
 ## Items — one node per Item would be the first thing to fall over.
 var _item_meshes: MultiMeshInstance3D = null
 
-## Every Enemy on the Map, as instances of one mesh.
+## Every Enemy on the Map, as instances of one mesh **per kind**.
 ##
-## **One MultiMesh, never a node per Enemy.** ADR 0001 keeps Godot a renderer, and
+## **One MultiMesh a kind, never a node per Enemy.** ADR 0001 keeps Godot a renderer, and
 ## DESIGN.md's ~100-Enemy target rests on exactly this: idiomatic engine agents cap out
 ## around 150-250 before frame times collapse, where instanced array entries reach
 ## thousands. Milestone 1 draws twenty Crawlers through this path so that the Chaff tier
 ## needs no new drawing code at all — only more array entries.
-var _enemy_meshes: MultiMeshInstance3D = null
+##
+## **One a kind rather than one in total, since #38**, and that is a change of count and
+## not of rule: a Crawler and a Breaker drew the same procedural carapace out of one buffer,
+## so the only thing separating "the sense of threat" from "the threat" on screen was a line
+## of HUD. A MultiMesh can hold exactly one mesh, so distinguishable kinds mean a buffer a
+## kind — three nodes, bounded by `EnemyKind.KIND_NAMES`, created on the first Enemy of each
+## kind and never again. `test_baking_a_character_adds_no_node_to_the_view` is what holds
+## that bound.
+var _swarm_meshes: Dictionary = {}
 
-## The instance transforms handed to the Enemy MultiMesh, in the same flat twelve-floats
-## layout the Items use. Rebuilt from `query_enemy_*` every frame and uploaded in one
-## assignment; nothing ever reads a position back out of it to make a decision.
+## The instance data handed to each kind's MultiMesh, keyed by kind.
+##
+## **Sixteen floats an instance, not twelve**: twelve for the transform and four more for the
+## per-instance custom data the skinning shader reads its animation frame out of. A MultiMesh
+## with `use_custom_data` has the wider stride and **refuses a narrower array outright**,
+## leaving every instance at the identity — which is what the Walls did before #32, four of
+## them in a heap at the world origin. A kind drawn with the procedural fallback body has no
+## shader and no custom data, so its buffer is the plain twelve.
+var _swarm_uploads: Dictionary = {}
+
+## The instance transforms of the whole swarm — every kind but the boss — in Enemy *index*
+## order, in the flat twelve-float layout the Items use.
+##
+## Kept beside the per-kind upload buffers rather than derived from them, because this is the
+## **readable record of what was drawn** and the per-kind buffers are bucketed by kind: a
+## MultiMesh keeps its own copy on the rendering server where a headless test cannot see it,
+## so an assertion about where Enemy 0 was drawn needs a record in Enemy 0's own order.
+## Nothing ever reads a position back out of it to make a decision.
 var _enemy_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## The baked character bodies, and one animator per kind holding that kind's clip lengths.
+##
+## Both are `RefCounted` and hold no node: `EnemyBodies` instantiates a character scene to read
+## its rig and frees it inside one call, and `EnemyAnimator` touches no asset at all.
+##
+## **An animator a kind rather than one shared one**, because the clip lengths differ per kind
+## and a shared animator would have to be told them again for every Enemy. It was, in the first
+## version, and the cost was measurable: `EnemyBodies.Body.frame_counts()` duplicates a
+## Dictionary, so a Wave of seventy paid for seventy Dictionary copies a frame. Told once, when
+## the kind's body is baked.
+var _enemy_bodies: EnemyBodies = EnemyBodies.new()
+var _enemy_animators: Dictionary = {}
 
 ## Every Siege Hulk on the Map: its hull, and the vent on its back.
 ##
@@ -250,8 +315,10 @@ var _enemy_transforms: PackedFloat32Array = PackedFloat32Array()
 ## buffers only because it needs its own *mesh*: a boss drawn with the Crawler's body at the
 ## Crawler's size would be unreadable, and the vent has to be a second material for the weak
 ## point to be visible at all. Two fixed nodes however many Hulks arrive.
-var _hulk_meshes: MultiMeshInstance3D = null
 var _hulk_vent_meshes: MultiMeshInstance3D = null
+## The Hulks' readable record of what was drawn, in Enemy index order, written by
+## `_sync_enemies` along with every other kind's. Kept separate from `_enemy_transforms`
+## because every Enemy test written before #38 means "the swarm" by that one.
 var _hulk_transforms: PackedFloat32Array = PackedFloat32Array()
 var _hulk_vent_transforms: PackedFloat32Array = PackedFloat32Array()
 
@@ -300,6 +367,11 @@ var _item_transforms: PackedFloat32Array = PackedFloat32Array()
 
 ## How many floats one MultiMesh instance transform occupies in TRANSFORM_3D format.
 const FLOATS_PER_INSTANCE: int = 12
+
+## And how many it occupies when the MultiMesh also carries per-instance custom data:
+## twelve for the transform and four more for the `INSTANCE_CUSTOM` the skinning shader
+## reads. The engine refuses a buffer of the wrong stride rather than padding it.
+const FLOATS_PER_SKINNED_INSTANCE: int = 16
 
 ## The generated bodies, merged and cached by id, with `null` recorded for a body the
 ## pipeline has not produced. One Mesh per *kind* of Machine and not one per Machine:
@@ -532,7 +604,7 @@ func sync(sim: Simulation) -> void:
 	_sync_turret_gauges(sim)
 	_sync_silo_gauges(sim)
 	_sync_enemies(sim)
-	_sync_siege_hulks(sim)
+	_sync_siege_hulk_vents(sim)
 	_sync_hives(sim)
 	_sync_shell_markers(sim)
 	_sync_belts(sim)
@@ -592,11 +664,71 @@ func pending_breach_marker_count() -> int:
 	return _pending_breach_meshes.size()
 
 
-## How many Enemies are on screen. Instances of one mesh, so this is a count of
-## transforms rather than a count of nodes — there is one node for the whole swarm.
-func enemy_instance_count() -> int:
+## How many Enemies are on screen. Instances of a mesh, so this is a count of transforms
+## rather than a count of nodes — there is one node for each *kind*, however many arrive.
+##
+## With no argument: the whole swarm, every kind but the boss, which is what the Enemy
+## tests written before #38 mean by it. With a kind: that kind's own buffer, which is how a
+## test says "every Breaker is an instance of the Breaker's mesh".
+func enemy_instance_count(kind: int = -1) -> int:
+	if kind < 0:
+		@warning_ignore("integer_division")
+		return _enemy_transforms.size() / FLOATS_PER_INSTANCE
+	if not _swarm_uploads.has(kind):
+		return 0
 	@warning_ignore("integer_division")
-	return _enemy_transforms.size() / FLOATS_PER_INSTANCE
+	return _swarm_uploads[kind].size() / _stride_for(kind)
+
+
+## Which mesh a kind is drawn with, as the Mesh's own object id, or 0 for a kind nothing is
+## drawn for. For the assertion that two kinds are not the same mesh — the cheapest version
+## of the claim `machine_silhouette.py` makes about Machines, which is that two things a
+## player has to respond to differently must not look the same.
+func enemy_mesh_id(kind: int) -> int:
+	if not _swarm_meshes.has(kind):
+		return 0
+	var node: MultiMeshInstance3D = _swarm_meshes[kind]
+	if node.multimesh == null or node.multimesh.mesh == null:
+		return 0
+	return node.multimesh.mesh.get_instance_id()
+
+
+## How big one instance of a kind was drawn, as the uniform scale on its basis. The bodies are
+## baked one metre tall, so this is the height the Simulation said that Enemy is.
+func enemy_instance_scale(kind: int, instance: int) -> float:
+	if not _swarm_uploads.has(kind):
+		return 0.0
+	var buffer: PackedFloat32Array = _swarm_uploads[kind]
+	var stride: int = _stride_for(kind)
+	var base: int = instance * stride
+	if instance < 0 or base + stride > buffer.size():
+		return 0.0
+	return Vector3(buffer[base + 0], buffer[base + 4], buffer[base + 8]).length()
+
+
+## Which row of its body's pose texture one instance was drawn on — the per-instance animation
+## frame, and the observable half of "the swarm is not in visible lockstep". Returns -1 for a
+## kind drawn through the procedural fallback, which carries no custom data because it has no
+## animation to carry.
+func enemy_instance_pose_row(kind: int, instance: int) -> int:
+	if not _swarm_uploads.has(kind) or _stride_for(kind) != FLOATS_PER_SKINNED_INSTANCE:
+		return -1
+	var buffer: PackedFloat32Array = _swarm_uploads[kind]
+	var base: int = instance * FLOATS_PER_SKINNED_INSTANCE
+	if instance < 0 or base + FLOATS_PER_SKINNED_INSTANCE > buffer.size():
+		return -1
+	return int(buffer[base + 12])
+
+
+## How wide one kind's instance data is. Sixteen floats where a baked body gave it a skinning
+## shader to feed, twelve where it is drawing the procedural fallback.
+func _stride_for(kind: int) -> int:
+	if not _swarm_meshes.has(kind):
+		return FLOATS_PER_INSTANCE
+	var node: MultiMeshInstance3D = _swarm_meshes[kind]
+	if node.multimesh != null and node.multimesh.use_custom_data:
+		return FLOATS_PER_SKINNED_INSTANCE
+	return FLOATS_PER_INSTANCE
 
 
 ## How many Siege Hulks and Hives are on screen, as instances rather than nodes. For the smoke
@@ -895,6 +1027,69 @@ static func _write_instance(
 	buffer[base + 9] = 0.0
 	buffer[base + 10] = across
 	buffer[base + 11] = where.z
+
+
+## Writes one instance with a yaw about Y, a uniform scale and a position, into a plain
+## twelve-float buffer. `_write_instance` with a size, for the meshes that are modelled in the
+## same normalised units a baked body is and placed by the Simulation's own figure for how big
+## the thing is.
+static func _write_scaled_instance(
+	buffer: PackedFloat32Array, instance: int, where: Vector3, yaw: float, scale: float
+) -> void:
+	var base: int = instance * FLOATS_PER_INSTANCE
+	var along: float = sin(yaw) * scale
+	var across: float = cos(yaw) * scale
+	buffer[base + 0] = across
+	buffer[base + 1] = 0.0
+	buffer[base + 2] = along
+	buffer[base + 3] = where.x
+	buffer[base + 4] = 0.0
+	buffer[base + 5] = scale
+	buffer[base + 6] = 0.0
+	buffer[base + 7] = where.y
+	buffer[base + 8] = -along
+	buffer[base + 9] = 0.0
+	buffer[base + 10] = across
+	buffer[base + 11] = where.z
+
+
+## Writes one instance of a skinned body: a yaw about Y, a uniform scale, a position, and
+## the four floats of per-instance custom data the skinning shader reads.
+##
+## **Sixteen floats, and the stride is not negotiable.** A MultiMesh with `use_custom_data`
+## expects twelve for the transform and four more after them, and assigning a narrower array
+## to its `buffer` is refused outright — every instance stays at the identity, which is what
+## the Walls did before #32: four of them in a heap at the world origin with an engine error
+## a frame. The custom data carries the animation frame and the Enemy's remaining health, and
+## nothing else: there is no per-Crawler object anywhere for anything else to live in.
+static func _write_skinned_instance(
+	buffer: PackedFloat32Array,
+	instance: int,
+	where: Vector3,
+	yaw: float,
+	scale: float,
+	pose_row: int,
+	health: float
+) -> void:
+	var base: int = instance * FLOATS_PER_SKINNED_INSTANCE
+	var along: float = sin(yaw) * scale
+	var across: float = cos(yaw) * scale
+	buffer[base + 0] = across
+	buffer[base + 1] = 0.0
+	buffer[base + 2] = along
+	buffer[base + 3] = where.x
+	buffer[base + 4] = 0.0
+	buffer[base + 5] = scale
+	buffer[base + 6] = 0.0
+	buffer[base + 7] = where.y
+	buffer[base + 8] = -along
+	buffer[base + 9] = 0.0
+	buffer[base + 10] = across
+	buffer[base + 11] = where.z
+	buffer[base + 12] = float(pose_row)
+	buffer[base + 13] = health
+	buffer[base + 14] = 0.0
+	buffer[base + 15] = 0.0
 
 
 ## The position an instance was drawn at, out of a MultiMesh buffer. A MultiMesh keeps its
@@ -1302,77 +1497,302 @@ func _sync_pending_breaches(sim: Simulation) -> void:
 		)
 
 
-## Every Enemy on the Map, at the position the Simulation says it is at.
+## Every Enemy on the Map, at the position the Simulation says it is at, wearing the
+## character its kind is cast as and on the frame of the clip it is playing.
 ##
-## One MultiMesh for the whole swarm and **no node per Enemy** (ADR 0001). That is the
-## decision the ~100-Enemy target depends on, and it is made here once so that the Chaff
-## tier arriving later is more array entries rather than new drawing code.
+## One MultiMesh **a kind** and no node per Enemy (ADR 0001). That is the decision the
+## ~100-Enemy target depends on, and #38 kept it while giving the swarm animation: the
+## animation lives in a texture of skinning matrices that the vertex shader samples, and
+## which row an Enemy is on arrives as four floats of per-instance custom data. There is
+## nothing per Crawler anywhere on this side of the boundary — no object, no node, no
+## remembered frame.
 ##
 ## No interpolation and no remembered previous frame, for the reason the Items have none:
-## the Simulation moves a Crawler a fixed amount every tick and this draws it there.
+## the Simulation moves a Crawler a fixed amount every tick and this draws it there. The
+## animation obeys the same rule from the other direction — `EnemyAnimator` derives the frame
+## from the tick, the Enemy's spawn tick and its serial, so nothing here is timed by a clock.
 func _sync_enemies(sim: Simulation) -> void:
-	if _enemy_meshes == null:
-		_enemy_meshes = MultiMeshInstance3D.new()
-		var instanced: MultiMesh = MultiMesh.new()
-		instanced.transform_format = MultiMesh.TRANSFORM_3D
-		instanced.mesh = _crawler_mesh()
-		_enemy_meshes.multimesh = instanced
-		add_child(_enemy_meshes)
+	var kinds: int = EnemyKind.KIND_NAMES.size()
+	var counts: PackedInt32Array = PackedInt32Array()
+	counts.resize(kinds)
+	var swarm: int = 0
+	for index: int in range(sim.query_enemy_count()):
+		var kind: int = sim.query_enemy_kind(index)
+		if kind < 0 or kind >= kinds:
+			continue
+		counts[kind] += 1
+		if kind != Simulation.ENEMY_KIND_SIEGE_HULK:
+			swarm += 1
 
-	# The swarm, which is every kind but the boss: a Siege Hulk is four metres of armour and is
-	# drawn by `_sync_siege_hulks` through its own mesh. Same arrays, same queries, different
-	# silhouette — which is the whole of what "a boss is one more array entry" costs the
-	# renderer.
-	var total: int = 0
+	# One node a kind, **every kind, on the first sync** — before a Breach has released
+	# anything. Eagerly rather than on the first Enemy of each kind, for two reasons that
+	# point the same way: it is what keeps `test_an_enemy_is_never_a_node`'s claim the
+	# strongest version of itself, zero growth rather than "no more than one a kind"; and
+	# baking three characters is the most expensive thing this file does, so paying for it at
+	# load is better than paying for it on the frame the first Wave arrives, which is the one
+	# frame of a Run where a hitch is least affordable.
+	#
+	# The resize is unconditional for the same reason the loop is: a buffer left at its old
+	# size would go on drawing a Wave that has been killed.
+	for kind: int in range(kinds):
+		_ensure_swarm_mesh(kind)
+		_swarm_uploads[kind].resize(counts[kind] * _stride_for(kind))
+	_enemy_transforms.resize(swarm * FLOATS_PER_INSTANCE)
+	_hulk_transforms.resize(counts[Simulation.ENEMY_KIND_SIEGE_HULK] * FLOATS_PER_INSTANCE)
+
+	var written: PackedInt32Array = PackedInt32Array()
+	written.resize(kinds)
+	var swarm_instance: int = 0
+	var hulk_instance: int = 0
 	for index: int in range(sim.query_enemy_count()):
-		if sim.query_enemy_kind(index) != Simulation.ENEMY_KIND_SIEGE_HULK:
-			total += 1
-	_enemy_transforms.resize(total * FLOATS_PER_INSTANCE)
-	var instance: int = 0
-	for index: int in range(sim.query_enemy_count()):
-		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_SIEGE_HULK:
+		var kind: int = sim.query_enemy_kind(index)
+		if kind < 0 or kind >= kinds:
 			continue
 		var where: FixedVec2 = sim.query_enemy_position_metres(index)
-		# A Crawler faces the way the flowfield is sending it, which is a query like
-		# everything else here — the Simulation decides where it is going and this draws
-		# it pointing that way. A Crawler on a tile the field cannot route keeps the
-		# heading it had, which is the same thing the Simulation does with it.
-		var heading: int = sim.query_flow_direction(sim.query_enemy_tile(index))
-		var yaw: float = _yaw_for_direction(heading) if heading >= 0 else 0.0
-		_write_instance(
-			_enemy_transforms,
-			instance,
-			Vector3(Fixed.to_float(where.x), 0.0, Fixed.to_float(where.z)),
-			yaw
+		var at: Vector3 = Vector3(Fixed.to_float(where.x), 0.0, Fixed.to_float(where.z))
+		var yaw: float = _enemy_yaw(sim, index, kind)
+		# The body is baked one metre tall, so the scale **is** the height the Simulation
+		# resolves a round against. "A body is placed, never measured" from the other end:
+		# a constant here would detach what a player shoots at from what they can see,
+		# which is #41's ownerless red rectangle in a different costume.
+		var height: float = Fixed.to_float(sim.query_enemy_hit_height_metres(index))
+		if height <= 0.0:
+			height = ENEMY_SIZE_METRES
+
+		if kind == Simulation.ENEMY_KIND_SIEGE_HULK:
+			_write_instance(_hulk_transforms, hulk_instance, at, yaw)
+			hulk_instance += 1
+		else:
+			_write_instance(_enemy_transforms, swarm_instance, at, yaw)
+			swarm_instance += 1
+
+		var buffer: PackedFloat32Array = _swarm_uploads[kind]
+		if _stride_for(kind) == FLOATS_PER_SKINNED_INSTANCE:
+			_write_skinned_instance(
+				buffer,
+				written[kind],
+				at,
+				yaw,
+				height,
+				_pose_row(sim, index, kind),
+				_health_fraction(sim, index)
+			)
+		else:
+			# The procedural fallback is modelled at its own size rather than normalised, so
+			# it is placed and not scaled — the rule it has always obeyed.
+			_write_instance(buffer, written[kind], at, yaw)
+		_swarm_uploads[kind] = buffer
+		written[kind] += 1
+
+	for kind: int in _swarm_meshes.keys():
+		var node: MultiMeshInstance3D = _swarm_meshes[kind]
+		node.multimesh.instance_count = counts[kind] if kind < kinds else 0
+		if node.multimesh.instance_count > 0:
+			node.multimesh.buffer = _swarm_uploads[kind]
+
+
+## Which way an Enemy of this kind is pointing, in radians.
+##
+## A Siege Hulk holds a facing *point* — the Simulation needs one for the weak-point test,
+## which is the sign of a dot product rather than an angle — so the `atan2` is here, on the
+## outbound side of the boundary where a float belongs. Everything else faces the way the
+## flowfield is sending it, which is a query like everything else: the Simulation decides
+## where it is going and this draws it pointing that way. An Enemy on a tile the field cannot
+## route keeps the heading it had, which is what the Simulation does with it too.
+func _enemy_yaw(sim: Simulation, index: int, kind: int) -> float:
+	if kind == Simulation.ENEMY_KIND_SIEGE_HULK:
+		var where: FixedVec2 = sim.query_enemy_position_metres(index)
+		var facing: FixedVec2 = sim.query_enemy_facing_point_metres(index)
+		var nose_x: float = Fixed.to_float(facing.x) - Fixed.to_float(where.x)
+		var nose_z: float = Fixed.to_float(facing.z) - Fixed.to_float(where.z)
+		var length: float = sqrt(nose_x * nose_x + nose_z * nose_z)
+		if length <= 0.0:
+			return 0.0
+		# `_write_instance` maps local +z to (sin yaw, cos yaw), so the yaw that points the
+		# nose at a place is atan2 of the gap.
+		return atan2(nose_x / length, nose_z / length)
+	var heading: int = sim.query_flow_direction(sim.query_enemy_tile(index))
+	return _yaw_for_direction(heading) if heading >= 0 else 0.0
+
+
+## Which row of its body's pose texture this Enemy is on.
+##
+## Everything that decides it is a `query_*`, and `EnemyAnimator` is where the rule lives —
+## this is only the wiring. A kind with no baked body has no texture to index and reads 0,
+## which the fallback path never looks at.
+func _pose_row(sim: Simulation, index: int, kind: int) -> int:
+	var body: EnemyBodies.Body = _enemy_bodies.body_for(kind)
+	if body == null or not _enemy_animators.has(kind):
+		return 0
+	var animator: EnemyAnimator = _enemy_animators[kind]
+	var facts: EnemyAnimator.Facts = EnemyAnimator.Facts.new()
+	facts.tick = sim.query_tick()
+	facts.spawn_tick = sim.query_enemy_spawn_tick(index)
+	facts.serial = sim.query_enemy_serial(index)
+	facts.attacking = sim.query_enemy_is_attacking(index)
+	# Holding is what is left of a Siege Hulk that has halted with nothing in reach; a
+	# Crawler with a route is always walking it, so nothing else ever holds.
+	facts.holding = (
+		kind == Simulation.ENEMY_KIND_SIEGE_HULK and not sim.query_enemy_is_bombarding(index)
+	)
+	var cue: EnemyAnimator.Cue = animator.cue_for(facts)
+	return body.row_of(cue.role, cue.frame)
+
+
+## How much of an Enemy's health is left, as a fraction, for the shader to darken it by. A
+## Crawler a Turret has been working on reads as hurt without a gauge over it — the Machines
+## get gauges because a player has to *triage* them, and an Enemy only has to look wrong.
+func _health_fraction(sim: Simulation, index: int) -> float:
+	var most: int = sim.query_enemy_max_health(index)
+	if most <= 0:
+		return 1.0
+	return clampf(float(sim.query_enemy_health(index)) / float(most), 0.0, 1.0)
+
+
+## The MultiMesh one kind of Enemy is drawn through, created on the first one to arrive.
+##
+## A kind with a baked character gets the skinning shader and per-instance custom data; a kind
+## with none gets the procedural carapace and no custom data at all. **A missing body is an
+## ordinary state and not a warning**, the rule a Machine with no generated `.glb` already
+## obeys: adding an Enemy kind is four tuning keys and a row in `content/waves.csv`, and it is
+## never blocked on art.
+func _ensure_swarm_mesh(kind: int) -> void:
+	if _swarm_meshes.has(kind):
+		return
+	var body: EnemyBodies.Body = _enemy_bodies.body_for(kind)
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	if body != null:
+		var animator: EnemyAnimator = EnemyAnimator.new()
+		animator.set_frame_counts(body.frame_counts())
+		_enemy_animators[kind] = animator
+		instanced.use_custom_data = true
+		instanced.mesh = _skinned_mesh(kind, body)
+		# **No `custom_aabb`, and that is a decision rather than an omission.** The shader
+		# moves vertices the engine cannot see, so the obvious thing is to declare a box big
+		# enough to hold the animation — but a `custom_aabb` is in the *node's* space, and
+		# this node sits at the view's origin while the Wave is forty metres away, so a box
+		# around the origin culls the entire swarm. That is exactly what the first version
+		# did: a render came back as empty ground with a Siege Hulk's vent floating on the
+		# horizon, because the vent's MultiMesh had no such box and the bodies' did.
+		#
+		# What the engine computes instead is conservative here by construction. It takes
+		# the mesh's own AABB — the **unnormalised** rest pose, 1.8 m for a Minion and 3.5 m
+		# for a Golem — and scales it by each instance's transform, which is the body's
+		# height. So a 1.6 m Crawler is bounded by a 2.9 m box and a 3.2 m Hulk by an 11 m
+		# one: eighty per cent of headroom in every direction, which is far more than a
+		# raised arm needs.
+	else:
+		instanced.mesh = (
+			_siege_hulk_hull_mesh()
+			if kind == Simulation.ENEMY_KIND_SIEGE_HULK
+			else _crawler_mesh()
 		)
-		instance += 1
+	node.multimesh = instanced
+	add_child(node)
+	_swarm_meshes[kind] = node
+	_swarm_uploads[kind] = PackedFloat32Array()
 
-	_enemy_meshes.multimesh.instance_count = total
-	if total > 0:
-		_enemy_meshes.multimesh.buffer = _enemy_transforms
 
-
-## Every Siege Hulk on the Map, hull and vent, turned to face what it is pointed at.
+## One kind's baked mesh with every surface repainted through the skinning shader.
 ##
-## **The yaw comes out of `query_enemy_facing_point_metres` rather than out of a stored angle**,
-## because the Simulation holds a *point* — a point reduces the weak-point test to the sign of a
-## dot product and needs no arc-tangent in fixed point. The `atan2` is here, on the outbound side
-## of the boundary, which is exactly where a float belongs.
+## The bake hands back the artist's own materials, because what a Crawler *is* belongs to the
+## artist's file and what it *looks like in this game* belongs here — the same split
+## `prop_grade.py` makes for the purchased props, and for the same reason: these are clean
+## fantasy skeletons in a world of grimy cast iron, and a colour picked against a white
+## background is a colour picked against the wrong thing (#32, measured on the Walls).
 ##
-## The vent is drawn one offset *behind* the hull along that same facing, so the glowing end is
-## the end that is not armoured. That is the only place in this project where geometry carries a
-## rule: the weak point has to be discoverable by looking at the thing, and a HUD line naming it
-## would spend the discovery.
-func _sync_siege_hulks(sim: Simulation) -> void:
-	if _hulk_meshes == null:
-		_hulk_meshes = _instanced(_siege_hulk_hull_mesh())
+## The pack splits each character into a body material and a `Glow` material for its eyes,
+## which is a gift: two surfaces, and the second one is the thing that makes a swarm readable
+## at thirty metres in a low-contrast palette.
+func _skinned_mesh(kind: int, body: EnemyBodies.Body) -> ArrayMesh:
+	for surface: int in range(body.mesh.get_surface_count()):
+		var source: Material = body.mesh.surface_get_material(surface)
+		var glowing: bool = body.mesh.surface_get_name(surface).to_lower().contains("glow")
+		var painted: ShaderMaterial = ShaderMaterial.new()
+		painted.shader = load(ENEMY_SKIN_SHADER)
+		painted.set_shader_parameter("pose", body.pose)
+		painted.set_shader_parameter("texels_per_bone", EnemyBodies.TEXELS_PER_BONE)
+		if glowing:
+			painted.set_shader_parameter("albedo_tint", Color(0.02, 0.01, 0.01))
+			painted.set_shader_parameter("emission_colour", ENEMY_EYE_COLOUR)
+			painted.set_shader_parameter("emission_energy", ENEMY_EYE_ENERGY)
+			painted.set_shader_parameter("roughness", 1.0)
+		else:
+			var texture: Texture2D = null
+			if source is BaseMaterial3D:
+				texture = (source as BaseMaterial3D).albedo_texture
+			if texture != null:
+				painted.set_shader_parameter("albedo_texture", texture)
+				painted.set_shader_parameter("has_albedo_texture", true)
+			painted.set_shader_parameter("albedo_tint", _enemy_tint(kind))
+			painted.set_shader_parameter("metallic", _enemy_metallic(kind))
+			painted.set_shader_parameter("roughness", _enemy_roughness(kind))
+		body.mesh.surface_set_material(surface, painted)
+	return body.mesh
+
+
+## What each kind's character texture is multiplied by.
+##
+## The committed skeletons are bone-white and this palette runs 0.055 to 0.14 albedo on its
+## Machines, so a character dropped in untinted would be the brightest object in frame. These
+## grade it down and apart: the Crawler to the dark warm chitin the procedural carapace wore,
+## the Breaker to cold hard steel so that the thing a player has to *answer* reads as armoured
+## rather than as a bigger Crawler, and the Hulk to the cast iron its hull already was.
+func _enemy_tint(kind: int) -> Color:
+	match kind:
+		Simulation.ENEMY_KIND_BREAKER:
+			return Color(0.21, 0.22, 0.25)
+		Simulation.ENEMY_KIND_SIEGE_HULK:
+			return SIEGE_HULK_HULL
+	return Color(0.17, 0.11, 0.095)
+
+
+## How metallic each kind reads. A Lambertian body beside a metal Machine renders twice as
+## bright from the same albedo whatever the texture says — `prop_grade.py`'s finding — so the
+## armoured kinds are metal and the bare one is not.
+func _enemy_metallic(kind: int) -> float:
+	match kind:
+		Simulation.ENEMY_KIND_BREAKER:
+			return 0.65
+		Simulation.ENEMY_KIND_SIEGE_HULK:
+			return 0.8
+	return 0.05
+
+
+## And how rough. The Crawler is nearly matte, which is the other half of grading it down: at
+## 0.62 the skulls caught a hard specular off a low sun and read as glazed pottery, which was
+## the brightest thing in the first render of a Wave and the third defect an image caught here.
+func _enemy_roughness(kind: int) -> float:
+	match kind:
+		Simulation.ENEMY_KIND_BREAKER:
+			return 0.55
+		Simulation.ENEMY_KIND_SIEGE_HULK:
+			return 0.55
+	return 0.88
+
+
+## The glowing vent on the back of every Siege Hulk on the Map.
+##
+## **The hull moved into `_sync_enemies` with every other kind in #38** — a Hulk is an entry in
+## the same Enemy arrays as a Crawler (ADR 0001), so it is drawn the same way, and since every
+## kind now has its own buffer there is nothing left for a separate hull path to do. The vent
+## did not move, and that is the point: it is a *second* mesh standing behind the body along
+## the Hulk's own facing, and it is the only place in this project where geometry carries a
+## rule. The front shrugs off 85% of a hit and the back does not; nothing tells a player that
+## in words; so the glowing end is the end that is not armoured.
+##
+## Unshaded, for the reason a Turret's gauge is: a weak point a directional light can darken is
+## a weak point a player misreads at the worst moment.
+func _sync_siege_hulk_vents(sim: Simulation) -> void:
+	if _hulk_vent_meshes == null:
 		_hulk_vent_meshes = _instanced(_siege_hulk_vent_mesh())
 
 	var total: int = 0
 	for index: int in range(sim.query_enemy_count()):
 		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_SIEGE_HULK:
 			total += 1
-	_hulk_transforms.resize(total * FLOATS_PER_INSTANCE)
 	_hulk_vent_transforms.resize(total * FLOATS_PER_INSTANCE)
 
 	var instance: int = 0
@@ -1380,30 +1800,23 @@ func _sync_siege_hulks(sim: Simulation) -> void:
 		if sim.query_enemy_kind(index) != Simulation.ENEMY_KIND_SIEGE_HULK:
 			continue
 		var where: FixedVec2 = sim.query_enemy_position_metres(index)
-		var at: Vector3 = Vector3(Fixed.to_float(where.x), 0.0, Fixed.to_float(where.z))
-		var facing: FixedVec2 = sim.query_enemy_facing_point_metres(index)
-		var nose_x: float = Fixed.to_float(facing.x) - at.x
-		var nose_z: float = Fixed.to_float(facing.z) - at.z
-		var length: float = sqrt(nose_x * nose_x + nose_z * nose_z)
-		# `_write_instance` maps local +z to (sin yaw, cos yaw), and every mesh in this file is
-		# modelled nose along +z, so the yaw that points the nose at a place is atan2 of the gap.
-		var yaw: float = 0.0
-		if length > 0.0:
-			yaw = atan2(nose_x / length, nose_z / length)
-		_write_instance(_hulk_transforms, instance, at, yaw)
-		var behind: float = SIEGE_HULK_SIZE_METRES * 0.42
-		_write_instance(
+		var size: float = Fixed.to_float(sim.query_enemy_hit_height_metres(index))
+		if size <= 0.0:
+			size = SIEGE_HULK_SIZE_METRES
+		# Exactly the body's own transform. The vent is modelled on the back of a one-metre
+		# body, so placing it *with* the body is what keeps the two together — there is no
+		# offset here to disagree with the one in the mesh.
+		_write_scaled_instance(
 			_hulk_vent_transforms,
 			instance,
-			at - Vector3(sin(yaw), 0.0, cos(yaw)) * behind,
-			yaw
+			Vector3(Fixed.to_float(where.x), 0.0, Fixed.to_float(where.z)),
+			_enemy_yaw(sim, index, Simulation.ENEMY_KIND_SIEGE_HULK),
+			size
 		)
 		instance += 1
 
-	_hulk_meshes.multimesh.instance_count = total
 	_hulk_vent_meshes.multimesh.instance_count = total
 	if total > 0:
-		_hulk_meshes.multimesh.buffer = _hulk_transforms
 		_hulk_vent_meshes.multimesh.buffer = _hulk_vent_transforms
 
 
@@ -1516,23 +1929,41 @@ func _siege_hulk_hull_mesh() -> Mesh:
 	return built.commit()
 
 
-## The vent on a Siege Hulk's back: a glowing block, drawn behind the hull along its own facing.
-## Unshaded, for the reason a Turret's gauge is: a weak point a directional light can darken is a
-## weak point a player misreads at the worst moment.
+## The vent on a Siege Hulk's back: a glowing panel, modelled **on the back of a body one
+## metre tall** and drawn with the Hulk's own transform.
+##
+## Unshaded, for the reason a Turret's gauge is: a weak point a directional light can darken is
+## a weak point a player misreads at the worst moment.
+##
+## Two things changed in #38 and both came out of a render. It is modelled in the body's own
+## normalised units, as `EnemyBodies` bakes a character, so it is a *fraction* of the Hulk and
+## cannot be left behind if `siege_hulk.hit_height_metres` is ever tuned. And the offset behind
+## the body is **modelled into the mesh** rather than applied to the instance, so the vent is
+## placed with exactly the transform the body is placed with and there is no second piece of
+## arithmetic to get wrong.
+##
+## Its first version was sized against the old procedural hull — a wide low sled four metres
+## across — and when the body became a Golem the same block rendered as a saturated orange
+## crate standing in front of the boss and hiding it completely. Worth recording because the
+## failure is the one #41 had: a mark sized off a constant rather than off the thing it marks.
 func _siege_hulk_vent_mesh() -> Mesh:
 	var built: SurfaceTool = SurfaceTool.new()
 	built.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var size: float = SIEGE_HULK_SIZE_METRES
 	var block: BoxMesh = BoxMesh.new()
 	block.size = Vector3.ONE
+
+	# A grille rather than a block: one glowing panel at the small of the back with two
+	# louvres across it. Read off a render — the first version stood a tall pillar either
+	# side of the panel and the three together made a bracket shape that read as a piece of
+	# HUD stuck to the model rather than as an opening in it.
 	built.append_from(block, 0, Transform3D(
-		Basis.from_scale(Vector3(size * 0.46, size * 0.34, size * 0.16)),
-		Vector3(0.0, size * 0.50, 0.0)
+		Basis.from_scale(Vector3(0.20, 0.15, 0.06)),
+		Vector3(0.0, 0.50, -SIEGE_HULK_VENT_OFFSET)
 	))
-	for side: int in [-1, 1]:
+	for louvre: int in [-1, 0, 1]:
 		built.append_from(block, 0, Transform3D(
-			Basis.from_scale(Vector3(size * 0.10, size * 0.44, size * 0.12)),
-			Vector3(float(side) * size * 0.30, size * 0.56, 0.0)
+			Basis.from_scale(Vector3(0.25, 0.022, 0.075)),
+			Vector3(0.0, 0.50 + float(louvre) * 0.055, -SIEGE_HULK_VENT_OFFSET)
 		))
 
 	var material: StandardMaterial3D = StandardMaterial3D.new()

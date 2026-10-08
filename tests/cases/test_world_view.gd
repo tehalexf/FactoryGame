@@ -636,6 +636,165 @@ func test_an_enemy_is_never_a_node() -> void:
 	view.free()
 
 
+## A Wave of Crawlers and Breakers both, so the two swarm kinds are on the Map at once and the
+## renderer has to tell them apart. Both tiers are unlocked at Heat 0, which the shipped file
+## does not do — `shock_breakers.min_heat` is 5200, about minute twenty-six.
+const CRAWLERS_AND_BREAKERS: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,3,0,3
+shock_breakers,breaker,0,2,0,2
+"""
+
+
+func _mixed_sim() -> Simulation:
+	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
+	var definitions: Definitions = Definitions.parse(
+		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
+		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
+		_soon(tuning).replace(SHIPPED_STOCK, STOCKED),
+		CRAWLERS_AND_BREAKERS,
+		DELIVERIES,
+		GEAR,
+		STRATAGEMS,
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml",
+		"waves.csv",
+		"deliveries.csv",
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_true(
+		not definitions.has_errors(),
+		"the mixed fixture's content must load: %s" % definitions.describe_errors()
+	)
+	var sim: Simulation = Simulation.new(1, 1, definitions)
+	sim.step([InputAction.call_wave_early(0)])
+	return sim
+
+
+func test_a_crawler_and_a_breaker_are_drawn_through_different_meshes() -> void:
+	# #38's acceptance criterion, and the reason it is a criterion: a player's response to a
+	# Breaker is to be somewhere else and their response to Chaff is to hold the line, so the
+	# two have to be distinguishable at a glance. Before #38 both drew the *same* procedural
+	# carapace out of one MultiMesh, so the only thing separating them on screen was the HUD.
+	var sim: Simulation = _mixed_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+
+	var crawlers: int = 0
+	var breakers: int = 0
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_CRAWLER:
+			crawlers += 1
+		elif sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_BREAKER:
+			breakers += 1
+	if not assert_true(crawlers > 0 and breakers > 0, "the premise: both kinds are out"):
+		view.free()
+		return
+
+	assert_eq(
+		view.enemy_instance_count(Simulation.ENEMY_KIND_CRAWLER),
+		crawlers,
+		"every Crawler is an instance of the Crawler's own mesh"
+	)
+	assert_eq(
+		view.enemy_instance_count(Simulation.ENEMY_KIND_BREAKER),
+		breakers,
+		"and every Breaker of the Breaker's"
+	)
+	assert_ne(
+		view.enemy_mesh_id(Simulation.ENEMY_KIND_CRAWLER),
+		view.enemy_mesh_id(Simulation.ENEMY_KIND_BREAKER),
+		"and the two meshes are not the same mesh"
+	)
+	view.free()
+
+
+func test_an_enemy_is_scaled_by_the_height_the_simulation_says_it_is() -> void:
+	# "A body is placed, never measured", from the other end: the body is baked one metre
+	# tall and the renderer scales it by `query_enemy_hit_height_metres`, which is the capsule
+	# a round is resolved against. So a player shoots at what they can see. A constant here
+	# would be the second authority that shipped #41's ownerless red rectangle.
+	var sim: Simulation = _mixed_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	if not assert_true(sim.query_enemy_count() > 0, "the premise: a Wave is out"):
+		view.free()
+		return
+	var kind: int = sim.query_enemy_kind(0)
+	var expected: float = Fixed.to_float(sim.query_enemy_hit_height_metres(0))
+	var drawn: float = view.enemy_instance_scale(kind, 0)
+	assert_true(
+		absf(drawn - expected) < 0.01,
+		"expected a scale of %f, got %f" % [expected, drawn]
+	)
+	view.free()
+
+
+func test_two_enemies_out_of_one_breach_are_drawn_on_different_frames() -> void:
+	# The swarm is not in visible lockstep, asserted where it is observable: the per-instance
+	# animation row. `EnemyAnimator` owns the rule and its own suite owns the arithmetic; this
+	# is the claim that the number actually reaches the MultiMesh, which no test of a pure
+	# function could make.
+	var sim: Simulation = _mixed_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	var drawn: int = view.enemy_instance_count(Simulation.ENEMY_KIND_CRAWLER)
+	if not assert_true(drawn >= 2, "the premise: at least two Crawlers are out"):
+		view.free()
+		return
+	var rows: Dictionary = {}
+	for instance: int in range(drawn):
+		rows[view.enemy_instance_pose_row(Simulation.ENEMY_KIND_CRAWLER, instance)] = true
+	assert_true(
+		rows.size() > 1,
+		"%d Crawlers are on %d different frames" % [drawn, rows.size()]
+	)
+	view.free()
+
+
+func test_baking_a_character_adds_no_node_to_the_view() -> void:
+	# The bake instantiates a character scene to read its rig, which is nodes — so the rule
+	# is not only "no node per Enemy" but "no node at all": the scene is detached, read and
+	# freed, and the view's own child count is what this measures. A bake that leaked its
+	# scaffolding would grow the tree by nine MeshInstance3Ds the first time a Wave arrived,
+	# which is the exact failure `test_an_enemy_is_never_a_node` is written to catch and
+	# would not have caught, because it counts after the first sync.
+	var sim: Simulation = _mixed_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var quiet: int = view.get_child_count()
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	if not assert_true(sim.query_enemy_count() > 0, "the premise: a Wave is out"):
+		view.free()
+		return
+	# **Zero**, not "no more than one a kind": the MultiMesh a kind is drawn through is
+	# created on the first sync, before a Breach has released anything, so by the time a
+	# Wave arrives there is nothing left to create. That is also why the bake is paid at
+	# load rather than on the frame the first Crawler appears, which is the one frame of a
+	# Run where a hitch is least affordable.
+	assert_eq(
+		view.get_child_count(),
+		quiet,
+		"the tree grew by %d for a whole Wave" % [view.get_child_count() - quiet]
+	)
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	assert_eq(view.get_child_count(), quiet, "and not by one more after that")
+
+	# And the swarm really was drawn, so that this is a claim about a Wave rather than about
+	# an empty Map — the honesty check beside the structural one.
+	assert_true(
+		view.enemy_instance_count() > 0,
+		"the premise again: the swarm was drawn through the buffers rather than not at all"
+	)
+	view.free()
+
+
 ## A Run under siege: the shipped Map and the shipped content, with the Wave table replaced by a
 ## single Siege Hulk so one arrives on the first Wave of a cold Factory rather than at 1200 Heat.
 ## The Map is the shipped one, which is where the Hives are.
