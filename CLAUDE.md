@@ -1088,6 +1088,104 @@ what lets a client whose own files hash differently refuse instead of desyncing.
 - **Nodes never deplete.** There is no quantity on a Node and nothing subtracts
   from one. DESIGN.md decided that: a 40-hour Factory must never need relocating,
   so Depth gates value instead.
+- **A Node is ground you can see, and #52 is the ticket that cost.** A playtest said *"I
+  cant seem to find any ore in range for the miners"*, and the snap was innocent: the ore
+  was a 0.4 m slab in `Color(0.45, 0.32, 0.18)` on ground #20 and #42 made worn brown
+  concrete, rust and soot. **Four times the palette's own albedo and still invisible**,
+  which is the third time this project has paid for a colour picked against a white
+  background — brightness was never the lever, because the slab shared its *hue* with the
+  rust it was lying on. **Nothing on the ground plane wins a contrast fight against the
+  ground plane.** So the seam came down into the palette (`ORE_IRON_GROUND`,
+  `ORE_COAL_GROUND`) and two unshaded marks do the finding, drawn through one MultiMesh:
+  - **A marking painted on the ore and a stack of segments floating above it**, because
+    two viewpoints need two marks. A render settled it: from Survey View — the one mode
+    this game has for reading the whole yard at a glance — a vertical mark is a 0.6 m
+    square seen end on, and the first survey shot showed no ore at all. The stack is what
+    reads across the yard, the marking is what reads from above, and the marking is also
+    what gives the floating stack an owner (#41's lesson: a bright mark with nothing under
+    it belongs to nobody).
+  - **Paint, not a plinth.** A Miner is placed *over* a Node, so a mark that read as
+    occupied would trade one confusion for another. `ground.gdshader` already draws the
+    grid as paint, and paint is the one thing on a floor that is unambiguously not an
+    object standing on it.
+  - **One segment per Depth tier, so "deeper" reads as "taller mark"** and the tiers need
+    no key. The base is 1.3 m and a render is why it is not 5: it was 5.0 first, reasoned
+    off the marks a Machine on the same tile could wear, and at the *real* spawn distance
+    a mark 5 m up sits 21 degrees above the horizon with nothing visibly under it. The
+    collision it was avoiding cannot happen anyway, because the marks leave the moment
+    anything is built on the Node.
+  - **Colour says Resource and reachability: iron is rose, coal is cyan.** Red is a
+    mistake, amber is waiting, hazard yellow is attention, teal is a split flowing, warm
+    orange an output port, cool blue an input, cream a flow arrow — every one of those is a
+    mark *about the Factory*, and a Node is the Map, like a Breach, so it reads in a family
+    the Factory does not use. Ore no unlocked Miner could lift goes inert steel rather than
+    a dimmed version of its own colour, the decision `PENDING_BREACH_HEIGHT_METRES` already
+    records for a Breach about to open: the actionable fact is "not yours yet", and a dimmed
+    colour reads as an artefact.
+  - **The first pair was green and violet and a render threw it away, which is #48's
+    finding again.** `HOLOGRAM_ALLOWED` is green, and the scanner below runs exactly when a
+    Miner is on the Build Gun — which is exactly when a green hologram is standing on the
+    ore. Three greens in one frame: the trail leading you there, the ore's own mark, and the
+    ghost of the Machine about to land on it. #48's was a red post on an orange arrow at the
+    one tile the two must coincide. **The colours to check a mark against are the ones it is
+    guaranteed to be seen beside, not the ones it merely shares a file with** — and the only
+    way either was found was by looking at the picture.
+- **Three projections carry it, and each exists because two callers must not disagree.**
+  `query_node_is_workable_now` is the unlock set, the Resource and the Depth tier read
+  together — the mark's colour and the objective line's target come out of the one
+  function, so a beacon cannot promise ore the hint will not send a player to.
+  `query_node_is_built_on` is geometry, and the weaker claim on purpose: what the mark and
+  the line share is *this is ground nothing more can be put on*. `query_player_facing`
+  hands out `_facing`, so a caller saying "to your right" does not own a second copy of
+  the yaw convention. None is read back and each has a test that asking leaves `hash()`
+  where it was.
+- **Covering a Node is not working it, and that was a live defect.**
+  `query_node_under_machine` is geometry; an iron Miner over coal and a Mk1 on a Depth 2
+  seam both cover a Node and accumulate nothing. `Objective` read the geometric answer, so
+  a Miner on the wrong ore reported the opening step done. `query_node_is_being_worked`
+  asks it of `query_machine_is_starved` instead, which keeps the question on
+  `_machine_has_its_inputs` rather than on a list of cases somebody has to maintain.
+- **Where a Run actually starts, measured rather than assumed.** A player opens at the
+  origin on the ground — **not** on the Nest's crown, which is where `_respawn` puts them
+  after a death. The nearest iron is **12.7 m** south-east, the coal 26.6 m east and the
+  far iron 23.7 m north; the Depth 2 and Depth 3 seams are 49.7 m and 66.7 m out. So the
+  opening walk is a few seconds and `MapLayout.starter()`'s "a Belt between them is a
+  decision rather than a formality" is intact. **No Node moved for #52 and none needed to.**
+- **The scanner is how a player is pointed at ore, and the player specified it:** *"we
+  need a sort of scanner to ping the nearest node while putting down miners"*. A run of
+  pings travels the ground from the player's feet out to the nearest ore they could claim,
+  in that ore's own colour, so the thing that leads you and the thing you arrive at read as
+  one. It answers direction, distance and identity at once.
+  - **"While putting down miners" is three facts, each read off its own query every
+    frame**: the Build Gun is in hand, the Machine tool is out, and what is on it mines.
+    Nothing is remembered and there is no scanner mode to enter. It also goes quiet the
+    moment the Factory is mining, on `query_anything_is_mining` — the same question
+    `Objective`'s opening line goes quiet on, so the two cannot disagree about whether the
+    opening has taught itself.
+  - **`SCANNER_PERIOD_TICKS` is a count of ticks and that is the rule rather than a
+    preference.** Nothing presentational here is timed by a clock: the audio director varies
+    takes with `tick % count` and counts cooldowns in ticks, and `WeaponViewmodel` computes
+    clip time from the tick and seeks explicitly. What all three buy is that two Runs down
+    the same script look the same, and `test_world_view` asserts it from both sides — a
+    frame that stepped nothing draws the same sweep, and one whole period on it is back.
+  - **Only the lit pings are drawn at all**, and the sweep starts at the player's own feet.
+    A full dotted line standing on the ground is a path through the yard — scenery — where
+    a scanner is a thing that *sweeps*, and the empty ground between sweeps is most of what
+    makes it read as one. Starting at the first step instead of at zero left the first
+    seventh of every period with nothing lit, which reads as broken rather than as between
+    sweeps.
+  - **It is deliberately silent.** `game/audio_director.gd` would take a cue, but this
+    fires every 90 ticks for as long as a Miner is in hand, and a repeating tone is exactly
+    the nagging the player has already rejected three alarms for. Nothing in this repository
+    can listen, so an un-auditionable cue added to a mix with three outstanding complaints is
+    the wrong risk. The lever, if it is ever wanted, is a `sustained_cues` entry keyed on
+    acquisition — a *change* — rather than on every sweep, with a hero take and a Kenney
+    fallback like every other cue.
+- **`tools/visual/compose_spawn_shot.gd` frames what a player sees the moment a Run
+  starts**, and it is the one view no composer framed. It refuses to improve the vantage:
+  no walking, no aiming, the camera wherever the Simulation put it. `spawn` is the opening
+  yaw, `turned` faces the nearest shallow ore and `survey` does the same from the lift.
+  Before and after are in `docs/images/ore_{spawn,turned,survey}_{before,after}.png`.
 - A Miner's input is the ground under it. It produces only while its footprint
   covers a Node whose Resource its Recipe produces, and otherwise accumulates no
   progress at all — a Miner on bare rock is visibly idle rather than invisibly

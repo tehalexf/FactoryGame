@@ -2092,3 +2092,361 @@ func test_a_split_tag_hangs_off_its_own_machines_roof_and_stacks_with_the_others
 		"and a branch post stands clear of the Belt deck rather than inside it"
 	)
 	view.free()
+
+
+# ── Ore you can see ───────────────────────────────────────────────────────────
+# #52, from a playtest: "I cant seem to find any ore in range for the miners." A Node was a
+# 0.4 m slab in a brown the ground itself is made of, 28 m from where a Run starts. The slab
+# stays a slab — a Node is **ground a Miner is placed over**, and anything that made it a
+# structure would trade one confusion for another — so what carries the legibility is a stack
+# of unshaded segments floating well clear of it, one per Depth tier.
+
+func test_a_node_wears_one_floating_segment_for_every_depth_tier_it_sits_at() -> void:
+	# Depth counted out rather than coloured, so "deeper" reads as "taller mark" and a player
+	# learns the tiers by looking rather than by being starved by one.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(16, 0, 0), "iron_ore", 3)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.ore_beacon_count(), 4, "one segment for the shallow Node and three for the seam")
+	view.free()
+
+
+func test_the_ore_wears_a_marking_on_the_ground_and_a_stack_in_the_air_above_it() -> void:
+	# Two marks because two viewpoints, and a render is what settled it. The stack is what
+	# reads at eye level across the yard; the marking is what reads from Survey View, where a
+	# vertical mark is a 0.6 m square seen end on and the first survey shot showed no ore at
+	# all. The marking also gives the floating stack an owner — #41's lesson, which is that a
+	# bright mark with nothing under it belongs to nobody.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 2)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	assert_eq(view.ore_marking_count(), 1, "one marking painted on the one piece of ore")
+	assert_eq(view.ore_beacon_count(), 2, "and a segment in the air for each of its two tiers")
+
+	# Tile (10,0,0) is 20 m to 22 m on x and 0 m to 2 m on z, so the centre is (21, 1). Every
+	# mark stands over the middle of the Node's own tile.
+	for at: Vector3 in [
+		view.ore_marking_position(0), view.ore_beacon_position(0), view.ore_beacon_position(1)
+	]:
+		assert_eq(at.x, 21.0)
+		assert_eq(at.z, 1.0)
+
+	# The marking lies on the ore. The stack starts clear above it, with open air between —
+	# which is what stops a mark over buildable ground reading as a structure standing on it.
+	assert_true(
+		view.ore_marking_position(0).y <= WorldView.NODE_HEIGHT_METRES + 0.1,
+		"the marking is paint on the ore, got %f" % view.ore_marking_position(0).y
+	)
+	var lowest: float = minf(view.ore_beacon_position(0).y, view.ore_beacon_position(1).y)
+	assert_true(
+		lowest - WorldView.NODE_BEACON_SEGMENT_METRES * 0.5 > WorldView.NODE_HEIGHT_METRES + 0.5,
+		"and there is open air under the stack, got %f" % lowest
+	)
+	assert_ne(view.ore_beacon_position(0).y, view.ore_beacon_position(1).y, "a stack, not a pile")
+	view.free()
+
+
+func test_iron_and_coal_wear_different_colours_and_ore_out_of_reach_wears_neither() -> void:
+	# Three questions one mark has to answer at thirty metres: is there ore here, which ore,
+	# and is it mine yet. The third is `query_node_is_workable_now` — the Simulation's own
+	# answer, the same one the objective line points by — so a mark cannot promise a seam the
+	# hint will not send a player to.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(16, 0, 0), "coal", 1)
+	layout.add_node(Vector3i(22, 0, 0), "iron_ore", 2)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	var iron: Color = _beacon_over(view, sim, Vector3i(10, 0, 0))
+	var coal: Color = _beacon_over(view, sim, Vector3i(16, 0, 0))
+	var seam: Color = _beacon_over(view, sim, Vector3i(22, 0, 0))
+	assert_ne(iron, coal, "iron and coal are told apart by colour")
+	assert_eq(iron, WorldView.ORE_IRON_COLOUR)
+	assert_eq(coal, WorldView.ORE_COAL_COLOUR)
+	assert_eq(seam, WorldView.ORE_OUT_OF_REACH_COLOUR, "and a seam no Miner can lift is inert")
+	view.free()
+
+
+## The colour of the lowest beacon segment over a Node's tile.
+func _beacon_over(view: WorldView, sim: Simulation, tile: Vector3i) -> Color:
+	var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+	var best: int = -1
+	for instance: int in range(view.ore_beacon_count()):
+		var at: Vector3 = view.ore_beacon_position(instance)
+		if not is_equal_approx(at.x, Fixed.to_float(centre.x)):
+			continue
+		if not is_equal_approx(at.z, Fixed.to_float(centre.z)):
+			continue
+		if best == -1 or at.y < view.ore_beacon_position(best).y:
+			best = instance
+	assert_true(best != -1, "there is a mark over %s" % tile)
+	return view.ore_beacon_colour(best)
+
+
+func test_building_on_ore_takes_its_marks_away_whether_or_not_the_machine_works_it() -> void:
+	# The mark is an invitation — *this is ore you can still claim* — so it leaves when the
+	# ground stops being claimable, with nothing remembered. Deliberately not "when the ore is
+	# being worked": a Miner standing idle on ore it cannot mine already says so in amber
+	# through `query_machine_is_starved`, and marking the same tile twice is two marks about
+	# one thing. Pointing at it would be pointing at ground nothing can be placed on, which is
+	# the very reason `Objective` skips it too.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(10, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(16, 0, 0), "coal", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.ore_marking_count(), 2, "two Nodes, nothing built on either")
+
+	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	sim.step([InputAction.build_machine(0, miner, Vector3i(10, 0, 0))])
+	view.sync(sim)
+	assert_eq(view.ore_marking_count(), 1, "the iron has been claimed")
+	assert_eq(view.ore_beacon_count(), 1, "and its stack went with it")
+
+	# An iron Miner over coal: it covers the Node and mines the wrong thing, so it is starved —
+	# and the ground is taken all the same.
+	sim.step([InputAction.build_machine(0, miner, Vector3i(16, 0, 0))])
+	view.sync(sim)
+	assert_true(sim.query_machine_is_starved(1), "the second Miner is over the wrong ore")
+	assert_eq(view.ore_marking_count(), 0, "and claimed ground is claimed either way")
+	view.free()
+
+
+func test_the_ore_marks_do_not_grow_the_scene_tree() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var children: int = view.get_child_count()
+	assert_true(view.ore_beacon_count() > 1, "the shipped Map has ore with tiers to count")
+	_run(sim, 30)
+	view.sync(sim)
+	assert_eq(view.get_child_count(), children, "every segment is one instance of one MultiMesh")
+	view.free()
+
+
+func test_the_ore_in_the_ground_is_painted_inside_the_palette_rather_than_brightened() -> void:
+	# The lesson #32 recorded and #38 paid for again: a colour picked against a white
+	# background is a colour picked against the wrong thing. The old slab was 0.45 albedo
+	# against a palette that runs 0.055 to 0.14, so it was *already* the brightest thing in
+	# frame and still invisible — because it shared its hue with the rust and soot the ground
+	# is made of. Brightness was never the lever, so the ore reads as a seam in the ground and
+	# the marks above it do the work.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for colour: Color in [WorldView.ORE_IRON_GROUND, WorldView.ORE_COAL_GROUND]:
+		for channel: float in [colour.r, colour.g, colour.b]:
+			assert_true(
+				channel <= 0.2, "%s sits inside the palette's range, got %f" % [colour, channel]
+			)
+	assert_ne(WorldView.ORE_IRON_GROUND, WorldView.ORE_COAL_GROUND, "and the two seams differ")
+	view.free()
+
+
+# ── The scanner ───────────────────────────────────────────────────────────────
+# The player's own words: "we need a sort of scanner to ping the nearest node while putting
+# down miners". So the hint is a mechanic rather than a line of text — a run of pings that
+# travels the ground from the player's feet out to the nearest ore they could claim, in that
+# ore's own colour, so the thing that leads you there and the thing you arrive at are
+# visibly one thing.
+#
+# **Timed by the tick and nothing else.** A pulse driven by a clock is two Runs down the same
+# script looking different, which is the rule `WeaponViewmodel` keeps by seeking its clips
+# from the tick count and the rule the audio director keeps with `tick % count`.
+
+## A Run with a Miner on the Build Gun, which is the condition the scanner runs under.
+func _scanning_run(layout: MapLayout) -> Simulation:
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	sim.step([
+		InputAction.set_build_mode(0, true),
+		InputAction.select_machine(0, sim.query_definitions().machine_index("miner_mk1")),
+	])
+	return sim
+
+
+func _ore_layout() -> MapLayout:
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 14), "iron_ore", 1)
+	layout.sort_nodes()
+	return layout
+
+
+func test_the_scanner_runs_only_while_a_miner_is_on_the_build_gun() -> void:
+	# "While putting down miners" is the condition, and it is read three ways because it is
+	# three facts: the Build Gun is in hand, the Machine tool is out, and what is on it mines.
+	# A player holding a rifle or about to place a Smelter is not looking for ore.
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "a Miner is on the gun and there is ore")
+
+	sim.step([InputAction.select_machine(0, sim.query_definitions().machine_index("smelter_mk1"))])
+	view.sync(sim)
+	assert_eq(view.ore_scanner_ping_count(), 0, "a Smelter is not a reason to hunt for ore")
+
+	sim.step([InputAction.select_machine(0, sim.query_definitions().machine_index("miner_mk1"))])
+	view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "and picking the Miner again brings it back")
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	view.sync(sim)
+	assert_eq(view.ore_scanner_ping_count(), 0, "nor is a rifle")
+	view.free()
+
+
+func test_the_scanner_runs_out_to_the_ore_the_objective_line_names() -> void:
+	# One authority for where a player is being sent — `query_nearest_workable_node` — so the
+	# trail and the line cannot point at different Nodes. The pings lie on the ground between
+	# the two, in the ore's own colour, which is what makes the trail and its destination read
+	# as one mark rather than as two.
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	var node: int = sim.query_nearest_workable_node(0)
+	var target: FixedVec2 = sim.query_tile_centre_metres(sim.query_node_tile(node))
+	var at: FixedVec2 = sim.query_player_position(0)
+	var span: float = Vector2(
+		Fixed.to_float(target.x) - Fixed.to_float(at.x),
+		Fixed.to_float(target.z) - Fixed.to_float(at.z)
+	).length()
+
+	assert_true(view.ore_scanner_ping_count() > 0, "the scanner is running")
+	for ping: int in range(view.ore_scanner_ping_count()):
+		var p: Vector3 = view.ore_scanner_ping_position(ping)
+		var from_player: float = Vector2(
+			p.x - Fixed.to_float(at.x), p.z - Fixed.to_float(at.z)
+		).length()
+		assert_true(
+			from_player <= span + 1.0, "no ping overshoots the ore, got %f of %f" % [from_player, span]
+		)
+		var off_line: float = Vector2(
+			p.x - Fixed.to_float(at.x), p.z - Fixed.to_float(at.z)
+		).distance_to(
+			Vector2(
+				Fixed.to_float(target.x) - Fixed.to_float(at.x),
+				Fixed.to_float(target.z) - Fixed.to_float(at.z)
+			).normalized() * from_player
+		)
+		assert_true(off_line < 0.01, "and every ping is on the line to it, got %f" % off_line)
+		assert_eq(
+			view.ore_scanner_ping_colour(ping).r,
+			WorldView.ORE_IRON_COLOUR.r,
+			"in the ore's own colour"
+		)
+	view.free()
+
+
+func test_the_pulse_travels_and_repeats_on_the_tick_rather_than_on_a_clock() -> void:
+	# Two Runs down the same script look the same, which they could not if a pulse were
+	# driven by elapsed seconds or by how many frames the renderer happened to draw. The head
+	# is a function of `query_tick`, so it advances when the Simulation does, it does not move
+	# on a frame that stepped nothing, and it comes back round to exactly where it was one
+	# period later.
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+
+	view.sync(sim)
+	var opening: float = _scanner_head(view)
+	var pattern: Array = _scanner_pattern(view)
+
+	# One tick changes the sweep — the pings fade as the head moves past them — but it does
+	# not necessarily move the *head*, because the pings are laid every
+	# `SCANNER_STEP_METRES` and a tick carries the sweep a fraction of that. Both halves are
+	# worth asserting: the first is what makes it look alive, the second that it travels.
+	sim.step([])
+	view.sync(sim)
+	assert_ne(_scanner_pattern(view), pattern, "a tick moves the sweep on")
+	for tick: int in range(10):
+		sim.step([])
+	view.sync(sim)
+	assert_true(_scanner_head(view) > opening, "and carries the head further out")
+
+	view.sync(sim)
+	assert_eq(
+		_scanner_pattern(view),
+		_scanner_pattern(view),
+		"and a frame that stepped nothing draws the same sweep: the renderer has no clock"
+	)
+
+	# Eleven ticks have been stepped since the opening sync, so this lands the Run exactly
+	# one period on from it.
+	for tick: int in range(WorldView.SCANNER_PERIOD_TICKS - 11):
+		sim.step([])
+	view.sync(sim)
+	assert_eq(_scanner_pattern(view), pattern, "one whole period later the sweep is back")
+	view.free()
+
+
+## How far out the leading ping of the sweep has got, in metres from the player's feet. The
+## first ping is laid at the feet and never moves, so the *head* is the furthest one lit.
+func _scanner_head(view: WorldView) -> float:
+	var furthest: float = 0.0
+	var foot: Vector3 = view.ore_scanner_ping_position(0)
+	for ping: int in range(view.ore_scanner_ping_count()):
+		furthest = maxf(furthest, foot.distance_to(view.ore_scanner_ping_position(ping)))
+	return furthest
+
+
+## Every lit ping and what it is painted, as one comparable value.
+func _scanner_pattern(view: WorldView) -> Array:
+	var pattern: Array = []
+	for ping: int in range(view.ore_scanner_ping_count()):
+		pattern.append([view.ore_scanner_ping_position(ping), view.ore_scanner_ping_colour(ping)])
+	return pattern
+
+
+func test_the_scanner_goes_quiet_once_a_miner_is_working_ore() -> void:
+	# `Objective`'s shape, with nothing remembered and nothing to skip: a player who walks
+	# straight to the ore and places a Miner should barely register that a scanner existed.
+	# And it is the same question the objective line goes quiet on, so the two cannot
+	# disagree about whether the opening has taught itself.
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 14), "iron_ore", 1)
+	layout.add_node(Vector3i(0, 0, 26), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = _scanning_run(layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "nothing is mining yet")
+
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 14)
+		)
+	])
+	view.sync(sim)
+	assert_eq(
+		view.ore_scanner_ping_count(),
+		0,
+		"the Factory is mining, so the player has no further use for being led anywhere"
+	)
+	view.free()
+
+
+func test_the_scanner_does_not_grow_the_scene_tree() -> void:
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var children: int = view.get_child_count()
+	for tick: int in range(40):
+		sim.step([])
+		view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "still scanning")
+	assert_eq(view.get_child_count(), children, "every ping is one instance of one MultiMesh")
+	view.free()
