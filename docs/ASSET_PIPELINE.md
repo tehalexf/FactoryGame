@@ -802,40 +802,65 @@ clip rather than the commonest one.
 The before and after are committed: `docs/images/enemies_pair_{before,after}.png`,
 `enemies_wave_{before,after}.png` and `enemies_boss_{before,after}.png`.
 
-### What does not read at thirty metres, measured rather than hoped
+### What reads at thirty metres, and the one thing that did not
 
 The acceptance criterion is "a Crawler reads as a scuttling thing rather than a box, at
-thirty metres, mid-Wave". Rendered at eye height on the lane at exactly thirty metres and
-magnified, the honest answer is split:
+thirty metres, mid-Wave". Rendered at eye height on the lane at exactly thirty metres, #38's
+answer was split, and **#49 closed the half that was open**:
 
 - **A Siege Hulk is unmistakable at any range.** Twice the height of everything else, and a
   glowing grille on its back that nothing else has.
 - **A swarm reads as a crowd of bodies rather than a row of boxes**, which is the real gain
   and it is a large one.
-- **A Crawler and a Breaker are not distinguishable from each other at thirty metres.** At
-  1.6 m in a 62-degree field at 1600 pixels they are about twenty-five pixels tall and both
-  resolve to a dark silhouette. They separate clearly at eight to twelve metres — bone-tan
-  running skeleton against blue-steel horned walker — and not beyond that.
+- **A Crawler and a Breaker were not distinguishable from each other**, which is what #49 was
+  opened about. At 1.6 m they are about twenty-five pixels tall and both resolved to the same
+  dark silhouette; they separated clearly at eight to twelve metres and not beyond.
 
-**The mitigation that was supposed to fix this does not work, and the reason is the art.**
-The plan was the characters' own `Glow` material: an ember in each eye socket, which is what
-carries a figure in a palette of dark neutrals. It renders nothing. The KayKit skulls are
-**closed meshes** and their 80 glow vertices sit 0.13 to 0.19 m *behind* the front of the
-skull, so what a player reads as an eye socket is brow and cheek rather than an opening.
+**#49's answer is size, and it is a number in the Simulation rather than anything here.** The
+two kinds are the same KayKit rig at what used to be the same declared height, so they had
+the same arm span, shoulders and head and nothing but armour detail to tell them apart — and
+armour detail is the first thing distance takes. `enemy.breaker_hit_height_metres` is now
+2.2 m against a Crawler's 1.6 and a Siege Hulk's 3.2, and because `WorldView` scales a body
+by `query_enemy_hit_height_metres` — the capsule a round is resolved against — the Breaker a
+player sees and the Breaker a player shoots at are one thing.
+`docs/images/enemies_triage_{before,after}.png` is the pair, rebuilt with the new `triage`
+preset — `pair`'s subject at `distance`'s range.
 
-This was measured rather than assumed: putting the same emission on the *body* surface
-renders four glowing skeletons with full bloom, so the shader, the uniform and the glow
-post-process are all working. The wiring is therefore left in place — a character that ships
-with exposed glow geometry lights up for nothing — and no workaround was taken, because both
-available ones are worse than the problem. Moving the vertices outward is the renderer
-editing an artist's model, and `depth_test_disabled` would draw a Crawler's eyes through the
-Factory wall it is standing behind.
+**The claim is a test now rather than a sentence, and that is the durable half.**
+`tests/cases/test_enemy_silhouette.gd` rasterises every kind's *posed, scaled* outline into
+an occupancy grid at the player's own resolution at thirty metres and fails if any two kinds
+converge — the gate `tools/assets/machine_silhouette.py` has given Machines since #24, which
+Enemies had no equivalent of, which is exactly how a false claim about glowing eyes sat in
+this file unnoticed. Measured: the three pairs were 0.42, 0.83 and 0.79 and are now **0.58,
+0.83 and 0.67**.
 
-So **distance readability is the open half of this ticket.** The fixes worth considering, in
-rough order of honesty: a rim light or a fresnel term in `enemy_skin.gdshader`, which is
-presentation and touches no asset; a character pack whose glow geometry is exposed; or
-per-kind silhouette separation at the pose level, which is what the UAL clips above would
-buy.
+Note which pair binds now. Making a Breaker bigger walks it toward the **boss** as fast as it
+walks it away from the Crawler, so the closest pair is Breaker-against-Hulk at 0.67 and the
+gate is what stops the obvious next tuning step trading one unreadable pair for another.
+
+**The glow wiring is gone, and this is the note that replaces it.** The plan had been the
+characters' own `Glow` material — an ember in each eye socket, which is what carries a figure
+in a palette of dark neutrals — and it rendered nothing on any of the six committed
+characters. The plumbing was never at fault and #49 checked rather than assumed it: the baked
+mesh really does carry a surface named `Glow`, the branch really did fire, and the same
+emission on the *body* surface renders a glowing skeleton with full bloom. The geometry is
+inside the skull — 0.13 m behind its front on the Minion, and wider than the skull is — so
+what a player looks into is brow and cheek. A close render shows both kinds with dark
+sockets, which is the measurement that settles it.
+
+#38 left the branch in place against a future character with exposed glow geometry. #49
+removed it, because that is an untested claim about art nobody has, and an untested claim in
+a comment is what produced the ticket. Both workarounds stay refused for #38's reasons, which
+are good ones: moving an artist's vertices outward is the renderer editing the model, and
+`depth_test_disabled` would draw a Crawler's eyes through the Factory wall it is standing
+behind. The Siege Hulk's vent is untouched and is still the project's one piece of emissive
+geometry — and the difference worth keeping is that the vent is **built**, sized and placed
+against the body it sits on, rather than hoped for in an asset.
+
+**What a still image cannot settle** is whether the size difference reads *in motion*, in a
+Wave that is spread out down a lane rather than posed. The gait difference is real and
+deliberate — the Crawler runs where the Breaker walks — and no render has an opinion about
+it.
 
 ### What is still placeholder-grade
 

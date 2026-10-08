@@ -20,7 +20,7 @@ SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png r
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
-                                 # a Wave arriving (swarm|pair|boss|distance; + hud, + bare)
+                                 # a Wave arriving (swarm|pair|triage|boss|distance; + hud, + bare)
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -407,20 +407,62 @@ data. There is nothing per Crawler anywhere on this side of the boundary.
   rule.** It is modelled in body heights with its offset in the mesh, so it is placed with
   exactly the transform the body is placed with.
 
-**What does not read at thirty metres, and it was measured rather than hoped.** A Siege Hulk
-is unmistakable at any range and a swarm reads as a crowd of bodies rather than a row of
-boxes — but a Crawler and a Breaker are **not** distinguishable from one another past about
-twelve metres, where they separate clearly. The mitigation was to have been the characters'
-own glowing eyes, and it renders nothing: the KayKit skulls are closed meshes whose glow
-vertices sit behind the front of the skull. The plumbing is fine — the same emission on the
-body renders four glowing skeletons — so the wiring stays and no workaround was taken, since
-moving an artist's vertices is the renderer editing the model and `depth_test_disabled` would
-draw eyes through a wall. Distance readability is the open half of this ticket.
+**What reads at thirty metres, and the one thing that did not.** #38 measured rather than
+hoped, and the answer was split: a Siege Hulk is unmistakable at any range and a swarm reads
+as a crowd of bodies rather than a row of boxes — but **a Crawler and a Breaker were the same
+dark silhouette** past about twelve metres, because they are the same KayKit rig at the same
+declared height and what separated them was armour detail that distance takes first. The
+mitigation was to have been the characters' own glowing eyes, and it rendered nothing.
+
+**#49 closed it with size, and the lever is a number in the Simulation.**
+`enemy.breaker_hit_height_metres` is 2.2 m against a Crawler's 1.6 and a Siege Hulk's 3.2 —
+its own hit volume at last, the arrangement the boss has had since #16 — so a Breaker looms
+over the 1.5 m Smelter it is eating and breaks the skyline a Crawler walks under. Because
+`WorldView` scales a body by `query_enemy_hit_height_metres`, **the Breaker a player sees and
+the Breaker a player shoots at are one thing**; the radius moved with the height for that
+reason, since the drawn body is scaled uniformly and a capsule that kept the Crawler's width
+would be narrower than what is on screen. Its one balance consequence is that a Breaker bites
+from 0.2 m further out, because reach is measured from the hull.
+
+**The claim is a test now rather than a sentence, and that is the durable half of #49.**
+`tests/cases/test_enemy_silhouette.gd` is `machine_silhouette.py`'s gate pointed at Enemies —
+it rasterises each kind's *posed, scaled* outline into an occupancy grid and fails if any two
+kinds converge. Enemies had no such check, which is exactly how a false claim about glowing
+eyes sat in the docs unnoticed. Measured, the three pairs were 0.42, 0.83 and 0.79 and are
+now **0.58, 0.83 and 0.67** — so the pair that binds is now the Breaker against the **boss**,
+and the gate is what stops the obvious next tuning step trading one unreadable pair for
+another. The grid is rasterised at **one cell per player pixel at thirty metres**, which is
+what makes it ungameable: detail finer than a cell is detail a player at that range cannot
+see either.
+
+**The glow wiring is gone rather than kept.** The plumbing was never at fault and #49 checked
+rather than assumed it — the baked mesh really does carry a surface named `Glow`, the branch
+really did fire, and the same emission on the body renders a glowing skeleton with full
+bloom. The geometry is simply inside the skull. #38 left the branch against a future
+character with exposed glow geometry; that is an untested claim about art nobody has, and an
+untested claim in a comment is what produced the ticket. Both workarounds stay refused for
+#38's reasons: moving an artist's vertices is the renderer editing the model, and
+`depth_test_disabled` would draw a Crawler's eyes through a wall. `WorldView._skinned_mesh`
+carries the note. The Siege Hulk's vent is untouched and is still the only place geometry
+carries a rule — and it is **built** here, sized against the body it sits on, rather than
+hoped for in an asset.
+
+**What a still image cannot settle** is whether the size difference reads *in motion*, in a
+Wave spread down a lane rather than posed. The gait difference is deliberate — the Crawler
+runs where the Breaker walks — and no render has an opinion about it.
 
 Full pipeline, the casting table, why `UAL1.glb` is still unused and what three renders
 caught are in [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 11. The before and
-after are `docs/images/enemies_{pair,wave,boss}_{before,after}.png`, rebuilt with
+after are `docs/images/enemies_{pair,wave,boss,triage}_{before,after}.png`, rebuilt with
 `SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png <preset>`.
+
+**`triage` is #49's preset and it exists because neither of the others asked its question.**
+`pair` stands six to twelve metres off, which is inside the range where the two kinds
+separated anyway; `distance` frames the **Crawler** swarm's centre, so a Breaker is routinely
+not in the frame at all — which a render showed immediately and which is why the ticket's own
+acceptance criterion could not have been settled with it. `triage` is `pair`'s subject at
+`distance`'s range: the closest Crawler-and-Breaker pair, square on, at thirty metres, at eye
+height, in the player's own 75-degree field rather than a cinematic one.
 
 **What it costs**, measured with `ENEMY_COUNT=<n> tools/visual/frame_cost.sh` against the
 same scenario with and without the renderer half: `WorldView.sync` goes from 3.16 ms to

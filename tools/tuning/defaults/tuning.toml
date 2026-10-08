@@ -754,6 +754,31 @@ breaker_damage = 60
 # How long between one Breaker's bites, in seconds.
 breaker_attack_interval_seconds = 1
 
+# How wide and how tall a Breaker is, in metres — the capsule a round is resolved against,
+# and the height `WorldView` scales its body by. Its own rather than the Crawler's
+# `gear.enemy_hit_*` since #49, and the reason is **readability rather than combat**.
+#
+# A Crawler and a Breaker were the same KayKit character rig at the same 1.6 m, so at thirty
+# metres both were about twenty-five pixels of dark silhouette and nothing told them apart —
+# which spends #34's whole effort to make a Breaker's approach legible and the Telegraph's
+# effort to name what is coming. Size is the one cue that survives any range, any light and
+# any amount of dust, and raising these two is the whole of the fix:
+# `tests/cases/test_enemy_silhouette.gd` measures the outlines and fails if two kinds
+# converge.
+#
+# 2.2 against a Crawler's 1.6 and a Siege Hulk's 3.2 puts a Breaker a head and shoulders over
+# a player at 1.8 and still plainly short of the boss — a thing that looms over the 1.5 m
+# Smelter it is eating. Raising it further runs into the boss rather than away from the
+# Crawler, which the silhouette gate reports as the Breaker and the Hulk converging.
+#
+# The radius keeps the Crawler's proportion rather than its value, because the drawn body is
+# scaled uniformly: 0.8 is to 2.2 roughly what 0.6 is to 1.6, so the capsule stays the width
+# of the thing a player is aiming at. It also widens a Breaker's bite by the difference,
+# because `enemy.player_bite_reach_metres` is measured from the hull — which is the right way
+# round for something bigger, and is the one balance consequence of this pair.
+breaker_hit_radius_metres = 0.8
+breaker_hit_height_metres = 2.2
+
 # How near a Breaker gets to the Nest — or to a Machine — before it breaks ranks and turns
 # on the Factory, in tiles along its route. #34's decision, and the one number it is made of.
 #

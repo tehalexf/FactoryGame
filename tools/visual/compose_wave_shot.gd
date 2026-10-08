@@ -188,6 +188,36 @@ func _frame(camera: Camera3D, sim: Simulation, preset: String) -> void:
 		)
 		return
 
+	if preset == "triage":
+		# **`pair`'s subject at `distance`'s range**, and the question #49 is about: a player
+		# holding a lane sees a Crawler and a Breaker side by side at thirty metres and has
+		# to know which is which, because the right answer to each is a different one.
+		#
+		# Neither of the other two presets asks it. `pair` stands six to twelve metres off,
+		# which is inside the range where #38 measured the two separating anyway; `distance`
+		# frames the swarm's *centre*, so the two kinds are wherever the Wave happened to put
+		# them and the Factory is in front of them. Here the camera is square on to the line
+		# between the closest pair, at the one distance the ticket names, so what the image
+		# answers is the question that was asked.
+		var pair: Array = _closest_pair(sim)
+		var crawler: Vector3 = pair[0]
+		var breaker: Vector3 = pair[1]
+		var between: Vector3 = (crawler + breaker) * 0.5
+		var across: Vector3 = (breaker - crawler)
+		if across.length() < 0.01:
+			across = Vector3.RIGHT
+		var facing: Vector3 = across.normalized().cross(Vector3.UP)
+		# Eye height and the player's own field of view, both of them deliberately: this is
+		# the one preset whose whole claim is "what a player sees from where a player stands",
+		# so a cinematic focal length would be measuring a lens rather than the game.
+		camera.fov = 75.0
+		camera.look_at_from_position(
+			between + facing * 30.0 + Vector3(0.0, 1.7, 0.0),
+			between + Vector3(0.0, 1.0, 0.0),
+			Vector3.UP
+		)
+		return
+
 	if preset == "boss":
 		var hulk: Vector3 = _first(sim, Simulation.ENEMY_KIND_SIEGE_HULK)
 		var facing: Vector3 = _hulk_facing(sim)
