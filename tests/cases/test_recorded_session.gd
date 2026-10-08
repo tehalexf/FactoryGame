@@ -56,17 +56,18 @@ func _session() -> Array:
 		settling.mouse_motion = Vector2(0.0, 11.0)
 		ticks.append(settling)
 
-	# Scroll along to a crafter, turn it a quarter, and place it.
+	# Press the key for a crafter, turn it a quarter, and place it.
 	#
-	# **One step, and #53 is why it is one again.** #42 made a Miner refuse bare rock, so a
-	# single step along the *id-sorted* list landed on `coal_miner_mk1` and recorded a click
-	# that built nothing; this fixture went to eight steps to reach `smelter_mk1`. The wheel
-	# now walks the chain rather than the alphabet, so one step off the Miner is the Smelter
-	# — a crafter, unlocked from the first tick, and what a player standing on open ground
-	# would be reaching for. What this fixture is about is a build intent that crosses,
-	# replays, and can be demolished again.
+	# **The number row, because the wheel is not a picker any more.** This was eight wheel
+	# steps: #42 made a Miner refuse bare rock, so one step along the id-sorted list landed
+	# on `coal_miner_mk1` and recorded a click that built nothing, and eight was what reached
+	# `smelter_mk1`. The wheel now turns the hologram instead, so the fixture says what it
+	# means and presses a key — and since #53 that key is `2`, because the hotbar is ordered
+	# by the chain and the Smelter is the second thing in it. A crafter, unlocked from the
+	# first tick, and what a player standing on open ground would be reaching for. What this
+	# fixture is about is a build intent that crosses, replays, and can be demolished again.
 	var scrolling: PlayerController.DeviceSample = _sample()
-	scrolling.machine_steps = 1
+	scrolling.machine_picked = 1
 	ticks.append(scrolling)
 
 	var turning: PlayerController.DeviceSample = _sample()

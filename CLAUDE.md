@@ -2767,10 +2767,16 @@ Five things worth knowing rather than rediscovering:
   Column-major keys would have handed the chain `1 5 7 9` and asked them to learn a lookup
   table. `BuildChain.key_label` is the single authority and the objective line reads it too,
   so the sentence and the cell print the same number.
-- **The controller reads the same order — the wheel as well as the number row.** Two ways of
-  reaching one row of cells, so they walk one derivation; otherwise a key press lands on the
-  Machine printed three cells away. It also un-did a workaround: `test_recorded_session`
-  needed eight wheel steps to reach a crafter under id order and needs **one** under this one.
+- **The controller reads the same order**, so a key press lands on the Machine printed on
+  the cell rather than on whatever sorts there by id. The number row is now the *only*
+  picker — the wheel was given the hologram to turn in the ticket merged just before this
+  one — which also un-did a workaround: `test_recorded_session` needed eight wheel steps to
+  reach a crafter under id order and now simply presses `2`, because the Smelter is the
+  second thing in the chain.
+- **Ten keys is the whole of it, and nothing reaches an eleventh Machine.** The wheel used
+  to; it does not any more. `Objective` says nothing about a key it cannot name rather than
+  naming one that does not exist, and that is the clause to revisit on the day the Machine
+  list outgrows the number row.
 - **What a Delivery gates is a second group, past the end of the chain, and a render is why.**
   The deeper Miners are stage 0, which is where the chain says they go, and it made that
   column four cells tall — a hotbar is as tall as its tallest column, so two Machines nobody
@@ -3335,6 +3341,55 @@ than trusting it. The conversion, and the four things about those FBX that bite,
   the hologram's own colour, so the silhouette read as a tool rather than a gun at a glance,
   and that distinction is the point of a holster. **Modelling a Build Gun is the ticket that
   gets it back**, and it is art rather than code.
+
+### Framing is read off the pack, never nudged
+
+The one defect this whole arrangement could not catch, and the shape is worth keeping
+because every future viewmodel runs the same risk.
+
+A player reported that *"the attack animation ... the khfing animation -- it doesnt work
+now"*. Nothing was broken and nothing was recent. `WeaponAnimator` entered `FIRE` on the
+tick the trigger went and held it for 32 of the Pneumatic Wrench's 35-tick interval;
+`WeaponViewmodel` resolved that role to `Knife_Attack_1_Anim` through the `"attack"`
+needle; the skeleton moved under the seek. **The swing ran in full and could not be
+seen**, because `convert_weapons.sh` framed the arms with the viewer standing inside
+them: `--offset=0.0,0.16,-0.18` put the elbows on the near plane and the forearms
+splayed around the view.
+
+Three things in that worth carrying forward:
+
+- **The middle number of an `--offset` is *forward*.** It is written in Blender's axes,
+  where +Y is the horizontal depth axis the exporter's Y-up conversion sends to glTF
+  -Z — the way the camera looks. Read as "back" or as "up" it walks the eye into the
+  model. `test_the_middle_number_of_an_offset_is_forward_and_not_up` pins it on the
+  fixture.
+- **A pack that ships no camera still answers where the eye goes.** The two `Weapon
+  pack` rifles use `--origin-object Camera001`; RgsDev has none, so #28 guessed. It did
+  not have to: `Prefabs/FPSController.prefab` parents those arms to a `WeaponHolder` at
+  (0, 0, 0) under the camera, so the model's own origin *is* the eye and the only hand
+  number is the drop from eye to hands. **Look for the prefab before reaching for a
+  nudge.** `test_no_weapon_is_framed_by_pushing_it_forward_into_the_camera` refuses a
+  recipe that pushes one forward again, and both tests run on the committed fixture
+  because `.github/ci/expected_skips.txt` is explicit that a licensed-asset skip is a
+  test that stopped covering anything.
+- **A state machine with no nodes proves the role, and only a render proves the frame.**
+  Every assertion in `test_weapon_viewmodel.gd` was true throughout, and that is the
+  point rather than a failing: `WeaponAnimator` answers *what should be playing* and has
+  no opinion about whether it is on screen. The defect lived in the one gap that
+  arrangement leaves, and the only instrument that found it was
+  `tools/visual/shot.sh` pointed at the player's own camera.
+
+And the reason it surfaced when it did: **#42 made the weapon the default hand**
+(`_player_build_mode.fill(0)`), so a player now opens every Run looking at the wrench
+instead of switching to it deliberately. The recipe had not changed since 95ee59c
+created it. "It doesn't work *now*" was exactly right about the experience and exactly
+wrong about the cause — a default moved, and a two-year-old framing error became the
+first thing anybody sees.
+
+The drop that replaced it, 0.10, was bracketed by rendering: 0.18 puts the knife half
+off the bottom of the frame. **It is a feel number and no harness has an opinion about
+it** — whether the swing reads as a swing rather than as an arm across the view is for
+a human with a mouse.
 
 What is still placeholder-grade is the *surface*: the packs reference textures they do not
 ship, so the arms and the weapons are repainted from `dieselpunk_palette.json` rather than

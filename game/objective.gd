@@ -41,7 +41,7 @@ static func line(sim: Simulation, player_id: int) -> String:
 			return _with_the_build_gun(
 				sim,
 				player_id,
-				"Place a Miner %s — %s, then left click" % [
+				"Place a Miner %s%s, then left click" % [
 					_where_the_ore_is(sim, player_id), _the_key_for_this_step(sim, player_id)
 				]
 			)
@@ -49,7 +49,7 @@ static func line(sim: Simulation, player_id: int) -> String:
 			return _with_the_build_gun(
 				sim,
 				player_id,
-				"Place a Smelter on clear ground nearby — %s; it turns ore into ingots"
+				"Place a Smelter on clear ground nearby%s; it turns ore into ingots"
 					% _the_key_for_this_step(sim, player_id)
 			)
 		Step.BELT:
@@ -133,15 +133,20 @@ static func _step(sim: Simulation, player_id: int) -> Step:
 	return Step.DELIVER
 
 
-## The key that reaches the cell this step is about, worded for the middle of a sentence, or
-## "the wheel" when no number key reaches it.
+## The key that reaches the cell this step is about, as a clause for the middle of a
+## sentence — " — key 2" — or "" for a cell no key reaches.
 ##
 ## **Derived from the chain and never typed**, which is the whole reason `BuildChain.key_label`
 ## is not in the renderer: the line and the cell print the same number because they read the
 ## same function, so a Machine added as a row moves both or neither.
+##
+## The empty case is not hypothetical furniture. The number row is ten keys and the wheel
+## stopped being a picker when it was given the hologram to turn, so an eleventh Machine has
+## no way to be reached at all — and a line naming a key that does not exist would be worse
+## than one that names none. The step still says what to place.
 static func _the_key_for_this_step(sim: Simulation, player_id: int) -> String:
 	var phrase: String = BuildChain.key_phrase(sim.query_definitions(), pointed_at(sim, player_id))
-	return "the wheel" if phrase.is_empty() else phrase
+	return "" if phrase.is_empty() else " — %s" % phrase
 
 
 ## A build step, with the key that puts the Build Gun in your hand on the front of it when
