@@ -426,7 +426,12 @@ class CuttingTheRunUpRatherThanTheSilenceBeforeIt(unittest.TestCase):
     """
 
     def _cut(self, take: str, extra: list[str] | None = None):
-        out = _work / f"runup_{take}.ogg"
+        # The extra arguments are part of the name, because two cuts of the same take
+        # that differ only in `--semitones` are two different files and writing both
+        # to one path compares a file with itself — which is exactly what this helper
+        # did when the transposition test was written against it.
+        tag = "_".join(extra or []).replace("-", "").replace(".", "") or "plain"
+        out = _work / f"runup_{take}_{tag}.ogg"
         result = _convert(
             "--input", str(_signals["gestures"]), "--output", str(out),
             "--takes", "2", "--take", take,
@@ -453,6 +458,28 @@ class CuttingTheRunUpRatherThanTheSilenceBeforeIt(unittest.TestCase):
             lengths["1"], lengths["2"], places=2,
             msg="two takes, two performances, two lengths — one number cannot fit both",
         )
+
+    def test_a_transposed_cue_keeps_the_whole_run_up_it_measured(self):
+        # **The unit bug this exists to prevent, and it shipped once.** The run-up is
+        # measured on the *source* envelope and `--duration` is the length of the
+        # *output*, so the two are in different units until the transposition is
+        # divided out. Comparing them directly capped a pitched-down cue at the
+        # source figure and dropped the front of the air: at -4 semitones a 0.30 s
+        # run-up came out 0.30 s long where it should be 0.378, so the cut opened
+        # 79% of the way through its own approach. Internally consistent, and not
+        # the approach it had just measured.
+        #
+        # So: the same take, cut twice, differing only by `--semitones`. Down a major
+        # third stretches time by 1/0.7937, and the cue has to stretch with it.
+        plain, _ = self._cut("1")
+        lower, _ = self._cut("1", ["--semitones", "-4"])
+        ratio = wav_to_cue.speed_ratio(-4.0)
+        self.assertAlmostEqual(
+            _probe(lower)["duration"], _probe(plain)["duration"] / ratio, places=2,
+            msg="a transposed run-up is the same air arriving more slowly, all of it",
+        )
+        # And the cap is still the cap, in the units the cap is quoted in.
+        self.assertLessEqual(_probe(lower)["duration"], 0.5 + 0.01)
 
     def test_the_cue_holds_signal_from_its_first_moment(self):
         # The assertion the shipped regression would have failed: measure only the
