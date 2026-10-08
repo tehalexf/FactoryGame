@@ -474,7 +474,18 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# Build Gun out places; the same click with the weapon out fires, further down. Nothing
 	# is being *forbidden* here and the Simulation has no opinion on any of it — this is one
 	# button producing one of two intents, which is the whole of what build mode is.
-	if sample.place_clicked and in_build_mode:
+	#
+	# The rule itself is `BuildGun.hand_refusal` rather than four readings of
+	# `in_build_mode`, because #35's playtest found the renderer drawing a green hologram
+	# while these branches were quietly producing nothing: four checks here and none there
+	# is exactly the disagreement `query_build_refusal` exists to prevent. The mode the
+	# player will be in once *this* tick's `B` has applied is what is passed, which is the
+	# same rule that makes a scroll-and-click place what the player scrolled to.
+	var gun_in_hand: bool = (
+		BuildGun.hand_refusal(in_build_mode) == Simulation.Refusal.NONE
+	)
+
+	if sample.place_clicked and gun_in_hand:
 		# The rotation the player will be holding once this tick's rotate has applied,
 		# so rotating and placing in the same tick places the Machine they can see.
 		var rotation: int = WorldGrid.wrap_rotation(
@@ -489,7 +500,7 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			)
 		)
 
-	if sample.belt_clicked and in_build_mode:
+	if sample.belt_clicked and gun_in_hand:
 		var entry: Vector3i = BuildGun.aimed_tile(sim, player_id)
 		# The direction comes from the yaw the *Simulation* is holding, rounded to the
 		# nearest of the grid's four, so there is no second opinion about which way the
@@ -501,10 +512,10 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			InputAction.build_belt(player_id, entry, entry + step * (BELT_RUN_TILES - 1))
 		)
 
-	if sample.wall_clicked and in_build_mode:
+	if sample.wall_clicked and gun_in_hand:
 		actions.append(InputAction.build_wall(player_id, BuildGun.aimed_tile(sim, player_id)))
 
-	if sample.demolish_clicked and in_build_mode:
+	if sample.demolish_clicked and gun_in_hand:
 		actions.append(InputAction.demolish(player_id, BuildGun.aimed_tile(sim, player_id)))
 
 	# Sent every tick the key is down and never on the edge, because the Simulation consumes

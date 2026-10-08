@@ -12,18 +12,19 @@
 ## every legitimate tuning change into a red suite, which is how a balance guard stops being
 ## read.
 ##
-## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision
-## in — which is why the two scenarios that walk anywhere read a little differently from
-## #26's own figures. See "What collision cost the two sorties" in CLAUDE.md.
+## Measured on 2026-10-08, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision in
+## and #35's shorter *first* Wave interval — the two undefended rows are a minute shorter for
+## that and nothing else moved by more than twenty seconds. See "What the shorter first Wave
+## cost" in CLAUDE.md.
 ##
-##     bare           4m22s   undefended
-##     opening_line   4m04s   undefended, and sooner than bare
-##     competent     27m00s   ran dry, then Breakers took the Factory
+##     bare           3m22s   undefended
+##     opening_line   3m12s   undefended, and sooner than bare
+##     competent     26m42s   ran dry, then Breakers took the Factory
 ##     over_producer 19m36s   ran dry, 27% sooner
 ##     fortified     29m15s   swarmed, with 274 rounds still in the Factory
 ##     deep_digger   10m48s   dug too deep, two Breaches
-##     hive_sortie   29m36s   ran dry, 2m36s later than competent
-##     rifle_picket  26m32s   ran dry, 28s sooner than competent (and 26m29s on seeds 11/29)
+##     hive_sortie   29m35s   ran dry, 2m53s later than competent
+##     rifle_picket  26m52s   ran dry, 10s *later* than competent — the claim flipped, see below
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -192,23 +193,40 @@ func test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed() -> voi
 		)
 
 
+## How much of a Run two scenarios may differ by and still count as the same length. A
+## minute and a half in a Run of twenty-six minutes: smaller than the swing #30's collision
+## and #35's schedule each produced on their own, so a difference inside it is phase and not
+## a mechanic.
+const SAME_LENGTH_SECONDS: int = 90
+
+
 func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void:
-	# #17's open question, measured. A Bolt Rifle spends `ammunition` at 75 rounds a minute
-	# out of the Nest's store; the Press makes 37. So a player who leans on the trigger is
-	# competing with his own Turret, and the Run is shorter for it even though the rounds went
-	# into Crawlers either way.
+	# #17's open question, measured — and **the claim has now flipped, so what is asserted is
+	# what was measured.** A Bolt Rifle spends `ammunition` at 75 rounds a minute out of the
+	# Nest's store against a Press that makes 37, so the mechanism is real: a player who
+	# leans on the trigger is competing with his own Turret. What the harness cannot show any
+	# more is that it *costs* anything end to end.
 	#
-	# This is also the only scenario a seed can reach at all, and the only row in the table
-	# that is not bit-identical across seeds: 26m32s on seed 7 against 26m29s on 11 and 29.
-	# Three seconds in twenty-six minutes — the spread moves where the rounds go without
-	# moving how long the Nest stands, which is why the row above is the whole of the seed
-	# story and why this one is asserted against `competent` rather than against a figure.
+	# #26 measured a two-minute penalty. #30's collision moved the picket's open-loop stance
+	# and took it to 28 seconds. #35's shorter first Wave moved the whole Wave schedule's
+	# phase by a minute and the margin crossed zero: 26m52s against `competent`'s 26m42s, ten
+	# seconds the *other* way, and 27m03s on seed 11. CLAUDE.md wrote down in advance that
+	# this could flip and that the honest response would be to say what was measured.
+	#
+	# So the claim this guards is the one the figures still support: a rifleman at the Nest is
+	# **neither free nor ruinous** — the fourth claimant costs about what it takes, within the
+	# phase noise of the schedule. A later Ammunition change that made the rifle genuinely
+	# cheap or genuinely fatal would move it outside `SAME_LENGTH_SECONDS` and fail here.
 	var competent: BalanceProbe.Report = _play("competent")
 	var picket: BalanceProbe.Report = _play("rifle_picket")
 	assert_true(picket.nest_fell, "the Run ends")
+	var apart: int = absi(picket.end_tick - competent.end_tick)
 	assert_true(
-		picket.end_tick < competent.end_tick,
-		"and sooner for the rifle: %s against %s" % [picket.clock(), competent.clock()]
+		apart <= SAME_LENGTH_SECONDS * Simulation.TICKS_PER_SECOND,
+		(
+			"the rifle should cost about what it takes: %s against %s"
+			% [picket.clock(), competent.clock()]
+		)
 	)
 
 

@@ -163,7 +163,20 @@ const CATALOGUE: Dictionary = {
 	# ── Waves ────────────────────────────────────────────────────────────────
 	# A warning you cannot hear is not a warning, so the klaxon is the loudest
 	# non-diegetic cue in the game.
-	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["forceField_003"], -5.0],
+	#
+	# **#35: *"the alarm when starting a wave is too STUPID"*, and the player was
+	# right.** The fallback was `forceField_003` — a sci-fi shimmer — played as a
+	# twelve-second loop, which is a cartoon rather than a warning, and the hero pick
+	# was a *trailer* alarm, a designed cinematic sting. Both fail #21's own standard
+	# of real mechanisms over designed sounds.
+	#
+	# A klaxon is a **motor** — an electric motor spinning a chopper against a port,
+	# which is why a siren winds up and winds down. `engineCircular_004` is the only
+	# circular motor in the committed packs not already spoken for by the Boiler's
+	# startup or the busy Factory bed, so it is the honest stand-in: a thing with a
+	# rotor, spinning, for as long as the Telegraph runs. Only the first take is ever
+	# used, because a looping cue is opened once rather than chosen per play.
+	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["engineCircular_004"], -4.0],
 	WAVE_BEGIN: ["wave_begin", ["lowFrequency_explosion_001"], -3.0],
 	BREACH_OPENS: ["breach_opens", ["impactGlass_heavy_000", "impactGlass_heavy_003"], -4.0],
 
@@ -175,16 +188,67 @@ const CATALOGUE: Dictionary = {
 	WEAPON_FIRE_CRACK: ["weapon_fire_crack", ["impactMetal_medium_000", "impactMetal_medium_003"], -6.0],
 	WEAPON_FIRE_TAIL: ["weapon_fire_tail", ["explosionCrunch_000", "explosionCrunch_002"], -14.0],
 	WEAPON_RELOAD: ["weapon_reload", ["impactMetal_light_001", "impactMetal_light_003"], -6.0],
-	WEAPON_IMPACT: ["weapon_impact", ["impactPunch_heavy_000", "impactPunch_heavy_002"], -8.0],
-	WEAPON_SWING: ["weapon_swing", ["impactSoft_medium_000"], -8.0],
-	WEAPON_HIT: ["weapon_hit", ["impactPunch_medium_000", "impactPunch_medium_003"], -5.0],
+	WEAPON_IMPACT: [
+		"weapon_impact",
+		["impactPunch_heavy_000", "impactPunch_heavy_002", "impactPunch_heavy_004"],
+		-9.0,
+	],
+	# **#35: *"knife sound is too loud and too generic (needs variance)"*.** The
+	# Pneumatic Wrench is the weapon a Run opens with, so its swing is the sound a new
+	# player hears more than any other, and it had one take at -8 dB — one sample, at
+	# the volume of a Machine being built, on every swing for the whole Run.
+	#
+	# Three fixes, and they are three different complaints. *Variance*: five takes, so
+	# `tick % count` has something to choose between. *Too loud*: a swing through air is
+	# the quietest thing a weapon does — the sound that matters is what it lands on, so
+	# the swing goes under the hit by five dB and nearly under a footstep. *Generic* is
+	# the one the committed packs cannot fully answer: Kenney ships no whoosh, and a soft
+	# medium impact is the nearest thing to air moving. The hero take is a real melee
+	# swing and is what this sounds like on a machine with the bundle.
+	WEAPON_SWING: [
+		"weapon_swing",
+		[
+			"impactSoft_medium_000",
+			"impactSoft_medium_001",
+			"impactSoft_medium_002",
+			"impactSoft_medium_003",
+			"impactSoft_medium_004",
+		],
+		-16.0,
+	],
+	# What the wrench lands on, which is the half of a melee hit that should carry the
+	# weight. Five takes and 4 dB down: it was the third-loudest cue in the table.
+	WEAPON_HIT: [
+		"weapon_hit",
+		[
+			"impactPunch_medium_000",
+			"impactPunch_medium_001",
+			"impactPunch_medium_002",
+			"impactPunch_medium_003",
+			"impactPunch_medium_004",
+		],
+		-9.0,
+	],
 	WEAPON_DRY: ["weapon_dry", ["impactGeneric_light_003"], -11.0],
 
 	# ── The Factory ──────────────────────────────────────────────────────────
 	# Both beds sit low. `AudioDirector.ambience_db` moves them against each other
 	# as the Factory grows; these are the ceilings that mix is measured down from.
-	FACTORY_BED: ["factory_bed", ["spaceEngineLow_000"], -16.0],
-	FACTORY_BUSY: ["factory_busy", ["engineCircular_002"], -14.0],
+	#
+	# **#35: *"the middle core hum is too loud"*.** The player heard it as coming from
+	# the Nest, which is the one structure in the middle of the Map and the thing a drone
+	# with no position attaches itself to. These are the ceilings a *full* Factory
+	# sustains rather than a worst case, and the quiet one's was 3 dB **above** a
+	# footstep — which is not a bed, it is a drone with the Factory mixed into it.
+	#
+	# A bed is the floor of the mix: everything else stands on it, so it belongs under
+	# the quietest thing it carries. Eight dB down each, which keeps the gap between them
+	# — the crossfade "growth is audible" is made of — and puts the pair below the
+	# footsteps. `test_the_ambience_beds_sit_under_everything_they_are_a_bed_for` is the
+	# rule rather than these two numbers, so a later cue that goes quieter than a bed
+	# fails rather than disappearing underneath it.
+	FACTORY_BED: ["factory_bed", ["spaceEngineLow_000"], -24.0],
+	FACTORY_BUSY: ["factory_busy", ["engineCircular_002"], -22.0],
 	MACHINE_BUILT: ["machine_built", ["impactPlate_medium_000", "impactPlate_medium_002"], -5.0],
 	MACHINE_DESTROYED: ["machine_destroyed", ["explosionCrunch_001", "explosionCrunch_003"], -3.0],
 	MACHINE_DAMAGED: ["machine_damaged", ["impactMetal_medium_001", "impactMetal_medium_004"], -9.0],
@@ -195,8 +259,37 @@ const CATALOGUE: Dictionary = {
 	RUN_OVER: ["run_over", ["lowFrequency_explosion_001"], 0.0],
 
 	# ── Enemies and the player ───────────────────────────────────────────────
-	ENEMY_ATTACK: ["enemy_attack", ["slime_000", "slime_001"], -6.0],
-	ENEMY_DEATH: ["enemy_death", ["impactSoft_medium_001", "impactSoft_medium_003"], -7.0],
+	# **#35: *"crawler hurt and death sound is too weird"*.** Both were wet. The attack
+	# was literally `slime`, and the death a soft medium impact — a squelch and a squish,
+	# which is a different creature from the one on screen and is what "weird" means here.
+	#
+	# A Crawler is a **carapace**: the sound of one is dry, hard and brittle, and a dry
+	# woody crack is the standard stand-in for chitin because wood and shell break the
+	# same way. Five takes of it for the attack, because a Wave is dozens of them a
+	# second, and the heavier family for a death — something structural giving way rather
+	# than something soft landing.
+	ENEMY_ATTACK: [
+		"enemy_attack",
+		[
+			"impactWood_light_000",
+			"impactWood_light_001",
+			"impactWood_light_002",
+			"impactWood_light_003",
+			"impactWood_light_004",
+		],
+		-9.0,
+	],
+	ENEMY_DEATH: [
+		"enemy_death",
+		[
+			"impactWood_medium_000",
+			"impactWood_medium_001",
+			"impactWood_medium_002",
+			"impactWood_medium_003",
+			"impactWood_medium_004",
+		],
+		-9.0,
+	],
 	PLAYER_HURT: ["player_hurt", ["impactPunch_medium_001"], -4.0],
 	PLAYER_DOWN: ["player_down", ["impactSoft_heavy_004"], -2.0],
 	# No hero take: the bundle has no footsteps in it. Kenney ships five of concrete,
@@ -212,7 +305,28 @@ const CATALOGUE: Dictionary = {
 		],
 		-19.0,
 	],
-	PLAYER_LAND: ["", ["impactSoft_heavy_001", "impactSoft_heavy_003"], -12.0],
+	# **#35: *"sound for jump is too comical"*.** There is no jump cue and never was —
+	# what a player hears when they jump is this, the landing, on the tick they get their
+	# feet back. It was two takes of `impactSoft_heavy`, a big soft squelchy thud, which
+	# is a cartoon character hitting the floor rather than a person in boots.
+	#
+	# A player lands on a Factory floor or on a Machine's roof, and both are plate steel
+	# over concrete, so the landing is a bootfall with weight behind it: five takes of a
+	# light steel plate, three dB further down. Same family as `MACHINE_BUILT`'s plate
+	# and two weights below it, because setting a Smelter down should be heavier than
+	# landing on one. Still no hero take — the bundle has no footsteps in it, which is
+	# the same reason `FOOTSTEP` has none.
+	PLAYER_LAND: [
+		"",
+		[
+			"impactPlate_light_000",
+			"impactPlate_light_001",
+			"impactPlate_light_002",
+			"impactPlate_light_003",
+			"impactPlate_light_004",
+		],
+		-15.0,
+	],
 }
 
 ## Which Kenney pack a fallback name lives in. Both packs are flat directories of

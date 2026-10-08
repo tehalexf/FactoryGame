@@ -489,6 +489,54 @@ func test_belt_laying_lives_in_build_mode() -> void:
 	)
 
 
+func test_every_build_act_goes_through_the_one_hand_rule() -> void:
+	# #35's second report — *"the hologram should not be placable in gun mode"* — covering
+	# all four build acts at once rather than only the two that had tests. It is the net
+	# under collapsing four inline readings of the mode into `BuildGun.hand_refusal`: the
+	# renderer, the panel and these four now ask one function, so there is no longer a
+	# version of this that can be fixed in one place and left wrong in another.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var sample: PlayerController.DeviceSample = _sample()
+	sample.place_clicked = true
+	sample.belt_clicked = true
+	sample.wall_clicked = true
+	sample.demolish_clicked = true
+
+	var builds: Array = [
+		InputAction.Kind.BUILD_MACHINE,
+		InputAction.Kind.BUILD_BELT,
+		InputAction.Kind.BUILD_WALL,
+		InputAction.Kind.DEMOLISH,
+	]
+	var with_the_gun: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
+	for kind: int in builds:
+		assert_true(with_the_gun.has(kind), "act %d happens with the Build Gun out" % kind)
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	var with_the_rifle: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
+	for kind: int in builds:
+		assert_false(with_the_rifle.has(kind), "act %d does not, with a rifle out" % kind)
+
+
+func test_holding_a_rifle_does_not_stop_a_player_building() -> void:
+	# The line this must not cross, from the other side. The four acts above are about what
+	# a *button* means; the Simulation is not being asked for permission, and an intent that
+	# reaches it is applied whatever is in the player's hands. If this ever goes red, the
+	# refusal has leaked out of `game/` and into the build path —
+	# `test_nothing_in_the_simulation_asks_the_mode_for_permission` says the same thing
+	# about the Simulation's own refusal.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_false(sim.query_player_is_in_build_mode(0), "the premise")
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(6, 0, 6), 0
+		)
+	])
+	assert_eq(sim.query_machine_count(), 1, "building is never gated")
+
+
 func test_no_two_actions_share_a_key() -> void:
 	# The thing three branches landing at once kept nearly doing. #29 moved the Belt to `C`
 	# while #17 was putting the Silo's charge counter there, and `T` was quietly bound to

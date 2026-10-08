@@ -183,13 +183,22 @@ lean_pitch_degrees_per_metre_per_second = 0.06
 field_of_view_degrees = 75
 sprint_field_of_view_add_degrees = 6
 
-# How long swapping between the Build Gun and a weapon takes, in seconds.
+# How long swapping between the Build Gun and a weapon takes, in seconds — the **whole**
+# swap, the old thing going down and the new one coming up together.
 #
 # **A holster animation and nothing else.** The mode itself switches on the tick you
 # press the key, so this never delays a placement or a shot and nothing is ever gated
-# by a swap in progress — it is only how long the old thing takes to go down and the
-# new thing to come up. Set it to 0 for an instant swap.
-holster_seconds = 0.2
+# by a swap in progress. Set it to 0 for a hard cut.
+#
+# **It is a budget, and until #35 it was read by nobody.** #28 timed the swap you see off
+# the `holster` and `draw` clip lengths of the model actually on screen, so this key moved
+# `query_player_holster_blend` and nothing else, and the first playtest's *"swapping modes
+# should be instant, not taking so long"* was seven tenths of a second of
+# `WeaponAnimator.DEFAULT_SECONDS` that turning this down did not touch. It is now the
+# ceiling on the pair: each half gets at most half of it, the clips decide the shape
+# inside that, and a pack whose stow is already brisk is left alone. 0.06 is three or four
+# ticks and reads as a cut with a hand in it rather than as a wait.
+holster_seconds = 0.06
 
 # How far a player turns per 1000 pixels of mouse travel, in turns — one turn is a
 # full revolution, so 0.4 means a 2500-pixel sweep spins all the way round. This is
@@ -632,14 +641,49 @@ per_craft_per_depth = 1
 # joint balance pass" in CLAUDE.md.
 decay_per_minute = 240
 
-# How long between Waves on a cold Factory, in seconds. Also how long the first Wave of
-# a Run is away, because a Run opens cold — one number rather than two that have to be
-# kept in a sensible relationship with each other.
+# How long between Waves on a cold Factory, in seconds.
+#
+# It used to be the length of the first gap too, on the grounds that a Run opens cold and one
+# number beats two. #35's playtest is what separated them: see
+# `first_wave_interval_seconds` below, which is the opening gap and the only one a player has
+# had no chance to shorten.
 wave_interval_baseline_seconds = 150
+
+# How long the **first** Wave of a Run is away, in seconds, on a cold Factory. Heat
+# shortens it exactly as it shortens every other interval, and `wave_interval_minimum_seconds`
+# still floors it.
+#
+# A separate key rather than a lower baseline, and the first playtest is why. Its report was
+# *"crawlers dont seem to be coming"*, which was not a bug: at the baseline's 150 seconds the
+# first Wave is two and a half minutes out and a new player waits for it in silence — longer
+# than most people will sit through, for the most interesting thing in the game. But the
+# baseline is not what was wrong with it. #26 measured the whole Heat → interval curve
+# against played Runs and left the baseline where it found it, and the gap between the fourth
+# Wave and the fifth is a different question from the gap before the first.
+#
+# What makes the first gap its own number is that **it is the one interval nobody has had the
+# chance to shorten.** Every later gap is the Factory's own doing: a player who wants the
+# next Wave sooner builds, or pulls the lever. The opening gap is spent with no Heat to spend
+# and nothing to defend against, so it is the only one where waiting teaches nothing. 90
+# seconds is long enough to get the opening line down and watch the Heat gauge move, and
+# short enough that the klaxon arrives while a player is still looking at what they built.
+#
+# **Measured at 50 first, and 50 was too short.** `tools/balance/measure.sh` put `deep_digger`
+# at 2m46s against its 10m48s: that scenario pulls the call-early lever once a minute from
+# minute one, and a natural Wave arriving at 45 seconds lands *in front of* the first pull, so
+# the levers stack Waves on a Factory that has not made a round yet. The opening gap has to
+# outlast the first thing a player can do about it, which is the lever. At 90 the natural Wave
+# still comes after the first minute, every other scenario moves by seconds, and the Factory's
+# own Heat is what brings the first Wave in: the opening line's 615 Heat takes it to about
+# 65 seconds, so **building is still what summons it** and a player who builds nothing waits
+# the full 90. That is the lesson the opening minute is for, and a fixed opening timer would
+# have taught the opposite.
+first_wave_interval_seconds = 90
 
 # The shortest the interval between Waves ever gets, in seconds. The ceiling on how
 # quickly Heat can hunt a Factory; past it, more Heat buys the Enemy more Enemies
-# instead of less time (see `content/waves.csv`).
+# instead of less time (see `content/waves.csv`). It floors the first Wave too, so the
+# opening line's own Heat cannot pull the first Wave in on top of the player.
 wave_interval_minimum_seconds = 40
 
 # How much Heat shaves one second off the interval between Waves. With the baseline and

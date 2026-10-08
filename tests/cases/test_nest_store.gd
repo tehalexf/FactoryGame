@@ -162,6 +162,7 @@ per_craft = 2
 per_craft_per_depth = 1
 decay_per_minute = 240
 wave_interval_baseline_seconds = 150
+first_wave_interval_seconds = 50
 wave_interval_minimum_seconds = 40
 per_second_sooner = 20
 [depth]
@@ -465,6 +466,8 @@ func _doomed_sim() -> Simulation:
 	var content: Definitions = _content(
 		TUNING.replace("health = 6000", "health = 10").replace(
 			"wave_interval_baseline_seconds = 150", "wave_interval_baseline_seconds = 2"
+		).replace(
+			"first_wave_interval_seconds = 50", "first_wave_interval_seconds = 2"
 		).replace(
 			"wave_interval_minimum_seconds = 40", "wave_interval_minimum_seconds = 1"
 		).replace("telegraph_seconds = 12", "telegraph_seconds = 1")

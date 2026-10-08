@@ -349,6 +349,64 @@ func test_variation_is_chosen_by_tick_and_not_at_random() -> void:
 	assert_true(differed, "and different ticks must choose differently, or there is no variation")
 
 
+## #35's playtest, in the player's words: *"knife sound is too loud and too generic
+## (needs variance)"*. The wrench is the weapon a Run opens with, so its swing is the
+## sound a new player hears most often in the game, and it had exactly one committed
+## take — one sample, on every swing, for the whole Run.
+##
+## Asserted about the **committed** takes rather than about whatever this machine has,
+## because the hero take is deliberately one chosen recording and is absent from almost
+## every clone: what nearly everybody actually hears is this list.
+func test_the_cues_a_player_hears_over_and_over_have_more_than_one_take() -> void:
+	var bank: SoundBank = SoundBank.new()
+	# The cues a single Wave fires dozens of times: the weapon in hand, what it lands on,
+	# and the Enemy answering. A second take is the cheapest possible fix for a sound
+	# wearing out, and `tick % count` is the mechanism.
+	for cue: String in [
+		SoundBank.WEAPON_SWING,
+		SoundBank.WEAPON_HIT,
+		SoundBank.WEAPON_IMPACT,
+		SoundBank.ENEMY_ATTACK,
+		SoundBank.ENEMY_DEATH,
+		SoundBank.FOOTSTEP,
+		SoundBank.PLAYER_LAND,
+	]:
+		assert_true(
+			bank.committed_paths(cue).size() > 1,
+			"'%s' is heard over and over and has one take, so it is a machine gun of one"
+				% cue
+		)
+
+
+## *"the middle core hum is too loud"* — the Factory's ambience beds, which a player
+## standing at the Nest hears as coming from it.
+##
+## **A bed is the floor of the mix**, and that is the whole claim: it is the thing every
+## other sound sits on top of, so it has to be quieter than the quietest of them. It was
+## not — the quiet bed's ceiling was 3 dB *above* a footstep — and `ambience_db` ramps
+## *up* to these figures as the Factory grows, so the ceiling is what a full Factory
+## actually sustains rather than a worst case.
+func test_the_ambience_beds_sit_under_everything_they_are_a_bed_for() -> void:
+	var bank: SoundBank = SoundBank.new()
+	var beds: Array = [SoundBank.FACTORY_BED, SoundBank.FACTORY_BUSY]
+	var quietest_cue: float = 0.0
+	var quietest_name: String = ""
+	for cue: String in bank.cues():
+		if beds.has(cue):
+			continue
+		if quietest_name.is_empty() or bank.gain_db(cue) < quietest_cue:
+			quietest_cue = bank.gain_db(cue)
+			quietest_name = cue
+	for bed: String in beds:
+		assert_true(
+			bank.gain_db(bed) < quietest_cue,
+			(
+				"'%s' sits at %f dB, at or above the quietest cue it carries ('%s', %f dB)"
+				% [bed, bank.gain_db(bed), quietest_name, quietest_cue]
+			)
+		)
+
+
 # ── The director: a Run opens silent ──────────────────────────────────────────
 
 func test_a_run_opens_silent() -> void:

@@ -300,6 +300,24 @@ enum Refusal {
 	## nothing asks whether acting is currently permitted, it asks whether *this* player has
 	## both hands on a designator, which is a fact about them in the same way their wallet is.
 	PLAYER_IS_PAINTING = 37,
+	## The Build Gun is not in the player's hands — they are holding a weapon, so the left
+	## mouse button fires rather than places.
+	##
+	## **The one reason in this enum that nothing behind the façade ever returns**, and that
+	## is deliberate rather than an oversight. Building is never gated: no refusal, no build
+	## path and no `_fight` consults `_player_build_mode`, and
+	## `test_nothing_in_the_simulation_asks_the_mode_for_permission` holds that line — a
+	## player holding a rifle builds exactly as well as one holding the Build Gun, and an
+	## `InputAction.build_machine` that arrives is applied whatever is in their hands.
+	##
+	## What this names is a fact about **an input**, not about a player's permissions: the
+	## left button means one thing with a Build Gun out and another with a rifle out, so a
+	## click that would have placed does nothing instead. That decision is `game/`'s from
+	## end to end — `BuildGun.hand_refusal` is the only thing that returns this — and the
+	## reason it is spelled here anyway is that `Refusal` is the shared vocabulary
+	## `BuildGun.refusal_text` translates, and a second enum for one value would be two
+	## vocabularies for one HUD line. See "Build mode is a hand, not a gate" in CLAUDE.md.
+	BUILD_GUN_IS_HOLSTERED = 38,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -5600,11 +5618,25 @@ func _waves() -> void:
 ## Heat tick by tick in both directions — a Factory that cools gets its breathing room
 ## back, which is what makes tearing a line down a real decision rather than a sunk cost.
 ##
+## **The first gap of a Run has its own baseline**, `heat.first_wave_interval_seconds`, and
+## everything else about the interval is identical: Heat shortens it, the minimum floors it,
+## and the Telegraph still gates the arrival. #35's playtest said *"crawlers dont seem to be
+## coming"* — they were, 150 seconds out, in silence. The opening gap is the one interval a
+## player has had no chance to shorten, because there is no Heat yet to shorten it with and
+## nothing to defend against while it runs, so it is the one that teaches nothing by being
+## long. It is read off `_wave_number` rather than off a flag, because "how many Waves have
+## arrived" is already hashed state and a second fact saying the same thing could disagree
+## with it.
+##
 ## One integer division per call and no accumulation, so nothing here can drift. It is
 ## recomputed rather than carried precisely *because* a carried value would have to be
 ## adjusted every tick, and a per-tick adjustment is the shape this file refuses.
 func _wave_interval_ticks() -> int:
-	var baseline: int = _seconds_to_ticks(_definitions.heat_wave_interval_baseline_seconds)
+	var baseline: int = _seconds_to_ticks(
+		_definitions.heat_first_wave_interval_seconds
+		if _wave_number == 0
+		else _definitions.heat_wave_interval_baseline_seconds
+	)
 	var minimum: int = maxi(_seconds_to_ticks(_definitions.heat_wave_interval_minimum_seconds), 1)
 	var sooner: int = _definitions.heat_per_second_sooner
 	var seconds_cut: int = 0

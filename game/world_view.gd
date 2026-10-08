@@ -2583,8 +2583,15 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 	)
 
 	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
-	var refusal: int = sim.query_build_refusal(
-		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation
+	# The same door the hologram and the click go through, so the panel cannot report a
+	# tile as clear while the Build Gun is on the player's back.
+	var refusal: int = BuildGun.build_refusal(
+		sim,
+		VIEWED_PLAYER,
+		sim.query_player_is_in_build_mode(VIEWED_PLAYER),
+		sim.query_player_selected_machine_index(VIEWED_PLAYER),
+		tile,
+		rotation
 	)
 	if refusal == Simulation.Refusal.NONE:
 		lines.append("aimed at %d, %d — clear" % [tile.x, tile.z])
@@ -2822,9 +2829,11 @@ func _ground_material(tile_size: float, build_extent: float) -> ShaderMaterial:
 ## drum occupy their footprint very differently.
 ##
 ## Everything here is a query. The aim comes from `BuildGun`, which derives it from where
-## the Simulation says the camera is; the refusal comes from `query_build_refusal`, which
-## is the same rule a build obeys. Nothing is remembered between frames, so there is no
-## way for the hologram to promise a placement the Simulation would refuse.
+## the Simulation says the camera is; the refusal comes from `BuildGun.build_refusal`, which
+## is the same function the click goes through — the Simulation's own rule about the tile,
+## plus the one fact that lives on this side of the boundary, which is whether the Build Gun
+## is in the player's hands at all. Nothing is remembered between frames, so there is no way
+## for the hologram to promise a placement the next click will not make.
 func _sync_hologram(sim: Simulation) -> void:
 	if _hologram == null:
 		_hologram = MeshInstance3D.new()
@@ -2834,9 +2843,31 @@ func _sync_hologram(sim: Simulation) -> void:
 		_hologram.material_override = fresh
 		add_child(_hologram)
 
+	# What the Build Gun would do with a click, asked once and used twice: it decides
+	# whether there is a promise to draw at all and, when there is, what colour it is.
+	# `BuildGun.build_refusal` is the same function the click goes through, so the hologram
+	# cannot promise a placement the next click will not make — #35's playtest found it
+	# still drawn, and still green, with a rifle in frame.
+	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
+	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
+	var refusal: int = BuildGun.build_refusal(
+		sim,
+		VIEWED_PLAYER,
+		sim.query_player_is_in_build_mode(VIEWED_PLAYER),
+		sim.query_player_selected_machine_index(VIEWED_PLAYER),
+		tile,
+		rotation
+	)
+
 	var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
 	var definition: MachineDefinition = sim.query_definitions().machine(selected)
-	_hologram.visible = definition != null
+	# **Hidden rather than reddened, and only for this one reason.** A red hologram says
+	# "not *there*" and invites a player to aim somewhere else; a holstered Build Gun is a
+	# fact about their hands, and nowhere they aim will help. A promise nobody can keep is
+	# better not made than made in red.
+	_hologram.visible = (
+		definition != null and refusal != Simulation.Refusal.BUILD_GUN_IS_HOLSTERED
+	)
 	if definition == null:
 		return
 
@@ -2853,22 +2884,23 @@ func _sync_hologram(sim: Simulation) -> void:
 		_hologram.material_override = skin
 		_hologram_dressing = dressing
 
-	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
 	var footprint: Vector2i = WorldGrid.rotated_footprint(declared.x, declared.y, rotation)
-	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
 
 	_hologram.rotation = Vector3(0.0, _yaw_for_rotation(rotation), 0.0)
 	_hologram.position = _footprint_centre(sim, tile, footprint)
 	if not dressing.begins_with("res://"):
 		_hologram.position.y += height * 0.5
 
-	var refusal: int = sim.query_build_refusal(
-		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation
-	)
 	var tint: StandardMaterial3D = _hologram.material_override
 	tint.albedo_color = (
 		HOLOGRAM_ALLOWED if refusal == Simulation.Refusal.NONE else HOLOGRAM_REFUSED
 	)
+
+
+## Whether the Build Gun's promise is in frame at all. False with the weapon out, and false
+## while the Build Gun is holding a Machine the definition set does not have. For the tests.
+func hologram_is_visible() -> bool:
+	return _hologram != null and _hologram.visible
 
 
 ## Where the hologram is standing, in metres. For the smoke test.

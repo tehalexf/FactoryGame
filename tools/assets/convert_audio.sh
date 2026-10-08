@@ -213,8 +213,22 @@ cue call_wave_lever "OBJFurn_Barber Chair, Foot Pump" \
 # ── Waves ─────────────────────────────────────────────────────────────────────
 # The Telegraph. A warning you cannot hear is not a warning, so this is a loop
 # that runs for exactly as long as the Telegraph does and stops with it.
-cue telegraph_klaxon "EffectiveTrailer_Alarms_Vol2_QuarterNotes" \
-  --mode loop --start 2.0 --duration 4.0 --seam 0.4 --channels 2
+#
+# **Repicked after #35's playtest, whose verdict was "the alarm when starting a wave
+# is too STUPID".** It was `EffectiveTrailer_Alarms_Vol2_QuarterNotes` — a *trailer*
+# alarm, in quarter notes, which is a designed cinematic sting and exactly the thing
+# this file's own standard rules out. A klaxon has to mean *get to your gun*, and
+# nothing designed for a film trailer means that; it means a film is starting.
+#
+# So the warning now comes out of the same recording the busy Factory bed does: a
+# real factory hall with a real alarm going off in it, a fifth down so the alarm is
+# the size of a building rather than the size of a room. A later in-point than
+# `factory_busy` takes, because that one is cut from the machinery and this one wants
+# the alarm. **The exact in-point was chosen from the file's length and not by
+# listening** — nobody with the bundle has auditioned it yet, and moving `--start` is
+# the first thing to try if the alarm is not in the cut.
+cue telegraph_klaxon "AMBInd_Factory Hall Busy Alarm Machines Voices" \
+  --mode loop --start 60.0 --duration 6.0 --seam 0.5 --semitones -7 --channels 2
 
 cue wave_begin "Cinematic Horn Braam, Epic, Cinematic, Dark, Instrument, Huge-32" \
   --duration 3.0 --search 0:5
@@ -284,8 +298,17 @@ cue nest_damaged "DSGNTonl_Designed Metal Bowed Screech Tonal Reverb" \
 cue run_over "Transition Braam Slow Dark Creepy" --duration 4.0 --search 0:2
 
 # ── Enemies and the player ────────────────────────────────────────────────────
+# **Repicked after #35's playtest: "crawler hurt and death sound is too weird".** The
+# death was `CREAEthr_Ethereal Entity Grim Pain Long` — an *ethereal entity* in grim
+# pain, which is a ghost and not a thing with a carapace, and "weird" is the correct
+# word for it. A Crawler is an insect, so both ends of its life come off the same
+# insectoid recording: the tremble-attack as it is, and a longer cut of it a fourth
+# down for the death, because the animal dying is the same animal. **Neither cut has
+# been auditioned**; the death's in-point and transposition are reasoned from the
+# attack's and want a listen.
 cue enemy_attack "CREAInsc_Insectoid Creature Tremble Attack" --duration 1.0 --search 0:6
-cue enemy_death "CREAEthr_Ethereal Entity Grim Pain Long" --duration 1.2 --search 0:6
+cue enemy_death "CREAInsc_Insectoid Creature Tremble Attack" \
+  --duration 1.8 --semitones -5 --search 6:20
 cue player_hurt "HMNBrth_Police Officer Gasp Vocal Male Shocked Alert" \
   --duration 0.44 --search 0:1
 cue player_down "VOXReac_Construction Kit Male Flutter Death Vocal" \

@@ -402,14 +402,18 @@ func _gap_metres(sim: Simulation, machine: int, enemy: int) -> int:
 ## Ammunition travels the long way round to a Turret standing in the Crawlers' lane.
 const TURRET_TILE: Vector3i = Vector3i(2, 0, -7)
 ## How far into the Run the dry fixture cuts the Turret's supply line. Just past the tick this
-## Factory's Turret first fires on — the Wave it is shooting at arrives at 7919, pulled in
-## from the 9000 a cold Factory would wait by the Heat this one made producing the Ammunition.
+## Factory's Turret first fires on — the Wave it is shooting at arrives at 4799, pulled in from
+## the 5400 a cold Factory waits by the Heat this one made producing the Ammunition.
 ##
 ## A balance change that moves the Wave clock moves this constant with it, and the symptom is
 ## `test_determinism_the_dry_fixture_really_did_run_dry_with_crawlers_still_coming` failing on
-## "supplied, and shooting". `tools/balance/measure.sh --scenario competent --verbose` prints
-## the trace to re-derive it from.
-const DRY_CUT_TICK: int = 8222
+## "supplied, and shooting" or on "it ran out mid-Wave".
+## `tools/balance/measure.sh --scenario competent --verbose` prints the trace to re-derive it
+## from. **It has moved once**: #35 gave the first Wave its own interval
+## (`heat.first_wave_interval_seconds`, 90 s against the baseline's 150) because a new player
+## waited two and a half minutes in silence for it, which brought this fixture's whole Run
+## forward by about 3400 ticks.
+const DRY_CUT_TICK: int = 5102
 
 const LAST_BELT_TILE: Vector3i = Vector3i(1, 0, -6)
 
@@ -477,7 +481,7 @@ func test_an_ammo_press_feeds_a_turret_by_belt_and_it_holds_the_lane() -> void:
 
 	# Long enough for the first Wave and the far side of it. **This Factory brings its own
 	# Wave forward**: six working Machines raise Heat, Heat shortens the gap, and the Wave
-	# lands inside this window rather than at the 9000 ticks a cold Factory would wait. That
+	# lands inside this window rather than at the 5400 ticks a cold Factory would wait. That
 	# is #12's mechanic acting on #10's arithmetic, and the comparison below is where it shows.
 	#
 	# Asserted as *sooner* rather than as a tick number, deliberately. #26 re-derived the whole
@@ -656,7 +660,7 @@ func test_determinism_a_turret_firing_and_killing_crawlers_replays_identically()
 	var script: InputScript = InputScript.new()
 	script.add_tick(_factory_machines(definitions))
 	script.add_tick(_factory_belts())
-	# Past the first Wave — which this Factory's own Heat pulls in to tick 7919 — and out the
+	# Past the first Wave — which this Factory's own Heat pulls in to tick 4799 — and out the
 	# far side of it.
 	script.add_idle_ticks(180 * Simulation.TICKS_PER_SECOND)
 
@@ -686,7 +690,7 @@ func test_determinism_the_firing_fixture_really_did_kill_crawlers() -> void:
 	# two extra Crawlers on its very first Wave; the measurement said that slope was steep
 	# enough to outgrow one Ammo Press by minute five, which made every Run about eighteen
 	# minutes long whatever a player did. What #12 buys the Enemy on Wave 1 is now *time* — the
-	# Wave lands on tick 7919 rather than the 9000 a cold Factory waits — and the Wave's *size*
+	# Wave lands on tick 4799 rather than the 5400 a cold Factory waits — and the Wave's *size*
 	# is what the Heat buys later. `tests/cases/test_balance.gd` is where later is measured.
 	assert_eq(killed, 6, "and the Turret shot every Crawler the Wave sent")
 	assert_true(seen > 0, "there were Crawlers on the Map to shoot at")
@@ -701,7 +705,7 @@ func test_determinism_a_turret_running_dry_mid_wave_replays_identically() -> voi
 	var script: InputScript = InputScript.new()
 	script.add_tick(_factory_machines(definitions))
 	script.add_tick(_factory_belts())
-	# Just after the Turret opens fire — it first shoots on tick 8181 — the last Belt into it
+	# Just after the Turret opens fire — it first shoots on tick 5061 — the last Belt into it
 	# is taken up, so it spends what it is holding and then stops with Crawlers still walking
 	# at it. One Input Action, which is what makes "it ran dry" a thing a replay can
 	# reproduce exactly.

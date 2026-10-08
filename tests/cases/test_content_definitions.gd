@@ -102,6 +102,7 @@ per_craft = 2
 per_craft_per_depth = 1
 decay_per_minute = 240
 wave_interval_baseline_seconds = 150
+first_wave_interval_seconds = 50
 wave_interval_minimum_seconds = 40
 per_second_sooner = 20
 [depth]

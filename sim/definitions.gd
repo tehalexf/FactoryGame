@@ -211,6 +211,7 @@ const TUNING_HEAT_PER_CRAFT: String = "heat.per_craft"
 const TUNING_HEAT_PER_CRAFT_PER_DEPTH: String = "heat.per_craft_per_depth"
 const TUNING_HEAT_DECAY_PER_MINUTE: String = "heat.decay_per_minute"
 const TUNING_HEAT_WAVE_INTERVAL_BASELINE: String = "heat.wave_interval_baseline_seconds"
+const TUNING_HEAT_FIRST_WAVE_INTERVAL: String = "heat.first_wave_interval_seconds"
 const TUNING_HEAT_WAVE_INTERVAL_MINIMUM: String = "heat.wave_interval_minimum_seconds"
 const TUNING_HEAT_PER_SECOND_SOONER: String = "heat.per_second_sooner"
 const TUNING_DEPTH_DRAW_PERCENT: String = "depth.draw_percent_per_depth"
@@ -510,11 +511,19 @@ var heat_per_craft_per_depth: int = 0
 ## over a forty-hour Run, and it would give the Factory an equilibrium Heat.
 var heat_decay_per_minute: int = 0
 
-## How long between Waves on a cold Factory, in fixed-point seconds. Also how far away
-## the first Wave of a Run is, because a Run opens cold.
+## How long between Waves on a cold Factory, in fixed-point seconds. The first gap has its
+## own key — see `heat_first_wave_interval_seconds`.
 var heat_wave_interval_baseline_seconds: int = 0
 
-## The shortest the interval between Waves ever gets, in fixed-point seconds.
+## How long the first Wave of a Run is away, in fixed-point seconds, on a cold Factory.
+##
+## Its own key rather than the baseline, because the opening gap is the one interval a player
+## has had no chance to shorten — every later one is the Factory's own doing. See #35 and the
+## comment on the key in `content/tuning.toml`.
+var heat_first_wave_interval_seconds: int = 0
+
+## The shortest the interval between Waves ever gets, in fixed-point seconds. Floors the
+## first interval as well as every later one.
 var heat_wave_interval_minimum_seconds: int = 0
 
 ## How much Heat shaves one second off the interval between Waves.
@@ -1203,6 +1212,7 @@ func digest() -> int:
 	hasher.feed_int(heat_per_craft_per_depth)
 	hasher.feed_int(heat_decay_per_minute)
 	hasher.feed_int(heat_wave_interval_baseline_seconds)
+	hasher.feed_int(heat_first_wave_interval_seconds)
 	hasher.feed_int(heat_wave_interval_minimum_seconds)
 	hasher.feed_int(heat_per_second_sooner)
 	hasher.feed_int(depth_draw_percent_per_depth)
@@ -2305,6 +2315,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	heat_per_craft_per_depth = tuning.require_int(TUNING_HEAT_PER_CRAFT_PER_DEPTH)
 	heat_decay_per_minute = tuning.require_int(TUNING_HEAT_DECAY_PER_MINUTE)
 	heat_wave_interval_baseline_seconds = tuning.require_fixed(TUNING_HEAT_WAVE_INTERVAL_BASELINE)
+	heat_first_wave_interval_seconds = tuning.require_fixed(TUNING_HEAT_FIRST_WAVE_INTERVAL)
 	heat_wave_interval_minimum_seconds = tuning.require_fixed(TUNING_HEAT_WAVE_INTERVAL_MINIMUM)
 	heat_per_second_sooner = tuning.require_int(TUNING_HEAT_PER_SECOND_SOONER)
 	depth_draw_percent_per_depth = tuning.require_int(TUNING_DEPTH_DRAW_PERCENT)
@@ -2569,6 +2580,21 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				tuning,
 				TUNING_HEAT_WAVE_INTERVAL_BASELINE,
 				"Waves with no gap are one endless Wave"
+			)
+		if heat_first_wave_interval_seconds <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_HEAT_FIRST_WAVE_INTERVAL,
+				"a Run that opens mid-Wave is an ambush, not an opening"
+			)
+		if heat_first_wave_interval_seconds < heat_wave_interval_minimum_seconds:
+			_report_tuning(
+				tuning,
+				TUNING_HEAT_FIRST_WAVE_INTERVAL,
+				(
+					"must be at least %s — the minimum floors the first interval too, so a"
+					+ " smaller figure here is a number the Run would silently ignore"
+				) % TUNING_HEAT_WAVE_INTERVAL_MINIMUM
 			)
 		if heat_wave_interval_minimum_seconds <= 0:
 			_report_tuning(
@@ -3064,6 +3090,7 @@ func _discard_content() -> void:
 	heat_per_craft_per_depth = 0
 	heat_decay_per_minute = 0
 	heat_wave_interval_baseline_seconds = 0
+	heat_first_wave_interval_seconds = 0
 	heat_wave_interval_minimum_seconds = 0
 	heat_per_second_sooner = 0
 	depth_draw_percent_per_depth = 0
