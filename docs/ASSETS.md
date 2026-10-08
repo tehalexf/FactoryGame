@@ -35,9 +35,19 @@ pre-commit hook once per clone:
 bash tools/git/install_hooks.sh
 ```
 
-CI (`.github/workflows/assets.yml`) runs the same guard on every push, so
+CI (`.github/workflows/ci.yml`) runs the same guard on every push, so
 forgetting the installer is caught rather than silently tolerated. See
 [ASSET_PIPELINE.md](ASSET_PIPELINE.md) for the whole mechanism.
+
+**If you commit through jj, that hook does not run.** jj executes no git hooks,
+has no hook system of its own, and refuses to let an alias shadow a built-in
+command, so the same installer also generates a `jj` wrapper on your PATH that
+runs `check_licensed_staged.py --jj` before `commit`, `describe`, `new`, `squash`,
+`split`, `absorb` and `git push`. Run the installer again if you install or move
+jj. The jj section of [CLAUDE.md](../CLAUDE.md) is the full account, including the
+one thing jj makes possible that git did not: jj snapshots the working copy by
+itself, so the moment `assets_licensed/` stops being ignored the whole quarantine
+is in a commit without anybody typing `add`.
 
 ## What may be committed
 

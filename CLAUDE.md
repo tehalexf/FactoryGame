@@ -27,7 +27,13 @@ tools/release/build_windows.sh --push        # the same, published to itch.io
 python3 tools/release/preflight.py --push    # can I build and publish? why not?
 godot --path .                   # run the game
 godot --headless --path . --quit-after 120   # launch headless for 120 frames
+bash tools/git/install_hooks.sh   # once per clone: the licence guard, for git AND jj
 ```
+
+The main checkout is a colocated jj workspace as well as a git one. git is
+unchanged and still the only thing CI, `gh` and the release scripts see; the jj
+command crib — and the licence rule under jj, which is **not** the git one — is
+in [Version control](#version-control-git-and-jj-alongside-it) below.
 
 The tuning dashboard is the usable surface over the ~70 numbers in
 `content/tuning.toml`, every one of which is a guess until somebody plays with
@@ -72,8 +78,166 @@ import pass rebuilds, so a newly added class otherwise fails with a confusing
 | Godot | 4.7.2 stable | On `PATH` as `godot`. ADR 0001 originally said 4.6; amended. |
 | scons | 4.11.1 | For GDExtension builds. Not needed yet. |
 | Blender | 5.2.2 LTS | Art pipeline. glTF 2.0 ships; FBX is intake only. |
+| jj (Jujutsu) | 0.46.0 | Optional. Colocated onto git — the section below, and read its licence rule before you commit anything through it. |
 
 GDScript, not C#. C++ via GDExtension only when profiling demands it.
+
+## Version control: git, and jj alongside it
+
+git is the repository. CI is git, `gh` is git, `tools/release/` reads git, and the
+agent worktrees in `.claude/worktrees/` are git's. None of that changed.
+
+What is new is that the **main checkout** at `/home/alex/code/factorygame` is also
+a **jj (Jujutsu) workspace**, *colocated*: `.git/` and `.jj/` sit side by side over
+one working copy, and every jj commit is a real git commit the instant it is made.
+You can use either tool, in either order, in the same checkout. jj is optional. If
+you only know git, keep using git and nothing here affects you — except the licence
+rule below, which you must read before you type `jj commit`.
+
+### ⚠️ The licence rule under jj — read this before anything else
+
+This repository is public and the main checkout holds **8.5 GB of purchased,
+non-redistributable assets** under `assets_licensed/`. The rule has not changed:
+**nothing from there, and nothing derived from it, may ever be committed.** What
+changed is the machinery, and it changed in a way that bites.
+
+**The licence guard is a git `pre-commit` hook, and jj does not run git hooks.**
+jj has no hook system at all, and it refuses to let an alias shadow a built-in
+command (`Cannot define an alias that overrides the built-in command 'commit'`).
+So the hook that stops `git commit` stops nothing when you commit through jj.
+
+What stands in for it is a **wrapper installed as the `jj` on your PATH** by
+`bash tools/git/install_hooks.sh`, generated from `tools/git/jj-wrapper.sh`. Before
+`commit`, `describe`, `new`, `squash`, `split`, `absorb` and `git push` it runs
+`tools/assets/check_licensed_staged.py --jj` and refuses the command if the guard
+fails. **Run the installer once per clone, and again whenever you install or move
+jj** — `jj --version` printing 0.46.0 does not tell you the wrapper is there;
+`head -3 "$(command -v jj)"` does.
+
+**And here is the thing jj makes possible that git did not.** git has an index: a
+file enters a commit only because somebody typed `git add`, and `git add` refuses
+a gitignored path without `-f` and refuses *outright* to stage anything reached
+through a symlink (`fatal: pathspec '...' is beyond a symbolic link`). jj has no
+index. It **snapshots the working copy automatically**, on almost every command,
+and the snapshot *is* the working-copy commit. It honours `.gitignore`, which is
+the only thing keeping the quarantine out — so:
+
+> The moment `assets_licensed/` stops being covered by `.gitignore`, the very next
+> jj command puts the quarantine into a commit. Nobody types `add`. Nobody is
+> asked. And putting the `.gitignore` line back **does not undo it** — jj keeps
+> tracking a file it has already snapshotted.
+
+Never edit the `/assets_licensed/` line in `.gitignore`. If it happens anyway:
+
+```bash
+# restore the .gitignore line first — jj will not untrack a file it would
+# immediately re-snapshot
+jj file untrack assets_licensed/<path>   # one path
+jj abandon <rev>                         # a whole commit that carries it
+jj op log && jj op restore <operation>   # or rewind the repo to before all of it
+```
+
+Two protections do survive, and neither is a substitute for the wrapper:
+
+- **Symlinks.** jj records a symlink *as a symlink* — the target path, a few
+  bytes — and never follows it. So the `assets_licensed/<pack>` symlinks an agent
+  worktree uses carry no asset data into a jj snapshot either. Different mechanism
+  from git's refusal, same outcome.
+- **The large-file brake.** `snapshot.max-new-file-size` is set to `4MiB` for this
+  repo; jj refuses to snapshot a *new* file above it and tells you so. That stops
+  bulk, not a 300 KB purchased texture, so it is a brake and not a guard.
+
+And `check_licensed_staged.py --all` runs in CI on every push, which catches it
+late — after the asset is in a commit object — rather than never.
+
+### The commands, against the git ones you would otherwise reach for
+
+| You want | git | jj |
+|---|---|---|
+| see what changed | `git status` | `jj st` (or bare `jj`) |
+| the log | `git log --oneline` | `jj log` |
+| diff the current work | `git diff` | `jj diff` |
+| stage a change | `git add -p` | nothing to do — jj snapshots the working copy |
+| commit it | `git commit -am "msg"` | `jj commit -m "msg"` |
+| reword what you are on | `git commit --amend` | `jj describe -m "msg"` |
+| amend more work in | `git commit --amend` | just edit the files; `@` already has them |
+| start the next change | — | `jj new` |
+| switch branch | `git switch feat/x` | `jj new feat/x` then `jj bookmark set feat/x -r @` |
+| make a branch | `git switch -c feat/x` | `jj bookmark create feat/x -r @` |
+| move a branch | `git branch -f x <sha>` | `jj bookmark set x -r <rev>` |
+| fetch | `git fetch` | `jj git fetch` |
+| push the branch | `git push -u origin feat/x` | `jj git push --allow-new -b feat/x` |
+| rebase onto the branch | `git rebase integration/milestone-1` | `jj rebase -d integration/milestone-1` |
+| undo the last thing | reflog, carefully | `jj undo`, or `jj op log && jj op restore <op>` |
+| throw work away | `git reset --hard` | `jj abandon <rev>` |
+| who touched this line | `git blame` | `git blame` — jj has no equivalent, use git |
+
+Three things that will trip you up if you expect git:
+
+- **There is no staging area and no "dirty working tree".** The commit you are
+  "on", `@`, already contains your uncommitted edits. `jj commit` does not collect
+  changes; it closes `@` and opens a fresh empty one on top. `jj describe` just
+  gives `@` a message and leaves you on it.
+- **Bookmarks are git branches, but they do not follow you.** A git branch moves
+  when you commit on it; a jj bookmark stays where it is until you move it. So
+  after a few `jj commit`s, `jj bookmark set <name> -r @-` is what makes those
+  commits pushable. **CI, `gh` and the merge flow only ever see bookmarks you have
+  pushed** — they are plain refs on the remote, named exactly as before
+  (`feat/<n>-<slug>`, `integration/milestone-1`).
+- **`@` is a real commit, and an empty one is normal.** `jj log` showing
+  `(empty) (no description set)` at the top is the expected resting state, not a
+  mistake.
+
+Useful revsets here: `trunk()` is aliased to `integration/milestone-1@origin`, so
+`jj log -r '::@ ~ ::trunk()'` is "my unpushed work" and `jj rebase -d trunk()`
+rebases onto the integration branch.
+
+### jj workspaces are not git worktrees — use git in a worktree
+
+This is the one genuine limitation, stated up front so nobody rediscovers it.
+
+The agent worktrees under `.claude/worktrees/` are **git worktrees**. jj's own
+equivalent is `jj workspace add`, and it is a different mechanism — jj will not
+adopt a git worktree.
+
+**If you are working in a worktree, use git.** Every command in the table's left
+column, exactly as before, and still run `bash tools/git/install_hooks.sh` for the
+git hook. Nothing else here applies to you.
+
+And it is worth knowing *why* that is an instruction and not a preference, because
+the failure is silent. A git worktree has no `.jj/` of its own, so jj does not stop
+there — **it walks up, finds the main checkout's `.jj/`, and operates on the main
+checkout's working copy** while you are standing in the worktree. `jj st` in an
+agent worktree prints the main checkout's changes as `../../../...`, and `jj commit`
+there would close somebody else's work into a commit under your ticket. That is
+measured behaviour, not a guess.
+
+The wrapper on PATH refuses outright rather than letting it happen:
+
+```
+jj: refusing to run here.
+  this git worktree:   /home/alex/code/factorygame/.claude/worktrees/agent-…
+  the jj workspace:    /home/alex/code/factorygame
+```
+
+jj is for the main checkout, which is where merges, releases and one-off tooling
+work happen. Do not run `jj workspace add` inside `.claude/worktrees/` either:
+agents are live in those directories, and jj and git would disagree about who owns
+the working copy.
+
+### Where things live
+
+```
+.jj/                     jj's store. Gitignored; must never reach the remote.
+.jj/repo/config.toml     this repo's jj config (user, trunk(), the 4MiB brake)
+tools/git/jj-wrapper.sh  the licence-guard wrapper, version-controlled template
+tools/git/install_hooks.sh  installs the git hook AND generates ~/.local/bin/jj
+~/.local/opt/jj-0.46.0/jj   the real binary. The `jj` on PATH is the wrapper.
+```
+
+`SKIP_JJ_WRAPPER=1 bash tools/git/install_hooks.sh` installs only the git hook.
+`tools/assets/tests/test_jj_guard.py` is what proves the jj half still refuses a
+purchased asset; CI installs jj so those tests run rather than skip.
 
 ## Layout
 
@@ -927,6 +1091,17 @@ Turret with no gauge: the **backing goes red when the magazine is empty**, so ab
 means there is no Turret there. The bars are unshaded, because a gauge a directional light can
 darken is a gauge a player misreads at the worst moment. The HUD says `ammo n/m` and `DRY`
 alongside, for the post-mortem rather than the fight.
+
+**A gauge hangs off its own Machine's roof, never off a constant.** The height comes from
+`query_machine_height_metres` — the same number the Simulation collides against and the same
+number a placeholder box is sized from — plus `AMMUNITION_GAUGE_LIFT_METRES`. It used to come
+from a `MACHINE_GAUGE_HEIGHT_METRES` set "taller than any housing in the content", which is a
+second authority on how tall a Machine is: it detaches the bar from everything that is not the
+tallest, and #41 was the result — a dry 2.0 m Turret wearing its red backing 2.1 m clear of its
+own roof, read as a saturated red rectangle floating over the Factory with no owner. Red is
+load-bearing here, so a red mark with nothing under it is worse than no mark. The lift also has
+to stay under `STARVED_MARK_LIFT_METRES`, which hangs off the same roof, or the amber starved
+tag draws straight through the middle of the bar; `test_world_view` asserts both bounds.
 
 ### Where the balance stands
 
