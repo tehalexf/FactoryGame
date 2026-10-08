@@ -484,3 +484,74 @@ func _of_kind(actions: Array, kind: int) -> Array:
 		if action.kind == kind:
 			found.append(action)
 	return found
+
+
+# ── Is it connected? ──────────────────────────────────────────────────────────
+# A Belt pointed at a wall and a Belt feeding a Smelter look identical until you read a
+# line of HUD text. These are the two projections the renderer marks them apart with, and
+# they ask the questions `_load_from_port` and `_hand_off` already ask — so a Belt the
+# renderer draws as connected is a Belt that really would hand an Item over.
+
+func test_a_belt_laid_on_open_ground_is_connected_at_neither_end() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.build_belt(0, Vector3i(20, 0, 20), Vector3i(24, 0, 20))])
+	assert_false(sim.query_belt_start_is_fed(0), "nothing behind it to load from")
+	assert_false(sim.query_belt_end_is_connected(0), "and nothing past it to hand to")
+
+
+func test_a_belt_off_a_machines_edge_is_fed_and_a_belt_into_one_is_connected() -> void:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var definitions: Definitions = sim.query_definitions()
+	# A 2x2 Miner at the origin, a 3x3 Smelter four tiles further along +z, and a Belt
+	# running from the tile past the Miner's south edge to the tile before the Smelter's
+	# north edge.
+	sim.step([InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0))])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(0, 0, 5))
+	])
+	sim.step([InputAction.build_belt(0, Vector3i(1, 0, 2), Vector3i(1, 0, 4))])
+	assert_eq(sim.query_belt_count(), 1)
+	assert_true(sim.query_belt_start_is_fed(0), "the Miner is behind its entry")
+	assert_true(sim.query_belt_end_is_connected(0), "and the Smelter is past its exit")
+
+
+func test_the_two_runs_of_a_cornered_route_are_connected_to_each_other() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([
+		InputAction.build_belt_route(0, Vector3i(20, 0, 20), Vector3i(24, 0, 23), BeltRoute.ALONG_X)
+	])
+	assert_eq(sim.query_belt_count(), 2)
+	assert_true(sim.query_belt_end_is_connected(0), "the first run hands to the second")
+	assert_true(sim.query_belt_start_is_fed(1), "and the second is fed by the first")
+	assert_false(sim.query_belt_start_is_fed(0), "the route as a whole still dangles")
+	assert_false(sim.query_belt_end_is_connected(1))
+
+
+func test_a_belt_into_the_nest_is_connected() -> void:
+	# Goods reach the Delivery counter by Belt as well as by hand, so a Belt pointed into the
+	# Nest's footprint is connected to something — and a player laying one deserves to see
+	# that rather than find out by waiting.
+	var sim: Simulation = Simulation.new(1, 1)
+	var nest: Vector3i = sim.query_nest_tile()
+	sim.step([
+		InputAction.build_belt(
+			0, Vector3i(nest.x, nest.y, nest.z - 4), Vector3i(nest.x, nest.y, nest.z - 1)
+		)
+	])
+	assert_eq(sim.query_belt_count(), 1, "the run stops short of the footprint")
+	assert_true(sim.query_belt_end_is_connected(0))
+
+
+func test_demolishing_what_a_belt_fed_leaves_the_belt_dangling() -> void:
+	# The projection is asked every frame and remembers nothing, which is the whole reason
+	# there is no stored connection to go stale (CLAUDE.md: Belts connect by adjacency, and
+	# nothing else).
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.build_belt(0, Vector3i(20, 0, 20), Vector3i(22, 0, 20))])
+	sim.step([InputAction.build_belt(0, Vector3i(23, 0, 20), Vector3i(25, 0, 20))])
+	assert_true(sim.query_belt_end_is_connected(0))
+	sim.step([InputAction.demolish(0, Vector3i(23, 0, 20))])
+	assert_false(sim.query_belt_end_is_connected(0), "nothing stored, so nothing stale")

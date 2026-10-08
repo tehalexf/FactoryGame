@@ -354,6 +354,38 @@ var _belt_preview_arrow_transforms: PackedFloat32Array = PackedFloat32Array()
 ## the button went down so it can draw the route that *would* cross, and the Simulation is
 ## still the only thing that knows a Belt was laid. `Main` is where the two meet because the
 ## controller and the view are both its children and neither may reach for the other.
+## The port markers: an arrow on every face a Belt may dock against, inputs in one buffer and
+## outputs in the other, for every Machine standing **and** for the one the hologram is about
+## to land.
+##
+## `content/machine_ports.csv` has declared all of this since #19 and nothing drew any of it,
+## which is why a player could not tell which face of a Smelter takes ore. The arrow points
+## the way goods travel — into the body for an input, out of it for an output — because which
+## way to point a Belt is the actual question being asked.
+var _input_ports: MultiMeshInstance3D = null
+var _output_ports: MultiMeshInstance3D = null
+var _input_port_transforms: PackedFloat32Array = PackedFloat32Array()
+var _output_port_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## What is wrong with the Factory, drawn where it is wrong.
+##
+## A Belt that feeds nothing and a Machine nothing reaches used to look exactly like a Belt
+## feeding a Smelter — you found out by reading a line of HUD text over the thing it was
+## describing. These are the two marks that make the difference visible in the world: a red
+## post at a Belt end that leads nowhere or is fed by nothing, and an amber tag over a Machine
+## the Simulation calls starved.
+##
+## **Both are queries asked every frame.** Nothing here remembers whether anything was
+## connected, which is what makes demolishing the Smelter a Belt fed show up on the next
+## frame with no bookkeeping anywhere — and what stops the renderer having a second opinion
+## about a Factory it is only supposed to be drawing.
+var _dangling_marks: MultiMeshInstance3D = null
+var _starved_marks: MultiMeshInstance3D = null
+var _belt_flow_arrows: MultiMeshInstance3D = null
+var _dangling_transforms: PackedFloat32Array = PackedFloat32Array()
+var _starved_transforms: PackedFloat32Array = PackedFloat32Array()
+var _belt_flow_transforms: PackedFloat32Array = PackedFloat32Array()
+
 var _belt_drag_active: bool = false
 var _belt_drag_anchor: Vector3i = Vector3i.ZERO
 var _belt_drag_corner_axis: int = BeltRoute.ALONG_X
@@ -363,6 +395,26 @@ var _belt_drag_corner_axis: int = BeltRoute.ALONG_X
 ## and the HUD says *why* in words, because a red box only says "no".
 const HOLOGRAM_ALLOWED: Color = Color(0.35, 0.85, 0.45, 0.45)
 const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
+
+## The colours of the two marks. Red for a dangling end, because it is a mistake; amber for a
+## starved Machine, because it is a Factory that is only waiting. Deliberately the same two
+## readings a HUD line used to carry, in the one place a player is already looking.
+const DANGLING_COLOUR: Color = Color(0.95, 0.27, 0.22, 0.85)
+const STARVED_COLOUR: Color = Color(1.0, 0.78, 0.22, 0.8)
+
+## How high the marks float above what they are about, in metres. A post at a Belt end stands
+## at about hip height; a Machine's tag hangs over its roof, where nothing is in the way of it.
+const DANGLING_MARK_HEIGHT_METRES: float = 1.1
+const STARVED_MARK_LIFT_METRES: float = 1.2
+
+## The port markers' colours. Cool for what goes in and warm for what comes out, which is
+## the one pair of colours a player does not have to be told the meaning of twice.
+const PORT_INPUT_COLOUR: Color = Color(0.45, 0.72, 1.0, 0.9)
+const PORT_OUTPUT_COLOUR: Color = Color(1.0, 0.66, 0.26, 0.9)
+
+## How high the port markers float, in metres: the standard Belt deck height the table itself
+## declares, so an arrow is at the height the Belt that docks there will be.
+const PORT_MARKER_HEIGHT_METRES: float = 0.9
 
 ## The flow arrows' colour: a warm cream that reads against the dark decks, the green of a
 ## clear preview and the red of a refused one alike.
@@ -422,6 +474,10 @@ func sync(sim: Simulation) -> void:
 	_sync_items(sim)
 	_sync_hologram(sim)
 	_sync_belt_preview(sim)
+	# After the hologram, because it draws the hologram's ports too and has to know whether
+	# there is one.
+	_sync_ports(sim)
+	_sync_connection_marks(sim)
 	_sync_hud(sim)
 	_place_camera(sim)
 	# After the camera, because the weapon hangs off it.
@@ -3043,6 +3099,240 @@ func _sync_belt_preview(sim: Simulation) -> void:
 	_upload(_belt_preview, clear)
 	_upload(_belt_preview_refused, refused)
 	_upload(_belt_preview_arrows, arrows)
+
+
+## An arrow on every port of every Machine standing, and of the one about to land.
+##
+## **Read out of `content/machine_ports.csv` through `Definitions`**, which is the file the
+## Blender generator put the mesh markers from — so the arrow and the moulded port on the
+## model are one declaration and not two. The rotation is the Machine's own, through
+## `MachinePorts.port_tile`, which shares `WorldGrid.rotated_footprint`'s convention: that is
+## what keeps the arrows on the body of a 3x2 Boiler turned a quarter.
+##
+## The hologram's ports are in the same buffers as the standing Machines', because they are
+## the same question asked a second earlier: which way round will this thing's faces be. They
+## go away with the hologram, so the Belt tool shows a route and nothing else.
+func _sync_ports(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _input_ports == null:
+		_input_ports = _flow_arrows(tile_size, PORT_INPUT_COLOUR)
+		_output_ports = _flow_arrows(tile_size, PORT_OUTPUT_COLOUR)
+
+	var definitions: Definitions = sim.query_definitions()
+	var ports: MachinePorts = definitions.machine_ports()
+	var into: PackedFloat32Array = PackedFloat32Array()
+	var out_of: PackedFloat32Array = PackedFloat32Array()
+
+	for index: int in range(sim.query_machine_count()):
+		var id: String = sim.query_machine_id(index)
+		var definition: MachineDefinition = definitions.machine(id)
+		if definition == null:
+			continue
+		_mark_ports(
+			sim, ports.ports_of(id), definition, sim.query_machine_tile(index),
+			sim.query_machine_rotation(index), into, out_of
+		)
+
+	# The Machine about to land, on the tile it would land on, turned the way it would be
+	# turned. Only while the hologram is up: with the Belt tool out the route is what the
+	# button would do, and two sets of arrows over one tile is a player guessing.
+	if hologram_is_visible():
+		var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
+		var about_to_land: MachineDefinition = definitions.machine(selected)
+		if about_to_land != null:
+			_mark_ports(
+				sim, ports.ports_of(selected), about_to_land,
+				BuildGun.aimed_tile(sim, VIEWED_PLAYER),
+				sim.query_player_build_rotation(VIEWED_PLAYER), into, out_of
+			)
+
+	_input_port_transforms = into
+	_output_port_transforms = out_of
+	_upload(_input_ports, into)
+	_upload(_output_ports, out_of)
+
+
+## Writes one Machine's declared ports into the two buffers.
+##
+## The arrow points **the way goods travel**: along the port's outward direction for an
+## output, against it for an input. That is the thing a player is trying to work out, and it
+## is one subtraction from the same number rather than a second declaration.
+func _mark_ports(
+	sim: Simulation,
+	ports: Array[MachinePorts.Port],
+	definition: MachineDefinition,
+	origin: Vector3i,
+	rotation: int,
+	into: PackedFloat32Array,
+	out_of: PackedFloat32Array
+) -> void:
+	for port: MachinePorts.Port in ports:
+		var tile: Vector3i = MachinePorts.port_tile(
+			port, origin, definition.footprint_x, definition.footprint_z, rotation
+		)
+		var facing: int = MachinePorts.port_direction(port, rotation)
+		var travel: int = (
+			WorldGrid.wrap_rotation(facing + 2) if port.is_an_input() else facing
+		)
+		var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+		var at: Vector3 = Vector3(
+			Fixed.to_float(centre.x),
+			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + PORT_MARKER_HEIGHT_METRES,
+			Fixed.to_float(centre.z)
+		)
+		var buffer: PackedFloat32Array = into if port.is_an_input() else out_of
+		buffer.resize(buffer.size() + FLOATS_PER_INSTANCE)
+		@warning_ignore("integer_division")
+		_write_instance(
+			buffer, buffer.size() / FLOATS_PER_INSTANCE - 1, at, _yaw_for_direction(travel)
+		)
+
+
+## How many port markers are on screen. For the smoke test.
+func port_marker_count() -> int:
+	return input_port_marker_count() + output_port_marker_count()
+
+
+## How many of them are inputs. For the smoke test.
+func input_port_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _input_port_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many of them are outputs. For the smoke test.
+func output_port_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _output_port_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where an output port's marker was drawn, in metres. For the smoke test.
+func output_port_marker_position(marker: int) -> Vector3:
+	return _instance_position(_output_port_transforms, marker)
+
+
+## Where an input port's marker was drawn, in metres. For the smoke test.
+func input_port_marker_position(marker: int) -> Vector3:
+	return _instance_position(_input_port_transforms, marker)
+
+
+## What is wrong with the Factory, marked where it is wrong: a post at every Belt end that
+## leads nowhere, a tag over every starved Machine, and an arrow a tile saying which way each
+## Belt carries.
+##
+## **Every one of the three is a query**. `query_belt_start_is_fed` and
+## `query_belt_end_is_connected` ask the geometry half of the hand-off the Simulation itself
+## performs, and `query_machine_is_starved` answers for a Miner over the wrong ground and a
+## crafter with half a Recipe alike — so a renderer that inferred any of it from a count that
+## had stopped moving would be a second opinion, and the wrong one on the frame they
+## disagreed.
+func _sync_connection_marks(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _dangling_marks == null:
+		_dangling_marks = _marker_posts(tile_size, DANGLING_COLOUR)
+		_starved_marks = _marker_posts(tile_size, STARVED_COLOUR)
+		_belt_flow_arrows = _flow_arrows(tile_size, FLOW_ARROW_COLOUR)
+
+	var dangling: PackedFloat32Array = PackedFloat32Array()
+	var flow: PackedFloat32Array = PackedFloat32Array()
+	for index: int in range(sim.query_belt_count()):
+		var direction: int = sim.query_belt_direction(index)
+		var yaw: float = _yaw_for_direction(direction)
+		var length: int = sim.query_belt_length_tiles(index)
+		if not sim.query_belt_start_is_fed(index):
+			_mark_at(sim, dangling, sim.query_belt_tile(index, 0), DANGLING_MARK_HEIGHT_METRES, yaw)
+		if not sim.query_belt_end_is_connected(index):
+			_mark_at(
+				sim, dangling, sim.query_belt_tile(index, length - 1),
+				DANGLING_MARK_HEIGHT_METRES, yaw
+			)
+		for tile: int in range(length):
+			_mark_at(
+				sim, flow, sim.query_belt_tile(index, tile),
+				Fixed.to_float(sim.query_belt_deck_height_metres()) + FLOW_ARROW_LIFT_METRES,
+				yaw
+			)
+
+	var starved: PackedFloat32Array = PackedFloat32Array()
+	for index: int in range(sim.query_machine_count()):
+		if not sim.query_machine_is_starved(index):
+			continue
+		var centre: Vector3 = _machine_centre(sim, index)
+		var definition: MachineDefinition = sim.query_definitions().machine(
+			sim.query_machine_id(index)
+		)
+		var roof: float = 0.0 if definition == null else Fixed.to_float(definition.height)
+		starved.resize(starved.size() + FLOATS_PER_INSTANCE)
+		@warning_ignore("integer_division")
+		_write_instance(
+			starved,
+			starved.size() / FLOATS_PER_INSTANCE - 1,
+			Vector3(centre.x, centre.y + roof + STARVED_MARK_LIFT_METRES, centre.z),
+			0.0
+		)
+
+	_dangling_transforms = dangling
+	_starved_transforms = starved
+	_belt_flow_transforms = flow
+	_upload(_dangling_marks, dangling)
+	_upload(_starved_marks, starved)
+	_upload(_belt_flow_arrows, flow)
+
+
+## Writes one mark over the centre of a tile.
+func _mark_at(
+	sim: Simulation, into: PackedFloat32Array, tile: Vector3i, lift: float, yaw: float
+) -> void:
+	var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+	into.resize(into.size() + FLOATS_PER_INSTANCE)
+	@warning_ignore("integer_division")
+	_write_instance(
+		into,
+		into.size() / FLOATS_PER_INSTANCE - 1,
+		Vector3(
+			Fixed.to_float(centre.x),
+			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + lift,
+			Fixed.to_float(centre.z)
+		),
+		yaw
+	)
+
+
+## A MultiMesh of small unshaded tags, one per thing being complained about. Unshaded on
+## purpose: a diagnostic has to read the same on the dark side of a Boiler as on the lit one.
+func _marker_posts(tile_size: float, colour: Color) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	var tag: BoxMesh = BoxMesh.new()
+	tag.size = Vector3(tile_size * 0.22, tile_size * 0.22, tile_size * 0.22)
+	instanced.mesh = tag
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## How many Belt ends are marked as leading nowhere. For the smoke test, and the number the
+## HUD reports.
+func dangling_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _dangling_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many Machines are marked as starved. For the smoke test.
+func starved_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _starved_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many flow arrows are drawn along the Belts that are standing. For the smoke test.
+func belt_flow_arrow_count() -> int:
+	@warning_ignore("integer_division")
+	return _belt_flow_transforms.size() / FLOATS_PER_INSTANCE
 
 
 ## Hands a MultiMesh its instances, or tells it there are none. The buffer may only be

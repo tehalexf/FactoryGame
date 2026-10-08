@@ -9828,6 +9828,61 @@ func query_belt_tile_refusal(tile: Vector3i) -> int:
 	return _belt_tile_refusal(tile)
 
 
+## Whether a Belt's far end leads anywhere goods can go: a Machine's footprint, the Nest's,
+## or the entry tile of another Belt.
+##
+## **The geometry half of `_hand_off`, with the fullness left out.** A Belt into a Machine
+## whose input buffer happens to be full is connected and backing up, which is a different
+## thing a player wants to read differently — `query_belt_is_stalled` is that one. Asked every
+## frame and remembering nothing, because there is no stored connection to go stale: Belts
+## connect by adjacency and nothing else, so demolishing what a Belt fed makes it dangle on
+## the next frame with no bookkeeping anywhere.
+func query_belt_end_is_connected(index: int) -> bool:
+	if not _is_belt(index):
+		return false
+	var beyond: Vector3i = (
+		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
+	)
+	if query_machine_at_tile(beyond) != -1:
+		return true
+	if _nest_covers(beyond):
+		return true
+	return _belt_entered_at(beyond) != -1
+
+
+## Whether anything is loading a Belt at its entry: a Machine output port behind it, or
+## another Belt handing Items on.
+##
+## The geometry half of `_load_from_port`, in the shape above and for the same reason. A Belt
+## nothing feeds is the commonest mistake a new player makes — it is laid the right length,
+## pointed the right way, and starts one tile too far from the Machine — and it is invisible
+## without this.
+func query_belt_start_is_fed(index: int) -> bool:
+	if not _is_belt(index):
+		return false
+	var behind: Vector3i = (
+		_belt_entry_tile(index) - WorldGrid.direction_step(_belt_direction[index])
+	)
+	if query_machine_at_tile(behind) != -1:
+		return true
+	var upstream: int = _belt_at_tile_feeding(_belt_entry_tile(index))
+	return upstream != -1
+
+
+## The Belt, if any, whose far end hands Items onto the tile given. The reverse of
+## `_belt_downstream`, walked rather than stored for the reason nothing else here is stored.
+func _belt_at_tile_feeding(tile: Vector3i) -> int:
+	for index: int in range(query_belt_count()):
+		if _belt_covers(index, tile):
+			continue
+		if (
+			_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
+			== tile
+		):
+			return index
+	return -1
+
+
 ## Which way a Belt carries, as a `WorldGrid` direction. -1 for an unknown Belt.
 func query_belt_direction(index: int) -> int:
 	if not _is_belt(index):
