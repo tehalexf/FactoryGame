@@ -124,6 +124,21 @@ class Report extends RefCounted:
 	var most_ammunition_at_once: int = 0
 	var iron_plate_in_the_factory: int = 0
 
+	## The Silo, measured: how many stood, the deepest the stockpile ever got, and what was
+	## actually called in.
+	##
+	## **#26 could not measure any of this**, and said so as a finding rather than an omission:
+	## the opening Factory draws 660 kW of the 900 one Steam Boiler and the Nest's baseline
+	## plant supply, and a Silo asks for 400 more. #37's acceptance criterion is that a
+	## competently built Factory can power, load and fire a Silo **within a Run**, demonstrated
+	## here rather than asserted — so these four figures are what demonstrates it, and
+	## `stratagems_fired` is the one that cannot be faked by a Factory that merely built a Silo.
+	var silos_standing: int = 0
+	var most_charges_banked: int = 0
+	var stratagems_fired: int = 0
+	var charges_fired: int = 0
+	var charges_wasted: int = 0
+
 	var player_deaths: int = 0
 
 	## The Simulation's state hash at the end of the Run.
@@ -264,11 +279,12 @@ class Report extends RefCounted:
 	## hash cannot answer that question: it differs by seed from tick 0 regardless.
 	func figures() -> String:
 		return (
-			"%d %d %d %d %d %d %d %d %d %d %d %d [%s]"
+			"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d [%s]"
 			% [
 				end_tick, wave_number, most_heat_at_once, nest_health, machines_built,
 				machines_standing, turrets_built, shots_fired, dry_turret_ticks,
 				most_ammunition_at_once, breach_count, hives_standing,
+				most_charges_banked, stratagems_fired, charges_wasted,
 				", ".join(machines_lost),
 			]
 		)
@@ -311,6 +327,14 @@ class Report extends RefCounted:
 		lines.append(
 			"   Power %d kW supplied against %d kW asked; in deficit for %d%% of the Run"
 			% [power_supply_kw, power_demand_kw, power_deficit_percent()]
+		)
+		lines.append(
+			"   %d Silos standing, %d Charges banked at the peak, %d Stratagems fired on"
+			% [silos_standing, most_charges_banked, stratagems_fired]
+		)
+		lines.append(
+			"   %d Charges, %d Charges lost to an interrupted Painting"
+			% [charges_fired, charges_wasted]
 		)
 		lines.append(
 			"   Deliveries finished: %s; Breaker arrived %s, Siege Hulk arrived %s"
@@ -435,6 +459,12 @@ static func play(
 		if sim.query_power_is_in_deficit():
 			report.ticks_in_power_deficit += 1
 
+		var banked: int = 0
+		for index: int in range(machine_count):
+			if sim.query_machine_is_silo(index):
+				banked += sim.query_silo_charges(index)
+		report.most_charges_banked = maxi(report.most_charges_banked, banked)
+
 		report.most_enemies_at_once = maxi(report.most_enemies_at_once, sim.query_enemy_count())
 		report.most_heat_at_once = maxi(report.most_heat_at_once, sim.query_heat())
 		var ammunition: int = sim.query_item_total("ammunition")
@@ -479,6 +509,12 @@ static func play(
 	report.deliveries_completed = sim.query_completed_deliveries()
 	report.power_supply_kw = sim.query_power_supply_kw()
 	report.power_demand_kw = sim.query_power_demand_kw()
+	for index: int in range(sim.query_machine_count()):
+		if sim.query_machine_is_silo(index):
+			report.silos_standing += 1
+	report.stratagems_fired = sim.query_player_stratagems_fired(0)
+	report.charges_fired = sim.query_player_charges_fired(0)
+	report.charges_wasted = sim.query_player_charges_wasted(0)
 	report.state_hash = sim.hash()
 	for index: int in range(sim.query_enemy_count()):
 		var kind: int = sim.query_enemy_kind(index)

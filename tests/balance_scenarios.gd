@@ -65,6 +65,67 @@ const EASTERN_HIVE: Vector3i = Vector3i(38, GROUND, 24)
 ## arithmetic honest.
 const SORTIE_WAYPOINT: Vector3i = Vector3i(24, GROUND, 0)
 
+## Where the second Steam Boiler stands, in `artillery`: south of the coal Miner at (12, 4),
+## reached by two Belts out of the Miner's own southern face.
+##
+## **The second Boiler is the whole of #37's Power answer.** One coal Node yields 40 coal a
+## minute against a Boiler's 30, which #26 read as "there is no second Boiler to be had" — but
+## a Boiler is only on the grid *while it is burning* (`_machine_would_work`), so 40 coal a
+## minute is 1.33 Boilers burning rather than one Boiler burning and 10 coal a minute piling up
+## on a Belt. Two Boilers on one Node supply about 800 kW averaged over time instead of 600, and
+## 300 + 800 is what pays for a Silo beside the opening line.
+const SECOND_BOILER_TILE: Vector3i = Vector3i(16, GROUND, 8)
+
+## The second ore line, out on the spare iron Node at (-6, 10) — the Node `over_producer` digs
+## into and collects nothing from, used here for what it is for.
+##
+## **The Silo needs its own plate and the opening line has none to spare.** The Smelter makes
+## 18.75 plate a minute and the Ammo Press wants 20, so the Press takes every plate the Smelter
+## produces: a second Belt off the Smelter is served after the Press's by canonical Belt order
+## and therefore never gets one at all. A Silo's Recipe is a plate and twenty rounds, so the
+## plate has to come from somewhere, and a second Miner and Smelter is what a player would
+## build. They cost 20 plate between them and almost nothing in Power — the Silo takes 3 plate a
+## minute of the 18.75 they make, so both spend about a sixth of their time working and the rest
+## idle and off the grid, which is back-pressure paying for itself.
+const SECOND_MINER_TILE: Vector3i = Vector3i(-6, GROUND, 10)
+const SECOND_SMELTER_TILE: Vector3i = Vector3i(-6, GROUND, 14)
+
+## Where the Silo stands: in the clear ground south of the Nest, beside the second ore line that
+## feeds it and a short Belt run from the Ammo Press's western face.
+const SILO_TILE: Vector3i = Vector3i(-1, GROUND, 14)
+
+## Where the walk to the Silo turns, and where a player stands to load it.
+##
+## The approach goes west of the long Ammunition Belt down x = 0 before turning south, because
+## the straight line from where a Run starts walks the whole length of that Belt — and a Belt is
+## solid, so an open-loop walk along one is a walk at deck height that comes off somewhere
+## unplanned. The loading spot is one tile north of the Silo's wall, inside
+## `silo.load_reach_metres` of 4 m.
+const SILO_APPROACH: Vector3i = Vector3i(-3, GROUND, 8)
+const SILO_LOADING_SPOT: Vector3i = Vector3i(0, GROUND, 13)
+
+## Where the Sentry is wanted, and where the player walks to paint it: north-west of the Silo,
+## where an 8-tile reach covers the Silo, the second Smelter and the second Miner at once. The
+## western line is the half of this Factory no Turret on the Nest's lane can see, and it is where
+## the Run keeps its artillery.
+const PAINT_APPROACH: Vector3i = Vector3i(-3, GROUND, 12)
+
+## The tile the walk to `PAINT_APPROACH` actually settles the player on, which is the tile the
+## Painting is held over. **Measured, not assumed**: a painted tile is the one under a player's
+## feet, and an open-loop walk stops where its arithmetic stops. If a later movement change moves
+## it, this row reports no Stratagem fired rather than quietly passing.
+const PAINT_TILE: Vector3i = Vector3i(-5, GROUND, 12)
+
+## How many Charges one load commits, against `silo.max_charges_per_load` of 4. Two, so the
+## Sentry arrives with 120 rounds — a Charge is a multiplier and this row spends two of them.
+const CHARGES_PER_LOAD: int = 2
+
+## When the player leaves the Factory for the Silo, and when they leave the Silo for the tile
+## they want the Sentry on. Late enough that the Silo has been standing for minutes with
+## Belt-fed plate and rounds to assemble Charges out of.
+const LOAD_WALK_SECOND: int = 420
+const PAINT_WALK_SECOND: int = 660
+
 ## How many of a Factory's own pixels of mouse travel make one whole turn, at the shipped
 ## `player.look_sensitivity_turns_per_1000_pixels`. Derived rather than written down, so a
 ## sensitivity change re-aims the sorties instead of silently sending them past the Hive.
@@ -76,7 +137,8 @@ const LOOK_PIXELS_PER_TURN: int = 1000 * 10 / 2
 const HEADING_STEPS: int = 4096
 
 
-## Every scenario, in report order: least built to most built, then the two sorties.
+## Every scenario, in report order: least built to most built, then the two sorties, then the
+## Factory that builds artillery.
 static func all() -> Array:
 	return [
 		bare(),
@@ -87,6 +149,7 @@ static func all() -> Array:
 		deep_digger(),
 		hive_sortie(),
 		rifle_picket(),
+		artillery(),
 	]
 
 
@@ -201,11 +264,18 @@ static func deep_digger() -> BalanceScenario:
 	# them back out both happen at that one counter. They will be bitten standing there, and
 	# the report counts it.
 	_walk_to(scenario, 10 * Simulation.TICKS_PER_SECOND, Vector3i(-3, GROUND, -3), 0)
-	# And the coal line comes back up at three minutes, because a Belt into the Nest banks the
-	# surplus **for ever**: `t01_munitions` wants 20 coal and the store will then take 200
-	# more, so a coal Belt nobody tears down keeps the Boiler short for the rest of the Run.
-	# Tearing it down once the tier is paid is the decision this models, and the Power trace
-	# in the report is what says whether it was made in time.
+	# And the coal line comes back up at three minutes, which is still the decision this row
+	# models even though #37 took the Nest's store out of the reason.
+	#
+	# **What is left is the Belt itself.** The store used to take 200 coal past the tier's bill
+	# and now takes none, because coal is not an Item a player can spend again
+	# (`Definitions.item_can_be_spent`) — but this line is forty tiles long, so it holds 160 coal
+	# of its own before back-pressure ever reaches the Miner, and its entry at (12, 6) *precedes*
+	# the Boiler's at (14, 4) in canonical Belt order, so it is served first. Measured with the
+	# demolish removed, this Run lasts **6m20s with 98% of it in Power deficit** — against 10m48s
+	# with it. So the diversion a long Belt can hide inside itself is bigger than the one the Nest
+	# was hiding, and tearing the line down once the tier is paid is still a decision a player has
+	# to make. See "Findings that are not tuning" in CLAUDE.md.
 	scenario.at_second(180, _demolish_all(_coal_belts_to_the_nest_tiles()))
 	# Then, once a minute: pull the lever, hand over whatever the open tier wants, take plate
 	# back out, and try to put a Mk2 on the seam. **The lever is the only plate a Run has** —
@@ -322,6 +392,104 @@ static func rifle_picket() -> BalanceScenario:
 	return scenario
 
 
+## The competent Factory, then a second Boiler, a second ore line and a Silo — loaded by hand
+## and fired.
+##
+## **#37's acceptance criterion, as a Run**: a competently built Factory can power, load and fire
+## a Silo within a Run, demonstrated rather than asserted. #26 could not ask the question, and
+## recorded why as a finding: the opening Factory draws 660 kW of the 900 one Boiler and the
+## Nest's baseline plant supply, and a Silo asks for 400 more.
+##
+## Three things a player has to build, and none of them is a new mechanic:
+##
+## 1. **A second Steam Boiler on the same coal Node.** See `SECOND_BOILER_TILE`: a Boiler is on
+##    the grid only while it burns, so one Node's 40 coal a minute is worth about 800 kW across
+##    two Boilers rather than 600 across one.
+## 2. **A second Miner and Smelter on the spare iron Node.** See `SECOND_MINER_TILE`: the Press
+##    already takes every plate the first Smelter makes, so the Silo's plate has to be made
+##    rather than diverted.
+## 3. **Sixty plate for the Silo**, and ninety-six in total, out of a Run whose only source of
+##    plate is the call-early lever at 25 a pull. Six pulls, so six Waves arrive sooner than they
+##    would have — which is what makes artillery a thing this Run *paid* for.
+##
+## What it fires is a **Sentry Drop**, because that is the one Stratagem the shipped Delivery
+## chain does not lock: `supply_drop` sits behind `t02_deep_mining` and `artillery_barrage` behind
+## `t03_deep_survey`, so a Run that has paid for neither has exactly one thing to put in the tube.
+## Which is worth knowing on its own — the Stratagem a Factory can reach first is the one that
+## hands it a second Turret.
+static func artillery() -> BalanceScenario:
+	var scenario: BalanceScenario = BalanceScenario.named(
+		"artillery", "grows a second Boiler and ore line, then loads and fires a Silo"
+	)
+	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
+	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
+
+	# **The lever is the only plate a Run has** — `wave.call_early_bounty_per_item` is 25 — so
+	# ninety-six plate is seven pulls against the lever's own refusals, and seven Waves arriving
+	# sooner than they would have. Pulled
+	# blind once a minute, like `deep_digger`: a pull while a Wave is still arriving is a silent
+	# refusal whose hash does not move, so what a scenario can do is keep asking.
+	#
+	# The builds are attempted blind too, cheapest first, once a minute from the first minute on.
+	# A build nobody can afford is `MISSING_MATERIALS` and a build on a tile already taken is
+	# `OCCUPIED`, so repeating the whole list every minute is how an open-loop script says "as
+	# soon as the plate is there". The Belts go in with them, because a Belt whose far end has no
+	# Machine yet simply backs up.
+	for minute: int in range(1, 11):
+		if minute <= 7:
+			scenario.at_second(minute * 60, [InputAction.call_wave_early(0)])
+		scenario.at_second(minute * 60 + 1, [_machine("steam_boiler_mk1", SECOND_BOILER_TILE)])
+		scenario.at_second(minute * 60 + 2, [_machine("miner_mk1", SECOND_MINER_TILE)])
+		scenario.at_second(minute * 60 + 3, [_machine("smelter_mk1", SECOND_SMELTER_TILE)])
+		scenario.at_second(minute * 60 + 4, [_machine("silo_mk1", SILO_TILE)])
+		scenario.at_second(minute * 60 + 5, _second_boiler_belts())
+		scenario.at_second(minute * 60 + 6, _second_ore_belts())
+		scenario.at_second(minute * 60 + 7, _silo_ammunition_belts())
+
+	# Then the walk out to the Silo. Two legs, both on clear ground: west and south to
+	# `SILO_APPROACH`, clear of the long Ammunition Belt down x = 0, then south-east to the
+	# Silo's northern wall.
+	var home: Vector3i = Vector3i(0, GROUND, 0)
+	var turn: int = _walk_to(
+		scenario, LOAD_WALK_SECOND * Simulation.TICKS_PER_SECOND, SILO_APPROACH, 0
+	)
+	_walk_to(
+		scenario, turn, SILO_LOADING_SPOT, 0, SILO_APPROACH, heading_towards(home, SILO_APPROACH)
+	)
+
+	# Winding the dial and committing, blind, once every ten seconds. The dial commits nothing
+	# and the load is irreversible, so a load attempted before the Silo has banked two Charges is
+	# a silent refusal and a load attempted after the first one landed is `SILO_ALREADY_LOADED` —
+	# which is exactly what makes repeating it safe.
+	var sentry: int = _definitions().stratagem_index("sentry_drop")
+	for attempt: int in range(1, 19):
+		var second: int = LOAD_WALK_SECOND + 20 + attempt * 10
+		scenario.at_second(second, [InputAction.set_silo_dial(0, sentry, CHARGES_PER_LOAD)])
+		scenario.at_second(
+			second + 1, [InputAction.load_silo(0, SILO_TILE, sentry, CHARGES_PER_LOAD)]
+		)
+
+	# And the Painting: a short walk back off the Silo's wall to the tile the Sentry is wanted on, five
+	# seconds of standing still so the walk's deceleration has finished, and then the key held for
+	# ten. A Sentry Drop channels three seconds and **any damage interrupts it**, so a Wave
+	# arriving on top of the player is a Charge lost — which the report counts as
+	# `charges_wasted` rather than hiding.
+	var paint_walk: int = _walk_to(
+		scenario,
+		PAINT_WALK_SECOND * Simulation.TICKS_PER_SECOND,
+		PAINT_APPROACH,
+		0,
+		SILO_LOADING_SPOT,
+		heading_towards(SILO_APPROACH, SILO_LOADING_SPOT)
+	)
+	scenario.hold(
+		paint_walk + 5 * Simulation.TICKS_PER_SECOND,
+		10 * Simulation.TICKS_PER_SECOND,
+		[InputAction.paint(0, PAINT_TILE)]
+	)
+	return scenario
+
+
 # ── The Factory, in pieces ────────────────────────────────────────────────────
 
 ## Miner, Smelter and Ammo Press on the eastern iron.
@@ -368,9 +536,16 @@ static func _first_ammunition_belts() -> Array:
 ##
 ## **Two Belts off one Machine is a real splitter**, and it is not a special case:
 ## `_load_from_port` reads whatever Machine sits behind each Belt's *entry* tile, and a 2x3
-## Press has room for two entries along its eastern wall. So the Press alternates between the
-## two lines, which is the arithmetic `fortified` is built to expose — a second Turret does
-## not come with a second Press.
+## Press has room for two entries along its eastern wall. So one Press feeds two Turret lines,
+## which is the arithmetic `fortified` is built to expose — a second Turret does not come with a
+## second Press.
+##
+## **It is a priority rather than a half-share**, which is worth saying because it reads like a
+## split: Belts are walked in canonical order and each takes one Item from the Machine behind its
+## entry, so this line's (10, 9) is served after the first Turret's (7, 9) and receives only what
+## that line has no room for. Between Waves the first line is sixty rounds of full Belt, so this
+## one does get fed; a Machine whose first Belt never backs up would starve its second outright.
+## See the splitter finding in CLAUDE.md.
 static func _factory_turret_belts() -> Array:
 	return [
 		InputAction.build_belt(0, Vector3i(10, GROUND, 9), Vector3i(11, GROUND, 9)),
@@ -381,9 +556,13 @@ static func _factory_turret_belts() -> Array:
 ## Coal from the coal Miner's northern face, out around the north of the Factory and down to
 ## the Nest's eastern wall. This is what pays `t01_munitions`, which wants 20 coal.
 ##
-## It takes coal the Boiler would otherwise have burned — the Miner alternates between the
-## two Belts — so Power sags while the tier is open and recovers the moment it closes and the
-## Nest stops wanting coal. That sag is a real cost of progression and the report shows it.
+## It takes coal the Boiler would otherwise have burned — this line's entry precedes the Boiler's
+## in canonical Belt order, so it is served first — and Power sags for as long as it has anywhere
+## to put coal. That sag is a real cost of progression and the report shows it.
+##
+## Forty tiles of Belt is 160 coal before back-pressure reaches the Miner at all, which is why
+## this row demolishes the line rather than waiting for it to pack up. The Nest's own store used
+## to add 200 more; since #37 it adds none.
 static func _coal_belts_to_the_nest() -> Array:
 	return [
 		InputAction.build_belt(0, Vector3i(12, GROUND, 6), Vector3i(12, GROUND, 13)),
@@ -423,6 +602,44 @@ static func _ammunition_belts_to_the_nest() -> Array:
 		InputAction.build_belt(0, Vector3i(7, GROUND, 11), Vector3i(0, GROUND, 11)),
 		InputAction.build_belt(0, Vector3i(-1, GROUND, 11), Vector3i(-1, GROUND, -2)),
 		InputAction.build_belt(0, Vector3i(-1, GROUND, -3), Vector3i(-2, GROUND, -3)),
+	]
+
+
+## Coal from the coal Miner's southern face, east and into the second Boiler at (16, 8).
+##
+## Its entry at (13, 6) **precedes** the first Boiler's at (14, 4) in canonical Belt order, so
+## the second Boiler is fed first and the first one burns what is left: 40 coal a minute against
+## two appetites of 30 is one Boiler burning continuously and the other a third of the time.
+## Which way round the priority falls does not matter to the grid — the average supply is 800 kW
+## either way — but it is worth knowing that a splitter in this game is a priority and not a
+## half-share, because that is what the Silo's plate line discovered the hard way.
+static func _second_boiler_belts() -> Array:
+	return [
+		InputAction.build_belt(0, Vector3i(13, GROUND, 6), Vector3i(13, GROUND, 8)),
+		InputAction.build_belt(0, Vector3i(13, GROUND, 9), Vector3i(15, GROUND, 9)),
+	]
+
+
+## The second ore line: ore from the Miner on the spare Node into the second Smelter, and that
+## Smelter's plate into the Silo.
+static func _second_ore_belts() -> Array:
+	return [
+		InputAction.build_belt(0, Vector3i(-6, GROUND, 12), Vector3i(-6, GROUND, 13)),
+		InputAction.build_belt(0, Vector3i(-3, GROUND, 15), Vector3i(-2, GROUND, 15)),
+	]
+
+
+## Rounds off the Ammo Press's western face, west along z = 11 and south into the Silo.
+##
+## **A third claimant on one Press, and the one #17 asked about.** Its entry at (7, 11) comes
+## after the first Turret's at (7, 9), so the Turret is fed first and the Silo gets what the
+## Turret's line cannot hold — which, because that line is sixty rounds of Belt, is most of what
+## the Press makes between Waves. A Charge is twenty rounds, so the artillery and the magazine
+## are spending the same output, which is exactly the tension the Silo was priced for.
+static func _silo_ammunition_belts() -> Array:
+	return [
+		InputAction.build_belt(0, Vector3i(7, GROUND, 11), Vector3i(3, GROUND, 11)),
+		InputAction.build_belt(0, Vector3i(2, GROUND, 11), Vector3i(2, GROUND, 13)),
 	]
 
 
