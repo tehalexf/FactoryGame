@@ -591,7 +591,8 @@ anything moves — and every Enemy converges on the same destination.
   sweep outward from the **whole Nest footprint**, four-connected, so no heuristic is
   involved and an Enemy heading for the Nest's near edge is not routed to its anchor.
 - **There are two fields, not one**, since #11: `_machine_flow_*` is the same sweep seeded on
-  every Machine's footprint instead, and it is what a Breaker steers by. Two destinations,
+  every Machine's footprint instead, and it is what a Breaker steers by **once it has broken
+  ranks** (#34 — see below). Two destinations,
   two fields, one `_sweep` and one `_mark_obstructions` pass shared between them — because a
   field is the right structure for the second destination for exactly the reason it was right
   for the first. "Walk at the nearest Machine" is O(Breakers x Machines) every tick and a path
@@ -601,6 +602,31 @@ anything moves — and every Enemy converges on the same destination.
   it while nothing routes through it. An empty Factory leaves that field empty and
   `_enemy_direction` falls the Breaker back onto the Nest's, which is why a Breaker with
   nothing to break is still an Enemy at the gate.
+- **A Breaker marches with the Wave before it hunts, and that is #34's whole decision.** It
+  steers by the *Nest's* field — the road every Crawler walks, and the road a player
+  fortifies — until it is within `enemy.breaker_breaks_ranks_within_tiles` of either the Nest
+  or a Machine, and by the Factory's field from that tile on. Before it, a Breaker took
+  whichever line was shortest to a Machine from the moment it emerged, which on a real Map is
+  never the lane a player defended: #26 measured the documented opening Factory with *no answer
+  at all* to the Breaker tier while an identical build with its second Turret over the Factory
+  lasted nine minutes longer. A rule a player cannot see is a trap rather than a lesson. Three
+  things make the fix cost almost nothing:
+  - **Two array reads, no third field.** `_flow_distance` and `_machine_flow_distance` are both
+    swept already, so "is the Nest at hand" and "is a Machine at hand" are integer comparisons
+    against arrays that exist. Nothing new is rebuilt and the 2.5 ms sweep is untouched.
+  - **It latches**, in one more parallel array — `_enemy_broke_ranks`, hashed, 0 for ever for a
+    Crawler and a Siege Hulk. Latching is not an optimisation: a Breaker that has turned on a
+    Machine walks *away* from the Nest, so a predicate re-decided every tick would cross back
+    over the boundary on its first step and shuffle there for good. It is also the right thing
+    to say about a Breaker — once it has chosen, it commits, and the turn is something a player
+    watches happen.
+  - **The second clause is load-bearing, not a special case.** Without "within reach of a
+    Machine" the rule says something stupid on a Factory built nowhere near its Nest: the
+    Breaker walks the length of the line, past everything in it, to the Nest's doorstep, and
+    then walks all the way back. With it, a Breaker lunges at the first thing it can reach from
+    the road it is on — which also makes **what a player puts beside the lane** the thing that
+    gets eaten first, starting with the Turret standing in it. `test_machine_mortality`'s
+    `_open_layout` moved its Nest onto the Breach's own latitude for this reason, and says so.
 - **Derived, so it is rebuilt rather than hashed**, exactly like `_belt_update_order`.
   It is a pure function of the Map and the obstructions standing on it, both of which
   are hashed. Rebuilt when a Machine is built or demolished or a reload could have
@@ -737,26 +763,34 @@ sessions headless to the end of the Run and reports what happened; the whole met
 scenarios and every finding live under "The joint balance pass", below. Re-run it after any
 edit to `content/` rather than reasoning about what the edit did.
 
-Shipped Map, shipped content, three seeds, measured 2026-10-07:
+Shipped Map, shipped content, three seeds, measured 2026-10-07 **with #34 in**:
 
 | Scenario | Run | Wave | Peak Heat | What killed it |
 |---|---|---|---|---|
 | `bare` — builds nothing | 4m22s | 1 | 0 | undefended; the first Wave alone |
-| `competent` — six Machines, one MG on the lane | **27m00s** | 32 | 5526 | **ran dry**, then Breakers took the Factory |
-| `fortified` — a second MG over the Factory itself | **29m15s** | 36 | 6204 | swarmed, with 274 rounds still in it |
-| `hive_sortie` — `competent` after clearing one Hive | **29m36s** | 35 | 5399 | ran dry |
+| `competent` — six Machines, one MG on the lane | **29m07s** | 35 | 6788 | three Siege Hulks, 96 rounds still in it |
+| `fortified` — a second MG over the Factory itself | **28m45s** | 35 | 6716 | the same, 112 rounds unspent |
+| `hive_sortie` — `competent` after clearing one Hive | **32m22s** | 39 | 6724 | the same, 3m15s later |
 
-Six times the Run an undefended Nest gets, and still lost.
+Seven times the Run an undefended Nest gets, and still lost.
 
-**It loses because it runs dry, which is the point.** The arithmetic, now against #12's
-schedule rather than #9's scaffold: the Turret fires four rounds a second and a Crawler takes
-two of them, while one Ammo Press makes two rounds every three seconds — 37 a minute, so
-about 19 Crawlers a minute of killing. The Wave interval floors at 40 seconds, which is 1.5
-Waves a minute, so **one Ammo Press sustains about twelve Crawlers a Wave and no more**. At
-`chaff_crawlers.heat_per_extra = 1200` that would be a Heat of 7,800, further out than a
-one-Press Factory ever gets — so what actually decides the Run is the **stockpile**. It peaks
-at 455 rounds around minute seventeen, every Wave after that is paid for out of it, it is gone
-by minute twenty-five, and the Nest falls two minutes later.
+**It no longer loses because it runs dry, and #34 is why.** Before it, a Breaker steered by the
+Factory from the moment it emerged, so the documented Factory lost all five production Machines
+to a tier its Turret could not reach — the Run ended at minute twenty-seven, dry, with the
+Breakers finishing it. Now the Breaker marches the lane under fire, the Factory keeps its line
+through the whole Breaker tier, and the Heat it goes on making carries it past
+`siege_hulks.min_heat` — so what ends the Run is the **boss**, three Siege Hulks deep, with 96
+rounds still in the Factory and the one answer DESIGN.md always said it had: a player on foot.
+
+The Ammunition arithmetic is unchanged and is still worth knowing, because it is what the
+*middle* of the Run is paid out of: the Turret fires four rounds a second and a Crawler takes
+two of them, while one Ammo Press makes two rounds every three seconds — 37 a minute, so about
+19 Crawlers a minute of killing. The Wave interval floors at 40 seconds, which is 1.5 Waves a
+minute, so **one Ammo Press sustains about twelve Crawlers a Wave and no more**. What changed is
+the *other* side of the ledger: with the production line surviving, the stockpile peaks at 454
+rounds around minute twenty-four and is still 96 deep when the Nest falls. **One Turret cannot
+spend what one Press makes**, which is a different and better problem to have than the old one,
+and it is why the second Turret in `fortified` is now a wash rather than a two-minute gain.
 
 **The way to survive past thirty minutes is a second Ammo Press and the Smelter and Miner
 behind it** — production is the defence, in the most literal arithmetic available. Which a Run
@@ -769,12 +803,15 @@ Two things a later ticket should know:
 - **A Machine's output buffer is uncapped**, so a Belt that fills up banks the surplus in the
   Ammo Press indefinitely. The stockpile a player builds between Waves is real and unbounded,
   and it is what carries minutes seventeen to twenty-five.
-- **A Turret on the Nest's lane cannot defend the Factory.** A Breaker steers by the *Factory*
-  flowfield and a Crawler by the Nest's, so a Breaker never walks into the reach of a Turret
-  placed to cover the Nest. The `competent` Factory loses all five of its production Machines
-  in its last minutes for exactly this reason, and a second MG at (11, 6) — which covers every
-  Machine of the opening line inside 16 m — is what answers it, and is why `fortified` outlasts
-  it. That is a geography lesson rather than a tuning one and no number fixes it.
+- **A Turret on the Nest's lane now defends the Factory, and #34 is the whole of why.** A
+  Breaker used to steer by the *Factory* flowfield from the moment it emerged, so it never
+  walked into the reach of a Turret placed to cover the Nest — the `competent` Factory lost all
+  five production Machines in its last minutes to a rule a player could not see. It now marches
+  the Nest's own field until the Nest or a Machine is within
+  `enemy.breaker_breaks_ranks_within_tiles`, so it arrives down the road, under fire, and turns
+  on the Factory where a player can watch it. See the flowfield section, and "What #34 cost the
+  table" below for the figures. The consequence for `fortified`'s second MG at (11, 6) is that
+  it is no longer what answers the Breaker tier, and the two rows have converged.
 
 ## Mortality: what can be taken from you
 
@@ -823,8 +860,10 @@ half of `_tile_obstructs_enemies` that does *not* force a rebuild, for exactly t
 1. **A Breaker takes a Machine over anything else.** That is the whole of what a Breaker is
    (GLOSSARY.md: it preferentially attacks Machines rather than players) and it is what makes
    mortality *felt* rather than merely true — a Crawler walking past a Smelter proves nothing
-   about whether the Smelter was ever at risk. It steers by the Factory's field too, so it is
-   hunting rather than bumping into things. The sentence was read as "rather than the Nest"
+   about whether the Smelter was ever at risk. Once it has broken ranks (#34) it steers by the
+   Factory's field too, so it is hunting rather than bumping into things — and **this clause
+   fires whether or not it has**, which is deliberate: a Breaker still marching the lane eats a
+   Machine a player put *on* the lane, because a Machine in its way is a Machine in its way. The sentence was read as "rather than the Nest"
    until #15 gave a player health, and it cost exactly what this note promised: **one more
    clause in `_enemy_contact_target`, ranked below a Machine**, and nothing else changed. A
    Breaker with a Smelter in reach still chews the Smelter with somebody standing next to it,
@@ -905,10 +944,17 @@ comfortably.
 — before a player has any second Turret to cover the Factory with — and the Breakers
 quietly dismantled all five production Machines from minute three onward, leaving a Run that
 spent its remaining ten minutes as one Turret firing a dwindling stockpile at Chaff. It is now
-**5200**, which the documented opening Factory reaches at around minute twenty-six, so the
-Breaker arrives as the question it is meant to be: *is your Turret covering the Nest or the
-Factory?* The answer is geography and not a number — see the Turrets section above, and "The
-joint balance pass" for the Runs it was measured on.
+**5200**, which the documented opening Factory reaches at around minute twenty-two.
+
+**#34 then answered the question #26 left the threshold open for, and answered it differently
+than #26 expected.** The question was *is your Turret covering the Nest or the Factory?* — and
+the trouble with it was that a player could not see it being asked, because a Breaker never came
+within reach of either answer except by accident. The fix was not a second Turret but a change to
+where a Breaker walks: it marches the Nest's own field until the Nest or a Machine is within
+`enemy.breaker_breaks_ranks_within_tiles`, and hunts from there. So the question a Breaker asks
+now is *is the road covered, and is the Turret on it fed?* — which a player can watch being asked
+and answered. See the flowfield section, the Turrets section, and "What #34 cost the table" under
+"The joint balance pass" for the eight Runs it was measured on.
 
 `wall.health`, `wrench.repair_points_per_second` and the Pylon's `repair` column were not
 moved. They are priced against `breaker_damage`, which also did not move, so the relationships
@@ -963,6 +1009,22 @@ they get hunted (DESIGN.md).
   interval can put the arrival in the past, and without the gate that would be exactly the
   ambush DESIGN.md forbids. There is no audio yet, so the klaxon is a capitalised HUD line
   with a countdown and a gauge that fills.
+- **The Telegraph names what is coming, not only that something is (#34).**
+  `query_telegraphed_wave_count_of_kind` is a projection — every tier the Heat has reached,
+  times every Breach — and `WorldView` prints it under the countdown as "6 crawlers, 2
+  breakers". That is the legible half of #34: the geography fix brings a Breaker down the road
+  under fire and turns it on the Factory when it gets there, which is a lesson a player can act
+  on only if they knew a Breaker was in *this* Wave while there was still time to go and stand
+  somewhere. Six Crawlers is a line to hold; six Crawlers and two Breakers is a reason to be
+  somewhere else.
+  - It is a **projection and not state**, read off the definition set and the current Heat
+    rather than off `_wave_queue_kind` — that queue does not exist until `_begin_a_wave`
+    composes it, and composing it early would *be* the Wave arriving. So it is a promise about
+    the Heat as it stands, and a line a player switches on mid-Telegraph can still buy one more
+    Crawler. That is #12's bet and it is correct to leave visible.
+  - **Times the Breach count**, because `_release_from_the_breaches` releases one per Breach. A
+    Map a player has dug a second hole in is attacked through both, and a warning that did not
+    say so would under-report by half.
 - **The lever waives the interval and nothing else.** What it buys the Enemy is nothing at
   all: a Wave is composed from the Heat the Factory is carrying when it *arrives*, so
   calling early means it arrives while that Heat is lower than it would have been. What it
@@ -2322,28 +2384,29 @@ it from several methods.
 
 ### The table, measured 2026-10-07
 
-Seeds 7, 11 and 29, identical on all three except `rifle_picket`, which now spreads three
-seconds — see "What the seed can reach", below. **Both columns are the same eight scenarios
-through the same harness**, so the difference between them is four numbers in one content file
-and nothing else, with the one exception the *after* column carries that #26 did not: #30's
-collision has landed since, and the two rows whose player walks anywhere were re-measured with
-it. See "What collision cost the two sorties", below.
+Seeds 7, 11 and 29, identical on all three except `rifle_picket`, which spreads three seconds —
+see "What the seed can reach", below. **All three columns are the same eight scenarios through
+the same harness.** The first two differ by four numbers in one content file and nothing else;
+the third adds #30's collision and #34's Breaker approach, and **no balance number moved between
+the second and the third**. See "What collision cost the two sorties" and "What #34 cost the
+table", below.
 
-| Scenario | Before | After | Wave | Peak Heat | What killed it, after |
-|---|---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | **4m22s** | 1 | 0 | undefended: the first Wave alone |
-| `opening_line` — the line, no Turret | 3m39s | **4m04s** | 1 | 782 | undefended, and *sooner than `bare`* |
-| `competent` — six Machines, one MG on the lane | 17m45s | **27m00s** | 32 | 5526 | **ran dry**, then Breakers took the Factory |
-| `over_producer` — the same plus an unbelted Miner | 10m30s | **19m36s** | 24 | 5691 | ran dry, **27% sooner** than `competent` |
-| `fortified` — a second MG over the Factory | 8m08s | **29m15s** | 36 | 6204 | swarmed, with 274 rounds still in the Factory |
-| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
-| `hive_sortie` — clears the eastern Hive | 19m13s | **29m36s** | 35 | 5399 | ran dry, 2m36s *later* than `competent` |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | **26m32s** | 31 | 5433 | ran dry, 28s sooner than `competent` |
+| Scenario | #26 before | #26 after | **#34** | Wave | Peak Heat | What killed it, now |
+|---|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 4m22s | **4m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | 4m04s | **4m04s** | 1 | 782 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | **29m07s** | 35 | 6788 | **three Siege Hulks**, 96 rounds still in it |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | **20m21s** | 25 | 6841 | the same, **30% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | 29m15s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
+| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | **32m22s** | 39 | 6724 | the same, 3m15s *later* — the longest Run measured |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | **27m13s** | 32 | 5862 | swarmed, 1m54s sooner than `competent` |
 
 **The loop the spec asks for lands.** Build nothing and lose in four minutes. Build the opening
-Factory and get twenty-seven, lost to a pressure with a name. Put the second Turret over the
-Factory instead of over the Nest's lane and get twenty-nine. Spend the same plate on a Miner
-nothing collects and lose a quarter of the Run. Dig to Depth 2 early and lose three fifths.
+Factory and get twenty-nine, lost to a boss with a name and an answer. Walk out and clear a Hive
+and get thirty-two, the best Run measured. Spend the lever's plate on a Miner nothing collects
+and lose a third of it. Dig to Depth 2 early and lose two thirds. Stand at the Nest spending the
+Turret's own rounds and lose two minutes.
 
 What the *before* column says on its own is the thing #26 was opened about: **the better a
 Factory was, the shorter its Run.** `fortified` — the only scenario that actually defends its
@@ -2414,6 +2477,56 @@ what was measured, not what was expected.
 **No balance number was changed to accommodate any of this.** `content/waves.csv` and
 `content/tuning.toml` are exactly as #26 left them.
 
+### What #34 cost the table
+
+**#34 changed where a Breaker walks and nothing else, and it moved six of the eight rows.** No
+number in `content/waves.csv` was touched and the one number it added — 
+`enemy.breaker_breaks_ranks_within_tiles` — is geography expressed as tuning rather than a
+balance lever. Recorded here in the same shape as #30's entry, because the *reasons* are the
+part worth keeping.
+
+The mechanism is in the flowfield section: a Breaker now steers by the Nest's field until it is
+within eight tiles of the Nest or of a Machine, and by the Factory's field from there on. What
+that does to a Run:
+
+- **`competent` gained 2m07s and changed what killed it, which is the whole ticket.** 27m00s to
+  **29m07s**, and from "ran dry, then the Breakers took the Factory" to "three Siege Hulks, with
+  96 rounds still in it". The Factory now holds all six Machines through the entire Breaker tier
+  — the lane MG engages a Breaker for the ten seconds of road and turn it has to cross — so the
+  Heat it keeps making carries it past `siege_hulks.min_heat` of 6400, which **no measured Run
+  had ever reached**. The old ending was a rule a player could not see; the new one is a boss
+  that walks in, halts, shells, has its impact point drawn on the HUD, and is answered on foot.
+- **`hive_sortie` is now the longest Run measured**, 29m36s to **32m22s**, +3m15s over
+  `competent` where it used to be +2m36s. The sortie's reward grew because what it buys — 30 of
+  the Nest's Heat decay, permanently — now buys *time before the boss* rather than time before
+  the Breakers. A Factory that defends itself turns Heat into the binding constraint, and a
+  Hive is the only thing in Milestone 1 that moves it.
+- **`fortified` is now a wash, and that is the fix landing rather than failing.** 29m15s to
+  **28m45s** — twenty-two seconds *shorter* than `competent`. Its second MG at (11, 6) existed
+  to cover the Factory because a Breaker would not come to the lane; now the lane Turret does
+  the job, so the second one buys kills the first one would have made while costing 90 kW of
+  draw, a share of one Press's output and the Heat that goes with them. It ends with 112 rounds
+  unspent, which says the same thing from the other side: **Ammunition was never the constraint
+  for either row.** The honest reading is that `fortified`'s row was measuring the workaround to
+  a bug, and the workaround is now worth nothing.
+- **`over_producer` and `rifle_picket` both moved by about forty-five seconds** and both claims
+  got *stronger*. Over-producing costs 30% of the Run rather than 27%; the rifleman costs 1m54s
+  rather than 28s. Same reason in both cases: a Factory that keeps its Machines has further to
+  fall, so the thing it wasted is measured against a longer Run.
+- **`bare`, `opening_line` and `deep_digger` did not move at all.** None of them reaches
+  `shock_breakers.min_heat` of 5200, so none of them ever met a Breaker. That is the control
+  this change deserved: three rows that should not have moved, and did not.
+
+**Two thresholds are worth re-reading in this light, and neither was touched.**
+`shock_breakers.min_heat = 5200` was set where it is because a Breaker was unanswerable, and it
+is now answerable — so the question it asks arrives late, and a later ticket could reasonably
+bring the Breaker tier forward to where it is the mid-game pressure rather than the last five
+minutes. And `siege_hulks.min_heat = 6400` was set by #26 to be "reachable only by a Factory
+that kept its Machines alive and its Turrets fed", which was unreachable in practice precisely
+*because* of the bug #34 fixed. It is now reached by four rows. **That number is not newly
+wrong; it is newly doing what it was tuned to do**, and moving it to put the boss back out of
+the harness's sight would be tuning for the instrument rather than for the game.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
@@ -2445,14 +2558,18 @@ Two consequences worth knowing before anybody quotes a variance:
 The things the measurement turned up that a number cannot fix. None was patched; all are
 recorded here instead, which is what #26 asked for.
 
-1. **A Turret on the Nest's lane cannot defend the Factory.** A Breaker steers by the Factory
-   flowfield and a Crawler by the Nest's, so a Breaker never enters the reach of a Turret placed
-   to cover the Nest. The documented `competent` Factory therefore has *no answer at all* to the
-   Breaker tier and loses all five production Machines in its last minutes; the fix is where the
-   player puts the second MG. `BalanceScenarios.FACTORY_TURRET_TILE` is the tile that covers
-   every Machine of the opening line inside 16 m, and `fortified` is the Run that does it —
-   which is why `fortified` outlasts `competent` by two minutes and ends with 274 rounds still
-   in the Factory rather than none. **Geography, not tuning.**
+1. ~~**A Turret on the Nest's lane cannot defend the Factory.**~~ **Fixed by #34**, and the
+   only one of these findings that has been. A Breaker steered by the Factory flowfield and a
+   Crawler by the Nest's, so a Breaker never entered the reach of a Turret placed to cover the
+   Nest: the documented `competent` Factory had *no answer at all* to the Breaker tier and lost
+   all five production Machines in its last minutes, while `fortified` outlasted it by two
+   minutes purely because its second MG happened to stand over the Factory rather than the lane.
+   #26 recorded it rather than patching it because it is geography and not a number — and the
+   fix is geography: a Breaker now marches the Nest's field until it is within
+   `enemy.breaker_breaks_ranks_within_tiles` of the Nest or of a Machine, and hunts from there.
+   See the flowfield section for the mechanism and "What #34 cost the table" for what it did to
+   all eight rows. The lesson the trap replaced: **a Breaker comes down the road, under fire,
+   and lunges at the first thing you built beside it.**
 2. **A Belt into the Nest banks the surplus for ever, so a Belt nobody tears down is a
    permanent tax.** `t01_munitions` wants 20 coal; the store will then take 200 more. The first
    `deep_digger` ran its whole Run with the Boiler short of coal and 98% of it in Power deficit,
@@ -2503,11 +2620,19 @@ Honest residue, so the next ticket does not have to rediscover it:
 - **Walls.** Nothing in the eight scenarios builds one, so `wall.health` against
   `enemy.breaker_damage` is likewise unplayed.
 - **The Silo, the Stratagems and the Painting**, for the Power reason above.
-- **Answering a Siege Hulk on foot**, for the flanking reason above — and, under the new
-  threshold, *meeting one at all*: 6400 Heat is past the peak of every one of the eight
-  scenarios. The next thing a human should play is a Factory with a **second Ammo Press**,
-  which is what the Turrets section says the answer to minute thirty is, and find out what
-  arrives.
+- **Answering a Siege Hulk on foot**, for the flanking reason above — and it is now the single
+  biggest hole in the table rather than a footnote. Before #34 no scenario reached 6400 Heat at
+  all; now **four of them do**, and all four end with Siege Hulks standing that nothing they own
+  can hurt. Every Run over twenty minutes therefore ends the same way, which compresses the
+  differences between builds at the top of the table and is a harness limitation rather than a
+  balance fault: the Hulk's answer is a player walking behind it, and an open-loop scripted
+  session cannot walk a circle around something that is walking towards it. **The next thing a
+  human should play is `competent` from minute twenty-five with a rifle in their hands.**
+- **A second Ammo Press**, still. The Turrets section says it is the answer to minute thirty and
+  nothing measures it — and #34 sharpened the question rather than answering it: `competent` now
+  ends with 96 rounds unspent and `fortified` with 112, so **one Turret cannot spend what one
+  Press makes**, and the plate the lever pays is better spent on throughput than on a second
+  Turret. Which of the two a second Press and a second Turret *together* fixes is unmeasured.
 - **Co-op.** Every scenario is one player. Four players on one Ammo Press is a different
   economy, and the Simulation already supports measuring it.
 

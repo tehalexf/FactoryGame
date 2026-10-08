@@ -129,12 +129,17 @@ func test_a_machine_chewed_to_nothing_is_destroyed() -> void:
 
 # ── What a destroyed Machine takes with it ────────────────────────────────────
 
-## A Map whose Nest is far to the south-west, so the ground around the origin is free to
-## build on and a player standing where a Run starts them is within wrench reach of it. The
-## Breach is twenty tiles east, as always.
+## A Map whose Nest is far to the west, so the ground around the origin is free to build on
+## and a player standing where a Run starts them is within wrench reach of it. The Breach is
+## twenty tiles east, as always.
+##
+## **On the Nest's own latitude, and that is load-bearing since #34.** A Breaker marches the
+## Nest's road before it breaks ranks, so the road has to be the one these tests put their
+## victim Machine on — otherwise the march is a thirty-tile detour and every wait below is a
+## test of the step limit rather than of a wrench.
 func _open_layout() -> MapLayout:
 	var layout: MapLayout = MapLayout.new()
-	layout.nest_tile = Vector3i(-30, WorldGrid.GROUND_LAYER, -30)
+	layout.nest_tile = Vector3i(-30, WorldGrid.GROUND_LAYER, 0)
 	layout.add_node(Vector3i(14, WorldGrid.GROUND_LAYER, 0), "iron_ore", 1)
 	layout.add_breach(Vector3i(20, WorldGrid.GROUND_LAYER, 1))
 	layout.sort_breaches()
@@ -915,3 +920,74 @@ artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 """
+
+
+# ── A Breaker marches with the Wave before it breaks ranks ────────────────────
+
+func test_a_breaker_marches_the_nests_lane_before_it_breaks_ranks() -> void:
+	# #34's decision, as behaviour. A Breaker steering by the Factory field from the moment
+	# it emerges takes whatever line is shortest to a Machine, which on any real Map is not
+	# the lane a player fortified — so a Turret covering the way in never saw one. Now it
+	# walks the Wave's own road until it is inside `enemy.breaker_breaks_ranks_within_tiles`
+	# of the Nest, and *then* turns on the Factory.
+	#
+	# The Smelter is deliberately beside the Breaker's own Breach and nineteen tiles from the
+	# Nest, which is the geometry that used to let it skip the approach entirely: the field
+	# seeded on that Smelter points south from the moment it spawns.
+	var ground: int = WorldGrid.GROUND_LAYER
+	var sim: Simulation = _sim(ONE_BREAKER)
+	_build(sim, "smelter_mk1", Vector3i(20, ground, 10))
+
+	var perimeter: int = sim.query_definitions().breaker_breaks_ranks_within_tiles
+	assert_true(perimeter > 0, "content declares a perimeter for this to be about")
+
+	# How far the Smelter it is hunting stands from the Nest. The march is only a real detour
+	# while this is outside the perimeter — so the test states the geometry it depends on
+	# rather than assuming it, and a perimeter wide enough to make the claim vacuous fails here.
+	var quarry: int = sim.query_flow_distance_tiles(Vector3i(20, ground, 10) + Vector3i(0, 0, -1))
+	assert_true(
+		quarry > perimeter,
+		"the Smelter at (20,10) is %d tiles out, well past the %d-tile perimeter"
+			% [quarry, perimeter]
+	)
+
+	var at_spawn: int = -1
+	var marching_on_the_tick_it_arrived: bool = false
+	var closest: int = 9999
+	var broke_ranks: bool = false
+	for tick: int in range(3000):
+		sim.step([])
+		if sim.query_enemy_count() == 0:
+			continue
+		if at_spawn == -1:
+			at_spawn = sim.query_flow_distance_tiles(sim.query_enemy_tile(0))
+			marching_on_the_tick_it_arrived = not sim.query_enemy_has_broken_ranks(0)
+		closest = mini(closest, sim.query_flow_distance_tiles(sim.query_enemy_tile(0)))
+		if sim.query_enemy_has_broken_ranks(0):
+			broke_ranks = true
+		if sim.query_machine_health(0) < 500:
+			break
+
+	assert_true(
+		marching_on_the_tick_it_arrived,
+		"it came out of the Breach marching rather than already hunting"
+	)
+	assert_true(
+		at_spawn > perimeter,
+		"from %d tiles out, which is past the %d-tile perimeter" % [at_spawn, perimeter]
+	)
+	assert_true(
+		closest <= perimeter,
+		"it marched to within %d tiles of the Nest, reaching %d" % [perimeter, closest]
+	)
+	assert_true(
+		closest < quarry,
+		"which is nearer the Nest than the Smelter it came for ever was"
+	)
+	assert_true(broke_ranks, "and then broke ranks")
+	assert_true(sim.query_machine_health(0) < 500, "and chewed the Smelter it came for")
+	assert_eq(
+		sim.query_nest_health(),
+		sim.query_nest_max_health(),
+		"without ever biting the Nest it marched on — it is still a Breaker"
+	)

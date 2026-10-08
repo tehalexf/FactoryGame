@@ -1968,7 +1968,33 @@ func _telegraph_lines(sim: Simulation) -> PackedStringArray:
 			called,
 		]
 	)
+	lines.append("   %s" % _telegraph_composition(sim))
 	return lines
+
+
+## What the telegraphed Wave is made of, as a line of text — "6 crawlers, 2 breakers".
+##
+## **The legible half of #34, and the reason it is on the Telegraph rather than anywhere else.**
+## A Breaker now marches the same road as everything else and turns on the Factory once it is
+## inside the perimeter, which is a lesson a player can act on — *if* they knew a Breaker was
+## in this Wave while there was still time to go and stand over the Smelters. So the warning
+## names its tiers. Six Crawlers is a line to hold; six Crawlers and two Breakers is a reason
+## to be somewhere else.
+##
+## Walked in `EnemyKind` order rather than in the Wave table's, so the same Wave reads the same
+## way every time and a player learns where to look rather than re-reading the line. A tier the
+## Heat has not reached contributes nothing and is not named, which is what makes the arrival of
+## a new word on this line the event it should be.
+func _telegraph_composition(sim: Simulation) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for kind: int in range(EnemyKind.KIND_NAMES.size()):
+		var count: int = sim.query_telegraphed_wave_count_of_kind(kind)
+		if count <= 0:
+			continue
+		parts.append("%d %s%s" % [count, EnemyKind.name_of(kind), "s" if count != 1 else ""])
+	if parts.is_empty():
+		return "nothing the Heat has unlocked yet"
+	return ", ".join(parts)
 
 
 ## Whether a Machine is a mine working deep enough to open a Breach, and has not opened its
