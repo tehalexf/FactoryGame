@@ -921,6 +921,35 @@ func test_a_bite_interrupts_a_painting_and_the_charge_is_gone() -> void:
 	)
 	assert_eq(control.query_silo_loaded_charges(0), 1, "with its own load still in the tube")
 
+# ── What was fired, as a number beside what was lost ─────────────────────────
+
+func test_a_finished_painting_is_counted_and_an_interrupted_one_is_not() -> void:
+	# The symmetric half of `query_player_charges_wasted`, and the figure #37's acceptance
+	# criterion is measured on: "a competently built Factory can power, load and fire a Silo
+	# within a Run" has to be *demonstrated* in the balance harness, and every one of the three
+	# effects can resolve leaving nothing to look at. A Barrage with no Enemy in the radius
+	# kills nobody, a Sentry expires, and a Supply Drop's goods look exactly like a withdrawal.
+	# So what was fired is recorded where what was wasted already is.
+	var fired: Simulation = _loaded_silo_run("artillery_barrage", 2)
+	assert_eq(fired.query_player_stratagems_fired(0), 0, "a Run opens having fired nothing")
+	assert_eq(fired.query_player_charges_fired(0), 0)
+
+	_paint_until_done(fired)
+
+	assert_eq(fired.query_player_stratagems_fired(0), 1, "one Stratagem was called in")
+	assert_eq(fired.query_player_charges_fired(0), 2, "and both Charges went into it")
+	assert_eq(fired.query_player_charges_wasted(0), 0, "with none wasted")
+
+	# And the one that was let go of counts for nothing, which is the whole of "an interrupted
+	# Painting consumes the Charge and produces nothing".
+	var lost: Simulation = _loaded_silo_run("artillery_barrage", 2)
+	lost.step([InputAction.paint(0, _target(lost))])
+	lost.step([])
+	assert_eq(lost.query_player_charges_wasted(0), 2, "the premise: the channel was broken")
+	assert_eq(lost.query_player_stratagems_fired(0), 0, "so nothing was fired")
+	assert_eq(lost.query_player_charges_fired(0), 0, "and no Charge landed anywhere")
+
+
 # ── The three Stratagems, each resolving distinctly ───────────────────────────
 
 func test_an_artillery_barrage_shells_everything_in_reach_of_the_painted_tile() -> void:

@@ -12,8 +12,9 @@
 ## every legitimate tuning change into a red suite, which is how a balance guard stops being
 ## read.
 ##
-## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision and
-## #34's Breaker approach in. See "What #34 cost the table" in CLAUDE.md for what moved and why.
+## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision,
+## #34's Breaker approach and #37's two rules in. **#37 moved none of the eight rows of record**;
+## see "What #37 cost the table" in CLAUDE.md for why that is the control it deserved.
 ##
 ##     bare           4m22s   undefended
 ##     opening_line   4m04s   undefended, and sooner than bare
@@ -22,7 +23,8 @@
 ##     fortified     28m45s   the same, with 112 rounds unspent — a wash against competent
 ##     deep_digger   10m48s   dug too deep, two Breaches
 ##     hive_sortie   32m22s   the same, 3m15s later than competent — the longest Run measured
-##     rifle_picket  27m13s   swarmed, 1m54s sooner than competent (27m16s on seed 7)
+##     rifle_picket  27m16s   swarmed, 1m51s sooner than competent (27m13s on seeds 11 and 29)
+##     artillery     16m10s   swarmed, 44% sooner — one Stratagem fired on two Charges
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -233,6 +235,67 @@ func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void
 	)
 
 
+# ── The acceptance test: a Factory powers, loads and fires a Silo ────────────
+
+func test_a_factory_can_power_load_and_fire_a_silo_within_a_run() -> void:
+	# **#37's first dead end, closed.** #26 recorded "Milestone 1 cannot power a Silo" as a
+	# finding rather than a number: the opening Factory draws 660 kW of the 900 one Steam Boiler
+	# and the Nest's baseline plant supply, a Silo wants 400 more, and the Map has one coal Node
+	# yielding 40 coal a minute against a Boiler's 30 — "so there is no second Boiler to be had".
+	#
+	# That last step is the one that does not follow. A Boiler is on the grid only *while it is
+	# burning*, so 40 coal a minute is 1.33 Boilers burning rather than one Boiler burning and 10
+	# coal a minute piling up on a Belt: two Boilers on one Node are worth about 800 kW averaged
+	# over time instead of 600, and 300 + 800 pays for a Silo. The Power was already there to be
+	# built toward, which is why nothing in `content/` changed for this.
+	#
+	# **Demonstrated rather than asserted**, which is the acceptance criterion's own wording: the
+	# `artillery` scenario grows the Factory out of lever plate, stands a Silo up, walks a player
+	# to it, commits two Charges to a Sentry Drop and holds the key on the tile it wants it on.
+	# `stratagems_fired` is Simulation state, so this is a Stratagem that was called in and not an
+	# effect somebody inferred.
+	var report: BalanceProbe.Report = _play("artillery")
+	assert_eq(report.silos_standing, 1, "a Silo was built and was still standing at the end")
+	assert_true(
+		report.most_charges_banked > 0,
+		"it assembled Charges out of Belt-fed plate and rounds"
+	)
+	assert_eq(report.stratagems_fired, 1, "and one was called in: %s" % report.cause())
+	assert_eq(
+		report.charges_fired,
+		BalanceScenarios.CHARGES_PER_LOAD,
+		"with both the Charges the dial committed, because a Charge is a multiplier"
+	)
+	assert_eq(report.charges_wasted, 0, "and the Painting was not interrupted")
+
+
+func test_building_artillery_costs_a_run_a_third_of_its_length() -> void:
+	# The other half of the acceptance criterion: getting there has to have *cost* something, or
+	# a weapon of last resort is a free one. Against `competent` — the same six Machines on the
+	# same tiles — artillery is four more Machines, four more Belts, seven pulls of the call-early
+	# lever, 400 kW of a grid that was running on 240 of headroom, and a third claimant on the one
+	# Ammo Press. The Run is measurably shorter for all of it.
+	#
+	# Asserted as a band rather than a figure, like every other claim in this file: what matters
+	# is that the Silo is a decision with a price and not a button.
+	var competent: BalanceProbe.Report = _play("competent")
+	var artillery: BalanceProbe.Report = _play("artillery")
+	if not assert_true(artillery.nest_fell and competent.nest_fell, "both Runs end"):
+		return
+	assert_true(
+		artillery.end_tick < competent.end_tick,
+		"artillery shortened the Run: %s against %s" % [artillery.clock(), competent.clock()]
+	)
+	@warning_ignore("integer_division")
+	var shorter_by: int = (
+		(competent.seconds() - artillery.seconds()) * 100 / competent.seconds()
+	)
+	assert_true(
+		shorter_by >= VISIBLE_MISTAKE_PERCENT,
+		"and by enough to feel: %d%% of the Run" % shorter_by
+	)
+
+
 # ── The instrument itself ─────────────────────────────────────────────────────
 
 func test_a_scenario_is_a_replayable_input_script() -> void:
@@ -255,6 +318,30 @@ func test_a_scenario_is_a_replayable_input_script() -> void:
 		120 * Simulation.TICKS_PER_SECOND + 1,
 		"every tick plus the starting state"
 	)
+
+
+func test_a_stratagem_fired_from_a_factory_that_built_it_replays_identically() -> void:
+	# **#37's replay fixture.** Everything a Stratagem touches is either irreversible or arrives
+	# from outside the Map — Charges leave the Silo on the tick the channel begins, a Sentry is
+	# placed with no Build Gun and a pre-filled buffer, and an expiry tick removes it again — so
+	# "it replays" is a stronger claim here than anywhere else in the project.
+	#
+	# The whole Run up to a few seconds past the firing, because the claim is about the Factory
+	# that built the Silo and not only about the Painting: twelve Belts, four Machines bought with
+	# lever plate, a walk, a dial, an irreversible load and a held key, all as Input Actions.
+	# Costs the suite a couple of minutes on its own, which is the honest price of replaying a
+	# Factory rather than a fixture: the harness compares every one of the 41,000 ticks.
+	var script: InputScript = BalanceScenarios.artillery().to_script(
+		680 * Simulation.TICKS_PER_SECOND
+	)
+	var recording: ReplayRecording = DeterminismHarness.record(script, 7, 1)
+	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording)
+	assert_true(divergence.is_identical, divergence.describe())
+
+	# And a fixture that fired nothing would replay perfectly and prove nothing, which is the
+	# honesty check every determinism test in this project carries beside it.
+	var report: BalanceProbe.Report = _play("artillery")
+	assert_eq(report.stratagems_fired, 1, "the fixture really did call one in")
 
 
 func test_the_probe_reports_what_ran_out_rather_than_only_that_something_did() -> void:
