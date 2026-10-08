@@ -149,10 +149,12 @@ func test_inputs_and_outputs_are_counted_apart_so_they_can_be_drawn_apart() -> v
 	view.free()
 
 
-func test_a_port_marker_stands_on_the_tile_the_table_declares() -> void:
-	# The Smelter is 3x3 and its ingot output is the middle of the south edge, so for a body
-	# anchored at (12, 12) that is tile (13, 14) — spanning 26 m to 28 m on x and 28 m to
-	# 30 m on z, centre (27, 29).
+func test_a_port_marker_stands_on_the_tile_a_belt_would_dock_at() -> void:
+	# The Smelter is 3x3 and its ingot output is the middle of the south edge, which is tile
+	# (13, 14) of a body anchored at (12, 12). The marker goes on the tile *past* it — (13,
+	# 15), spanning 26 m to 28 m on x and 30 m to 32 m on z, centre (27, 31) — because a
+	# marker on the port tile is a marker inside the Machine, which a render showed
+	# immediately, and because the tile outside is where the Belt actually goes.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([
@@ -164,13 +166,14 @@ func test_a_port_marker_stands_on_the_tile_the_table_declares() -> void:
 	# Marker 0 is the standing Smelter's: the Machines are written before the hologram's.
 	var at: Vector3 = view.output_port_marker_position(0)
 	assert_true(is_equal_approx(at.x, 27.0), "expected x 27.0, got %f" % at.x)
-	assert_true(is_equal_approx(at.z, 29.0), "expected z 29.0, got %f" % at.z)
+	assert_true(is_equal_approx(at.z, 31.0), "expected z 31.0, got %f" % at.z)
 	view.free()
 
 
 func test_turning_the_machine_moves_its_markers_with_it() -> void:
 	# A half turn puts the south face north: the ingot port goes from local (1, 2) to
-	# (1, 0), which for an anchor at (12, 12) is tile (13, 12) — centre (27, 25).
+	# (1, 0), which for an anchor at (12, 12) is tile (13, 12), and the tile a Belt would
+	# dock at is (13, 11) — centre (27, 23).
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([
@@ -181,7 +184,7 @@ func test_turning_the_machine_moves_its_markers_with_it() -> void:
 	view.sync(sim)
 	var at: Vector3 = view.output_port_marker_position(0)
 	assert_true(is_equal_approx(at.x, 27.0), "expected x 27.0, got %f" % at.x)
-	assert_true(is_equal_approx(at.z, 25.0), "expected z 25.0, got %f" % at.z)
+	assert_true(is_equal_approx(at.z, 23.0), "expected z 23.0, got %f" % at.z)
 	view.free()
 
 

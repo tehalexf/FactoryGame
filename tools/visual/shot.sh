@@ -43,6 +43,11 @@ if [ -z "$display" ]; then
   sleep 2
 fi
 
+# Which composer. The default frames the Factory from a chosen vantage to judge how the
+# world looks; tools/visual/compose_building_shot.gd frames it through the player's own
+# eyes to judge what a player is told while they build.
+script="${SHOT_SCRIPT:-tools/visual/compose_shot.gd}"
+
 DISPLAY="$display" "$godot" --path . \
   --resolution "${size%x*}x${size#*x}" \
-  --script tools/visual/compose_shot.gd -- "$out" "$preset"
+  --script "$script" -- "$out" "$preset"

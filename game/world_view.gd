@@ -412,6 +412,10 @@ const STARVED_MARK_LIFT_METRES: float = 1.2
 const PORT_INPUT_COLOUR: Color = Color(0.45, 0.72, 1.0, 0.9)
 const PORT_OUTPUT_COLOUR: Color = Color(1.0, 0.66, 0.26, 0.9)
 
+## How much bigger a port arrow is than a Belt's own flow arrow. Judged in a render: at
+## 1.0 the two read as the same mark and the ports vanish into the line.
+const PORT_MARKER_SCALE: float = 1.6
+
 ## How high the port markers float, in metres: the standard Belt deck height the table itself
 ## declares, so an arrow is at the height the Belt that docks there will be.
 const PORT_MARKER_HEIGHT_METRES: float = 0.9
@@ -423,6 +427,14 @@ const FLOW_ARROW_COLOUR: Color = Color(0.98, 0.88, 0.62, 0.85)
 ## How high off the ground the previewed route floats, in metres. Just clear of the grid
 ## markings, so a preview over bare ground is unmistakably a preview and not a Belt.
 const BELT_PREVIEW_HEIGHT_METRES: float = 0.06
+
+## How tall a **refused** tile of the preview stands, in metres.
+##
+## A column rather than a slab, and that came out of a render: the commonest thing a route
+## is refused by is a Wall, a Wall is 2.4 m of dark box, and a red slab 6 cm off the ground
+## under one is a red slab nobody can see. The refusal has to read over the thing causing
+## it, so it is drawn as the blocked *volume* and not as a blocked footprint.
+const BELT_REFUSED_HEIGHT_METRES: float = 2.6
 
 ## How high the flow arrows float above the preview and above a running Belt's deck. Enough
 ## to clear the deck and the Items on it without becoming the thing a player looks at.
@@ -3031,8 +3043,10 @@ func _sync_hologram(sim: Simulation) -> void:
 func _sync_belt_preview(sim: Simulation) -> void:
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
 	if _belt_preview == null:
-		_belt_preview = _preview_slabs(tile_size, HOLOGRAM_ALLOWED)
-		_belt_preview_refused = _preview_slabs(tile_size, HOLOGRAM_REFUSED)
+		_belt_preview = _preview_slabs(tile_size, HOLOGRAM_ALLOWED, 0.04)
+		_belt_preview_refused = _preview_slabs(
+			tile_size, HOLOGRAM_REFUSED, BELT_REFUSED_HEIGHT_METRES
+		)
 		_belt_preview_arrows = _flow_arrows(tile_size, FLOW_ARROW_COLOUR)
 
 	var laying: bool = sim.query_player_is_laying_belt(VIEWED_PLAYER)
@@ -3077,13 +3091,20 @@ func _sync_belt_preview(sim: Simulation) -> void:
 				Fixed.to_float(centre.x), ground + BELT_PREVIEW_HEIGHT_METRES,
 				Fixed.to_float(centre.z)
 			)
-			var into: PackedFloat32Array = (
-				clear if sim.query_belt_tile_refusal(tile) == Simulation.Refusal.NONE
-				else refused
+			var is_clear: bool = (
+				sim.query_belt_tile_refusal(tile) == Simulation.Refusal.NONE
 			)
+			var into: PackedFloat32Array = clear if is_clear else refused
+			if not is_clear:
+				# The blocked volume, standing over whatever is blocking it.
+				at.y = ground + BELT_REFUSED_HEIGHT_METRES * 0.5
 			into.resize(into.size() + FLOATS_PER_INSTANCE)
 			@warning_ignore("integer_division")
 			_write_instance(into, into.size() / FLOATS_PER_INSTANCE - 1, at, yaw)
+			if not is_clear:
+				# No flow arrow on a tile nothing will flow along, and nowhere to put one
+				# that would not be inside the obstruction.
+				continue
 			arrows.resize(arrows.size() + FLOATS_PER_INSTANCE)
 			@warning_ignore("integer_division")
 			_write_instance(
@@ -3115,8 +3136,11 @@ func _sync_belt_preview(sim: Simulation) -> void:
 func _sync_ports(sim: Simulation) -> void:
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
 	if _input_ports == null:
-		_input_ports = _flow_arrows(tile_size, PORT_INPUT_COLOUR)
-		_output_ports = _flow_arrows(tile_size, PORT_OUTPUT_COLOUR)
+		# Bigger than the Belt's own flow arrows: a port arrow is a thing a player goes
+		# looking for while deciding where to build, and the small one a render showed was
+		# invisible at the distance anybody actually works from.
+		_input_ports = _flow_arrows(tile_size * PORT_MARKER_SCALE, PORT_INPUT_COLOUR)
+		_output_ports = _flow_arrows(tile_size * PORT_MARKER_SCALE, PORT_OUTPUT_COLOUR)
 
 	var definitions: Definitions = sim.query_definitions()
 	var ports: MachinePorts = definitions.machine_ports()
@@ -3167,7 +3191,11 @@ func _mark_ports(
 	out_of: PackedFloat32Array
 ) -> void:
 	for port: MachinePorts.Port in ports:
-		var tile: Vector3i = MachinePorts.port_tile(
+		# **The dock tile, not the port tile.** The port itself is a tile of the Machine's own
+		# footprint, and a marker there is a marker *inside* the body — invisible, which a
+		# render showed immediately. The tile just outside it is both visible and the more
+		# useful answer: it is where the Belt goes.
+		var tile: Vector3i = MachinePorts.dock_tile(
 			port, origin, definition.footprint_x, definition.footprint_z, rotation
 		)
 		var facing: int = MachinePorts.port_direction(port, rotation)
@@ -3347,12 +3375,12 @@ func _upload(into: MultiMeshInstance3D, transforms: PackedFloat32Array) -> void:
 
 ## A MultiMesh of flat translucent slabs, one a tile. The shape of a tile of Belt before
 ## there is a tile of Belt.
-func _preview_slabs(tile_size: float, colour: Color) -> MultiMeshInstance3D:
+func _preview_slabs(tile_size: float, colour: Color, height: float) -> MultiMeshInstance3D:
 	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
 	var instanced: MultiMesh = MultiMesh.new()
 	instanced.transform_format = MultiMesh.TRANSFORM_3D
 	var slab: BoxMesh = BoxMesh.new()
-	slab.size = Vector3(tile_size * 0.82, 0.04, tile_size * 0.82)
+	slab.size = Vector3(tile_size * 0.82, height, tile_size * 0.82)
 	instanced.mesh = slab
 	node.multimesh = instanced
 	var skin: StandardMaterial3D = StandardMaterial3D.new()
