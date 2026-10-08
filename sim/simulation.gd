@@ -1219,6 +1219,14 @@ var _belt_item_offsets: Array = []
 var _belt_update_order: PackedInt64Array = PackedInt64Array()
 var _belt_update_order_stale: bool = true
 
+## The Belts in canonical order — by the tile each run starts at. The order a Machine's
+## branches are listed in, and therefore the list its rotation cursor indexes into.
+##
+## Derived from the same inputs under the same staleness flag as the update order above, and
+## falling out of the same rebuild, which already sorts the Belts to decide where to start each
+## chain. Cached rather than sorted per tick because this is the hottest loop in the project.
+var _belt_canonical_order: PackedInt64Array = PackedInt64Array()
+
 ## The one Power grid's reading at the end of the tick it last ran: what the Factory's
 ## generators and its baseline plant between them supplied, and what its working
 ## Machines between them drew, both in whole kilowatts.
@@ -1321,6 +1329,19 @@ var _silo_loaded_charges: PackedInt64Array = PackedInt64Array()
 ## left is arithmetic over two numbers that are hashed anyway, so there is no second counter
 ## to keep in step.
 var _machine_expires_tick: PackedInt64Array = PackedInt64Array()
+
+## Which of its Belts a Machine gave first claim to last — the rotation that makes two Belts
+## off one Machine a **split** rather than a priority.
+##
+## An index into the Machine's own Belts *in canonical order*, which is what keeps the
+## fairness free of the build-order bias the Belt update order exists to avoid: the list the
+## cursor indexes into is geography, and the cursor is the only history in it. One entry per
+## Machine, parallel to every other per-Machine array, so a Smelter with no Belts off it
+## carries a 0 that nothing reads.
+##
+## Hashed, because it decides which branch runs next: two clients that disagreed about it
+## would feed different consumers out of the same Factory.
+var _machine_port_cursor: PackedInt64Array = PackedInt64Array()
 
 ## Where each player's dial is set — the shell type and the charge count they are carrying to
 ## a Silo. Not a load: nothing is committed until `LOAD_SILO`.
@@ -2272,7 +2293,17 @@ func _survey_blend(player_id: int) -> int:
 # ── Transport ─────────────────────────────────────────────────────────────────
 
 ## Advances every Belt by one tick: hand off what has reached the far end, carry
-## everything forward, then take one more Item from the Machine port behind.
+## everything forward, and then — in a pass of its own, once every Belt has moved — take
+## one more Item from the Machine port behind.
+##
+## **Loading is a second pass because a branch is decided at the Machine, not at the Belt.**
+## A Machine's output buffer is one pot and each Belt takes at most one Item a tick, so two
+## Belts off one Machine compete; deciding that inside `_advance_belt` would mean deciding it
+## in the order the Belts happen to be advanced in, which is the one order this section is at
+## pains not to let anything depend on. The split costs nothing, because the two passes cannot
+## see each other: a Belt fed by a Machine port is never also fed by another Belt — the tile
+## behind its entry is a Machine footprint tile or it is not — so no Belt's entry room is
+## touched by both.
 ##
 ## The Belts are walked **downstream first** (`_belt_update_order`), never in index
 ## order, so a line's behaviour is a function of its geography and not of the order its
@@ -2286,6 +2317,7 @@ func _transport() -> void:
 	var order: PackedInt64Array = _ordered_belts()
 	for position: int in range(order.size()):
 		_advance_belt(order[position])
+	_load_the_ports()
 
 
 ## One Belt, one tick.
@@ -2311,8 +2343,6 @@ func _advance_belt(index: int) -> void:
 
 	_belt_item_ids[index] = items
 	_belt_item_offsets[index] = offsets
-
-	_load_from_port(index)
 
 
 ## Hands the leading Item off the far end of a Belt, reporting whether it went.
@@ -2378,38 +2408,108 @@ func _hand_off_blocked(index: int) -> bool:
 	return onward == -1 or not _belt_has_entry_room(onward)
 
 
-## Takes one Item from the Machine output port a Belt runs out of, if there is one and
-## there is room at the Belt's entry.
+## Loads every Belt that runs out of a Machine port, giving a Machine's Belts **equal turns**
+## at its output rather than always serving the same one first.
+##
+## Belts are gathered in canonical order — by the tile each run starts at, which is geography
+## and not build history — and grouped by the Machine behind their entry. Each group is then
+## served starting from that Machine's own cursor, so over any window every branch with room
+## has taken an equal share give or take one Item. A player can put one Smelter's output onto
+## two Belts and have both run, which is a factory game's second verb after laying a Belt.
+##
+## Machines are reached in the order their Belts appear in that canonical list, which is
+## likewise geography; it could be any order at all without being observable, because no two
+## Machines ever compete for the same Belt — a tile holds one Machine.
+func _load_the_ports() -> void:
+	var canonical: PackedInt64Array = _canonical_belts()
+	var count: int = canonical.size()
+	if count == 0:
+		return
+
+	# Which Machine is behind each Belt, asked once per Belt per tick — exactly as often as
+	# the old per-Belt load asked it — and then read rather than asked again.
+	var feeders: PackedInt64Array = PackedInt64Array()
+	for position: int in range(count):
+		feeders.append(_machine_behind_belt(canonical[position]))
+
+	var done: PackedInt64Array = PackedInt64Array()
+	for position: int in range(count):
+		var machine: int = feeders[position]
+		if machine == -1 or done.has(machine):
+			continue
+		done.append(machine)
+		var branches: PackedInt64Array = PackedInt64Array()
+		for other: int in range(position, count):
+			if feeders[other] == machine:
+				branches.append(canonical[other])
+		_serve_the_branches(machine, branches)
+
+
+## Hands one Item to each of a Machine's Belts that can take one, in rotation.
+##
+## The cursor says which branch had first claim last time, so the claim order starts one past
+## it. Three things fall out of that, and each is a criterion rather than an accident:
+##
+## - **A blocked branch is skipped, not waited on.** A Belt with no room at its entry simply
+##   fails to take and the next branch is offered the Item, so one full branch never starves
+##   the other — and what neither of them can carry stays in the Machine's uncapped output
+##   buffer, where a player watching two full Belts can read the surplus off the Machine.
+## - **The cursor moves to one past whichever branch actually got the first Item**, not past
+##   the one that merely had first claim. A branch that was blocked did not have its turn, so
+##   it does not lose it.
+## - **Scarcity is what the rotation is for.** A Machine producing faster than its branches
+##   can carry serves all of them every tick and the cursor changes nothing; a Machine
+##   producing one Item a tick alternates them exactly.
+func _serve_the_branches(machine: int, branches: PackedInt64Array) -> void:
+	var count: int = branches.size()
+	var cursor: int = posmod(_machine_port_cursor[machine], count)
+	var first_served: int = -1
+	for step: int in range(count):
+		var rank: int = (cursor + step) % count
+		if not _load_from_port(branches[rank], machine):
+			continue
+		if first_served == -1:
+			first_served = rank
+	if first_served != -1:
+		_machine_port_cursor[machine] = (first_served + 1) % count
+
+
+## The Machine whose output port a Belt runs out of, or -1. The tile behind the entry end:
+## Belts connect straight into Machine ports and no inserter entity exists (DESIGN.md).
+func _machine_behind_belt(index: int) -> int:
+	return query_machine_at_tile(
+		_belt_entry_tile(index) - WorldGrid.direction_step(_belt_direction[index])
+	)
+
+
+## Takes one Item from the output buffer of the Machine behind a Belt's entry, if there is room
+## at that entry, reporting whether one went.
+##
+## The Machine is passed in rather than looked up, because `_load_the_ports` has already asked
+## which Machine is behind every Belt and the rotation is decided from those answers.
 ##
 ## The port is the Machine footprint tile the run starts against: Belts connect straight
 ## into Machine ports and no inserter entity exists (DESIGN.md). Any footprint edge tile
 ## counts for now; `content/machine_ports.csv` declares the exact edge and tile each port
 ## sits on, and CLAUDE.md records why the Simulation cannot adopt that table yet and which
-## ticket should. The room check is what
-## rate-limits loading — an Item can only enter once the last one is a full spacing
-## clear, which is exactly the Belt's rated throughput and not a second number that
-## could disagree with it.
+## ticket should. The room check is what rate-limits loading — an Item can only enter once the
+## last one is a full spacing clear, which is exactly the Belt's rated throughput and not a
+## second number that could disagree with it.
 ##
 ## Which Item, when a Machine holds several: the first in its sorted buffer. Sorted by
 ## id, so the choice is a property of the content rather than of what was produced
 ## first.
-func _load_from_port(index: int) -> void:
+func _load_from_port(index: int, machine: int) -> bool:
 	if not _belt_has_entry_room(index):
-		return
-
-	var behind: Vector3i = (
-		_belt_entry_tile(index) - WorldGrid.direction_step(_belt_direction[index])
-	)
-	var machine: int = query_machine_at_tile(behind)
-	if machine == -1:
-		return
+		return false
 
 	var items: PackedStringArray = _machine_buffer_items[machine]
 	if items.is_empty():
-		return
+		return false
 	var item_id: String = items[0]
 	_take_from_output(machine, item_id, 1)
 	_place_on_belt(index, item_id)
+	return true
 
 
 ## Whether a Belt has room for another Item at its entry end. True when the hindmost
@@ -2530,6 +2630,15 @@ func _ordered_belts() -> PackedInt64Array:
 	return _belt_update_order
 
 
+## The Belts in canonical order, which is the order a Machine's branches are listed in. Rebuilt
+## under the same flag and by the same function as the order above, because it is the sort that
+## function already does.
+func _canonical_belts() -> PackedInt64Array:
+	if _belt_update_order_stale:
+		_rebuild_belt_update_order()
+	return _belt_canonical_order
+
+
 ## Rebuilds the downstream-first order.
 ##
 ## Each Belt feeds at most one other, so the graph is a set of chains and loops rather
@@ -2545,6 +2654,12 @@ func _rebuild_belt_update_order() -> void:
 	for index: int in range(count):
 		starts.append(index)
 	starts.sort_custom(func(a: int, b: int) -> bool: return _belt_precedes(a, b))
+
+	# The same sort is the canonical order a Machine's branches are served in, so it is kept
+	# rather than thrown away and sorted again on every tick of every Run.
+	_belt_canonical_order = PackedInt64Array()
+	for start: int in starts:
+		_belt_canonical_order.append(start)
 
 	# 0 not reached, 1 on the chain being walked, 2 placed in the order.
 	var visited: PackedInt64Array = PackedInt64Array()
@@ -3427,6 +3542,8 @@ func _place_machine(
 	_silo_loaded_stratagem.append("")
 	_silo_loaded_charges.append(0)
 	_machine_expires_tick.append(expires_tick)
+	# Nobody has had first claim yet, so the canonically first Belt off it gets the first Item.
+	_machine_port_cursor.append(0)
 	# A new footprint is a new obstruction, so the Enemies' shared field no longer
 	# describes the Map. Rebuilt on the next tick that has an Enemy to move, never here:
 	# a player laying out a Factory places a Machine a second and the field is O(map).
@@ -3623,6 +3740,7 @@ func _remove_machine(index: int) -> void:
 	_silo_loaded_stratagem.remove_at(index)
 	_silo_loaded_charges.remove_at(index)
 	_machine_expires_tick.remove_at(index)
+	_machine_port_cursor.remove_at(index)
 	_flowfield_stale = true
 	_solid_height_stale = true
 
@@ -7782,6 +7900,9 @@ func hash() -> int:
 	for stratagem_id: String in _silo_loaded_stratagem:
 		hasher.feed_text(stratagem_id)
 	hasher.feed_ints(_machine_expires_tick)
+	# Which branch had first claim on each Machine's output last. Hashed because it decides
+	# which of two Belts off one Machine runs next, and therefore which consumer is fed.
+	hasher.feed_ints(_machine_port_cursor)
 	for index: int in range(query_machine_count()):
 		hasher.feed_text(_machine_id[index])
 		var items: PackedStringArray = _machine_buffer_items[index]

@@ -1019,6 +1019,59 @@ The order is derived, so it is rebuilt rather than hashed, and only when a Belt 
 `tests/cases/test_belts.gd` asserts the absence of the bias directly, by building the
 same Factory in two orders and comparing every Item position tick by tick.
 
+### A line that branches, and the rotation that makes it one
+
+#46. **Loading a Belt from a Machine port is a pass of its own, after every Belt has moved**,
+because a branch is decided at the Machine and not at the Belt. A Machine's output buffer is one
+pot and each Belt takes at most one Item a tick, so two Belts off one Machine *compete* —
+and deciding that competition inside `_advance_belt` meant deciding it in the order the Belts
+happened to be advanced in, which is the one order this section is at pains not to let anything
+depend on.
+
+**Splitting the pass costs nothing, because the two halves cannot see each other.** A Belt fed
+by a Machine port is never also fed by another Belt — the tile behind its entry is a Machine
+footprint tile or it is not, and `_hand_off` checks for a Machine before it checks for a Belt —
+so no Belt's entry room is touched by both. That is why #46 moved every Factory in every fixture
+onto a new code path and changed what exactly one of them did.
+
+- **The rotation is one integer per Machine, `_machine_port_cursor`, and it is hashed.** Which of
+  its Belts a Machine gave first claim to last. One more parallel per-Machine array, indexed
+  exactly like `_machine_progress_ticks`, so a Machine with no Belts off it carries a 0 nothing
+  reads — and giving branching its own index space is how a branch would stop being a property of
+  a Machine.
+- **The cursor indexes the Machine's Belts in *canonical* order, which is what keeps the
+  fairness free of the bias above.** The list is geography — by the tile each run starts at — and
+  the cursor is the only history in it, so a share cannot depend on which branch was laid first.
+  `test_a_branch_splits_the_same_way_whichever_belt_was_laid_first` is the same two-Factories
+  assertion the update order has, pointed at a branch.
+- **A blocked branch is skipped, not waited on.** A Belt with no room at its entry simply fails
+  to take and the Item is offered to the next branch, so one full branch never starves the other.
+  And the cursor moves to one past whichever branch actually *got* the first Item rather than past
+  the one that merely had first claim — a branch that was blocked did not have its turn, so it
+  does not lose it.
+- **What two full branches cannot carry banks in the Machine**, whose output buffer is uncapped,
+  which is where a player reads the surplus off. Nothing is destroyed because a Belt filled up —
+  the rule a full input buffer already obeys.
+- **Scarcity is the whole of what the rotation is for.** A Machine producing faster than its
+  branches can carry serves all of them every tick and the cursor changes nothing. A Machine
+  producing one Item every ninety ticks — which is every Miner the shipped content can build —
+  alternates them exactly.
+- **The canonical order is cached, not sorted per tick.** It falls out of the same rebuild that
+  produces the downstream-first order, under the same staleness flag, because that rebuild
+  already sorts the Belts to decide where to start each chain. This is the hottest loop in the
+  project and a per-tick sort of every Belt in a late-game Factory is not a thing to add to it.
+
+**One fixture's premise changed and is worth knowing about**, because it is finding 8's third
+consequence arriving as a behaviour change rather than as a number.
+`test_power.test_determinism_the_factory_losing_its_fuel_really_did_cross_into_deficit` lays a
+second Belt off a Coal Miner to divert its fuel, and before #46 that diversion was a **cut** —
+the Boiler never saw another lump and the grid settled on the 300 kW baseline for good. It is now
+a **share**: the Boiler is fed about 20 lumps a minute against the 30 it burns, so it goes out,
+relights, and goes out again. The fixture still crosses the line in both directions, which is
+what it is for, so what the test asserts moved from the last tick's reading to a count over the
+window — because which side of a flicker the last tick lands on says nothing about whether the
+Factory lost its fuel.
+
 ### Machines, ports and starvation
 
 - A crafter's inputs live in an **input buffer** separate from its output buffer, with a
@@ -1032,12 +1085,14 @@ same Factory in two orders and comparing every Item position tick by tick.
 - A tick runs **Belts before Machines**: an Item delivered this tick is usable this
   tick, and an Item produced this tick is collected on the next, which is the same rule a
   freshly built Machine follows.
-- **Two Belts off one Machine is a priority, not a half-share.** `_load_from_port` walks Belts
-  in canonical order and each takes one Item from the Machine behind its entry, so the Belt
-  whose entry tile comes first is filled every tick and the second gets only what the first has
-  no room for. That is a real mechanism and not a bug — it is how back-pressure composes — but
-  it is not a splitter, and three measured Factory facts fall out of it. See the splitter finding
-  under "The joint balance pass".
+- **Two Belts off one Machine is a split, and that is #46.** A line that branches is a factory
+  game's second verb after laying a Belt, and until #46 this game did not have it: Belts were
+  loaded one at a time inside `_advance_belt`, so the Belt whose entry tile came first took
+  every Item and the second got only what the first had no room for. That was a *priority*
+  rather than a share, and three measured Factory facts fell out of it — the sharpest being
+  that **a second Belt off the shipped Smelter never received a single plate**, because the
+  Ammo Press took the lot. See the branching section below, and finding 8 under "The joint
+  balance pass" for what it cost before it was fixed.
 
 ## The one Power grid
 
@@ -3584,19 +3639,25 @@ recorded here instead, which is what #26 asked for.
    `BalanceProbe` did — yields 9,830,400 and an "at the interval floor" verdict that is always
    true. Anything reading a `_seconds` field off `Definitions` goes through `Fixed.floor_to_int`
    or the same `Fixed.mul` the Simulation uses.
-8. **A splitter in this game is a priority, not a half-share — and that is the half of #37's
-   second trap that is still open.** `_load_from_port` walks Belts in canonical order and takes
-   one Item from the Machine behind each entry, so a Machine with two Belts off it fills the
-   first one that has room *every tick*. Two Belts only alternate when the first is backed up.
-   Three consequences, all measured: the Ammo Press feeds its Turret line and the Silo gets what
-   that line cannot hold, which is fine; a second Belt off the Smelter never receives a single
-   plate, because the Press takes the lot, which is why `artillery` has to build a second ore
-   line; and `deep_digger`'s coal Belt to the Nest is served **before** the Boiler's purely
-   because its entry tile has a smaller x, which is the invisible part of the starvation #37
-   fixed the visible part of. The CLAUDE.md sentence claiming the Press "alternates" between two
-   lines was wrong and is corrected where it stands. A fair round-robin would need "which Belt
-   was served last" as hashed state in the one function every Belt goes through, which is a
-   bigger change than #37's two findings and belongs to whichever ticket owns Belt routing.
+8. ~~**A splitter in this game is a priority, not a half-share.**~~ **Fixed by #46**, which is
+   the ticket this finding said it belonged to. `_load_from_port` used to be called per Belt from
+   inside `_advance_belt`, so a Machine with two Belts off it filled the first one that had room
+   *every tick* and the two only alternated when the first was backed up. Three consequences were
+   measured and all three are now gone: the Ammo Press fed its Turret line and the Silo got only
+   what that line could not hold; **a second Belt off the Smelter never received a single plate**,
+   because the Press took the lot, which is why `artillery` had to build an entire second ore
+   line; and `deep_digger`'s coal Belt to the Nest was served **before** the Boiler's purely
+   because its entry tile had a smaller x, which was the invisible part of the starvation #37
+   fixed the visible part of. (The sentence that claimed the Press "alternates" between two lines
+   was wrong and #37 corrected it.)
+
+   The fix is the shape this finding named: **"which Belt was served last" as hashed state in the
+   one function every Belt goes through.** Loading became a pass of its own, after every Belt has
+   advanced, and `_machine_port_cursor` — one integer per Machine, hashed — rotates which branch
+   gets first claim. The list it indexes is the Machine's Belts in *canonical* order, so the
+   share is geography plus one integer of history rather than build order. See "A line that
+   branches, and the rotation that makes it one". The lesson the trap replaced: **two Belts off
+   one Machine both run, and what neither can carry banks in the Machine where you can see it.**
 9. **A long Belt is a long buffer, and a Belt pointed at the Nest hides its diversion inside
    itself.** `deep_digger`'s coal line is forty tiles, which is 160 coal before back-pressure
    reaches the Miner at all — eight times what the tier it was built to pay actually wanted.

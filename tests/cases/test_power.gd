@@ -327,14 +327,25 @@ func test_a_boiler_is_not_throttled_by_the_brownout_it_is_there_to_end() -> void
 # Factory down a notch rather than killing one Machine.
 #
 # It is cut here with a single Belt. A second Belt laid against the Coal Miner's northern
-# edge loads from the same output port as the fuel line, and the Belts are advanced in
-# canonical tile order — by the tile a run starts at, which is geography and not build
-# order — so the Belt starting at (12, 0, 3) is served before the one starting at
-# (14, 0, 4). The Coal Miner only ever holds one lump at a time, so the diverted Belt
-# takes every one of them and the Boiler never sees another.
+# edge loads from the same output port as the fuel line, so the two Belts are a **branch**
+# and the Coal Miner gives them equal turns at its output (#46). The Boiler therefore sees
+# half the coal rather than none: it is fed about 20 lumps a minute against the 30 it burns,
+# so it goes out, relights, and goes out again, and the grid flickers between 900 kW and the
+# 300 kW baseline instead of settling on the baseline for good.
+#
+# Before #46 the diversion was a **cut** rather than a share — the Belt starting at
+# (12, 0, 3) was served ahead of the one starting at (14, 0, 4) every tick, and the Coal
+# Miner only ever holds one lump at a time, so the Boiler never saw another. The fixture
+# still crosses the line in both directions, which is what it is for; what changed is that
+# the crossing back is now intermittent, and the Factory is not in deficit on the last tick.
 
 const DIVERSION_ENTRY: Vector3i = Vector3i(12, 0, 3)
 const DIVERSION_EXIT: Vector3i = Vector3i(12, 0, 0)
+
+## The tick the diversion Belt is laid on, and what the Nest's own plant supplies with no
+## Boiler burning. Both named so the fixture's two halves can be told apart by a counter.
+const DIVERSION_TICK: int = 401
+const BASELINE_SUPPLY_KW: int = 300
 
 ## The Map's two iron Nodes, which two more Miners stand on to give the brownout something
 ## to be visible in. Three Miners at 120 kW is 360 kW against a 300 kW baseline, so losing
@@ -664,17 +675,37 @@ func test_determinism_the_factory_losing_its_fuel_really_did_cross_into_deficit(
 	var script: InputScript = _fuel_cut_script()
 	var surplus_ticks: int = 0
 	var deficit_ticks: int = 0
+	var baseline_ticks_after_the_diversion: int = 0
+	var deficit_ticks_after_the_diversion: int = 0
 	for tick: int in range(script.tick_count()):
 		sim.step(script.actions_at(tick))
 		if sim.query_power_is_in_deficit():
 			deficit_ticks += 1
+			if tick > DIVERSION_TICK:
+				deficit_ticks_after_the_diversion += 1
 		else:
 			surplus_ticks += 1
+		if tick > DIVERSION_TICK and sim.query_power_supply_kw() == BASELINE_SUPPLY_KW:
+			baseline_ticks_after_the_diversion += 1
 	assert_eq(sim.query_machine_count(), 4, "four Machines; a Belt is not one of them")
 	assert_true(surplus_ticks > 100, "the Factory spent %d ticks in surplus" % surplus_ticks)
 	assert_true(deficit_ticks > 100, "and %d ticks short of Power" % deficit_ticks)
-	assert_eq(sim.query_power_supply_kw(), 300, "ending on the baseline alone")
-	assert_true(sim.query_power_is_in_deficit(), "and ending short of what it asked for")
+	# The crossing *back* is what this fixture is for, and since #46 it happens more than
+	# once: a diverted branch takes half the coal rather than all of it, so the Boiler goes
+	# out and relights for the rest of the window. Counted over the window rather than read
+	# off the last tick, because which side of the flicker the last tick lands on says
+	# nothing about whether the Factory lost its fuel.
+	assert_true(
+		baseline_ticks_after_the_diversion > 50,
+		"the Boiler was out for %d ticks after the coal was shared" % baseline_ticks_after_the_diversion
+	)
+	assert_true(
+		deficit_ticks_after_the_diversion > 50,
+		(
+			"and the grid was short for %d of them"
+			% deficit_ticks_after_the_diversion
+		)
+	)
 
 
 ## The script both fuel-cut tests run: build the whole Power chain, let it reach surplus,
