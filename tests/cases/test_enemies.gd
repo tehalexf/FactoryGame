@@ -610,27 +610,38 @@ func test_nothing_is_announced_while_no_wave_is_telegraphed() -> void:
 	assert_eq(sim.query_telegraphed_wave_count_of_kind(EnemyKind.BREAKER), 0)
 
 
+## Every tier at Heat 0, so a Crawler and a Siege Hulk are on the Map together and the two
+## ends of the size range can be compared in one Run.
+const EVERY_KIND: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,2,0,2
+siege_hulks,siege_hulk,0,1,0,1
+"""
+
+
 func test_the_simulation_says_how_big_an_enemy_is_and_the_boss_is_bigger() -> void:
 	# #38. The renderer has to size a body, and the one authority on how big an Enemy is
 	# is the volume the Simulation resolves a round against — `_enemy_hit_radius` and
 	# `_enemy_hit_height`, which `_bite`, `_shot_target` and the Barrage all read. A
 	# constant in `WorldView` beside them would be a second authority on the same fact,
 	# which is exactly the shape #41 shipped as a red rectangle with no owner.
-	var sim: Simulation = _sim(CRAWLERS_AND_BREAKERS, [["min_heat = 5200", "min_heat = 0"]])
-	_step_until_spawned(sim)
-	if not assert_true(sim.query_enemy_count() > 0, "the premise: a Wave is out"):
-		return
+	var sim: Simulation = _sim(EVERY_KIND)
+	# Long enough for the trickle to have released a Hulk as well as the Chaff.
+	for tick: int in range(10 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
 
 	var crawler: int = -1
+	var hulk: int = -1
 	for index: int in range(sim.query_enemy_count()):
-		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_CRAWLER:
+		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_CRAWLER and crawler < 0:
 			crawler = index
-			break
-	if not assert_true(crawler >= 0, "the premise: a Crawler is out"):
+		elif sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_SIEGE_HULK and hulk < 0:
+			hulk = index
+	if not assert_true(crawler >= 0 and hulk >= 0, "the premise: both kinds are out"):
 		return
 
-	# The figures come from `content/tuning.toml` — gear.enemy_hit_height_metres = 1.6 —
-	# rather than from recomputing what the code does.
+	# The figures come from `content/tuning.toml` — `gear.enemy_hit_height_metres = 1.6`
+	# and `siege_hulk.hit_height_metres = 3.2` — rather than from recomputing what the
+	# code does.
 	assert_eq(
 		sim.query_enemy_hit_height_metres(crawler),
 		Fixed.from_decimal_string("1.6"),
@@ -641,10 +652,17 @@ func test_the_simulation_says_how_big_an_enemy_is_and_the_boss_is_bigger() -> vo
 	# And the boss has its own volume, which is the whole reason `_enemy_hit_height` is a
 	# function of the kind: four metres of armour missed by a metre reads as a broken gun.
 	assert_eq(
-		sim.query_enemy_hit_height_metres(0) > 0,
-		true,
-		"every Enemy has a height"
+		sim.query_enemy_hit_height_metres(hulk),
+		Fixed.from_decimal_string("3.2"),
+		"a Siege Hulk is twice a Crawler"
 	)
+	assert_eq(sim.query_enemy_hit_radius_metres(hulk), Fixed.from_decimal_string("1.6"))
+
+	# An index that names nothing is 0 rather than a read off the end of an array — the
+	# rule every other `query_enemy_*` obeys, and the one a renderer depends on while a
+	# Wave is being cleared out from under it.
+	assert_eq(sim.query_enemy_hit_height_metres(sim.query_enemy_count()), 0)
+	assert_eq(sim.query_enemy_hit_radius_metres(-1), 0)
 
 
 func test_asking_how_big_an_enemy_is_does_not_move_the_hash() -> void:
