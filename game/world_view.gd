@@ -328,11 +328,146 @@ var _hud: Label = null
 var _hud_layer: CanvasLayer = null
 var _camera: Camera3D = null
 
+## What the HUD could say, and what it is saying.
+##
+## **Fifty-three appended lines, drawn over the Factory they describe.** Every one of them
+## earned its place when it arrived and the sum of them is a wall. So the wall is still
+## assembled — `hud_text` is it, and the suite still asserts against it — and what is
+## *shown* is `_hud_brief`: what the player is doing, what is coming, and what is in
+## trouble. The rest is one key away.
+##
+## The toggle is **not an Input Action**, for the reason saving is not: it does nothing to
+## the Run, it leaves the hash where it was, and a replay has nothing to reproduce.
+var _hud_full: String = ""
+var _hud_brief: String = ""
+var _hud_detailed: bool = false
+
+## The Machine picker: a cell per Machine and one for the Belt tool, each with the icon of
+## what the Machine makes, the key that reaches it, its build cost, and whether a Delivery
+## still has it locked.
+##
+## Built once per definition set and repainted every frame, which is the same bargain the
+## Machine bodies strike: what changes a lot is the selection and the lock state, and
+## neither needs a node rebuilt.
+var _picker: HBoxContainer = null
+var _picker_cells: Array[PanelContainer] = []
+var _picker_labels: PackedStringArray = PackedStringArray()
+var _picker_icon_paths: PackedStringArray = PackedStringArray()
+var _picker_locked: PackedInt64Array = PackedInt64Array()
+var _picker_selected: int = -1
+var _picker_built_for: int = -1
+
+## The previewed Belt route: one flat slab a tile, in two buffers — the tiles that would be
+## laid and the tiles that would be refused.
+##
+## **Two MultiMeshes rather than one with per-instance colour**, because the question a
+## player is asking of it is binary and because two counts are two things a test can read.
+## The arrows are a third, one a tile, pointing the way Items would travel, because a route
+## with no direction on it is a route a player has to work out from which end they started
+## dragging.
+##
+## Nothing here is remembered state. The route is recomputed every frame from the drag the
+## controller is holding and `BeltRoute`, and the refusal comes from the Simulation's own
+## projection — the same one the release will consult — so what is drawn red and what would
+## be refused cannot disagree on the frame it matters.
+var _belt_preview: MultiMeshInstance3D = null
+var _belt_preview_refused: MultiMeshInstance3D = null
+var _belt_preview_arrows: MultiMeshInstance3D = null
+var _belt_preview_transforms: PackedFloat32Array = PackedFloat32Array()
+var _belt_preview_refused_transforms: PackedFloat32Array = PackedFloat32Array()
+var _belt_preview_arrow_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## The drag the controller is holding, handed over once a frame by `Main`.
+##
+## A reading on its way in, exactly as it is in the controller: the renderer is told where
+## the button went down so it can draw the route that *would* cross, and the Simulation is
+## still the only thing that knows a Belt was laid. `Main` is where the two meet because the
+## controller and the view are both its children and neither may reach for the other.
+## The port markers: an arrow on every face a Belt may dock against, inputs in one buffer and
+## outputs in the other, for every Machine standing **and** for the one the hologram is about
+## to land.
+##
+## `content/machine_ports.csv` has declared all of this since #19 and nothing drew any of it,
+## which is why a player could not tell which face of a Smelter takes ore. The arrow points
+## the way goods travel — into the body for an input, out of it for an output — because which
+## way to point a Belt is the actual question being asked.
+var _input_ports: MultiMeshInstance3D = null
+var _output_ports: MultiMeshInstance3D = null
+var _input_port_transforms: PackedFloat32Array = PackedFloat32Array()
+var _output_port_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## What is wrong with the Factory, drawn where it is wrong.
+##
+## A Belt that feeds nothing and a Machine nothing reaches used to look exactly like a Belt
+## feeding a Smelter — you found out by reading a line of HUD text over the thing it was
+## describing. These are the two marks that make the difference visible in the world: a red
+## post at a Belt end that leads nowhere or is fed by nothing, and an amber tag over a Machine
+## the Simulation calls starved.
+##
+## **Both are queries asked every frame.** Nothing here remembers whether anything was
+## connected, which is what makes demolishing the Smelter a Belt fed show up on the next
+## frame with no bookkeeping anywhere — and what stops the renderer having a second opinion
+## about a Factory it is only supposed to be drawing.
+var _dangling_marks: MultiMeshInstance3D = null
+var _starved_marks: MultiMeshInstance3D = null
+var _belt_flow_arrows: MultiMeshInstance3D = null
+var _dangling_transforms: PackedFloat32Array = PackedFloat32Array()
+var _starved_transforms: PackedFloat32Array = PackedFloat32Array()
+var _belt_flow_transforms: PackedFloat32Array = PackedFloat32Array()
+
+var _belt_drag_active: bool = false
+var _belt_drag_anchor: Vector3i = Vector3i.ZERO
+var _belt_drag_corner_axis: int = BeltRoute.ALONG_X
+
 
 ## Hologram colours. Green where a Machine would land, red where it would be refused —
 ## and the HUD says *why* in words, because a red box only says "no".
 const HOLOGRAM_ALLOWED: Color = Color(0.35, 0.85, 0.45, 0.45)
 const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
+
+## The colours of the two marks. Red for a dangling end, because it is a mistake; amber for a
+## starved Machine, because it is a Factory that is only waiting. Deliberately the same two
+## readings a HUD line used to carry, in the one place a player is already looking.
+const DANGLING_COLOUR: Color = Color(0.95, 0.27, 0.22, 0.85)
+const STARVED_COLOUR: Color = Color(1.0, 0.78, 0.22, 0.8)
+
+## How high the marks float above what they are about, in metres. A post at a Belt end stands
+## at about hip height; a Machine's tag hangs over its roof, where nothing is in the way of it.
+const DANGLING_MARK_HEIGHT_METRES: float = 1.1
+const STARVED_MARK_LIFT_METRES: float = 1.2
+
+## The port markers' colours. Cool for what goes in and warm for what comes out, which is
+## the one pair of colours a player does not have to be told the meaning of twice.
+const PORT_INPUT_COLOUR: Color = Color(0.45, 0.72, 1.0, 0.9)
+const PORT_OUTPUT_COLOUR: Color = Color(1.0, 0.66, 0.26, 0.9)
+
+## How much bigger a port arrow is than a Belt's own flow arrow. Judged in a render: at
+## 1.0 the two read as the same mark and the ports vanish into the line.
+const PORT_MARKER_SCALE: float = 1.6
+
+## How high the port markers float, in metres: the standard Belt deck height the table itself
+## declares, so an arrow is at the height the Belt that docks there will be.
+const PORT_MARKER_HEIGHT_METRES: float = 0.9
+
+## The flow arrows' colour: a warm cream that reads against the dark decks, the green of a
+## clear preview and the red of a refused one alike.
+const FLOW_ARROW_COLOUR: Color = Color(0.98, 0.88, 0.62, 0.85)
+
+## How high off the ground the previewed route floats, in metres. Just clear of the grid
+## markings, so a preview over bare ground is unmistakably a preview and not a Belt.
+const BELT_PREVIEW_HEIGHT_METRES: float = 0.06
+
+## How tall a **refused** tile of the preview stands, in metres.
+##
+## A column rather than a slab, and that came out of a render: the commonest thing a route
+## is refused by is a Wall, a Wall is 2.4 m of dark box, and a red slab 6 cm off the ground
+## under one is a red slab nobody can see. The refusal has to read over the thing causing
+## it, so it is drawn as the blocked *volume* and not as a blocked footprint.
+const BELT_REFUSED_HEIGHT_METRES: float = 2.6
+
+## How high the flow arrows float above the preview and above a running Belt's deck. Enough
+## to clear the deck and the Items on it without becoming the thing a player looks at.
+const FLOW_ARROW_LIFT_METRES: float = 0.08
 
 ## How far the ground plane extends past the **buildable** Map, in tiles. The plane used
 ## to stop exactly where the Simulation stops accepting a build, and the consequence was
@@ -343,6 +478,29 @@ const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
 ## The grid is not drawn out here — `game/ground.gdshader` paints markings only inside
 ## the Map — so there is no question about which part can be built on.
 const GROUND_APRON_TILES: int = 96
+
+## Where the generated Item icons live. #20 produced ten of them and nothing used one; a
+## Machine's glyph is the Item it makes, which is what a player is actually hunting for when
+## they go looking for a Smelter — and it means a new Machine gets a picture by having a
+## Recipe rather than by somebody drawing one.
+const ICON_DIRECTORY: String = "res://assets/generated/icons"
+
+## How far off the bottom of the screen the Machine picker sits, and how big its icons are.
+## Judged in a render: small enough to stay out of the way of the Factory, big enough that
+## the glyph is a glyph and not a smudge.
+const PICKER_MARGIN_PIXELS: float = 12.0
+const PICKER_ICON_PIXELS: float = 40.0
+
+## The picker's three states. The selected cell is lit, the rest are dim, and a cell the Run
+## has not unlocked is greyed as well — locked and unselected are different things and a
+## player must be able to see both at once.
+const PICKER_SELECTED_TINT: Color = Color(1.0, 0.86, 0.5, 1.0)
+const PICKER_RESTING_TINT: Color = Color(1.0, 1.0, 1.0, 0.55)
+const PICKER_LOCKED_TINT: Color = Color(0.5, 0.5, 0.55, 0.65)
+
+## How many Machines in trouble the brief HUD will name before it counts them instead. Lower
+## than the full list's: the brief is read at a glance mid-Wave.
+const BRIEF_MACHINES_LISTED: int = 3
 
 ## How many Machines the HUD will name before it starts counting them instead. A line a
 ## Machine is readable at four and is a wall of text over the Factory at fifty, so the
@@ -379,6 +537,11 @@ func sync(sim: Simulation) -> void:
 	_sync_walls(sim)
 	_sync_items(sim)
 	_sync_hologram(sim)
+	_sync_belt_preview(sim)
+	# After the hologram, because it draws the hologram's ports too and has to know whether
+	# there is one.
+	_sync_ports(sim)
+	_sync_connection_marks(sim)
 	_sync_hud(sim)
 	_place_camera(sim)
 	# After the camera, because the weapon hangs off it.
@@ -550,11 +713,37 @@ func turret_gauge_position(slot: int) -> Vector3:
 	return _turret_gauge_backings[slot].position
 
 
-## What the HUD is showing. The Items the Factory is holding, and how many.
+## Everything the HUD could say, as one block of text.
+##
+## **The whole wall, whether or not it is on screen.** It is what the suite asserts against
+## and what `set_hud_detailed(true)` puts up; `hud_brief_text` is the triage and
+## `shown_hud_text` is whichever of the two a player is actually reading.
 func hud_text() -> String:
-	if _hud == null:
-		return ""
-	return _hud.text
+	return _hud_full
+
+
+## What the HUD is showing: the brief, or the wall if the player asked for it.
+func shown_hud_text() -> String:
+	return "" if _hud == null else _hud.text
+
+
+## The triaged HUD: what the player is doing, what is coming, and what is in trouble.
+func hud_brief_text() -> String:
+	return _hud_brief
+
+
+## Whether the player has asked for the whole wall.
+func hud_is_detailed() -> bool:
+	return _hud_detailed
+
+
+## Shows or hides the rest of the HUD. **Not an Input Action**, for the reason saving is
+## not one: it does nothing to the Run, it leaves the hash where it was, and a replay has
+## nothing to reproduce. `Main` reads the key where it reads Escape.
+func set_hud_detailed(detailed: bool) -> void:
+	_hud_detailed = detailed
+	if _hud != null:
+		_hud.text = _hud_full if _hud_detailed else _hud_brief
 
 
 ## Which body a Machine drew, as a `res://` path, or `""` where it fell back to a
@@ -1643,6 +1832,13 @@ func _sync_hud(sim: Simulation) -> void:
 		lines.append("THE NEST HAS FALLEN — reached wave %d" % sim.query_wave_number())
 	lines.append_array(_telegraph_lines(sim))
 	lines.append_array(_breach_opening_lines(sim))
+	# The one line that makes the opening teach itself, in both HUDs: the brief is what a
+	# player reads, and the wall is everything the HUD could say, so it cannot be missing
+	# from the wall. Empty once the first Delivery has landed, and an empty line is not
+	# appended.
+	var objective: String = Objective.line(sim)
+	if not objective.is_empty():
+		lines.append(objective)
 	lines.append("tick %d" % sim.query_tick())
 	# What the Run is about, the pressure on it, and what is on the Map. Read out of the
 	# queries every frame, so none of it can be stale.
@@ -1841,7 +2037,269 @@ func _sync_hud(sim: Simulation) -> void:
 	if sim.query_wall_count() > 0:
 		lines.append("walls %d — %d damaged" % [sim.query_wall_count(), breached])
 
-	_hud.text = "\n".join(lines)
+	_hud_full = "\n".join(lines)
+	_hud_brief = "\n".join(_brief_lines(sim))
+	_hud.text = _hud_full if _hud_detailed else _hud_brief
+	_sync_picker(sim)
+
+
+## The Machine picker: a cell per Machine and one for the Belt tool, along the bottom of the
+## screen, with the icon of what each Machine makes, the key that reaches it, what it costs
+## and whether a Delivery still has it locked.
+##
+## **Machine selection used to be blind mouse-wheeling** through a list with the name in a
+## line of text, which meant a player hunting for the Smelter scrolled until the word
+## changed. A row of pictures is the fix, and the pictures already existed — #20 generated
+## ten Item icons and nothing used one.
+##
+## A Machine's glyph is **the Item its Recipe makes**, so a Smelter shows an ingot. That is
+## the thing a player is actually hunting for, and it means a Machine added as a row gets a
+## picture without anybody drawing one. A Machine that makes no Item — a Turret, a generator,
+## a Silo — has no glyph and reads by its name, which is honest: there is no picture of
+## damage.
+##
+## Rebuilt only when the definition set changes, repainted every frame. The nodes are a
+## handful and the Machine list is ten long, so this is the one place in the view where a
+## node per thing is the right shape.
+func _sync_picker(sim: Simulation) -> void:
+	var definitions: Definitions = sim.query_definitions()
+	if _picker == null:
+		_picker = HBoxContainer.new()
+		_picker.add_theme_constant_override("separation", 6)
+		_picker.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+		_picker.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		_picker.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		_picker.offset_bottom = -PICKER_MARGIN_PIXELS
+		_hud_layer.add_child(_picker)
+
+	if _picker_built_for != sim.query_definition_generation():
+		_build_picker_cells(sim, definitions)
+		_picker_built_for = sim.query_definition_generation()
+
+	# What is in hand, and what the Run has earned, every frame — both are state and neither
+	# is remembered here.
+	_picker_selected = (
+		definitions.machine_count() if sim.query_player_is_laying_belt(VIEWED_PLAYER)
+		else sim.query_player_selected_machine_index(VIEWED_PLAYER)
+	)
+	for index: int in range(_picker_cells.size()):
+		var locked: bool = (
+			index < definitions.machine_count() and not sim.query_machine_is_unlocked(index)
+		)
+		_picker_locked[index] = 1 if locked else 0
+		var cell: PanelContainer = _picker_cells[index]
+		cell.modulate = PICKER_LOCKED_TINT if locked else Color.WHITE
+		cell.self_modulate = (
+			PICKER_SELECTED_TINT if index == _picker_selected else PICKER_RESTING_TINT
+		)
+	_picker.visible = sim.query_player_is_in_build_mode(VIEWED_PLAYER)
+
+
+## Builds one cell per Machine, and the Belt tool's, from the definition set.
+func _build_picker_cells(sim: Simulation, definitions: Definitions) -> void:
+	for spare: PanelContainer in _picker_cells:
+		_picker.remove_child(spare)
+		spare.queue_free()
+	_picker_cells.clear()
+	_picker_labels = PackedStringArray()
+	_picker_icon_paths = PackedStringArray()
+	_picker_locked = PackedInt64Array()
+
+	for index: int in range(definitions.machine_count()):
+		var machine: MachineDefinition = definitions.machine_at(index)
+		_add_picker_cell(
+			_picker_key_label(index),
+			machine.display_name,
+			_cost_text(machine),
+			_icon_path_for(definitions, machine)
+		)
+	# The Belt, last and apart, because it is not a Machine: no row in
+	# `content/machines.csv`, no Recipe, no cost, and its own key.
+	_add_picker_cell("C", "Belt", "free", "")
+
+
+## Which key reaches a cell. Ten of them — `1` to `9` and `0` — which is the whole of the
+## shipped Machine list and as many as a hand reaches without looking. Past that a player
+## scrolls, which still works and always did.
+func _picker_key_label(index: int) -> String:
+	if index < 9:
+		return str(index + 1)
+	if index == 9:
+		return "0"
+	return "·"
+
+
+## What a Machine costs, in the `item:count` form its row is written in. "free" where the
+## column is empty, because a blank cell reads as a bug.
+func _cost_text(machine: MachineDefinition) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for slot: int in range(machine.build_cost_items.size()):
+		parts.append("%s %d" % [machine.build_cost_items[slot], machine.build_cost_counts[slot]])
+	return "free" if parts.is_empty() else ", ".join(parts)
+
+
+## The icon of the first Item a Machine's Recipe produces, or "" for one that produces none.
+func _icon_path_for(definitions: Definitions, machine: MachineDefinition) -> String:
+	var recipe: RecipeDefinition = definitions.recipe(machine.recipe_id)
+	if recipe == null or recipe.output_count() == 0:
+		return ""
+	var item_id: String = definitions.item_id(recipe.output_item(0))
+	if item_id.is_empty():
+		return ""
+	var path: String = "%s/%s.png" % [ICON_DIRECTORY, item_id]
+	return path if ResourceLoader.exists(path) else ""
+
+
+func _add_picker_cell(key: String, name: String, cost: String, icon_path: String) -> void:
+	var cell: PanelContainer = PanelContainer.new()
+	var column: VBoxContainer = VBoxContainer.new()
+	column.add_theme_constant_override("separation", 0)
+	cell.add_child(column)
+
+	# The icon slot is there whether or not there is an icon to put in it. A render showed
+	# why: without it the cells with a picture are taller than the cells without, and a row
+	# of hotbar cells whose captions sit at six different heights reads as broken rather
+	# than as sparse.
+	var picture: TextureRect = TextureRect.new()
+	if not icon_path.is_empty():
+		picture.texture = load(icon_path)
+	picture.custom_minimum_size = Vector2(PICKER_ICON_PIXELS, PICKER_ICON_PIXELS)
+	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	column.add_child(picture)
+
+	var caption: Label = Label.new()
+	caption.text = "[%s] %s\n%s" % [key, name, cost]
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(caption)
+
+	_picker.add_child(cell)
+	_picker_cells.append(cell)
+	_picker_labels.append(caption.text)
+	_picker_icon_paths.append(icon_path)
+	_picker_locked.append(0)
+
+
+## How many cells the picker has: one per Machine, plus the Belt tool. For the smoke test.
+func machine_picker_cell_count() -> int:
+	return _picker_cells.size()
+
+
+## What a cell says: its key, its name and what it costs. For the smoke test.
+func machine_picker_label(cell: int) -> String:
+	if cell < 0 or cell >= _picker_labels.size():
+		return ""
+	return _picker_labels[cell]
+
+
+## The icon a cell carries, or "" where the Machine makes no Item. For the smoke test.
+func machine_picker_icon_path(cell: int) -> String:
+	if cell < 0 or cell >= _picker_icon_paths.size():
+		return ""
+	return _picker_icon_paths[cell]
+
+
+## Whether a Delivery still has a cell's Machine locked. For the smoke test.
+func machine_picker_is_locked(cell: int) -> bool:
+	if cell < 0 or cell >= _picker_locked.size():
+		return false
+	return _picker_locked[cell] != 0
+
+
+## Which cell is in the player's hands — a Machine's index, or the Belt cell past the end of
+## the Machine list. For the smoke test.
+func machine_picker_selected() -> int:
+	return _picker_selected
+
+
+## The HUD a player actually reads: what they are doing, what is coming, and what is wrong.
+##
+## **Six things, in the order a player needs them**, against the fifty-three the full HUD
+## assembles. The test of each line is whether it changes what the player does in the next
+## few seconds — which is why the Wave banner and the objective are at the top, why the
+## Machines in trouble are named and the healthy ones are not counted at all, and why the
+## Gear table, the Silo dial, the Nest's store and the per-Item totals are behind the key.
+##
+## Nothing here is a second copy of a decision. The urgent banners, the build-gun lines and
+## the route line are the same helpers the full HUD calls; the trouble summary is a *shorter
+## sentence about the same queries*, not a reimplementation of the long one — it names ids
+## and states, where the full list adds buffers, Heat, magazines and health.
+func _brief_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	if sim.query_run_is_over():
+		lines.append("THE NEST HAS FALLEN — reached wave %d" % sim.query_wave_number())
+	lines.append_array(_telegraph_lines(sim))
+	lines.append_array(_breach_opening_lines(sim))
+
+	# The one line that makes the opening teach itself. Empty once it has, and an empty
+	# line is not appended — a blank row at the top of the screen is one more thing to read.
+	var objective: String = Objective.line(sim)
+	if not objective.is_empty():
+		lines.append(objective)
+
+	lines.append(
+		"nest %d/%d — wave %d — next in %ds — crawlers %d"
+		% [
+			sim.query_nest_health(),
+			sim.query_nest_max_health(),
+			sim.query_wave_number(),
+			sim.query_ticks_until_next_wave() / Simulation.TICKS_PER_SECOND,
+			sim.query_enemy_count(),
+		]
+	)
+	lines.append(
+		"power %d/%d kW — %d%%"
+		% [
+			sim.query_power_supply_kw(),
+			sim.query_power_demand_kw(),
+			roundi(Fixed.to_float(sim.query_power_ratio()) * 100.0),
+		]
+	)
+	lines.append_array(_build_gun_lines(sim))
+	lines.append_array(_trouble_lines(sim))
+	lines.append("[H] details")
+	return lines
+
+
+## What is wrong with the Factory, in as few words as will still get somebody to the right
+## Machine: the ones in trouble by id and state, then a count of the rest.
+##
+## **Triage is not silence.** The whole reason the wall existed is that a player mid-Wave has
+## to know which Machine is in trouble; what was wrong with it was the forty lines around
+## that one. Damaged outranks starved outranks throttled, which is the same order the full
+## list uses and for the same reason — they are three different fixes.
+func _trouble_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var named: PackedStringArray = PackedStringArray()
+	var unnamed: int = 0
+	for index: int in range(sim.query_machine_count()):
+		var state: String = ""
+		if sim.query_machine_health(index) < sim.query_machine_max_health(index):
+			state = "DAMAGED"
+		elif sim.query_machine_is_starved(index):
+			state = "starved"
+		elif sim.query_machine_is_throttled(index):
+			state = "throttled"
+		elif sim.query_machine_is_turret(index) and sim.query_turret_ammunition(index) == 0:
+			state = "DRY"
+		if state.is_empty():
+			continue
+		if named.size() >= BRIEF_MACHINES_LISTED:
+			unnamed += 1
+			continue
+		named.append("%s %s" % [sim.query_machine_id(index), state])
+
+	var dangling: int = dangling_marker_count()
+	if named.is_empty() and dangling == 0:
+		return lines
+
+	var sentence: String = ", ".join(named) if not named.is_empty() else "all machines fed"
+	if unnamed > 0:
+		sentence += " and %d more" % unnamed
+	if dangling > 0:
+		sentence += " — %d belt end%s lead nowhere" % [dangling, "" if dangling == 1 else "s"]
+	lines.append(sentence)
+	return lines
 
 
 ## The Silo: the dial a player is carrying, whether the thing in front of them would take it,
@@ -1968,7 +2426,33 @@ func _telegraph_lines(sim: Simulation) -> PackedStringArray:
 			called,
 		]
 	)
+	lines.append("   %s" % _telegraph_composition(sim))
 	return lines
+
+
+## What the telegraphed Wave is made of, as a line of text — "6 crawlers, 2 breakers".
+##
+## **The legible half of #34, and the reason it is on the Telegraph rather than anywhere else.**
+## A Breaker now marches the same road as everything else and turns on the Factory once it is
+## inside the perimeter, which is a lesson a player can act on — *if* they knew a Breaker was
+## in this Wave while there was still time to go and stand over the Smelters. So the warning
+## names its tiers. Six Crawlers is a line to hold; six Crawlers and two Breakers is a reason
+## to be somewhere else.
+##
+## Walked in `EnemyKind` order rather than in the Wave table's, so the same Wave reads the same
+## way every time and a player learns where to look rather than re-reading the line. A tier the
+## Heat has not reached contributes nothing and is not named, which is what makes the arrival of
+## a new word on this line the event it should be.
+func _telegraph_composition(sim: Simulation) -> String:
+	var parts: PackedStringArray = PackedStringArray()
+	for kind: int in range(EnemyKind.KIND_NAMES.size()):
+		var count: int = sim.query_telegraphed_wave_count_of_kind(kind)
+		if count <= 0:
+			continue
+		parts.append("%d %s%s" % [count, EnemyKind.name_of(kind), "s" if count != 1 else ""])
+	if parts.is_empty():
+		return "nothing the Heat has unlocked yet"
+	return ", ".join(parts)
 
 
 ## Whether a Machine is a mine working deep enough to open a Breach, and has not opened its
@@ -2597,6 +3081,7 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 		lines.append("aimed at %d, %d — clear" % [tile.x, tile.z])
 	else:
 		lines.append("aimed at %d, %d — %s" % [tile.x, tile.z, BuildGun.refusal_text(refusal)])
+	lines.append_array(_belt_route_lines(sim, tile))
 
 	var carried: PackedStringArray = PackedStringArray()
 	for item_id: String in sim.query_player_items(VIEWED_PLAYER):
@@ -2608,6 +3093,46 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 	if sim.query_player_is_sprinting(VIEWED_PLAYER):
 		lines.append("sprinting")
 
+	return lines
+
+
+## The route the drag in flight would lay: how long it is, what it costs, and why it would be
+## refused — all three **before the button comes up**, which is the whole point of the
+## projection being a projection.
+##
+## Empty unless the Belt tool is out, because a line about a route nobody is drawing is one
+## more line of the wall this HUD is trying to stop being.
+##
+## **The cost reads "free" and that is honest rather than unfinished.** A Belt has no row in
+## `content/machines.csv` and so has no `build_cost` column to read; `content/tuning.toml`
+## says in as many words that the ticket giving Belts a cost should give Walls one at the
+## same time, in whatever table ends up owning both. So the number a player needs to decide
+## is the length, the cost is stated rather than implied, and the sentence changes to a bill
+## on the day there is one.
+func _belt_route_lines(sim: Simulation, aimed: Vector3i) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	if not sim.query_player_is_laying_belt(VIEWED_PLAYER):
+		return lines
+
+	var from_tile: Vector3i = _belt_drag_anchor if _belt_drag_active else aimed
+	var length: int = maxi(
+		BeltRoute.length_tiles(from_tile, aimed, _belt_drag_corner_axis), 1
+	)
+	var refusal: int = sim.query_belt_route_refusal(
+		VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
+	)
+	var verdict: String = (
+		"clear" if refusal == Simulation.Refusal.NONE else BuildGun.refusal_text(refusal)
+	)
+	lines.append(
+		"belt: %s — %d tiles — free — %s"
+		% [
+			"drag to route, right click turns the corner" if not _belt_drag_active
+			else "release to lay",
+			length,
+			verdict,
+		]
+	)
 	return lines
 
 
@@ -2861,14 +3386,24 @@ func _sync_hologram(sim: Simulation) -> void:
 
 	var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
 	var definition: MachineDefinition = sim.query_definitions().machine(selected)
-	# **Hidden rather than reddened, and only for this one reason.** A red hologram says
-	# "not *there*" and invites a player to aim somewhere else; a holstered Build Gun is a
-	# fact about their hands, and nowhere they aim will help. A promise nobody can keep is
-	# better not made than made in red.
+	# **Hidden rather than reddened, for two reasons that are the same reason.** A red
+	# hologram says "not *there*" and invites a player to aim somewhere else, so it is the
+	# right answer only when aiming elsewhere would help. Neither of these is that:
+	#
+	#   the hand   a holstered Build Gun is a fact about what the player is holding, and
+	#              nowhere they aim will change it (#35, which found the hologram still
+	#              drawn and still green with a rifle in frame);
+	#   the tool   with the Belt tool out the route preview is what the button would do, and
+	#              two previews of two different acts over one tile is a player guessing
+	#              which (#36).
+	#
+	# A promise nobody can keep is better not made than made in red.
 	_hologram.visible = (
-		definition != null and refusal != Simulation.Refusal.BUILD_GUN_IS_HOLSTERED
+		definition != null
+		and refusal != Simulation.Refusal.BUILD_GUN_IS_HOLSTERED
+		and not sim.query_player_is_laying_belt(VIEWED_PLAYER)
 	)
-	if definition == null:
+	if not _hologram.visible:
 		return
 
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
@@ -2897,8 +3432,442 @@ func _sync_hologram(sim: Simulation) -> void:
 	)
 
 
-## Whether the Build Gun's promise is in frame at all. False with the weapon out, and false
-## while the Build Gun is holding a Machine the definition set does not have. For the tests.
+## What the player is told the drag would do: a slab on every tile of the route, the ones
+## that would be refused in red, and an arrow a tile pointing the way Items would travel.
+##
+## **The route is `BeltRoute`'s, the refusal is the Simulation's, and this draws what they
+## say.** Nothing here decides anything about a route: a preview with its own opinion about
+## where a corner goes or about what is in the way is the defect this whole arrangement
+## exists to make impossible — a player would see a green line and get a refusal.
+##
+## Before the press there is no drag and the preview is the single tile under the aim, which
+## is exactly what a click would lay. That is the one case where the route's two ends are the
+## same tile, and `BeltRoute` deliberately calls that no route at all — the direction of a
+## one-tile Belt is the player's facing and the Simulation owns it, so the preview asks for
+## the same thing the intent will.
+func _sync_belt_preview(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _belt_preview == null:
+		_belt_preview = _preview_slabs(tile_size, HOLOGRAM_ALLOWED, 0.04)
+		_belt_preview_refused = _preview_slabs(
+			tile_size, HOLOGRAM_REFUSED, BELT_REFUSED_HEIGHT_METRES
+		)
+		_belt_preview_arrows = _flow_arrows(tile_size, FLOW_ARROW_COLOUR)
+
+	var laying: bool = sim.query_player_is_laying_belt(VIEWED_PLAYER)
+	_belt_preview.visible = laying
+	_belt_preview_refused.visible = laying
+	_belt_preview_arrows.visible = laying
+	if not laying:
+		_belt_preview_transforms.resize(0)
+		_belt_preview_refused_transforms.resize(0)
+		_belt_preview_arrow_transforms.resize(0)
+		_belt_preview.multimesh.instance_count = 0
+		_belt_preview_refused.multimesh.instance_count = 0
+		_belt_preview_arrows.multimesh.instance_count = 0
+		return
+
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
+	var from_tile: Vector3i = _belt_drag_anchor if _belt_drag_active else aimed
+	var runs: Array = BeltRoute.segments(from_tile, aimed, _belt_drag_corner_axis)
+
+	var clear: PackedFloat32Array = PackedFloat32Array()
+	var refused: PackedFloat32Array = PackedFloat32Array()
+	var arrows: PackedFloat32Array = PackedFloat32Array()
+	if runs.is_empty():
+		# The drag that never moved: one tile, aimed along the player's facing, which is the
+		# direction the Simulation will give the Belt.
+		runs = [
+			BeltRoute.Run.new(
+				from_tile,
+				from_tile,
+				WorldGrid.direction_from_turns(sim.query_player_yaw_turns(VIEWED_PLAYER))
+			)
+		]
+
+	for run: BeltRoute.Run in runs:
+		var step: Vector3i = WorldGrid.direction_step(run.direction)
+		var yaw: float = _yaw_for_direction(run.direction)
+		for offset: int in range(run.length_tiles()):
+			var tile: Vector3i = run.from + step * offset
+			var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+			var ground: float = Fixed.to_float(sim.query_layer_height_metres(tile.y))
+			var at: Vector3 = Vector3(
+				Fixed.to_float(centre.x), ground + BELT_PREVIEW_HEIGHT_METRES,
+				Fixed.to_float(centre.z)
+			)
+			var is_clear: bool = (
+				sim.query_belt_tile_refusal(tile) == Simulation.Refusal.NONE
+			)
+			var into: PackedFloat32Array = clear if is_clear else refused
+			if not is_clear:
+				# The blocked volume, standing over whatever is blocking it.
+				at.y = ground + BELT_REFUSED_HEIGHT_METRES * 0.5
+			into.resize(into.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_instance(into, into.size() / FLOATS_PER_INSTANCE - 1, at, yaw)
+			if not is_clear:
+				# No flow arrow on a tile nothing will flow along, and nowhere to put one
+				# that would not be inside the obstruction.
+				continue
+			arrows.resize(arrows.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_instance(
+				arrows,
+				arrows.size() / FLOATS_PER_INSTANCE - 1,
+				Vector3(at.x, ground + FLOW_ARROW_LIFT_METRES, at.z),
+				yaw
+			)
+
+	_belt_preview_transforms = clear
+	_belt_preview_refused_transforms = refused
+	_belt_preview_arrow_transforms = arrows
+	_upload(_belt_preview, clear)
+	_upload(_belt_preview_refused, refused)
+	_upload(_belt_preview_arrows, arrows)
+
+
+## An arrow on every port of every Machine standing, and of the one about to land.
+##
+## **Read out of `content/machine_ports.csv` through `Definitions`**, which is the file the
+## Blender generator put the mesh markers from — so the arrow and the moulded port on the
+## model are one declaration and not two. The rotation is the Machine's own, through
+## `MachinePorts.port_tile`, which shares `WorldGrid.rotated_footprint`'s convention: that is
+## what keeps the arrows on the body of a 3x2 Boiler turned a quarter.
+##
+## The hologram's ports are in the same buffers as the standing Machines', because they are
+## the same question asked a second earlier: which way round will this thing's faces be. They
+## go away with the hologram, so the Belt tool shows a route and nothing else.
+func _sync_ports(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _input_ports == null:
+		# Bigger than the Belt's own flow arrows: a port arrow is a thing a player goes
+		# looking for while deciding where to build, and the small one a render showed was
+		# invisible at the distance anybody actually works from.
+		_input_ports = _flow_arrows(tile_size * PORT_MARKER_SCALE, PORT_INPUT_COLOUR)
+		_output_ports = _flow_arrows(tile_size * PORT_MARKER_SCALE, PORT_OUTPUT_COLOUR)
+
+	var definitions: Definitions = sim.query_definitions()
+	var ports: MachinePorts = definitions.machine_ports()
+	var into: PackedFloat32Array = PackedFloat32Array()
+	var out_of: PackedFloat32Array = PackedFloat32Array()
+
+	for index: int in range(sim.query_machine_count()):
+		var id: String = sim.query_machine_id(index)
+		var definition: MachineDefinition = definitions.machine(id)
+		if definition == null:
+			continue
+		_mark_ports(
+			sim, ports.ports_of(id), definition, sim.query_machine_tile(index),
+			sim.query_machine_rotation(index), into, out_of
+		)
+
+	# The Machine about to land, on the tile it would land on, turned the way it would be
+	# turned. Only while the hologram is up: with the Belt tool out the route is what the
+	# button would do, and two sets of arrows over one tile is a player guessing.
+	if hologram_is_visible():
+		var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
+		var about_to_land: MachineDefinition = definitions.machine(selected)
+		if about_to_land != null:
+			_mark_ports(
+				sim, ports.ports_of(selected), about_to_land,
+				BuildGun.aimed_tile(sim, VIEWED_PLAYER),
+				sim.query_player_build_rotation(VIEWED_PLAYER), into, out_of
+			)
+
+	_input_port_transforms = into
+	_output_port_transforms = out_of
+	_upload(_input_ports, into)
+	_upload(_output_ports, out_of)
+
+
+## Writes one Machine's declared ports into the two buffers.
+##
+## The arrow points **the way goods travel**: along the port's outward direction for an
+## output, against it for an input. That is the thing a player is trying to work out, and it
+## is one subtraction from the same number rather than a second declaration.
+func _mark_ports(
+	sim: Simulation,
+	ports: Array[MachinePorts.Port],
+	definition: MachineDefinition,
+	origin: Vector3i,
+	rotation: int,
+	into: PackedFloat32Array,
+	out_of: PackedFloat32Array
+) -> void:
+	for port: MachinePorts.Port in ports:
+		# **The dock tile, not the port tile.** The port itself is a tile of the Machine's own
+		# footprint, and a marker there is a marker *inside* the body — invisible, which a
+		# render showed immediately. The tile just outside it is both visible and the more
+		# useful answer: it is where the Belt goes.
+		var tile: Vector3i = MachinePorts.dock_tile(
+			port, origin, definition.footprint_x, definition.footprint_z, rotation
+		)
+		var facing: int = MachinePorts.port_direction(port, rotation)
+		var travel: int = (
+			WorldGrid.wrap_rotation(facing + 2) if port.is_an_input() else facing
+		)
+		var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+		var at: Vector3 = Vector3(
+			Fixed.to_float(centre.x),
+			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + PORT_MARKER_HEIGHT_METRES,
+			Fixed.to_float(centre.z)
+		)
+		var buffer: PackedFloat32Array = into if port.is_an_input() else out_of
+		buffer.resize(buffer.size() + FLOATS_PER_INSTANCE)
+		@warning_ignore("integer_division")
+		_write_instance(
+			buffer, buffer.size() / FLOATS_PER_INSTANCE - 1, at, _yaw_for_direction(travel)
+		)
+
+
+## How many port markers are on screen. For the smoke test.
+func port_marker_count() -> int:
+	return input_port_marker_count() + output_port_marker_count()
+
+
+## How many of them are inputs. For the smoke test.
+func input_port_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _input_port_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many of them are outputs. For the smoke test.
+func output_port_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _output_port_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where an output port's marker was drawn, in metres. For the smoke test.
+func output_port_marker_position(marker: int) -> Vector3:
+	return _instance_position(_output_port_transforms, marker)
+
+
+## Where an input port's marker was drawn, in metres. For the smoke test.
+func input_port_marker_position(marker: int) -> Vector3:
+	return _instance_position(_input_port_transforms, marker)
+
+
+## What is wrong with the Factory, marked where it is wrong: a post at every Belt end that
+## leads nowhere, a tag over every starved Machine, and an arrow a tile saying which way each
+## Belt carries.
+##
+## **Every one of the three is a query**. `query_belt_start_is_fed` and
+## `query_belt_end_is_connected` ask the geometry half of the hand-off the Simulation itself
+## performs, and `query_machine_is_starved` answers for a Miner over the wrong ground and a
+## crafter with half a Recipe alike — so a renderer that inferred any of it from a count that
+## had stopped moving would be a second opinion, and the wrong one on the frame they
+## disagreed.
+func _sync_connection_marks(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _dangling_marks == null:
+		_dangling_marks = _marker_posts(tile_size, DANGLING_COLOUR)
+		_starved_marks = _marker_posts(tile_size, STARVED_COLOUR)
+		_belt_flow_arrows = _flow_arrows(tile_size, FLOW_ARROW_COLOUR)
+
+	var dangling: PackedFloat32Array = PackedFloat32Array()
+	var flow: PackedFloat32Array = PackedFloat32Array()
+	for index: int in range(sim.query_belt_count()):
+		var direction: int = sim.query_belt_direction(index)
+		var yaw: float = _yaw_for_direction(direction)
+		var length: int = sim.query_belt_length_tiles(index)
+		if not sim.query_belt_start_is_fed(index):
+			_mark_at(sim, dangling, sim.query_belt_tile(index, 0), DANGLING_MARK_HEIGHT_METRES, yaw)
+		if not sim.query_belt_end_is_connected(index):
+			_mark_at(
+				sim, dangling, sim.query_belt_tile(index, length - 1),
+				DANGLING_MARK_HEIGHT_METRES, yaw
+			)
+		for tile: int in range(length):
+			_mark_at(
+				sim, flow, sim.query_belt_tile(index, tile),
+				Fixed.to_float(sim.query_belt_deck_height_metres()) + FLOW_ARROW_LIFT_METRES,
+				yaw
+			)
+
+	var starved: PackedFloat32Array = PackedFloat32Array()
+	for index: int in range(sim.query_machine_count()):
+		if not sim.query_machine_is_starved(index):
+			continue
+		var centre: Vector3 = _machine_centre(sim, index)
+		var definition: MachineDefinition = sim.query_definitions().machine(
+			sim.query_machine_id(index)
+		)
+		var roof: float = 0.0 if definition == null else Fixed.to_float(definition.height)
+		starved.resize(starved.size() + FLOATS_PER_INSTANCE)
+		@warning_ignore("integer_division")
+		_write_instance(
+			starved,
+			starved.size() / FLOATS_PER_INSTANCE - 1,
+			Vector3(centre.x, centre.y + roof + STARVED_MARK_LIFT_METRES, centre.z),
+			0.0
+		)
+
+	_dangling_transforms = dangling
+	_starved_transforms = starved
+	_belt_flow_transforms = flow
+	_upload(_dangling_marks, dangling)
+	_upload(_starved_marks, starved)
+	_upload(_belt_flow_arrows, flow)
+
+
+## Writes one mark over the centre of a tile.
+func _mark_at(
+	sim: Simulation, into: PackedFloat32Array, tile: Vector3i, lift: float, yaw: float
+) -> void:
+	var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+	into.resize(into.size() + FLOATS_PER_INSTANCE)
+	@warning_ignore("integer_division")
+	_write_instance(
+		into,
+		into.size() / FLOATS_PER_INSTANCE - 1,
+		Vector3(
+			Fixed.to_float(centre.x),
+			Fixed.to_float(sim.query_layer_height_metres(tile.y)) + lift,
+			Fixed.to_float(centre.z)
+		),
+		yaw
+	)
+
+
+## A MultiMesh of small unshaded tags, one per thing being complained about. Unshaded on
+## purpose: a diagnostic has to read the same on the dark side of a Boiler as on the lit one.
+func _marker_posts(tile_size: float, colour: Color) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	var tag: BoxMesh = BoxMesh.new()
+	tag.size = Vector3(tile_size * 0.22, tile_size * 0.22, tile_size * 0.22)
+	instanced.mesh = tag
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## How many Belt ends are marked as leading nowhere. For the smoke test, and the number the
+## HUD reports.
+func dangling_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _dangling_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many Machines are marked as starved. For the smoke test.
+func starved_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _starved_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many flow arrows are drawn along the Belts that are standing. For the smoke test.
+func belt_flow_arrow_count() -> int:
+	@warning_ignore("integer_division")
+	return _belt_flow_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Hands a MultiMesh its instances, or tells it there are none. The buffer may only be
+## assigned when there is at least one instance to put in it.
+func _upload(into: MultiMeshInstance3D, transforms: PackedFloat32Array) -> void:
+	@warning_ignore("integer_division")
+	var count: int = transforms.size() / FLOATS_PER_INSTANCE
+	into.multimesh.instance_count = count
+	if count > 0:
+		into.multimesh.buffer = transforms
+
+
+## A MultiMesh of flat translucent slabs, one a tile. The shape of a tile of Belt before
+## there is a tile of Belt.
+func _preview_slabs(tile_size: float, colour: Color, height: float) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	var slab: BoxMesh = BoxMesh.new()
+	slab.size = Vector3(tile_size * 0.82, height, tile_size * 0.82)
+	instanced.mesh = slab
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## A MultiMesh of flat chevrons, each pointing along its own **local +z** — which is where
+## `_write_instance` puts a yaw's forward, so one yaw out of `_yaw_for_direction` aims it
+## down the flow.
+##
+## Built by hand rather than out of a primitive because every primitive that is a wedge
+## points along an axis this does not want, and baking the correction into the vertices is
+## cheaper than a second transform per instance on a mesh drawn hundreds of times.
+func _flow_arrows(tile_size: float, colour: Color) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	instanced.mesh = _chevron_mesh(tile_size * 0.3)
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## One flat arrowhead in the xz plane, apex at +z, drawn both ways round so it reads from
+## above and from underneath a Belt deck.
+func _chevron_mesh(reach: float) -> Mesh:
+	var vertices: PackedVector3Array = PackedVector3Array([
+		Vector3(0.0, 0.0, reach),
+		Vector3(-reach * 0.8, 0.0, -reach * 0.6),
+		Vector3(reach * 0.8, 0.0, -reach * 0.6),
+		Vector3(0.0, 0.0, reach),
+		Vector3(reach * 0.8, 0.0, -reach * 0.6),
+		Vector3(-reach * 0.8, 0.0, -reach * 0.6),
+	])
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## How many tiles of route are being previewed. For the smoke test, and the number the HUD
+## reports as a length.
+func belt_preview_tile_count() -> int:
+	@warning_ignore("integer_division")
+	return (
+		_belt_preview_transforms.size() + _belt_preview_refused_transforms.size()
+	) / FLOATS_PER_INSTANCE
+
+
+## How many of them are marked as refused. For the smoke test.
+func belt_preview_refused_tile_count() -> int:
+	@warning_ignore("integer_division")
+	return _belt_preview_refused_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where the drag the renderer is drawing started, and which way its corner bends. Handed
+## over by `Main` once a frame, straight off the controller.
+func note_belt_drag(active: bool, anchor: Vector3i, corner_axis: int) -> void:
+	_belt_drag_active = active
+	_belt_drag_anchor = anchor
+	_belt_drag_corner_axis = corner_axis
+
+
+## Whether the Build Gun's promise is in frame at all. For the tests, and for `_sync_ports`,
+## which hangs the about-to-land Machine's port arrows off the same answer.
+##
+## False in three cases, and none of them is a refusal a player could aim their way out of:
+## with the Build Gun holstered (#35), with the Belt tool out, because the route preview is
+## what the button would do and two previews over one tile is a player guessing (#36), and
+## while the Build Gun is holding a Machine the definition set does not have.
 func hologram_is_visible() -> bool:
 	return _hologram != null and _hologram.visible
 

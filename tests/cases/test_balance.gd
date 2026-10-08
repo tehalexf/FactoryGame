@@ -12,19 +12,20 @@
 ## every legitimate tuning change into a red suite, which is how a balance guard stops being
 ## read.
 ##
-## Measured on 2026-10-08, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision in
-## and #35's shorter *first* Wave interval — the two undefended rows are a minute shorter for
-## that and nothing else moved by more than twenty seconds. See "What the shorter first Wave
-## cost" in CLAUDE.md.
+## Measured on 2026-10-08, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision,
+## #34's Breaker approach **and** #35's separate first-Wave interval in — the merge of the two,
+## re-measured, because the two tickets move opposite ends of the same schedule and neither
+## branch's own figures survived it. Every scenario now ends on the same tick on all three seeds.
+## See "The table, measured 2026-10-08" in CLAUDE.md for which ticket owns which row.
 ##
-##     bare           3m22s   undefended
+##     bare           3m22s   undefended — #35's shorter first Wave, a minute off
 ##     opening_line   3m12s   undefended, and sooner than bare
-##     competent     26m42s   ran dry, then Breakers took the Factory
-##     over_producer 19m36s   ran dry, 27% sooner
-##     fortified     29m15s   swarmed, with 274 rounds still in the Factory
+##     competent     28m48s   a Siege Hulk standing, with 96 rounds still in the Factory
+##     over_producer 20m21s   the same, 29% sooner
+##     fortified     28m45s   the same, with 112 rounds unspent — a wash against competent
 ##     deep_digger   10m48s   dug too deep, two Breaches
-##     hive_sortie   29m35s   ran dry, 2m53s later than competent
-##     rifle_picket  26m52s   ran dry, 10s *later* than competent — the claim flipped, see below
+##     hive_sortie   32m05s   the same, 3m17s later than competent — the longest Run measured
+##     rifle_picket  28m02s   swarmed, 46s sooner than competent
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -101,17 +102,39 @@ func test_a_competent_factory_reaches_twenty_to_forty_minutes() -> void:
 
 func test_a_competent_factory_loses_to_a_pressure_it_can_name() -> void:
 	# The acceptance criterion that matters most, and the one a bare Run length cannot carry:
-	# a player has to be able to say what killed them. "Ran dry" is the answer here — one Ammo
-	# Press cannot keep one MG Turret fed once the Wave interval reaches its floor — and a
-	# Factory with no Ammunition anywhere in it through the last two minutes is the evidence.
+	# a player has to be able to say what killed them.
+	#
+	# **#34 changed the answer, which is the whole point of #34.** It used to be "ran dry, and
+	# then the Breakers took the Factory" — and the Breaker half of that was a rule a player
+	# could not see, because a Breaker never walked into the reach of the Turret they had built.
+	# Now a Breaker marches the lane under fire, the documented Factory holds its Machines
+	# through the whole Breaker tier with rounds to spare, and what ends the Run is the boss:
+	# three Siege Hulks that a Factory cannot answer **by design** (DESIGN.md — it outranges
+	# Turrets and its frontal armour leaves an MG doing 2) and a player on foot can.
+	#
+	# That is a nameable pressure in the strong sense: the Hulk walks in, halts and shells, the
+	# HUD draws where the shell will land, and the answer is the first-person pillar the game
+	# already ships. Asserted as "the tier arrived and Ammunition was not what ran out",
+	# because the exact figure belongs in CLAUDE.md.
 	var report: BalanceProbe.Report = _play("competent")
 	assert_true(report.shots_fired > 0, "the Turret was fed and fired")
+	assert_true(report.a_breaker_arrived, "the Breaker tier arrived")
 	assert_true(
-		report.dry_endgame_percent() >= BalanceProbe.DRY_ENDGAME_PERCENT,
-		"and ended with nothing to shoot: dry for %d%% of the endgame"
-		% report.dry_endgame_percent()
+		report.dry_endgame_percent() < BalanceProbe.DRY_ENDGAME_PERCENT,
+		"Ammunition was not what ran out: dry for %d%% of the endgame, %d rounds left"
+		% [report.dry_endgame_percent(), report.ammunition_in_the_factory]
 	)
-	assert_true(report.cause().contains("ran dry"), "named: %s" % report.cause())
+	# **And this is the assertion that says the Breaker tier was survived**, which is worth
+	# spelling out because it looks indirect. Heat is made by Machines that are working, so
+	# `siege_hulks.min_heat` of 6400 is unreachable for a Factory whose production line was
+	# eaten at 5200 — which is exactly the argument #26 set that number on. A Run that met the
+	# boss is a Run that still had five production Machines after the Breakers came, and before
+	# #34 no measured Run ever got there at all.
+	assert_true(
+		report.a_siege_hulk_arrived,
+		"and the boss did, which only a Factory that kept its line through the Breakers reaches"
+	)
+	assert_true(report.cause().contains("Siege Hulk"), "named: %s" % report.cause())
 
 
 func test_over_producing_is_a_visible_mistake() -> void:
@@ -208,10 +231,14 @@ func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void
 	# more is that it *costs* anything end to end.
 	#
 	# #26 measured a two-minute penalty. #30's collision moved the picket's open-loop stance
-	# and took it to 28 seconds. #35's shorter first Wave moved the whole Wave schedule's
-	# phase by a minute and the margin crossed zero: 26m52s against `competent`'s 26m42s, ten
-	# seconds the *other* way, and 27m03s on seed 11. CLAUDE.md wrote down in advance that
-	# this could flip and that the honest response would be to say what was measured.
+	# and took it to 28 seconds. #34's Breaker approach took it back out to 1m54s. #35's
+	# shorter first Wave moved the whole schedule's phase and, measured on its own branch,
+	# crossed zero — 26m52s against `competent`'s 26m42s, ten seconds the *other* way.
+	#
+	# **Merged, it is 46 seconds and back on the original side**: 28m02s against 28m48s. So
+	# the sign of this margin has now moved four times across four tickets without anything
+	# about the Ammunition economy changing, which is the finding. It is not a penalty with a
+	# value; it is phase noise in a schedule that other tickets keep re-phasing.
 	#
 	# So the claim this guards is the one the figures still support: a rifleman at the Nest is
 	# **neither free nor ruinous** — the fourth claimant costs about what it takes, within the

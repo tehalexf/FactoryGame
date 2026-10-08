@@ -738,6 +738,40 @@ breaker_damage = 60
 # How long between one Breaker's bites, in seconds.
 breaker_attack_interval_seconds = 1
 
+# How near a Breaker gets to the Nest — or to a Machine — before it breaks ranks and turns
+# on the Factory, in tiles along its route. #34's decision, and the one number it is made of.
+#
+# **A Breaker marches with the Wave and only then goes hunting.** It steers by the Nest's
+# own flowfield — the road every Crawler walks — until the field says the Nest is this many
+# tiles away, *or* until a Machine is, and from that tile on it steers by the field seeded
+# on the Machines. The switch latches: a Breaker that has broken ranks does not change its
+# mind, which is what stops it oscillating on the boundary as the two distances cross, and
+# is also the right thing to say about it — once it has chosen, it commits.
+#
+# The second half of the condition is what keeps the rule from saying something stupid on a
+# Factory built nowhere near its Nest: without it a Breaker would walk the length of the
+# line, past every Machine in it, to the Nest's doorstep, and then walk all the way back.
+# With it, a Breaker lunges at the first thing it can reach from the road it is on — which
+# is the more legible rule anyway, because it makes **what a player puts beside the lane**
+# the thing that gets eaten first, starting with the Turret standing in it.
+#
+# Why this exists at all: a Breaker that steered by the Factory from the moment it emerged
+# took whichever line was shortest to a Machine, which on a real Map is never the lane a
+# player fortified. A Turret covering the way in therefore never saw one — #26 measured the
+# documented opening Factory losing all five production Machines to a tier it had *no answer
+# to*, while the same build with its second Turret standing over the Factory instead lasted
+# nine minutes longer. That is a rule a player cannot see, and an unseeable rule is a trap
+# rather than a lesson. Now the threat arrives down the road it was always going to arrive
+# down, under fire the whole way, and turns on the Factory where a player can watch it happen.
+#
+# 8 tiles is 16 m, which is exactly `range_tiles` of the shipped MG Turret in
+# `content/machines.csv`. That is the coupling to keep if this number moves: the ground a
+# Breaker turns on has to be ground one Turret can cover, or the lane and the turn are two
+# defensive problems instead of one. Larger and a Breaker marches to the Nest's doorstep
+# before hunting, which reads as it ignoring the Factory; smaller and it breaks ranks out
+# past anything a player built, which is the trap this replaced.
+breaker_breaks_ranks_within_tiles = 8
+
 # How close an Enemy has to be to a player to bite them, in metres.
 #
 # A distance rather than tile contact, unlike everything else an Enemy bites. The Nest, a

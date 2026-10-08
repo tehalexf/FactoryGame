@@ -546,3 +546,65 @@ artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 """
+
+
+# ── The Telegraph says what is coming ─────────────────────────────────────────
+
+## A Wave of both kinds from a cold start, so one Telegraph has two tiers to name.
+const CRAWLERS_AND_BREAKERS: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,6,0,6
+shock_breakers,breaker,0,2,0,2
+"""
+
+
+func test_the_telegraph_says_which_kinds_are_coming_and_how_many() -> void:
+	# #34's other half. The geography fix makes a Breaker arrive down the road a player
+	# fortified; this is what lets them know it is a Breaker before it gets there. A warning
+	# that says only "a Wave" cannot teach anybody where to stand.
+	#
+	# Not a count of what is on the Map — that is `query_enemy_count` — but a projection of
+	# the Wave the Telegraph is for: every tier the Factory's Heat has reached, times every
+	# Breach it will come out of.
+	var sim: Simulation = Simulation.new(11, 1, _content(CRAWLERS_AND_BREAKERS), _layout())
+	sim.step([InputAction.call_wave_early(0)])
+	assert_true(sim.query_wave_is_telegraphed(), "the lever telegraphs immediately")
+
+	var crawlers: int = sim.query_telegraphed_wave_count_of_kind(EnemyKind.CRAWLER)
+	var breakers: int = sim.query_telegraphed_wave_count_of_kind(EnemyKind.BREAKER)
+	assert_eq(crawlers, 6, "six Crawlers announced")
+	assert_eq(breakers, 2, "and two Breakers")
+	assert_eq(
+		sim.query_telegraphed_wave_count_of_kind(EnemyKind.SIEGE_HULK),
+		0,
+		"and no tier the Heat has not reached"
+	)
+
+	# The projection is checked against what the Wave actually released, which is the only
+	# way for it to be a promise rather than a second opinion.
+	var arrived_crawlers: int = 0
+	var arrived_breakers: int = 0
+	var highest: int = 0
+	for tick: int in range(120 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
+		if sim.query_enemy_count() > highest:
+			for index: int in range(highest, sim.query_enemy_count()):
+				if sim.query_enemy_kind(index) == EnemyKind.CRAWLER:
+					arrived_crawlers += 1
+				elif sim.query_enemy_kind(index) == EnemyKind.BREAKER:
+					arrived_breakers += 1
+			highest = sim.query_enemy_count()
+		if sim.query_wave_number() > 1:
+			break
+	assert_eq(arrived_crawlers, crawlers, "exactly as many Crawlers came as were announced")
+	assert_eq(arrived_breakers, breakers, "and exactly as many Breakers")
+
+
+func test_nothing_is_announced_while_no_wave_is_telegraphed() -> void:
+	# A projection about a Wave that is not coming yet would be a HUD line a player learns to
+	# ignore. It reads zero until the Telegraph is up, which is what makes the line's presence
+	# the warning rather than its contents.
+	var sim: Simulation = Simulation.new(11, 1, _content(CRAWLERS_AND_BREAKERS), _layout())
+	sim.step([])
+	assert_false(sim.query_wave_is_telegraphed(), "nothing is coming yet")
+	assert_eq(sim.query_telegraphed_wave_count_of_kind(EnemyKind.CRAWLER), 0)
+	assert_eq(sim.query_telegraphed_wave_count_of_kind(EnemyKind.BREAKER), 0)

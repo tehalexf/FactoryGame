@@ -258,30 +258,40 @@ func test_a_device_reading_is_spent_exactly_once() -> void:
 	assert_eq(controller.sample_devices().mouse_motion, Vector2.ZERO, "and not a second time")
 
 
-func test_a_belt_key_lays_a_run_along_the_way_the_player_is_looking() -> void:
+func test_the_belt_key_and_a_dragged_click_lay_a_belt_through_the_whole_chain() -> void:
 	# Belts have no row in `content/machines.csv` and so cannot sit on the Build Gun's
-	# Machine list. Until the Belt routing UI arrives — DESIGN.md puts routing in a menu —
-	# one key lays a fixed-length run from the aimed tile along the player's facing, which
-	# is enough for a player to build the Miner-Belt-Smelter line by hand.
+	# Machine list — they are a **tool** on it instead. The Belt key swaps the tool, and the
+	# primary button then lays Belt: press, drag, release. This is that whole chain through
+	# the real input producer, which is what the smoke test is for; the shape of the route
+	# itself is `test_belt_routing.gd`.
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
 	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
 
-	var sample: PlayerController.DeviceSample = _sample()
-	sample.belt_clicked = true
-	sim.step(controller.actions_for_tick(sim, 0, sample))
+	var swapping: PlayerController.DeviceSample = _sample()
+	swapping.belt_clicked = true
+	sim.step(controller.actions_for_tick(sim, 0, swapping))
+	assert_true(sim.query_player_is_laying_belt(0), "the Belt tool is out")
+	assert_eq(sim.query_belt_count(), 0, "and the key itself laid nothing")
 
-	assert_eq(sim.query_belt_count(), 1, "a Belt was laid")
-	assert_eq(sim.query_belt_tile(0, 0), aimed, "starting at the tile the gun was aimed at")
-	assert_eq(
-		sim.query_belt_length_tiles(0),
-		PlayerController.BELT_RUN_TILES,
-		"and running the fixed length"
-	)
-	assert_eq(
-		sim.query_belt_direction(0),
-		WorldGrid.direction_from_turns(sim.query_player_yaw_turns(0)),
-		"along the way the player is facing"
+	var pressing: PlayerController.DeviceSample = _sample()
+	pressing.place_clicked = true
+	sim.step(controller.actions_for_tick(sim, 0, pressing))
+	assert_eq(sim.query_belt_count(), 0, "the press is the start of a drag, not a Belt")
+
+	# Drag by turning, which is how a player aims the far end of a route.
+	for tick: int in range(20):
+		sim.step(controller.actions_for_tick(sim, 0, _sample()))
+	var released_at: Vector3i = BuildGun.aimed_tile(sim, 0)
+
+	var releasing: PlayerController.DeviceSample = _sample()
+	releasing.primary_released = true
+	sim.step(controller.actions_for_tick(sim, 0, releasing))
+
+	assert_true(sim.query_belt_count() >= 1, "the release laid the route")
+	assert_eq(sim.query_belt_tile(0, 0), aimed, "Items enter where the press was")
+	assert_ne(
+		sim.query_belt_at_tile(released_at), -1, "and the route reaches where the drag ended"
 	)
 
 
@@ -317,9 +327,16 @@ func test_the_lever_key_is_an_edge_so_holding_it_does_not_call_a_wave_a_tick() -
 func test_demolishing_takes_a_belt_back_apart_too() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
-	var laying: PlayerController.DeviceSample = _sample()
-	laying.belt_clicked = true
-	sim.step(controller.actions_for_tick(sim, 0, laying))
+	var swapping: PlayerController.DeviceSample = _sample()
+	swapping.belt_clicked = true
+	sim.step(controller.actions_for_tick(sim, 0, swapping))
+	# A click with the Belt tool out — press and release in one tick — is one tile of Belt
+	# on the aimed tile, which is the shortest route there is and exactly what a demolish
+	# then wants to find.
+	var clicking: PlayerController.DeviceSample = _sample()
+	clicking.place_clicked = true
+	clicking.primary_released = true
+	sim.step(controller.actions_for_tick(sim, 0, clicking))
 	assert_eq(sim.query_belt_count(), 1, "the premise of the assertion below")
 
 	var wrecking: PlayerController.DeviceSample = _sample()
@@ -467,20 +484,23 @@ func test_the_holster_key_toggles_and_routes_the_same_tick() -> void:
 
 func test_belt_laying_lives_in_build_mode() -> void:
 	# `B` used to lay a Belt and is now the holster; the Belt moved to `KEY_BELT`, and it
-	# is only read with the Build Gun out, because routing a Belt is a build act.
+	# is only read with the Build Gun out, because routing a Belt is a build act. Since #36
+	# what the key does is swap the **tool** rather than stamp a run, so what this asserts
+	# is that the swap is a build-mode act too — a player holding a rifle has no use for the
+	# Belt tool, and would otherwise find the Build Gun holding it when they drew it.
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
 	var sample: PlayerController.DeviceSample = _sample()
 	sample.belt_clicked = true
 
 	assert_true(
-		_kinds(controller.actions_for_tick(sim, 0, sample)).has(InputAction.Kind.BUILD_BELT),
-		"with the Build Gun out, the key lays a Belt"
+		_kinds(controller.actions_for_tick(sim, 0, sample)).has(InputAction.Kind.SET_BUILD_TOOL),
+		"with the Build Gun out, the key swaps the tool"
 	)
 
 	sim.step([InputAction.set_build_mode(0, false)])
 	assert_false(
-		_kinds(controller.actions_for_tick(sim, 0, sample)).has(InputAction.Kind.BUILD_BELT),
+		_kinds(controller.actions_for_tick(sim, 0, sample)).has(InputAction.Kind.SET_BUILD_TOOL),
 		"with the weapon out, it does not"
 	)
 	assert_true(
@@ -491,32 +511,60 @@ func test_belt_laying_lives_in_build_mode() -> void:
 
 func test_every_build_act_goes_through_the_one_hand_rule() -> void:
 	# #35's second report — *"the hologram should not be placable in gun mode"* — covering
-	# all four build acts at once rather than only the two that had tests. It is the net
-	# under collapsing four inline readings of the mode into `BuildGun.hand_refusal`: the
-	# renderer, the panel and these four now ask one function, so there is no longer a
-	# version of this that can be fixed in one place and left wrong in another.
+	# every build act rather than only the two that had tests. It is the net under collapsing
+	# the inline readings of the mode into `BuildGun.hand_refusal`: the renderer, the panel
+	# and all of these now ask one function, so there is no longer a version of this that can
+	# be fixed in one place and left wrong in another.
+	#
+	# **One sample per act, not one sample with every flag set.** #36 gave the Build Gun two
+	# tools and made `belt_clicked` swap between them, so the flags are no longer independent:
+	# setting them all at once swaps to the Belt tool and the Machine click then correctly
+	# does nothing. Driving each act through the gesture that really produces it is both the
+	# honest test and the one that keeps meaning something the next time the scheme moves.
+	var acts: Array = [
+		["a Machine", InputAction.Kind.BUILD_MACHINE, "place_clicked"],
+		["a Wall", InputAction.Kind.BUILD_WALL, "wall_clicked"],
+		["a demolition", InputAction.Kind.DEMOLISH, "demolish_clicked"],
+		# The tool swap is a build act too: it is the Build Gun's own control, and a
+		# holstered gun has no tool to change.
+		["the tool swap", InputAction.Kind.SET_BUILD_TOOL, "belt_clicked"],
+	]
+
+	for act: Array in acts:
+		var sim: Simulation = Simulation.new(1, 1)
+		var controller: PlayerController = PlayerController.new()
+		var sample: PlayerController.DeviceSample = _sample()
+		sample.set(act[2] as String, true)
+
+		assert_true(
+			_kinds(controller.actions_for_tick(sim, 0, sample)).has(act[1] as int),
+			"%s happens with the Build Gun out" % act[0]
+		)
+		sim.step([InputAction.set_build_mode(0, false)])
+		assert_false(
+			_kinds(controller.actions_for_tick(sim, 0, sample)).has(act[1] as int),
+			"%s does not, with a rifle out" % act[0]
+		)
+
+	# A Belt route is the one act that is a *gesture* rather than a click: press, drag,
+	# release, with a press and a release in one tick being the one-tile case. So it needs the
+	# Belt tool on the gun first, which is a second tick either way.
 	var sim: Simulation = Simulation.new(1, 1)
 	var controller: PlayerController = PlayerController.new()
-	var sample: PlayerController.DeviceSample = _sample()
-	sample.place_clicked = true
-	sample.belt_clicked = true
-	sample.wall_clicked = true
-	sample.demolish_clicked = true
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var drag: PlayerController.DeviceSample = _sample()
+	drag.place_clicked = true
+	drag.primary_released = true
 
-	var builds: Array = [
-		InputAction.Kind.BUILD_MACHINE,
-		InputAction.Kind.BUILD_BELT,
-		InputAction.Kind.BUILD_WALL,
-		InputAction.Kind.DEMOLISH,
-	]
-	var with_the_gun: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
-	for kind: int in builds:
-		assert_true(with_the_gun.has(kind), "act %d happens with the Build Gun out" % kind)
-
+	assert_true(
+		_kinds(controller.actions_for_tick(sim, 0, drag)).has(InputAction.Kind.BUILD_BELT),
+		"a Belt route happens with the Build Gun out"
+	)
 	sim.step([InputAction.set_build_mode(0, false)])
-	var with_the_rifle: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
-	for kind: int in builds:
-		assert_false(with_the_rifle.has(kind), "act %d does not, with a rifle out" % kind)
+	assert_false(
+		_kinds(controller.actions_for_tick(sim, 0, drag)).has(InputAction.Kind.BUILD_BELT),
+		"a Belt route does not, with a rifle out"
+	)
 
 
 func test_holding_a_rifle_does_not_stop_a_player_building() -> void:

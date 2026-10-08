@@ -168,6 +168,14 @@ const HIT_HIVE: int = 2
 ## that has not happened, so the hologram can show the reason before the click rather
 ## than after it, and `_apply_build_machine` consults the same function so the two can
 ## never disagree.
+## The Machine tool: a click places what the Build Gun is holding. What a Run opens on.
+const BUILD_TOOL_MACHINE: int = 0
+
+## The Belt tool: a press, a drag and a release lay a Belt route. A Belt is not a Machine
+## and cannot sit on the Machine list, so it is a tool rather than one more position.
+const BUILD_TOOL_BELT: int = 1
+
+
 enum Refusal {
 	## Nothing in the way. The placement would succeed.
 	NONE = 0,
@@ -460,6 +468,15 @@ var _player_step_phase: PackedInt64Array = PackedInt64Array()
 ## over two numbers that are hashed anyway.
 var _player_build_mode: PackedInt64Array = PackedInt64Array()
 var _player_mode_since_tick: PackedInt64Array = PackedInt64Array()
+
+## Which tool is on each player's Build Gun: `BUILD_TOOL_MACHINE` or `BUILD_TOOL_BELT`.
+##
+## State here for the three reasons `_player_build_mode` is, and **consulted by nothing**
+## for the same reason: a tool decides what the mouse means, never what a player may do.
+## Grep this name and the only callers are its two queries, `_apply_set_build_tool` and
+## `_apply_select_machine` — which puts the Machine tool back, because scrolling to a
+## Smelter is a player saying they want to place one.
+var _player_build_tool: PackedInt64Array = PackedInt64Array()
 
 ## The throttle each player asked for this tick, in their own frame: forward and
 ## strafe, each in [-ONE, ONE].
@@ -929,6 +946,23 @@ var _enemy_spawn_tick: PackedInt64Array = PackedInt64Array()
 ## a player standing at its feet is a player stopping the bombardment, at the only price this
 ## game charges for anything.
 var _enemy_attack_cooldown: PackedInt64Array = PackedInt64Array()
+
+## Whether each Enemy has broken ranks: 1 once it steers by the Factory's field rather than
+## the Nest's, 0 while it is still marching with the Wave.
+##
+## **#34's latch, and the reason it is state rather than a predicate.** The switch is made on
+## how far the Nest and the nearest Machine are — `_flow_distance` and `_machine_flow_distance`
+## — and walking towards a Machine afterwards carries the Breaker *away* from the Nest again, so
+## a Breaker that re-decided every tick would cross back over the boundary on its first step and
+## shuffle on it for ever. Latching is both the fix and the better behaviour: a Breaker that has
+## chosen a Machine commits to it, which is what makes the turn something a player can watch
+## happen rather than a flicker. See `_breaker_has_broken_ranks` for the rule itself.
+##
+## Hashed, because it decides where an Enemy walks next, and therefore which Machine falls.
+## One entry per Enemy, every Enemy, no branch — a parallel array is parallel. It is 0 for ever
+## for a Crawler, whose two fields are the same field, and for a Siege Hulk, which steers by
+## the Nest's field by design and has its own clause in `_enemies`.
+var _enemy_broke_ranks: PackedInt64Array = PackedInt64Array()
 
 ## The point in fixed-point metres each Enemy is facing — the thing it last shelled, stomped or
 ## walked towards.
@@ -1434,6 +1468,9 @@ func _init(
 	# Never swapped, which is different from swapped on tick 0: a Run must not open with a
 	# holster animation playing for something nobody put away.
 	_player_mode_since_tick.fill(-1)
+	_player_build_tool.resize(players)
+	# The Machine tool, because the first thing a Run asks of a player is a Miner on a Node.
+	_player_build_tool.fill(BUILD_TOOL_MACHINE)
 	_player_intent_forward.resize(players)
 	_player_intent_strafe.resize(players)
 	_player_intent_forward.fill(0)
@@ -1617,6 +1654,8 @@ func _apply(action: InputAction) -> void:
 			_apply_jump(action)
 		InputAction.Kind.SET_BUILD_MODE:
 			_apply_set_build_mode(action)
+		InputAction.Kind.SET_BUILD_TOOL:
+			_apply_set_build_tool(action)
 		InputAction.Kind.SELECT_MACHINE:
 			_apply_select_machine(action)
 		InputAction.Kind.ROTATE_BUILD:
@@ -1720,6 +1759,24 @@ func _apply_set_build_mode(action: InputAction) -> void:
 		return
 	_player_build_mode[action.player_id] = wanted
 	_player_mode_since_tick[action.player_id] = _tick
+
+
+## Puts a tool on a player's Build Gun.
+##
+## Asking for the tool already in hand is a no-op whose hash does not move, so leaning on
+## the key is not an act. An unknown tool leaves the Build Gun holding what it held, for
+## the reason a `SELECT_MACHINE` naming no Machine does: a selection that silently became
+## "nothing" would leave a player clicking at nothing.
+##
+## `_player_can_act` is deliberately not consulted, exactly as `_apply_set_build_mode`
+## does not: what is in a player's hands changes nothing about the world.
+func _apply_set_build_tool(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	var wanted: int = action.build_tool_wanted()
+	if wanted != BUILD_TOOL_MACHINE and wanted != BUILD_TOOL_BELT:
+		return
+	_player_build_tool[action.player_id] = wanted
 
 
 ## Records whether a player is holding Survey View. Moving the camera is `_survey`'s
@@ -3135,6 +3192,7 @@ func _remove_enemy(index: int) -> void:
 	_enemy_health.remove_at(index)
 	_enemy_spawn_tick.remove_at(index)
 	_enemy_attack_cooldown.remove_at(index)
+	_enemy_broke_ranks.remove_at(index)
 	_enemy_face_x.remove_at(index)
 	_enemy_face_z.remove_at(index)
 	_forget_target(serial)
@@ -3263,6 +3321,10 @@ func _apply_select_machine(action: InputAction) -> void:
 	if definition == null:
 		return
 	_player_selected_machine[action.player_id] = definition.id
+	# Choosing a Machine is a player saying they want to place one, so it puts the Machine
+	# tool back in their hands. The alternative is a Belt mode they have to remember to
+	# leave, which is a mode in the sense this project does not have.
+	_player_build_tool[action.player_id] = BUILD_TOOL_MACHINE
 
 
 ## Turns a player's Build Gun by a signed number of quarter turns.
@@ -5267,30 +5329,52 @@ func _opening_stratagem() -> String:
 ## The run is stored as an anchor, a direction and a length rather than as a list of
 ## tiles, because that is three integers instead of a growing array and the tiles are
 ## recoverable from it exactly.
+## Lays the route a released drag asked for, or nothing at all.
+##
+## **The route is what crosses, and it lands whole or not at all.** A route half-laid up
+## to the first obstruction would be a player having to demolish what they did not ask
+## for, so the refusal is consulted over every tile of the route before the first Belt
+## appears. `_belt_route_refusal` is the same function `query_belt_route_refusal` reports
+## to the preview, which is what makes the red tiles a player saw and the Belts they got
+## one rule rather than two.
 func _apply_build_belt(action: InputAction) -> void:
 	var from_tile: Vector3i = action.belt_from_tile()
 	var to_tile: Vector3i = action.belt_to_tile()
+	var corner_axis: int = action.belt_corner_axis()
 
-	var direction: int = WorldGrid.direction_from_to(from_tile, to_tile)
-	if direction == -1:
+	if _belt_route_refusal(action.player_id, from_tile, to_tile, corner_axis) != Refusal.NONE:
 		return
 
-	var tiles: int = WorldGrid.tiles_between(from_tile, to_tile)
-	var step: Vector3i = WorldGrid.direction_step(direction)
-	for offset: int in range(tiles):
-		var tile: Vector3i = from_tile + step * offset
-		if not WorldGrid.is_buildable(tile):
-			return
-		if query_belt_at_tile(tile) != -1 or query_machine_at_tile(tile) != -1:
-			return
-		if query_wall_at_tile(tile) != -1:
-			return
-		if _nest_covers(tile):
-			return
+	for run: BeltRoute.Run in _belt_route_runs(action.player_id, from_tile, to_tile, corner_axis):
+		_lay_belt(run.from, run.direction, run.length_tiles())
 
-	_belt_tile_x.append(from_tile.x)
-	_belt_tile_y.append(from_tile.y)
-	_belt_tile_z.append(from_tile.z)
+
+## The runs a route breaks into, including the one-tile case a drag that never moved means.
+##
+## A one-tile Belt still has to be aimed and two identical tiles do not say which way, so
+## the aim is the player's own facing — authoritative fixed-point state the Simulation
+## already holds, read the same way by the apply and by the projection the preview asks, so
+## the preview cannot point one way and the Belt another.
+func _belt_route_runs(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> Array:
+	if from_tile == to_tile and _is_player(player_id):
+		return [
+			BeltRoute.Run.new(
+				from_tile,
+				from_tile,
+				WorldGrid.direction_from_turns(query_player_yaw_turns(player_id))
+			)
+		]
+	return BeltRoute.segments(from_tile, to_tile, corner_axis)
+
+
+## Stands one straight run of Belt up. The one place a Belt joins the Factory, so a route
+## of two runs cannot fall out of step with a route of one.
+func _lay_belt(entry: Vector3i, direction: int, tiles: int) -> void:
+	_belt_tile_x.append(entry.x)
+	_belt_tile_y.append(entry.y)
+	_belt_tile_z.append(entry.z)
 	_belt_direction.append(direction)
 	_belt_tiles.append(tiles)
 	_belt_item_ids.append(PackedStringArray())
@@ -5299,6 +5383,55 @@ func _apply_build_belt(action: InputAction) -> void:
 	# A new deck a player can stand on, and the one structure that changes the height field
 	# without changing either of the Enemies' fields.
 	_solid_height_stale = true
+
+
+## Why a dragged route would be refused, or `Refusal.NONE`.
+##
+## The single authority on whether a route may be laid, in the shape `_build_refusal`
+## already has: the apply obeys it and `query_belt_route_refusal` reports it, so what the
+## preview shows and what the drag does cannot disagree.
+##
+## The **first** obstruction in route order, so a player dragging a long line reads about
+## the tile nearest the end they started from rather than about whichever one the loop
+## happened to reach last.
+func _belt_route_refusal(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> int:
+	# A player who is Downed or dead is not building. **Still not a build mode** — nothing
+	# here asks whether building is currently permitted, it asks whether *this* player is
+	# on their feet, which is a fact about them in the same way their wallet is.
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
+
+	var runs: Array = _belt_route_runs(player_id, from_tile, to_tile, corner_axis)
+	if runs.is_empty():
+		# No route at all: two tiles on different layers. There are no diagonal Belts and
+		# no Belt between storeys (DESIGN.md), so this is the same answer an unreachable
+		# tile gets.
+		return Refusal.OFF_THE_MAP
+
+	for run: BeltRoute.Run in runs:
+		var step: Vector3i = WorldGrid.direction_step(run.direction)
+		for offset: int in range(run.length_tiles()):
+			var refusal: int = _belt_tile_refusal(run.from + step * offset)
+			if refusal != Refusal.NONE:
+				return refusal
+	return Refusal.NONE
+
+
+## Why one tile of a route would be refused, or `Refusal.NONE`. What the preview tints a
+## tile by, and what the whole-route refusal is the first non-`NONE` of.
+func _belt_tile_refusal(tile: Vector3i) -> int:
+	if not WorldGrid.is_buildable(tile):
+		return Refusal.OFF_THE_MAP
+	if query_belt_at_tile(tile) != -1 or query_machine_at_tile(tile) != -1:
+		return Refusal.OCCUPIED
+	if query_wall_at_tile(tile) != -1:
+		return Refusal.OCCUPIED
+	if _nest_covers(tile):
+		return Refusal.OCCUPIED
+	return Refusal.NONE
 
 
 ## Swaps in a new definition set, or refuses to.
@@ -6168,6 +6301,10 @@ func _spawn_enemy(kind: int, tile: Vector3i) -> void:
 	_enemy_health.append(health)
 	_enemy_spawn_tick.append(_tick)
 	_enemy_attack_cooldown.append(0)
+	# Marching, always. Even a Breaker emerging a tile from a Smelter starts on the Nest's
+	# field: where it breaks ranks is a fact about the Map and not about the Breach, and a
+	# Breaker that arrived already hunting would be the behaviour #34 replaced.
+	_enemy_broke_ranks.append(0)
 	# Facing the Nest, which is where everything on this Map is ultimately going. It matters
 	# for a Siege Hulk and for nothing else: a Hulk that arrived facing its own feet would have
 	# every direction count as behind it, so its armour would be missing for the walk in.
@@ -6330,6 +6467,11 @@ func _enemies() -> void:
 	# hitch in the middle of a Wave is not.
 	var nest_field: PackedInt64Array = _flowfield()
 	var factory_field: PackedInt64Array = _machine_flowfield()
+	# Swept with the two fields above and fresh for the same reason: how far the Nest is and
+	# how far the nearest Machine is, in whole tiles, which is what #34's perimeter is
+	# compared against.
+	var nest_distance: PackedInt64Array = _flow_distance
+	var factory_distance: PackedInt64Array = _machine_flow_distance
 
 	for index: int in range(query_enemy_count()):
 		# An Enemy does not act on the tick it came through its Breach, for the reason a
@@ -6344,15 +6486,87 @@ func _enemies() -> void:
 		if kind == EnemyKind.SIEGE_HULK:
 			_siege_hulk(index, nest_field)
 			continue
-		# A Breaker steers by the Factory and a Crawler by the Nest. Falling back on the
-		# other way round is `_enemy_direction`'s job, so the field an Enemy *moves* by and
-		# the field it decides whether it is cornered by are the same field.
-		var field: PackedInt64Array = (
-			factory_field if kind == EnemyKind.BREAKER else nest_field
-		)
+		# **A Breaker marches with the Wave and then goes hunting (#34).** It steers by the
+		# Nest's field — the road every Crawler walks, and the road a player fortifies —
+		# until it is inside `enemy.breaker_breaks_ranks_within_tiles` of the Nest or of a
+		# Machine, and by the Factory's field from that tile on. A Crawler steers by the
+		# Nest's throughout. Falling back from one field onto the other is
+		# `_enemy_direction`'s job, so the field an Enemy *moves* by and the field it decides
+		# whether it is cornered by are the same field.
+		var field: PackedInt64Array = nest_field
+		if kind == EnemyKind.BREAKER:
+			if _breaker_has_broken_ranks(index, nest_distance, factory_distance):
+				field = factory_field
 		if _enemy_bites(index, kind, field, nest_field):
 			continue
 		_advance_enemy(index, field, nest_field, _enemy_step_metres(kind))
+
+
+## Whether a Breaker is hunting the Factory yet, latching it the tick it starts.
+##
+## **One sentence of rule: a Breaker marches with the Wave until it is within
+## `enemy.breaker_breaks_ranks_within_tiles` of either the Nest or a Machine, and hunts from
+## then on.** Two clauses, and both of them are needed:
+##
+## 1. **Within reach of the Nest.** The normal case, and the whole of #34. A Factory is built
+##    around its Nest, so coming inside the Nest's perimeter is coming inside the Factory — and
+##    it means the Breaker walks the *Wave's* road to get there, which is the road a player
+##    fortifies. Before this it took whichever line was shortest to a Machine, so a Turret
+##    covering the way in never saw one.
+## 2. **Within reach of a Machine.** Without it the rule says something stupid on a Map whose
+##    Factory is nowhere near its Nest: a Breaker would walk the length of the Factory, past
+##    every Machine in it, to the Nest's doorstep, and then walk all the way back. With it, a
+##    Breaker lunges at the first thing it can reach from the road it is on — which is also the
+##    more legible rule, because it makes *what a player puts beside the lane* the thing that
+##    gets eaten first.
+##
+## **Two reads of fields that are already built, and no third field.** `_flow_distance` and
+## `_machine_flow_distance` hold the exact four-connected tile count from every tile to the
+## Nest's footprint and to the nearest Machine, and both are swept already — so "is either of
+## them at hand" is two array lookups and two integer comparisons. No distance, no square root,
+## no rebuild. And a tile count means tiles of *walking*: a Machine behind a Wall is as far away
+## as the detour round it.
+##
+## Latched, because the quantities it is decided on move the wrong way afterwards: a Breaker
+## that has turned on a Machine is walking *away* from the Nest, so re-deciding every tick
+## would send it back across the boundary on its first step and leave it shuffling there.
+## Latching also says the right thing about a Breaker — once it has chosen, it commits, and the
+## turn is something a player can watch happen.
+##
+## A tile neither sweep reached — inside an obstruction, or ground walled off from both — carries
+## no distance and keeps the Breaker marching, because "unreachable" is not "at hand".
+##
+## Takes the distance arrays rather than reading the fields itself, for the reason `_enemies`
+## resolves both of them once for the whole tick: a rebuild inside the Enemy loop would make
+## the tick O(Enemies x map).
+func _breaker_has_broken_ranks(
+	index: int, nest_distance: PackedInt64Array, factory_distance: PackedInt64Array
+) -> bool:
+	if _enemy_broke_ranks[index] == 1:
+		return true
+	var perimeter: int = _definitions.breaker_breaks_ranks_within_tiles
+	if perimeter <= 0:
+		return false
+	var cell: int = _field_index(WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index]))
+	if cell == -1:
+		return false
+	var at_hand: bool = (
+		_within_field_reach(cell, nest_distance, perimeter)
+		or _within_field_reach(cell, factory_distance, perimeter)
+	)
+	if not at_hand:
+		return false
+	_enemy_broke_ranks[index] = 1
+	return true
+
+
+## Whether a swept field puts a cell's destination inside `tiles` steps of walking. False for a
+## cell the sweep never reached, which is what keeps "unreachable" from reading as "at hand".
+func _within_field_reach(cell: int, distance: PackedInt64Array, tiles: int) -> bool:
+	if cell >= distance.size():
+		return false
+	var steps: int = distance[cell]
+	return steps >= 0 and steps <= tiles
 
 
 ## Lets one Enemy bite whatever it is in contact with, and reports whether this tick was
@@ -7366,6 +7580,9 @@ func hash() -> int:
 	# anything consults it for permission. See `_player_build_mode`.
 	hasher.feed_ints(_player_build_mode)
 	hasher.feed_ints(_player_mode_since_tick)
+	# Which tool is out, for the reason the mode is: a replay has to reproduce the swap, or
+	# every drag after it means something different.
+	hasher.feed_ints(_player_build_tool)
 	hasher.feed_ints(_player_survey_held)
 	hasher.feed_ints(_player_sprint_held)
 	hasher.feed_ints(_player_survey_ticks)
@@ -7464,6 +7681,9 @@ func hash() -> int:
 	hasher.feed_ints(_enemy_health)
 	hasher.feed_ints(_enemy_spawn_tick)
 	hasher.feed_ints(_enemy_attack_cooldown)
+	# Which Enemies have broken ranks. Hashed because it decides which of the two fields an
+	# Enemy steers by from here on, and therefore which Machine falls next.
+	hasher.feed_ints(_enemy_broke_ranks)
 	# Which way every Enemy is facing. Hashed because it decides how much damage the *next*
 	# hit does: a Siege Hulk's armour is a function of this and of where the shooter stands, so
 	# two clients that disagreed about it would disagree about how long the boss lives.
@@ -7853,6 +8073,22 @@ func query_player_is_in_build_mode(player_id: int) -> bool:
 	if not _is_player(player_id):
 		return false
 	return _player_build_mode[player_id] != 0
+
+
+## Which tool is on a player's Build Gun: `BUILD_TOOL_MACHINE` or `BUILD_TOOL_BELT`.
+##
+## **Read by `game/player_controller.gd` to decide what the primary button means, and by
+## nothing in the Simulation.** The Machine tool for a player this Run does not have, so a
+## caller that asks about nobody is told about the ordinary case rather than crashing.
+func query_player_build_tool(player_id: int) -> int:
+	if not _is_player(player_id):
+		return BUILD_TOOL_MACHINE
+	return _player_build_tool[player_id]
+
+
+## Whether a player has the Belt tool out — the one the preview and the HUD actually ask.
+func query_player_is_laying_belt(player_id: int) -> bool:
+	return query_player_build_tool(player_id) == BUILD_TOOL_BELT
 
 
 ## How far the thing in a player's hands is out of frame, in [0, Fixed.ONE] — 0 at rest, 1
@@ -9010,6 +9246,37 @@ func query_telegraph_ticks() -> int:
 	return _telegraph_ticks()
 
 
+## How many Enemies of a kind the Wave now being telegraphed will release, across every
+## Breach — or 0 when no Telegraph is showing.
+##
+## **The legible half of #34.** A Breaker now arrives down the same road as everything else
+## and turns on the Factory when it gets there, which is a lesson only if a player knows a
+## Breaker is in the Wave *before* it is standing in their Smelter. So the warning names its
+## tiers: six Crawlers and two Breakers is a different thing to stand somewhere for than
+## eight Crawlers, and a Telegraph that said only "a Wave" could never have taught that.
+##
+## A **projection and not state**, which is why it reads off the definition set and the Heat
+## rather than off `_wave_queue_kind`: that queue does not exist until `_begin_a_wave` composes
+## it, and composing it early would be the Wave arriving. The number is therefore a promise
+## about the Heat as it stands, and the Wave the Factory actually gets is composed from the
+## Heat at the moment it *lands* — so a line that switches on during the Telegraph can still
+## buy one more Crawler, which is the bet #12 is about and is correct to leave visible.
+##
+## Times every Breach, because `_release_from_the_breaches` releases one per Breach: a Map a
+## player has dug two holes in is attacked through both, and a warning that did not say so
+## would under-report by half.
+func query_telegraphed_wave_count_of_kind(kind: int) -> int:
+	if not query_wave_is_telegraphed():
+		return 0
+	var count: int = 0
+	for index: int in range(_definitions.wave_entry_count()):
+		var entry: WaveEntry = _definitions.wave_entry_at(index)
+		if entry == null or entry.enemy_kind != kind:
+			continue
+		count += entry.count_at_heat(_heat)
+	return count * query_breach_count()
+
+
 ## Whether the Wave now being telegraphed was called by a player rather than by the clock.
 ## Worth drawing: a called Wave is a decision somebody in the Factory made, and in co-op
 ## the other three deserve to know it was made rather than merely that a Wave is coming.
@@ -9397,6 +9664,22 @@ func query_enemy_is_bombarding(index: int) -> bool:
 	return _bombardment_target(index).x != BOMBARD_NOTHING
 
 
+## Whether an Enemy has broken ranks — stopped marching on the Nest and turned on the Factory.
+##
+## True only of a Breaker, and only once it has come inside
+## `enemy.breaker_breaks_ranks_within_tiles` of the Nest (#34). A Crawler never breaks ranks
+## and neither does a Siege Hulk, so this is also the predicate a renderer asks to tell the
+## threat to the Factory apart from the threat to the Nest *while it is still walking*.
+##
+## A pure read. Which Breakers have broken ranks is decided once a tick in `_enemies`, before
+## anything is asked, for the reason `_aim` is the only thing that acquires: a query that
+## latched would move the state hash by being asked a question.
+func query_enemy_has_broken_ranks(index: int) -> bool:
+	if not _is_enemy(index):
+		return false
+	return _enemy_broke_ranks[index] == 1
+
+
 ## Ticks until a Siege Hulk's next shell or stomp. One counter for both, which is why standing
 ## at its feet stops the bombardment.
 func query_enemy_attack_ticks_remaining(index: int) -> int:
@@ -9704,6 +9987,81 @@ func query_belt_length_tiles(index: int) -> int:
 	if not _is_belt(index):
 		return 0
 	return _belt_tiles[index]
+
+
+## Why the route a player is dragging would be refused, or `Refusal.NONE`.
+##
+## A projection of state that has not changed, in the shape `query_build_refusal` already
+## has: asking costs nothing and changes nothing, which is what lets the preview ask every
+## frame about a route nobody has committed to and put the reason on screen **before** the
+## drag is released. `_apply_build_belt` consults the same function, so the route a player
+## was told was clear is the route that lands.
+func query_belt_route_refusal(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> int:
+	return _belt_route_refusal(player_id, from_tile, to_tile, corner_axis)
+
+
+## Why one tile of a route would be refused, or `Refusal.NONE`. What the preview tints each
+## tile by, so the obstruction is marked where it is rather than described in a line of text
+## somewhere else.
+func query_belt_tile_refusal(tile: Vector3i) -> int:
+	return _belt_tile_refusal(tile)
+
+
+## Whether a Belt's far end leads anywhere goods can go: a Machine's footprint, the Nest's,
+## or the entry tile of another Belt.
+##
+## **The geometry half of `_hand_off`, with the fullness left out.** A Belt into a Machine
+## whose input buffer happens to be full is connected and backing up, which is a different
+## thing a player wants to read differently — `query_belt_is_stalled` is that one. Asked every
+## frame and remembering nothing, because there is no stored connection to go stale: Belts
+## connect by adjacency and nothing else, so demolishing what a Belt fed makes it dangle on
+## the next frame with no bookkeeping anywhere.
+func query_belt_end_is_connected(index: int) -> bool:
+	if not _is_belt(index):
+		return false
+	var beyond: Vector3i = (
+		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
+	)
+	if query_machine_at_tile(beyond) != -1:
+		return true
+	if _nest_covers(beyond):
+		return true
+	return _belt_entered_at(beyond) != -1
+
+
+## Whether anything is loading a Belt at its entry: a Machine output port behind it, or
+## another Belt handing Items on.
+##
+## The geometry half of `_load_from_port`, in the shape above and for the same reason. A Belt
+## nothing feeds is the commonest mistake a new player makes — it is laid the right length,
+## pointed the right way, and starts one tile too far from the Machine — and it is invisible
+## without this.
+func query_belt_start_is_fed(index: int) -> bool:
+	if not _is_belt(index):
+		return false
+	var behind: Vector3i = (
+		_belt_entry_tile(index) - WorldGrid.direction_step(_belt_direction[index])
+	)
+	if query_machine_at_tile(behind) != -1:
+		return true
+	var upstream: int = _belt_at_tile_feeding(_belt_entry_tile(index))
+	return upstream != -1
+
+
+## The Belt, if any, whose far end hands Items onto the tile given. The reverse of
+## `_belt_downstream`, walked rather than stored for the reason nothing else here is stored.
+func _belt_at_tile_feeding(tile: Vector3i) -> int:
+	for index: int in range(query_belt_count()):
+		if _belt_covers(index, tile):
+			continue
+		if (
+			_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
+			== tile
+		):
+			return index
+	return -1
 
 
 ## Which way a Belt carries, as a `WorldGrid` direction. -1 for an unknown Belt.

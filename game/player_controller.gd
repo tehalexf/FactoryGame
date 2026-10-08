@@ -52,8 +52,15 @@ const KEY_JUMP: Key = KEY_SPACE
 ## (GLOSSARY.md, DESIGN.md).
 const KEY_BUILD_MODE: Key = KEY_B
 
-## Laying a Belt. **Moved off `B`**, which is now the holster, and it belongs here anyway:
-## Belt routing is a build act and lives in build mode, which is where this key is read.
+## Putting the Belt tool on the Build Gun, and taking it back off. **Moved off `B`**, which
+## is now the holster, and it belongs here anyway: Belt routing is a build act and lives in
+## build mode, which is where this key is read.
+##
+## **It no longer lays anything.** Before #36 one press stamped a fixed four-tile run from
+## the aimed tile along the player's facing, which the code called a stopgap and was: there
+## was no dragging, no routing, no corner and no preview. What it does now is swap the
+## **tool**, and the primary button is what lays Belt — press, drag, release. An edge and a
+## toggle, like the holster: one press is one swap.
 const KEY_BELT: Key = KEY_C
 
 ## One tile of Wall on the aimed tile. An edge, like the Belt key: one press is one Wall.
@@ -84,6 +91,34 @@ const KEY_WEAPON_FIRST: Key = KEY_1
 ## How many weapon keys there are. Three because `KEY_1` to `KEY_3` is what a hand reaches
 ## without looking; a fifth weapon would want the Gear menu rather than `KEY_5`.
 const WEAPON_KEY_COUNT: int = 3
+
+## **The number row reads both ways, and which one it means is what the hand decides.**
+##
+## With the Build Gun out, `1` to `9` and `0` put the first ten Machines on it — the Machine
+## picker along the bottom of the screen is that row, with the key printed on each cell. With
+## the weapon out, the same keys are the weapon and Gear-slot keys below.
+##
+## That is the arrangement the primary button already has: `sample_devices` cannot know which
+## mode anybody is in, so it records the *digit*, and `actions_for_tick` decides what it
+## meant. Machine selection used to be blind mouse-wheeling through a list; the wheel still
+## works and always will, and this is the way to reach a Machine without hunting for it.
+##
+## Ten, because the shipped Machine list is ten long and ten is as many as a hand reaches
+## without looking. An eleventh Machine is a scroll away, which is where every Machine was.
+const PICK_KEY_COUNT: int = 10
+
+## The tenth picker key, which is `0` rather than a tenth digit: the row runs `1` to `9` and
+## then wraps to the key at the end of it, the way every hotbar has since Doom.
+const KEY_PICK_TENTH: Key = KEY_0
+
+## Showing the rest of the HUD. Gathered here with the rest so the rebinding ticket has one
+## file to change, and deliberately **not** read by `sample_devices` — `Main._input` handles
+## it where it handles Escape and the save keys.
+##
+## Not an Input Action, for the reason saving is not one: it does nothing to the Run, it
+## leaves the hash where it was, and a replay has nothing to reproduce. What it changes is
+## how much of what the HUD could say is on the screen.
+const KEY_HUD_DETAIL: Key = KEY_H
 
 ## The slot keys. One per interned Gear slot, in the sorted order the table interns them
 ## in, each cycling through the components that fit it — so `KEY_4` is the first slot,
@@ -202,15 +237,6 @@ const KEY_PAINT: Key = KEY_P
 const KEY_SAVE: Key = KEY_F5
 const KEY_LOAD: Key = KEY_F9
 
-## How many tiles of Belt one press lays.
-##
-## Belts have no row in `content/machines.csv` — a Belt is not a Machine, and GLOSSARY.md
-## keeps the two apart — so they cannot sit on the Build Gun's Machine list. Until the Belt
-## routing UI arrives, and DESIGN.md puts routing in a menu rather than in the world, one
-## key lays a fixed run from the aimed tile along the player's facing. Four tiles: long
-## enough that a line is a few presses rather than a dozen, short enough to aim.
-const BELT_RUN_TILES: int = 4
-
 ## **The primary button does both, and which one it does is what build mode decides.** In
 ## build mode a click places what is on the Build Gun; in combat mode holding it fires.
 ## That is what the player asked for, and it is why there is a holster key at all — #15 put
@@ -249,9 +275,14 @@ class DeviceSample extends RefCounted:
 	var jump_held: bool = false
 	## Edges, not held states: one click is one Machine, not one a tick.
 	var place_clicked: bool = false
+	## The primary button coming back *up*. The other end of a drag: with the Belt tool out
+	## the press anchors a route and this is what commits it, so a drag is two edges of one
+	## button rather than a held state. With the Machine tool out it means nothing at all.
+	var primary_released: bool = false
 	## One press is one swap of what is in the player's hands.
 	var build_mode_clicked: bool = false
 	var demolish_clicked: bool = false
+	## One press is one swap of the tool on the Build Gun, Machine for Belt or back.
 	var belt_clicked: bool = false
 	var call_wave_clicked: bool = false
 	var deliver_clicked: bool = false
@@ -273,6 +304,12 @@ class DeviceSample extends RefCounted:
 	## Which weapon frame was asked for this tick, as an index into the definition set's
 	## weapon frames, or -1. An edge: one press is one swap.
 	var weapon_chosen: int = -1
+	## Which cell of the Machine picker was asked for this tick, as an index into the
+	## definition set's Machines, or -1. An edge, and **the same keypresses `weapon_chosen`
+	## and `slot_cycled` carry**: the polling cannot know which hand the player is in, so it
+	## records all three readings and `actions_for_tick` picks. The primary button's two
+	## readings are the same arrangement.
+	var machine_picked: int = -1
 	## Which Gear slot's component was cycled this tick, as a slot index, or -1. An edge.
 	var slot_cycled: int = -1
 	## Signed quarter turns of hologram rotation asked for this tick.
@@ -287,6 +324,7 @@ var _unsent_mouse_motion: Vector2 = Vector2.ZERO
 var _unsent_rotate_steps: int = 0
 var _unsent_machine_steps: int = 0
 var _place_clicked: bool = false
+var _place_released: bool = false
 var _build_mode_clicked: bool = false
 var _sprint_clicked: bool = false
 var _demolish_clicked: bool = false
@@ -297,9 +335,25 @@ var _withdraw_clicked: bool = false
 var _wall_clicked: bool = false
 var _weapon_chosen: int = -1
 var _slot_cycled: int = -1
+var _machine_picked: int = -1
 var _silo_shell_cycled: bool = false
 var _silo_charges_cycled: bool = false
 var _load_silo_clicked: bool = false
+
+## The drag in flight: where the primary button went down with the Belt tool out, whether
+## it is still down, and how many times the player has flipped the corner since.
+##
+## **The same category of thing as the mouse buffer and the sprint latch** — a reading on
+## its way in, not a fact about the world. Nothing authoritative is here: the route is
+## *decided* on release, it crosses as one `BUILD_BELT` intent, and the Simulation is the
+## only thing that knows a Belt was laid. A replay reproduces the route without reproducing
+## the drag, which is the same bargain the sprint latch strikes.
+##
+## Abandoned the moment the Belt tool leaves the player's hands, because a drag whose tool
+## is gone is a drag the player changed their mind about.
+var _belt_dragging: bool = false
+var _belt_drag_anchor: Vector3i = Vector3i.ZERO
+var _belt_corner_flips: int = 0
 
 ## Whether a toggled sprint is currently latched on. Only read when
 ## `player.sprint_is_toggle` is true; see `_sprinting`, which is where the whole argument
@@ -319,6 +373,9 @@ func note_event(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var button: InputEventMouseButton = event
 		if not button.pressed:
+			# The only release this layer reads, and it is the other end of a Belt drag.
+			if button.button_index == BUTTON_PRIMARY:
+				_place_released = true
 			return
 		match button.button_index:
 			BUTTON_PRIMARY:
@@ -362,6 +419,12 @@ func note_event(event: InputEvent) -> void:
 				_weapon_chosen = key.keycode - KEY_WEAPON_FIRST
 			elif key.keycode >= KEY_SLOT_FIRST and key.keycode < KEY_SLOT_FIRST + SLOT_KEY_COUNT:
 				_slot_cycled = key.keycode - KEY_SLOT_FIRST
+			# The second reading of the number row, recorded whatever the first one made of
+			# it, because the polling must not know which hand the player is in.
+			if key.keycode == KEY_PICK_TENTH:
+				_machine_picked = PICK_KEY_COUNT - 1
+			elif key.keycode >= KEY_1 and key.keycode < KEY_1 + PICK_KEY_COUNT - 1:
+				_machine_picked = key.keycode - KEY_1
 
 
 ## Reads the devices for one tick and drains the buffer, so nothing is spent twice.
@@ -394,6 +457,7 @@ func sample_devices() -> DeviceSample:
 	sample.rotate_steps = _unsent_rotate_steps
 	sample.machine_steps = _unsent_machine_steps
 	sample.place_clicked = _place_clicked
+	sample.primary_released = _place_released
 	sample.build_mode_clicked = _build_mode_clicked
 	sample.sprint_clicked = _sprint_clicked
 	sample.demolish_clicked = _demolish_clicked
@@ -404,6 +468,7 @@ func sample_devices() -> DeviceSample:
 	sample.wall_clicked = _wall_clicked
 	sample.weapon_chosen = _weapon_chosen
 	sample.slot_cycled = _slot_cycled
+	sample.machine_picked = _machine_picked
 	sample.silo_shell_cycled = _silo_shell_cycled
 	sample.silo_charges_cycled = _silo_charges_cycled
 	sample.load_silo_clicked = _load_silo_clicked
@@ -412,6 +477,7 @@ func sample_devices() -> DeviceSample:
 	_unsent_rotate_steps = 0
 	_unsent_machine_steps = 0
 	_place_clicked = false
+	_place_released = false
 	_build_mode_clicked = false
 	_sprint_clicked = false
 	_demolish_clicked = false
@@ -422,6 +488,7 @@ func sample_devices() -> DeviceSample:
 	_wall_clicked = false
 	_weapon_chosen = -1
 	_slot_cycled = -1
+	_machine_picked = -1
 	_silo_shell_cycled = false
 	_silo_charges_cycled = false
 	_load_silo_clicked = false
@@ -453,6 +520,19 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 		in_build_mode = not in_build_mode
 		actions.append(InputAction.set_build_mode(player_id, in_build_mode))
 
+	# **Whether the Build Gun is in hand, asked once, through the rule the renderer
+	# also asks.** #35's playtest found the hologram drawn and green over a click that
+	# did nothing: every build act below tested `in_build_mode` inline and
+	# `_sync_hologram` tested something else, which is exactly the disagreement
+	# `query_build_refusal` exists to prevent. `BuildGun.hand_refusal` is now the one
+	# answer and both sides read it.
+	#
+	# It is resolved here, beside the holster and ahead of the tool, because every act
+	# in this function that needs it needs the mode the player will be in once *this*
+	# tick's `B` has applied — the same rule that makes a scroll-and-click place what
+	# the player scrolled to.
+	var gun_in_hand: bool = BuildGun.hand_refusal(in_build_mode) == Simulation.Refusal.NONE
+
 	if sample.mouse_motion != Vector2.ZERO:
 		actions.append(
 			InputAction.look(
@@ -462,30 +542,63 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			)
 		)
 
+	# **Which tool is on the Build Gun, resolved before anything that depends on it**, for
+	# the reason the holster is resolved first: a player who presses the Belt key and clicks
+	# in the same tick gets the act of the tool they are swapping *to*.
+	var build_tool: int = sim.query_player_build_tool(player_id)
+	if sample.belt_clicked and gun_in_hand:
+		build_tool = (
+			Simulation.BUILD_TOOL_MACHINE if build_tool == Simulation.BUILD_TOOL_BELT
+			else Simulation.BUILD_TOOL_BELT
+		)
+		actions.append(InputAction.set_build_tool(player_id, build_tool))
+
+	# The number row, with the Build Gun out. Before the wheel and before the click, so a
+	# player who presses a key and clicks in one tick places what they pressed — the rule
+	# that already makes a scroll-and-click place what the player scrolled to.
+	if (
+		sample.machine_picked != -1
+		and gun_in_hand
+		and sample.machine_picked < sim.query_definitions().machine_count()
+	):
+		actions.append(InputAction.select_machine(player_id, sample.machine_picked))
+		build_tool = Simulation.BUILD_TOOL_MACHINE
+
 	if sample.machine_steps != 0:
 		var chosen: int = _stepped_machine(sim, player_id, sample.machine_steps)
 		if chosen != -1:
 			actions.append(InputAction.select_machine(player_id, chosen))
+			# Choosing a Machine is the Simulation's way of putting the Machine tool back,
+			# so the reading used for the rest of this tick follows it.
+			build_tool = Simulation.BUILD_TOOL_MACHINE
+
+	# A drag whose tool has left the player's hands is a drag they changed their mind
+	# about. Dropped here rather than refused later, because an intent nobody is still
+	# asking for should never cross at all.
+	if build_tool != Simulation.BUILD_TOOL_BELT:
+		_belt_dragging = false
 
 	if sample.rotate_steps != 0:
-		actions.append(InputAction.rotate_build(player_id, sample.rotate_steps))
+		if build_tool == Simulation.BUILD_TOOL_BELT:
+			# There is no hologram to turn with the Belt tool out, and the one thing about a
+			# route a player chooses is which way it bends. The same button therefore does
+			# the one useful thing in each hand — a tool deciding what the mouse means,
+			# which is the only kind of mode this project has.
+			_belt_corner_flips += sample.rotate_steps
+		else:
+			actions.append(InputAction.rotate_build(player_id, sample.rotate_steps))
 
 	# **The four build acts, routed by what is in the player's hands.** A click with the
 	# Build Gun out places; the same click with the weapon out fires, further down. Nothing
 	# is being *forbidden* here and the Simulation has no opinion on any of it — this is one
 	# button producing one of two intents, which is the whole of what build mode is.
 	#
-	# The rule itself is `BuildGun.hand_refusal` rather than four readings of
-	# `in_build_mode`, because #35's playtest found the renderer drawing a green hologram
-	# while these branches were quietly producing nothing: four checks here and none there
-	# is exactly the disagreement `query_build_refusal` exists to prevent. The mode the
-	# player will be in once *this* tick's `B` has applied is what is passed, which is the
-	# same rule that makes a scroll-and-click place what the player scrolled to.
-	var gun_in_hand: bool = (
-		BuildGun.hand_refusal(in_build_mode) == Simulation.Refusal.NONE
-	)
-
-	if sample.place_clicked and gun_in_hand:
+	# **The hand and the tool are two questions and both are asked.** `gun_in_hand` is
+	# whether the Build Gun is out at all, through the one rule `_sync_hologram` reads;
+	# `build_tool` is which tool #36 put on it. A click builds a Machine when the gun is
+	# in hand *and* the Machine tool is on it, and the two compose rather than one
+	# standing in for the other.
+	if sample.place_clicked and gun_in_hand and build_tool == Simulation.BUILD_TOOL_MACHINE:
 		# The rotation the player will be holding once this tick's rotate has applied,
 		# so rotating and placing in the same tick places the Machine they can see.
 		var rotation: int = WorldGrid.wrap_rotation(
@@ -500,17 +613,32 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			)
 		)
 
-	if sample.belt_clicked and gun_in_hand:
-		var entry: Vector3i = BuildGun.aimed_tile(sim, player_id)
-		# The direction comes from the yaw the *Simulation* is holding, rounded to the
-		# nearest of the grid's four, so there is no second opinion about which way the
-		# player is looking.
-		var step: Vector3i = WorldGrid.direction_step(
-			WorldGrid.direction_from_turns(sim.query_player_yaw_turns(player_id))
-		)
-		actions.append(
-			InputAction.build_belt(player_id, entry, entry + step * (BELT_RUN_TILES - 1))
-		)
+	# **Press, drag, release.** The press anchors and commits nothing; the release decides
+	# the route and sends it as one intent. A press and a release in the same tick is a
+	# click, which is one tile of Belt — so the cheap act and the considered one are the
+	# same gesture at two speeds.
+	#
+	# #35's single-key Belt run is gone and that is #36's doing, not a casualty of this
+	# merge: `belt_clicked` now swaps the tool rather than laying a fixed run, and the
+	# route a player drags is strictly more than the four tiles straight ahead it
+	# replaced. What #35 contributes here is the hand: `gun_in_hand` in place of the
+	# inline `in_build_mode`, so a holstered player cannot start a drag the hologram is
+	# not drawing.
+	if build_tool == Simulation.BUILD_TOOL_BELT and gun_in_hand:
+		if sample.place_clicked:
+			_belt_dragging = true
+			_belt_drag_anchor = BuildGun.aimed_tile(sim, player_id)
+			_belt_corner_flips = 0
+		if sample.primary_released and _belt_dragging:
+			actions.append(
+				InputAction.build_belt_route(
+					player_id,
+					_belt_drag_anchor,
+					BuildGun.aimed_tile(sim, player_id),
+					belt_corner_axis(sim, player_id)
+				)
+			)
+			_belt_dragging = false
 
 	if sample.wall_clicked and gun_in_hand:
 		actions.append(InputAction.build_wall(player_id, BuildGun.aimed_tile(sim, player_id)))
@@ -530,12 +658,12 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 
 	# Gear comes before the trigger, so a player who swaps and shoots in one tick shoots
 	# what they swapped to — the same rule that puts `select_machine` before `build_machine`.
-	if sample.weapon_chosen != -1:
+	if sample.weapon_chosen != -1 and not in_build_mode:
 		var weapon: int = sim.query_definitions().weapon_gear_index(sample.weapon_chosen)
 		if weapon != -1:
 			actions.append(InputAction.equip_weapon(player_id, weapon))
 
-	if sample.slot_cycled != -1:
+	if sample.slot_cycled != -1 and not in_build_mode:
 		var next_component: int = _next_component(sim, player_id, sample.slot_cycled)
 		if next_component != -2:
 			actions.append(
@@ -639,6 +767,34 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	actions.append(InputAction.sprint(player_id, _sprinting(sim, player_id, sample)))
 
 	return actions
+
+
+## Whether a Belt drag is in flight. **Read by the renderer to draw the preview**, which is
+## what makes the previewed route and the route that crosses the same route: one anchor, one
+## aim, one `BeltRoute` call, asked by the drawing and by the intent.
+func is_dragging_a_belt() -> bool:
+	return _belt_dragging
+
+
+## The tile the primary button went down on, which is the end Items will enter the route
+## from. Only meaningful while `is_dragging_a_belt`.
+func belt_drag_anchor() -> Vector3i:
+	return _belt_drag_anchor
+
+
+## Which way the route in flight bends: the longer leg first, flipped once per click of the
+## right button since the press.
+##
+## The default is `BeltRoute.natural_corner_axis`, which lives in `sim/` precisely so the
+## preview and the intent cannot have different opinions about what "the natural way round"
+## was. The flip count is a device reading, like the mouse buffer.
+func belt_corner_axis(sim: Simulation, player_id: int) -> int:
+	var natural: int = BeltRoute.natural_corner_axis(
+		_belt_drag_anchor, BuildGun.aimed_tile(sim, player_id)
+	)
+	if posmod(_belt_corner_flips, 2) == 0:
+		return natural
+	return BeltRoute.ALONG_Z if natural == BeltRoute.ALONG_X else BeltRoute.ALONG_X
 
 
 ## Whether to tell the Simulation this player is sprinting, under whichever reading of the

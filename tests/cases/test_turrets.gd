@@ -831,3 +831,185 @@ const AMMO_STOCK: String = 'starting_stock = ""'
 const AMMO_DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,ammunition:1,,placeholder_gear,
 """
+
+
+# ── A Turret on the lane answers a Breaker ────────────────────────────────────
+
+## One Breaker a Breach, for #34's acceptance criterion.
+const ONE_BREAKER: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+shock_breakers,breaker,0,1,0,1
+"""
+
+
+## The Ammunition Map with the Breach pushed out to (26,1) and a second seam standing eleven
+## tiles south of it, so there is a Machine out there for a Breaker to want.
+##
+## **The geometry is the whole test and every number in it is load-bearing**, so they are all
+## written down. Measured as the Factory's own field measures — tiles of walking, four-connected,
+## round obstructions:
+##
+## * From the Breach, the bait seam is **eleven** tiles and the Turret is **seventeen**. So a
+##   Breaker that hunted from the moment it emerged picks the bait, every time.
+## * The bait is **twenty** tiles from the Turret, which reaches eight. So it would take it
+##   entirely unopposed. That pair of facts is #34 in one Run.
+## * Eleven is past `enemy.breaker_breaks_ranks_within_tiles`, which is eight, and the bait only
+##   gets further away as the Breaker marches west — so nothing short-circuits the march.
+## * What *does* catch the Breaker is the Turret itself, eight tiles off the road at (16,2) —
+##   which is the rule saying the right thing: what a player puts beside the lane is what gets
+##   lunged at, and a Turret beside the lane is lunged at from inside its own reach.
+func _bait_layout() -> MapLayout:
+	var ground: int = WorldGrid.GROUND_LAYER
+	var layout: MapLayout = MapLayout.new()
+	layout.nest_tile = Vector3i(0, ground, 0)
+	layout.add_node(Vector3i(8, ground, 6), "ammunition", 1)
+	layout.add_node(Vector3i(26, ground, 12), "ammunition", 1)
+	layout.sort_nodes()
+	layout.add_breach(Vector3i(26, ground, 1))
+	layout.sort_breaches()
+	return layout
+
+
+func test_a_turret_on_the_lane_answers_a_breaker_before_it_reaches_the_factory() -> void:
+	# #34, as the one assertion it is about. A Breaker that steered by the Factory from the
+	# moment it emerged walked straight from this Breach to the seam beside it and was never
+	# once inside the Turret's eight tiles — so a Turret covering the way in was decoration
+	# against the whole Breaker tier, and the documented opening Factory had no answer to it.
+	#
+	# Now it marches the Nest's lane first, which is the lane the Turret stands in.
+	var ground: int = WorldGrid.GROUND_LAYER
+	var sim: Simulation = Simulation.new(
+		5, 1, _ammo_content([], ONE_BREAKER), _bait_layout()
+	)
+	sim.step([InputAction.call_wave_early(0)])
+	_fed_turret(sim)
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("ammo_source_mk1"), Vector3i(26, ground, 12)
+		)
+	])
+	assert_true(_step_until_loaded(sim) < 1200, "the Turret is fed before the Wave lands")
+
+	var bait: int = 2
+	assert_eq(sim.query_machine_health(bait), 400, "the seam out past the Breach is index 2")
+
+	var acquired: bool = false
+	var killed: bool = false
+	var seen: int = 0
+	for tick: int in range(3600):
+		sim.step([])
+		if sim.query_enemy_count() > 0:
+			seen = 1
+			if sim.query_turret_target_serial(0) != -1:
+				acquired = true
+		elif seen == 1:
+			killed = true
+			break
+
+	assert_true(seen == 1, "a Breaker came out of the Breach")
+	assert_true(acquired, "the Turret in the lane acquired it — which it never used to")
+	assert_true(killed, "and shot it dead")
+	assert_eq(
+		sim.query_machine_health(bait),
+		400,
+		"the seam it was walking towards was never touched"
+	)
+
+
+# ── The replay fixture: a Breaker comes down the lane and the Turret answers ───
+#
+# #34's fixture, and it is deliberately the *documented* Factory on the *shipped* Map rather
+# than a contrived geometry: the whole finding was that the build CLAUDE.md holds up as the
+# thing a player should construct had no answer to the Breaker tier. So the fixture is
+# `BalanceScenarios.competent()` — six Machines, one MG on the lane, the shipped chain feeding
+# it — and the only substitution is the Wave table, because `content/waves.csv` holds the
+# Breaker tier behind 5200 Heat and a fixture should be two minutes rather than twenty-six.
+
+## Shipped content with the Telegraph shortened and the Wave table replaced by one Breaker a
+## Breach from a cold start. Every other number is the real file's, including
+## `player.starting_stock`, which is what the scenario's 78-plate bill is paid out of.
+func _breaker_fixture_content() -> Definitions:
+	var tuning: String = _read("res://content/tuning.toml")
+	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
+	var definitions: Definitions = Definitions.parse(
+		_read("res://content/machines.csv"),
+		_read("res://content/recipes.csv"),
+		tuning,
+		ONE_BREAKER,
+		_read("res://content/deliveries.csv"),
+		_read("res://content/gear.csv"),
+		_read("res://content/stratagems.csv"),
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml",
+		"waves.csv",
+		"deliveries.csv",
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	return definitions
+
+
+## The second at which the fixture pulls the call-early lever: late enough that the chain has
+## filled the Turret's magazine, early enough that the clock has not sent Wave 1 by itself —
+## the shipped cold interval is 150 s and this Factory shortens it to about 110.
+const FIXTURE_LEVER_SECOND: int = 80
+
+## How long the fixture runs. The lever, half a second of Telegraph, and then forty seconds
+## for a Breaker to walk ten metres into the Turret's eight tiles and be shot down in it.
+const FIXTURE_SECONDS: int = 125
+
+
+func _breaker_approach_script() -> InputScript:
+	var scenario: BalanceScenario = BalanceScenarios.competent()
+	scenario.at_second(FIXTURE_LEVER_SECOND, [InputAction.call_wave_early(0)])
+	return scenario.to_script(FIXTURE_SECONDS * Simulation.TICKS_PER_SECOND)
+
+
+func test_determinism_a_breaker_approach_and_a_turret_answering_it_replay_identically() -> void:
+	var definitions: Definitions = _breaker_fixture_content()
+	var recording: ReplayRecording = DeterminismHarness.record(
+		_breaker_approach_script(), 7, 1, definitions
+	)
+	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording)
+	assert_true(divergence.is_identical, divergence.describe())
+
+
+func test_determinism_the_breaker_fixture_really_was_a_breaker_the_turret_answered() -> void:
+	# A fixture in which nothing was approached and nothing was shot would prove determinism
+	# over an empty Run, so the scenario is checked separately from the replay — and what is
+	# checked is the whole of #34: it broke ranks rather than arriving already hunting, the
+	# Turret on the lane acquired it, and no Machine was lost.
+	var definitions: Definitions = _breaker_fixture_content()
+	var sim: Simulation = Simulation.new(7, 1, definitions)
+	var script: InputScript = _breaker_approach_script()
+
+	var machines_at_the_start: int = 0
+	var marched: bool = false
+	var broke_ranks: bool = false
+	var acquired: bool = false
+	var killed: bool = false
+	var seen: bool = false
+	for tick: int in range(script.tick_count()):
+		sim.step(script.actions_at(tick))
+		machines_at_the_start = maxi(machines_at_the_start, sim.query_machine_count())
+		if sim.query_enemy_count() == 0:
+			if seen:
+				killed = true
+			continue
+		seen = true
+		if not sim.query_enemy_has_broken_ranks(0):
+			marched = true
+		else:
+			broke_ranks = true
+		for machine: int in range(sim.query_machine_count()):
+			if sim.query_turret_target_serial(machine) == sim.query_enemy_serial(0):
+				acquired = true
+
+	assert_eq(machines_at_the_start, 6, "the documented Factory went up: six Machines")
+	assert_true(seen, "a Breaker came out of the Breach")
+	assert_true(marched, "and spent part of its approach marching on the Nest")
+	assert_true(acquired, "the MG on the lane acquired it — the whole of #34")
+	assert_true(killed, "and killed it")
+	assert_true(broke_ranks or killed, "it either turned on the Factory or died on the road")
+	assert_eq(sim.query_machine_count(), 6, "with every Machine still standing")
