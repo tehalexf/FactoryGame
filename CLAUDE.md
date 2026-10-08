@@ -23,6 +23,8 @@ SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair
                                  # a Wave arriving (swarm|pair|triage|boss|distance; + hud, + bare)
 SHOT_SCRIPT=tools/visual/compose_branch_shot.gd tools/visual/shot.sh out.png bare
                                  # a line that branches, one side blocked (+ bare)
+SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare
+                                 # the marks a starved Machine wears, over bodies of three heights (+ bare)
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -1273,9 +1275,10 @@ before and after are [`docs/images/branch_before.png`](docs/images/branch_before
    `_machine_roof` takes the **max** of the housing and the drawn body's own AABB, and the lift
    is the max of a small clearance over that body and a larger one over the housing that keeps
    the mark order Ammunition gauge → starved tag → split tag. Neither number is a constant
-   standing in for a Machine's height. **The amber starved tag and the Ammunition gauge have the
-   same defect and were deliberately left alone**: that is a behaviour change to three shipped
-   marks with two assertions pinning them, and it belongs to its own ticket.
+   standing in for a Machine's height. **The amber starved tag and the Ammunition gauge had the
+   same defect and were deliberately left alone**, as a behaviour change to shipped marks with
+   assertions pinning them; that was #50, and both now measure from `_machine_roof` too. See
+   "Every mark hangs off the drawn body, not the declared housing".
 4. **The vantage is a finding too.** A split leaves by a Machine's southern and eastern faces, so
    a camera to the west or north has one entry directly behind the body — and a mark that is
    behind something looks exactly like a mark that was never drawn. Three renders had a counter
@@ -1622,24 +1625,27 @@ darken is a gauge a player misreads at the worst moment. The HUD says `ammo n/m`
 alongside, for the post-mortem rather than the fight.
 
 **A gauge hangs off its own Machine's roof, never off a constant.** The height comes from
-`query_machine_height_metres` — the same number the Simulation collides against and the same
-number a placeholder box is sized from — plus `AMMUNITION_GAUGE_LIFT_METRES`. It used to come
+`WorldView._machine_roof` — the taller of the housing the Simulation collides against and the
+body the renderer is drawing — plus `AMMUNITION_GAUGE_LIFT_METRES`. It used to come
 from a `MACHINE_GAUGE_HEIGHT_METRES` set "taller than any housing in the content", which is a
 second authority on how tall a Machine is: it detaches the bar from everything that is not the
 tallest, and #41 was the result — a dry 2.0 m Turret wearing its red backing 2.1 m clear of its
 own roof, read as a saturated red rectangle floating over the Factory with no owner. Red is
 load-bearing here, so a red mark with nothing under it is worse than no mark. The lift also has
 to stay under `STARVED_MARK_LIFT_METRES`, which hangs off the same roof, or the amber starved
-tag draws straight through the middle of the bar; `test_world_view` asserts both bounds.
+tag draws straight through the middle of the bar; `test_world_view` asserts both bounds — and
+since #50 it asserts them **on a Turret whose body is taller than its declaration**, which is
+the only version of that assertion with any teeth. See below.
 
-#### Open: `query_machine_height_metres` is the housing, and the body is taller
+#### Every mark hangs off the drawn body, not the declared housing
 
-**#41 bites in both directions, and #48 found the other one by rendering.** The number above is
-the **housing** — what a player stands on, what a placeholder box is sized from, what `_walk`
-collides against — and several generated bodies carry a superstructure well above it. Measured
-by standing every Machine up and reading the drawn mesh's own AABB:
+**#41 bites in both directions, #48 found the other one by rendering, and #50 fixed it.**
+`query_machine_height_metres` is the **housing** — what a player stands on, what a placeholder
+box is sized from, what `_walk` collides against — and several generated bodies carry a
+superstructure well above it. Measured by standing every Machine up and reading the drawn
+mesh's own AABB:
 
-| machine | housing | body drawn | amber starved tag at | |
+| machine | housing | body drawn | amber starved tag was at | |
 |---|---|---|---|---|
 | `miner_mk1` | 1.80 | **8.24** | 3.00 | inside the derrick, by 5.2 m |
 | `smelter_mk1` | 1.50 | **7.75** | 2.70 | inside the flue |
@@ -1649,27 +1655,57 @@ by standing every Machine up and reading the drawn mesh's own AABB:
 | `mg_turret_mk1` | 2.00 | 2.00 | 3.20 | ok |
 | `repair_pylon_mk1` | 2.40 | 2.40 | 3.60 | ok |
 
-So **five of the seven Machines wear their starved tag inside their own body**, and the two that
-do not are exactly the two Turrets. That is also why it was never caught: the Ammunition gauge is
-only ever worn by a Turret, both Turret meshes are exactly their declared housing, and
-`test_a_gauge_hangs_off_its_own_machines_roof_rather_than_a_fixed_height` therefore **passes for
-the wrong reason** — it pins the rule on the one Machine class where the two numbers cannot
-disagree.
+So **five of the seven Machines wore their starved tag inside their own body**, and the two
+that did not are exactly the two Turrets.
 
-**The fix is `WorldView._machine_roof`, which #48 added and uses**: the **max** of
-`query_machine_height_metres` and the drawn body's own AABB. The Simulation's figure stays a
-floor and is never contradicted, the mesh is asked only about its own extent, and neither is a
-constant — which is what keeps #41's rule rather than bending it. Routing the gauge and the
-starved tag through it, and re-basing their two lifts so the stack order holds against the drawn
-roof rather than the housing, is the whole change.
+**Why it was never caught is the more interesting half, and it is a lesson about tests rather
+than about marks.** The Ammunition gauge is only ever worn by a Turret;
+`test_a_gauge_hangs_off_its_own_machines_roof_rather_than_a_fixed_height` pinned the gauge's
+lift against the starved tag's, and it **passed while the rule was broken** — because the one
+Machine class that wears both marks is the one class where the two numbers cannot disagree.
+The test looked like it covered the rule and in fact covered only the case where the rule is
+trivially true. It is worse than that: neither Turret has a `.glb` *at all*, so both draw a
+placeholder box, and a placeholder box is sized **from the declaration** — the two numbers are
+not merely equal by coincidence, they are equal by construction.
 
-**Not done here, deliberately.** It moves three shipped marks that two assertions pin, and a
-Miner's tag rises 5.2 m — a visible change to every screenshot with a starved Machine in it,
-which wants its own render pass. Two things for whoever takes it: the existing assertion only
-keeps its teeth if it is **also** run against a Machine where housing and body differ, and the
-lift wants bounding from *both* ends, because #48's second render hung a tag 2.1 m over a
-five-metre flue and got seven metres of air with nothing visibly under it — which is #41's actual
-symptom arriving from the other side.
+**The fix is `WorldView._machine_roof`**, which #48 added for its own three split marks: the
+**max** of `query_machine_height_metres` and the drawn body's own AABB. The Simulation's figure
+stays a floor and is never contradicted, the mesh is asked only about its own extent, and
+neither is a constant — which is what keeps #41's rule rather than bending it. #50 pointed the
+starved tag and the Ammunition gauge at it, so **all five marks a Machine can wear now measure
+from one function.**
+
+**Three heights were rendered and the choice was made by looking, which is what the issue
+asked for.** The pair is [`docs/images/marks_before.png`](docs/images/marks_before.png) and
+[`_after`](docs/images/marks_after.png) — a starved Miner, Smelter and dry MG Turret in a row —
+rebuilt with `SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare`.
+
+1. **The declaration, which is what shipped.** The Miner's tag is a smudge inside the derrick's
+   lattice and the Smelter's is **not visible at all**. Drawn, the right colour, in the right
+   place horizontally, and invisible — which is why the count could never have found it.
+2. **The housing plus a lift big enough to clear the tallest body in the content.** This is the
+   `MACHINE_GAUGE_HEIGHT_METRES` #41 deleted, offered again because the issue listed it. It
+   reproduces #41 exactly: the dry Turret's red backing floats at 8.94 m over a 2 m box with
+   seven metres of empty sky under it. Rejected on sight, and worth having rendered — the
+   argument for it is plausible on paper and the picture ends it in one glance.
+3. **The drawn body, per Machine.** Each tag rests just above its own silhouette; the Turret's
+   two marks do not move at all, because its body *is* its declaration. This is what shipped.
+
+The worry the issue raised — that a tag 8 m up a derrick is attached but harder to read, being
+far from the Machine's visual centre of mass — did not survive the render. At a player's
+distance the tag sits on the derrick's cap with about a tag's height of gap, which reads as
+resting on it; `STARVED_MARK_LIFT_METRES` is 1.2 m and the silhouette is directly underneath.
+What would have been unreadable is candidate 2, where the gap is metres of nothing.
+
+**The assertion was rewritten so that it can fail**, which is the durable half of #50. It now
+builds a Turret that **has a body** — a row borrowing `press_mk1`, which the repository already
+carries at 2.4 m with a superstructure over it, under a declared 1.2 m housing — so the two
+numbers genuinely differ, and it compares the gauge and the starved tag **where they were
+actually drawn** rather than comparing two constants. Measured both ways while it was written:
+with the gauge back on the declaration it fails by 3.2 m, and with only the starved tag back on
+it the stacking clause fails with the tag at 2.4 m under a bar at 5.4 m. A second test,
+`test_a_starved_tag_clears_the_body_a_player_can_see_not_the_housing_underneath_it`, pins the
+tag alone on a starved Miner, where the gap is 5.2 m.
 
 ### Where the balance stands
 
