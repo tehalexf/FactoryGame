@@ -20,7 +20,7 @@ SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png r
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
-                                 # a Wave arriving (swarm|pair|boss|distance; + hud, + bare)
+                                 # a Wave arriving (swarm|pair|triage|boss|distance; + hud, + bare)
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -407,20 +407,62 @@ data. There is nothing per Crawler anywhere on this side of the boundary.
   rule.** It is modelled in body heights with its offset in the mesh, so it is placed with
   exactly the transform the body is placed with.
 
-**What does not read at thirty metres, and it was measured rather than hoped.** A Siege Hulk
-is unmistakable at any range and a swarm reads as a crowd of bodies rather than a row of
-boxes — but a Crawler and a Breaker are **not** distinguishable from one another past about
-twelve metres, where they separate clearly. The mitigation was to have been the characters'
-own glowing eyes, and it renders nothing: the KayKit skulls are closed meshes whose glow
-vertices sit behind the front of the skull. The plumbing is fine — the same emission on the
-body renders four glowing skeletons — so the wiring stays and no workaround was taken, since
-moving an artist's vertices is the renderer editing the model and `depth_test_disabled` would
-draw eyes through a wall. Distance readability is the open half of this ticket.
+**What reads at thirty metres, and the one thing that did not.** #38 measured rather than
+hoped, and the answer was split: a Siege Hulk is unmistakable at any range and a swarm reads
+as a crowd of bodies rather than a row of boxes — but **a Crawler and a Breaker were the same
+dark silhouette** past about twelve metres, because they are the same KayKit rig at the same
+declared height and what separated them was armour detail that distance takes first. The
+mitigation was to have been the characters' own glowing eyes, and it rendered nothing.
+
+**#49 closed it with size, and the lever is a number in the Simulation.**
+`enemy.breaker_hit_height_metres` is 2.2 m against a Crawler's 1.6 and a Siege Hulk's 3.2 —
+its own hit volume at last, the arrangement the boss has had since #16 — so a Breaker looms
+over the 1.5 m Smelter it is eating and breaks the skyline a Crawler walks under. Because
+`WorldView` scales a body by `query_enemy_hit_height_metres`, **the Breaker a player sees and
+the Breaker a player shoots at are one thing**; the radius moved with the height for that
+reason, since the drawn body is scaled uniformly and a capsule that kept the Crawler's width
+would be narrower than what is on screen. Its one balance consequence is that a Breaker bites
+from 0.2 m further out, because reach is measured from the hull.
+
+**The claim is a test now rather than a sentence, and that is the durable half of #49.**
+`tests/cases/test_enemy_silhouette.gd` is `machine_silhouette.py`'s gate pointed at Enemies —
+it rasterises each kind's *posed, scaled* outline into an occupancy grid and fails if any two
+kinds converge. Enemies had no such check, which is exactly how a false claim about glowing
+eyes sat in the docs unnoticed. Measured, the three pairs were 0.42, 0.83 and 0.79 and are
+now **0.58, 0.83 and 0.67** — so the pair that binds is now the Breaker against the **boss**,
+and the gate is what stops the obvious next tuning step trading one unreadable pair for
+another. The grid is rasterised at **one cell per player pixel at thirty metres**, which is
+what makes it ungameable: detail finer than a cell is detail a player at that range cannot
+see either.
+
+**The glow wiring is gone rather than kept.** The plumbing was never at fault and #49 checked
+rather than assumed it — the baked mesh really does carry a surface named `Glow`, the branch
+really did fire, and the same emission on the body renders a glowing skeleton with full
+bloom. The geometry is simply inside the skull. #38 left the branch against a future
+character with exposed glow geometry; that is an untested claim about art nobody has, and an
+untested claim in a comment is what produced the ticket. Both workarounds stay refused for
+#38's reasons: moving an artist's vertices is the renderer editing the model, and
+`depth_test_disabled` would draw a Crawler's eyes through a wall. `WorldView._skinned_mesh`
+carries the note. The Siege Hulk's vent is untouched and is still the only place geometry
+carries a rule — and it is **built** here, sized against the body it sits on, rather than
+hoped for in an asset.
+
+**What a still image cannot settle** is whether the size difference reads *in motion*, in a
+Wave spread down a lane rather than posed. The gait difference is deliberate — the Crawler
+runs where the Breaker walks — and no render has an opinion about it.
 
 Full pipeline, the casting table, why `UAL1.glb` is still unused and what three renders
 caught are in [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 11. The before and
-after are `docs/images/enemies_{pair,wave,boss}_{before,after}.png`, rebuilt with
+after are `docs/images/enemies_{pair,wave,boss,triage}_{before,after}.png`, rebuilt with
 `SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png <preset>`.
+
+**`triage` is #49's preset and it exists because neither of the others asked its question.**
+`pair` stands six to twelve metres off, which is inside the range where the two kinds
+separated anyway; `distance` frames the **Crawler** swarm's centre, so a Breaker is routinely
+not in the frame at all — which a render showed immediately and which is why the ticket's own
+acceptance criterion could not have been settled with it. `triage` is `pair`'s subject at
+`distance`'s range: the closest Crawler-and-Breaker pair, square on, at thirty metres, at eye
+height, in the player's own 75-degree field rather than a cinematic one.
 
 **What it costs**, measured with `ENEMY_COUNT=<n> tools/visual/frame_cost.sh` against the
 same scenario with and without the renderer half: `WorldView.sync` goes from 3.16 ms to
@@ -1521,9 +1563,11 @@ sessions headless to the end of the Run and reports what happened; the whole met
 scenarios and every finding live under "The joint balance pass", below. Re-run it after any
 edit to `content/` rather than reasoning about what the edit did.
 
-Shipped Map, shipped content, three seeds, measured 2026-10-08 **with #46 in** — none of these
-four rows has a Machine with two Belts off it, so #46 left every one of them exactly where #35's
-schedule did:
+Shipped Map, shipped content, three seeds, measured 2026-10-08 **with #49 in** — and these four
+figures have now survived #46, #47 and #49 unchanged. None of the four has a Machine with two
+Belts off it, so #46 left them alone; their Belts were budgeted by #47's larger opening bill; and
+#49's bigger Breaker is a capsule only a *player's* round and a bite against a *player* ever
+read, which no row here does. See "What a bigger Breaker cost the table".
 
 | Scenario | Run | Wave | Peak Heat | What killed it |
 |---|---|---|---|---|
@@ -3471,19 +3515,21 @@ declared ports, measured together, and **six of the nine rows did not move at al
 the Belt price and the declared port cost the table". It is one fresh run of
 `tools/balance/measure.sh` on the tree with #38 merged in, re-run after that merge rather than
 carried across it, because the rule this file keeps is that a measured figure is rewritten from a
-measurement and never reconciled with one.
+measurement and never reconciled with one. The eighth is **#49's bigger Breaker**, and **not one
+of the nine rows moved by a single tick** — see "What a bigger Breaker cost the table", below,
+for why that is the expected answer rather than a suspicious one.
 
-| Scenario | #26 before | #26 after | #34 | #37 | merged | #46 | **#47** | Wave | Peak Heat | What killed it, now |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | 3m22s | 3m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
-| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | 3m12s | 3m12s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
-| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | 28m48s | 28m48s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
-| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
-| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
-| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | 10m48s | 11m03s | **12m27s** | 15 | 3538 | swarmed, 16 rounds left, with **two Breaches** open |
-| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | 32m05s | 32m05s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | 28m02s | 28m02s | **27m18s** | 33 | 6051 | swarmed, 1m30s sooner than `competent` |
-| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | 16m10s | 15m22s | **16m40s** | 22 | 5433 | swarmed, **42% sooner** than `competent` |
+| Scenario | #26 before | #26 after | #34 | #37 | merged | #46 | #47 | **#49** | Wave | Peak Heat | What killed it, now |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | 3m22s | 3m22s | 3m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | 3m12s | 3m12s | 3m12s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | 28m48s | 28m48s | 28m48s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | 20m21s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | 28m45s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | 10m48s | 11m03s | 12m27s | **12m27s** | 15 | 3538 | swarmed, 16 rounds left, with **two Breaches** open |
+| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | 32m05s | 32m05s | 32m05s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | 28m02s | 28m02s | 27m18s | **27m18s** | 33 | 6051 | swarmed, 1m30s sooner than `competent` |
+| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | 16m10s | 15m22s | 16m40s | **16m40s** | 22 | 5433 | swarmed, **42% sooner** than `competent` |
 
 **#36 moved no row of this table, and that was the control its shape predicted**: it gave a
 player a Belt-routing tool and a port table to aim it with, and a scenario issues `BUILD_BELT`
@@ -3871,6 +3917,41 @@ same reason — its second branch left by the Smelter's northern wall, which is 
 now leaves by the southern one.
 
 
+### What a bigger Breaker cost the table
+
+**#49 raised a Breaker's hit volume and every one of the nine rows is bit-identical to #47's,
+on all three seeds, down to the Wave number, the peak Heat and the list of Machines lost.** The
+change was made for readability — a Crawler and a Breaker were the same dark silhouette at
+thirty metres — but `enemy.breaker_hit_radius_metres` and `breaker_hit_height_metres` are the
+capsule a round is resolved against, so it is a combat quantity and was measured rather than
+reasoned about.
+
+**The null result is explained by who reads that capsule, and it is a shorter list than it
+looks.** Grep `_enemy_hit_radius` and `_enemy_hit_height` and there are exactly two consumers:
+
+- **`_shot_target`** — a *player's* ranged weapon, which resolves against the capsule with three
+  tests in the order that rejects most cheaply.
+- **`_enemy_bite_reach`** — `enemy.player_bite_reach_metres` plus the radius, so how close an
+  Enemy has to be to bite a *player*.
+
+**A Turret reads neither.** `_fire` takes its target from `_turret_target_index`, which acquires
+on the distance to the Enemy's *point* against `range_tiles` and never against a hit volume at
+all — so the thing that does nearly all of the killing in every row of this table is untouched
+by construction. That is the whole of why nothing moved, and it is worth knowing in its own
+right: **a Breaker's size is a fact about what a player can shoot and what can bite a player,
+and not a fact about the Factory's own defence.**
+
+Of the nine scenarios only `rifle_picket` fires a player's weapon, and it is the row least able
+to show the difference: it reaches the Breaker tier's 5200 Heat only in its last minutes, and it
+ends with 18 rounds left because it has been rationing throughout. So the one row that *could*
+have moved had almost no Breaker to shoot at while it still had rounds.
+
+**The one balance consequence that is real and unmeasured** is the other consumer: a Breaker
+bites a player from 0.2 m further out than it did, because reach is measured from the hull and
+the hull got wider. Nothing in the nine scenarios stands next to a Breaker on purpose — the
+same hole that leaves hand repair under fire unmeasured — so that is an arithmetic claim, and it
+is listed under "What is still unmeasured" with the others rather than dressed up as a finding.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
@@ -3891,6 +3972,11 @@ Two consequences worth knowing before anybody quotes a variance:
   on seed 7 against 26m29s on seeds 11 and 29; on #35's branch it spread eleven seconds; on the
   merged schedule and through #46 it was identical again at 28m02s. **#47 split it once more**:
   27m18s, 27m20s and 26m39s, a spread of 39 seconds, with peak Heat 6051, 6001 and 5892.
+
+  **#49 re-measured all three seeds and reproduced those six figures exactly** — 27m18s, 27m20s
+  and 26m39s at peak Heat 6051, 6001 and 5892 — which is the first time any row of this table
+  has been independently re-derived by a later ticket rather than carried forward. A table whose
+  whole value is that somebody can re-derive it is worth occasionally re-deriving.
 
   The last paragraph of this bullet used to warn that the spread going to zero was not an
   improvement anybody made and that the next ticket to re-phase the schedule might split the
@@ -4026,6 +4112,13 @@ Honest residue, so the next ticket does not have to rediscover it:
 - **Hand repair under fire.** No scenario picks up a wrench to save a Machine, because chasing a
   Breaker open-loop is not possible. `wrench.repair_points_per_second` against
   `enemy.breaker_damage` is still an arithmetic claim.
+- **What a bigger Breaker is worth to a player, in both directions**, which is #49's residue.
+  It is easier to shoot — a 2.2 m by 0.8 m capsule against the Crawler's 1.6 by 0.6 — and it
+  bites from 0.2 m further out, because reach is measured from the hull. Neither showed in the
+  table, for the reason given in "What a bigger Breaker cost the table": a Turret resolves on
+  the Enemy's point and never on the capsule, and the one scenario that fires a player's weapon
+  barely meets a Breaker before it ends. Both are about aiming and spacing through a mouse,
+  which is the same category as `gear.enemy_hit_radius_metres` itself.
 - **Walls.** Nothing in the nine scenarios builds one, so `wall.health` against
   `enemy.breaker_damage` is likewise unplayed — and since #47 so is **what a Wall costs**. Two
   plates a tile was priced against a Belt's one, on the argument that a Wall's whole job is to be

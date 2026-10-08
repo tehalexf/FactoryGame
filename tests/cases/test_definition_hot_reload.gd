@@ -148,6 +148,8 @@ breaker_speed_metres_per_second = 2
 breaker_damage = 60
 breaker_attack_interval_seconds = 1
 breaker_breaks_ranks_within_tiles = 8
+breaker_hit_radius_metres = 0.8
+breaker_hit_height_metres = 2.2
 [siege_hulk]
 health = 1800
 speed_metres_per_second = 1

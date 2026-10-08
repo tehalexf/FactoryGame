@@ -263,6 +263,8 @@ const TUNING_BREAKER_ATTACK_INTERVAL_SECONDS: String = (
 const TUNING_BREAKER_BREAKS_RANKS_WITHIN_TILES: String = (
 	"enemy.breaker_breaks_ranks_within_tiles"
 )
+const TUNING_BREAKER_HIT_RADIUS: String = "enemy.breaker_hit_radius_metres"
+const TUNING_BREAKER_HIT_HEIGHT: String = "enemy.breaker_hit_height_metres"
 const TUNING_SIEGE_HULK_HEALTH: String = "siege_hulk.health"
 const TUNING_SIEGE_HULK_SPEED: String = "siege_hulk.speed_metres_per_second"
 const TUNING_SIEGE_HULK_RANGE: String = "siege_hulk.range_metres"
@@ -604,6 +606,12 @@ var breaker_damage: int = 0
 
 ## How long between one Breaker's bites, in fixed-point seconds.
 var breaker_attack_interval_seconds: int = 0
+
+## How wide and how tall a Breaker's hit volume is, in fixed-point metres. Its own rather
+## than the Crawler's since #49, because a Breaker is bigger — which is what tells the two
+## apart at thirty metres, and the renderer scales the body it draws by this height.
+var breaker_hit_radius_metres: int = 0
+var breaker_hit_height_metres: int = 0
 
 ## How close to the Nest a Breaker gets, in **whole tiles along its route**, before it breaks
 ## ranks and steers by the Factory's field instead of the Nest's.
@@ -1396,6 +1404,8 @@ func digest() -> int:
 	hasher.feed_int(breaker_damage)
 	hasher.feed_int(breaker_attack_interval_seconds)
 	hasher.feed_int(breaker_breaks_ranks_within_tiles)
+	hasher.feed_int(breaker_hit_radius_metres)
+	hasher.feed_int(breaker_hit_height_metres)
 	hasher.feed_int(wall_health)
 	hasher.feed_int(wall_height)
 	hasher.feed_int(wrench_repair_points_per_second)
@@ -2688,6 +2698,8 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	breaker_attack_interval_seconds = tuning.require_fixed(
 		TUNING_BREAKER_ATTACK_INTERVAL_SECONDS
 	)
+	breaker_hit_radius_metres = tuning.require_fixed(TUNING_BREAKER_HIT_RADIUS)
+	breaker_hit_height_metres = tuning.require_fixed(TUNING_BREAKER_HIT_HEIGHT)
 	siege_hulk_health = tuning.require_int(TUNING_SIEGE_HULK_HEALTH)
 	siege_hulk_speed = tuning.require_fixed(TUNING_SIEGE_HULK_SPEED)
 	siege_hulk_range_metres = tuning.require_fixed(TUNING_SIEGE_HULK_RANGE)
@@ -3097,6 +3109,14 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				TUNING_SIEGE_HULK_ARMOUR_PERCENT,
 				"armour is a percentage taken off a hit: 100 would make the front invulnerable"
 			)
+		if breaker_hit_radius_metres <= 0:
+			_report_tuning(
+				tuning, TUNING_BREAKER_HIT_RADIUS, "an Enemy with no width cannot be hit"
+			)
+		if breaker_hit_height_metres <= 0:
+			_report_tuning(
+				tuning, TUNING_BREAKER_HIT_HEIGHT, "an Enemy with no height cannot be aimed at"
+			)
 		if siege_hulk_hit_radius_metres <= 0:
 			_report_tuning(
 				tuning, TUNING_SIEGE_HULK_HIT_RADIUS, "an Enemy with no width cannot be hit"
@@ -3485,6 +3505,8 @@ func _discard_content() -> void:
 	breaker_damage = 0
 	breaker_attack_interval_seconds = 0
 	breaker_breaks_ranks_within_tiles = 0
+	breaker_hit_radius_metres = 0
+	breaker_hit_height_metres = 0
 	wall_health = 0
 	wall_height = 0
 	wrench_repair_points_per_second = 0
