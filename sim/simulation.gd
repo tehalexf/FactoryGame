@@ -916,11 +916,12 @@ var _enemy_attack_cooldown: PackedInt64Array = PackedInt64Array()
 ## the Nest's, 0 while it is still marching with the Wave.
 ##
 ## **#34's latch, and the reason it is state rather than a predicate.** The switch is made on
-## `_flow_distance` — how far the Nest is — and walking towards a Machine afterwards carries
-## the Breaker *away* from the Nest again, so a Breaker that re-decided every tick would cross
-## back over the boundary on its first step and shuffle on it for ever. Latching is both the
-## fix and the better behaviour: a Breaker that has chosen a Machine commits to it, which is
-## what makes the turn something a player can watch happen rather than a flicker.
+## how far the Nest and the nearest Machine are — `_flow_distance` and `_machine_flow_distance`
+## — and walking towards a Machine afterwards carries the Breaker *away* from the Nest again, so
+## a Breaker that re-decided every tick would cross back over the boundary on its first step and
+## shuffle on it for ever. Latching is both the fix and the better behaviour: a Breaker that has
+## chosen a Machine commits to it, which is what makes the turn something a player can watch
+## happen rather than a flicker. See `_breaker_has_broken_ranks` for the rule itself.
 ##
 ## Hashed, because it decides where an Enemy walks next, and therefore which Machine falls.
 ## One entry per Enemy, every Enemy, no branch — a parallel array is parallel. It is 0 for ever
@@ -6342,10 +6343,9 @@ func _enemies() -> void:
 		# Nest's field — the road every Crawler walks, and the road a player fortifies —
 		# until it is inside `enemy.breaker_breaks_ranks_within_tiles` of the Nest or of a
 		# Machine, and by the Factory's field from that tile on. A Crawler steers by the
-		# Nest's throughout.
-		# Falling back from one field onto the other is `_enemy_direction`'s job, so the
-		# field an Enemy *moves* by and the field it decides whether it is cornered by are
-		# the same field.
+		# Nest's throughout. Falling back from one field onto the other is
+		# `_enemy_direction`'s job, so the field an Enemy *moves* by and the field it decides
+		# whether it is cornered by are the same field.
 		var field: PackedInt64Array = nest_field
 		if kind == EnemyKind.BREAKER:
 			if _breaker_has_broken_ranks(index, nest_distance, factory_distance):
@@ -6403,9 +6403,12 @@ func _breaker_has_broken_ranks(
 	var cell: int = _field_index(WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index]))
 	if cell == -1:
 		return false
-	if not _within_field_reach(cell, nest_distance, perimeter):
-		if not _within_field_reach(cell, factory_distance, perimeter):
-			return false
+	var at_hand: bool = (
+		_within_field_reach(cell, nest_distance, perimeter)
+		or _within_field_reach(cell, factory_distance, perimeter)
+	)
+	if not at_hand:
+		return false
 	_enemy_broke_ranks[index] = 1
 	return true
 
