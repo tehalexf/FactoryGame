@@ -1335,36 +1335,143 @@ func test_a_turret_wears_an_ammunition_gauge_and_nothing_else_does() -> void:
 func test_a_gauge_hangs_off_its_own_machines_roof_rather_than_a_fixed_height() -> void:
 	# #41: a bright red rectangle floating in mid-air over the Factory with nothing under
 	# it, which turned out to be a dry MG Turret's gauge hung from a constant set "taller
-	# than any housing in the content". The Turret is 2.0 m, the constant put the bar at
-	# 4.1 m, and a mark 2.1 m clear of its own roof has visibly stopped belonging to
-	# anything. The height of a Machine has one authority — `query_machine_height_metres` —
-	# and this is the renderer asking it rather than keeping a second copy.
-	var sim: Simulation = Simulation.new(1, 1)
+	# than any housing in the content". A mark 2.1 m clear of its own roof has visibly
+	# stopped belonging to anything.
+	#
+	# **The Turret is given a housing shorter than the body it draws, and that is the whole
+	# point of the fixture.** #50 found that this assertion passed while the rule it names
+	# was broken: the gauge is worn only by a Turret, and both shipped Turret meshes are
+	# *exactly* their declared housing, so the one Machine class that can wear both marks is
+	# the one class where the two numbers cannot disagree. The test looked like it covered
+	# the rule and in fact covered only the case where the rule is trivially true. Declaring
+	# a Turret given one of the bodies the repository already carries is how the two numbers
+	# are prised apart without inventing art: nothing else about the Turret changes, and both
+	# marks have to find the body rather than the declaration.
+	var sim: Simulation = _sim_with_a_turret_taller_than_its_housing()
 	var view: WorldView = WorldView.new()
 	sim.step([
 		InputAction.build_machine(
-			0, sim.query_definitions().machine_index("mg_turret_mk1"), Vector3i(10, 0, 4)
+			0, sim.query_definitions().machine_index("press_mk1"), Vector3i(10, 0, 4)
 		),
 	])
+	sim.step([])
 	view.sync(sim)
 
-	var roof: float = Fixed.to_float(sim.query_machine_height_metres(0))
-	var clearance: float = view.turret_gauge_position(0).y - roof
+	var housing: float = Fixed.to_float(sim.query_machine_height_metres(0))
+	var drawn: float = view.machine_drawn_roof_metres(sim, 0)
+	assert_true(
+		drawn > housing + 1.0,
+		"the fixture really did prise the two numbers apart: %f drawn over %f declared"
+			% [drawn, housing]
+	)
+
+	var clearance: float = view.turret_gauge_position(0).y - drawn
 	assert_true(
 		is_equal_approx(clearance, WorldView.AMMUNITION_GAUGE_LIFT_METRES),
-		"the bar sits one lift above the Turret's own 2.0 m roof, got %f above %f"
-			% [clearance, roof]
+		"the bar sits one lift above the body a player can see, got %f above %f"
+			% [clearance, drawn]
 	)
 	assert_true(
 		clearance > WorldView.AMMUNITION_GAUGE_HEIGHT_METRES * 0.5,
 		"clear of the roof rather than sunk into it"
 	)
-	# The other mark a Machine can wear hangs from the same roof. The bar has to stay under
-	# it, or an amber starved tag draws straight through the middle of a red gauge.
+	# The other mark this Machine is wearing hangs from the same roof, and this is the
+	# assertion #50 rewrote. It used to compare two *constants*, which can only ever restate
+	# the order they were written in; it now compares the two marks **where they were
+	# actually drawn**, on a Machine whose housing and body disagree — so a mark measured off
+	# the wrong one of the two fails here instead of passing by construction.
+	assert_eq(view.starved_marker_count(), 1, "a Turret with no Ammunition is starved")
 	assert_true(
-		clearance + WorldView.AMMUNITION_GAUGE_HEIGHT_METRES * 0.5
-			< WorldView.STARVED_MARK_LIFT_METRES,
-		"and below the starved tag, so the two marks stack instead of intersecting"
+		view.starved_marker_position(0).y
+			> view.turret_gauge_position(0).y + WorldView.AMMUNITION_GAUGE_HEIGHT_METRES * 0.5,
+		(
+			"and the amber starved tag stacks above the bar instead of drawing through it: "
+			+ "tag at %f, bar at %f"
+		) % [view.starved_marker_position(0).y, view.turret_gauge_position(0).y]
+	)
+	view.free()
+
+
+## A Run carrying **a Turret that has a body**, which neither shipped Turret does.
+##
+## `mg_turret_mk1` and `repair_pylon_mk1` have no row in `content/machine_bodies.csv` and no
+## `.glb`, so both draw a placeholder box — and a placeholder box is sized *from the
+## declaration*, which is precisely why a Turret can never catch a mark measured off the
+## wrong number. This row borrows `press_mk1`, a body the repository already carries at
+## 2.4 m with a superstructure over it, and declares a 1.2 m housing under it. Every other
+## column is the shipped MG Turret's, including the reach — `Definitions` refuses a content
+## set in which a Turret outranges the Siege Hulk, and this fixture is not the place to find
+## that out.
+const TURRET_WITH_A_BODY: String = (
+	"press_mk1,Hydraulic Turret Mk1,turret,2,3,1.2,90,0,350,0,8,15,0,0,fire_mg,iron_plate:20\n"
+)
+
+
+func _sim_with_a_turret_taller_than_its_housing() -> Simulation:
+	var definitions: Definitions = Definitions.parse(
+		FileAccess.get_file_as_string("res://content/machines.csv") + TURRET_WITH_A_BODY,
+		FileAccess.get_file_as_string("res://content/recipes.csv"),
+		(
+			FileAccess.get_file_as_string("res://content/tuning.toml")
+			. replace(SHIPPED_STOCK, STOCKED)
+		),
+		FileAccess.get_file_as_string("res://content/waves.csv"),
+		DELIVERIES,
+		GEAR,
+		STRATAGEMS,
+		"machines.csv",
+		"recipes.csv",
+		"tuning.toml",
+		"waves.csv",
+		"deliveries.csv",
+		"gear.csv",
+		"stratagems.csv"
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	# No Breach, so no Wave arrives to give the Turret something to shoot at and empty its
+	# magazine in the middle of an assertion about where a bar is drawn.
+	return Simulation.new(1, 1, definitions, MapLayout.empty())
+
+
+func test_a_starved_tag_clears_the_body_a_player_can_see_not_the_housing_underneath_it() -> void:
+	# #50, and #41's bug pointed inwards. `query_machine_height_metres` is the **housing** —
+	# what the Simulation collides against — and five of the seven Machines draw a body well
+	# above theirs: a Miner's derrick reaches 8.24 m over a declared 1.80, a Smelter's flue
+	# 7.75 over 1.50. A tag hung off the housing is therefore *inside the derrick*, which a
+	# render showed immediately and no count could have: the amber mark was drawn, was the
+	# right colour and was in the right place horizontally, and was invisible.
+	var layout: MapLayout = MapLayout.empty()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	# A Miner on bare rock, which is starved by the rule that a Miner's input is the ground
+	# under it. No Node anywhere on this Map, so there is nothing for it to be working.
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(4, 0, 4)
+		),
+	])
+	sim.step([])
+	view.sync(sim)
+	assert_eq(view.starved_marker_count(), 1, "a Miner over bare rock is starved")
+
+	var housing: float = Fixed.to_float(sim.query_machine_height_metres(0))
+	var drawn: float = view.machine_drawn_roof_metres(sim, 0)
+	assert_true(
+		drawn > housing + 1.0,
+		"the Miner's derrick really does rise well over its housing: %f against %f"
+			% [drawn, housing]
+	)
+	var clearance: float = view.starved_marker_position(0).y - drawn
+	assert_true(
+		clearance >= STARVED_MARK_CLEARS_THE_BODY_METRES,
+		"so the tag clears the body rather than hiding in it, got %f above %f"
+			% [clearance, drawn]
+	)
+	# And the other half of #41: a mark can be too high as well as too low. A tag floating
+	# clear of the thing it is about is the ownerless red rectangle that ticket shipped.
+	assert_true(
+		clearance < 2.0 * STARVED_MARK_CLEARS_THE_BODY_METRES,
+		"and rests on it rather than floating over it, got %f above %f" % [clearance, drawn]
 	)
 	view.free()
 
@@ -1558,6 +1665,12 @@ func test_the_hud_says_a_locked_machine_is_locked_rather_than_unbuildable() -> v
 # nothing and a stock that pays for anything.
 
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
+## How far over the body a player can see a starved tag has to sit, in metres. Not
+## `WorldView.STARVED_MARK_LIFT_METRES` restated — that is the number under test, and a test
+## that reads it back asserts nothing. This is the independent claim: a tag is readable when
+## it is clear of the silhouette and still visibly resting on it.
+const STARVED_MARK_CLEARS_THE_BODY_METRES: float = 1.0
+
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One

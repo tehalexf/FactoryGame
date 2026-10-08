@@ -166,11 +166,18 @@ const AMMUNITION_GAUGE_DEPTH_METRES: float = 0.18
 
 ## How far above **its own Machine's roof** a gauge hangs, in metres.
 ##
-## Measured from `query_machine_height_metres` and from nothing else. It used to be measured
-## from a `MACHINE_GAUGE_HEIGHT_METRES` constant set "taller than any housing in the
-## content", which is a second authority on how tall a Machine is and detaches the bar from
-## everything that is not the tallest: a 2.0 m Turret wore its gauge 2.1 m clear of its own
-## roof, which is #41's red rectangle floating over the Factory with nothing under it.
+## Measured from `_machine_roof` and from nothing else. It used to be measured from a
+## `MACHINE_GAUGE_HEIGHT_METRES` constant set "taller than any housing in the content", which
+## is a second authority on how tall a Machine is and detaches the bar from everything that
+## is not the tallest: a 2.0 m Turret wore its gauge 2.1 m clear of its own roof, which is
+## #41's red rectangle floating over the Factory with nothing under it.
+##
+## **#50 then moved it from the declared housing to the roof, which is the same fix made
+## twice.** `query_machine_height_metres` is what a player *stands on*, and a body may rise
+## well above it — so a bar measured off the declaration is inside the superstructure of
+## every Machine whose art has one. A Turret could never have shown that: neither shipped
+## Turret has a body at all, so both draw a placeholder box sized from the declaration, and
+## the two numbers are equal on the one Machine class that wears this mark.
 ##
 ## Small enough that the bar reads as sitting *on* the Machine, and comfortably under
 ## `STARVED_MARK_LIFT_METRES` so the amber starved tag stacks above the bar instead of
@@ -511,6 +518,16 @@ const STARVED_COLOUR: Color = Color(1.0, 0.78, 0.22, 0.8)
 
 ## How high the marks float above what they are about, in metres. A post at a Belt end stands
 ## at about hip height; a Machine's tag hangs over its roof, where nothing is in the way of it.
+##
+## **"Its roof" is `_machine_roof` and not the declared housing**, since #50. A Miner's
+## derrick reaches 8.24 m over a declared 1.80 and a Smelter's flue 7.75 over 1.50, so a tag
+## measured off the declaration is five metres inside the thing it is labelling — drawn, the
+## right colour, in the right place horizontally, and invisible. Three heights were rendered
+## before this one was chosen: the declaration (the tag disappears into the derrick), a
+## global lift big enough to clear the tallest body in the content (#41 reproduced exactly —
+## the Turret's red bar floats seven metres over a low box with nothing under it), and the
+## body each Machine actually draws, which is this one and the only one of the three that
+## reads as a tag resting on a silhouette.
 const DANGLING_MARK_HEIGHT_METRES: float = 1.1
 const STARVED_MARK_LIFT_METRES: float = 1.2
 
@@ -1456,15 +1473,16 @@ func _paint_gauge(bar: MeshInstance3D, colour: Color) -> void:
 ## Where a gauge hangs: over the middle of its Machine's footprint, a fixed lift above
 ## **that Machine's own roof**.
 ##
-## The height comes from `query_machine_height_metres`, the same number the Simulation
-## collides against and the same number a placeholder box is sized from — so a gauge is
-## *placed* on the thing it belongs to rather than *measured* against a constant, the rule
-## a body already follows. A constant tall enough for every housing leaves the bar hanging
-## in clear air over everything shorter, which is what #41 saw.
+## The height comes from `_machine_roof` — the taller of the housing the Simulation collides
+## against and the body the renderer is drawing — so a gauge is *placed* on the thing it
+## belongs to rather than *measured* against a constant, the rule a body already follows. A
+## constant tall enough for every housing leaves the bar hanging in clear air over everything
+## shorter, which is what #41 saw; the declaration alone puts it inside the superstructure of
+## everything taller, which is what #50 saw.
 func _gauge_height(sim: Simulation, index: int) -> Vector3:
 	return _machine_centre(sim, index) + Vector3(
 		0.0,
-		Fixed.to_float(sim.query_machine_height_metres(index)) + AMMUNITION_GAUGE_LIFT_METRES,
+		_machine_roof(sim, index) + AMMUNITION_GAUGE_LIFT_METRES,
 		0.0
 	)
 
@@ -4302,10 +4320,7 @@ func _sync_connection_marks(sim: Simulation) -> void:
 		if not sim.query_machine_is_starved(index):
 			continue
 		var centre: Vector3 = _machine_centre(sim, index)
-		var definition: MachineDefinition = sim.query_definitions().machine(
-			sim.query_machine_id(index)
-		)
-		var roof: float = 0.0 if definition == null else Fixed.to_float(definition.height)
+		var roof: float = _machine_roof(sim, index)
 		starved.resize(starved.size() + FLOATS_PER_INSTANCE)
 		@warning_ignore("integer_division")
 		_write_instance(
@@ -4432,10 +4447,10 @@ func _write_mark_over_machine(
 ## So the roof is the **max** of the two. The Simulation's figure is a floor and never
 ## contradicted, the mesh is asked only about its own extent, and neither is a constant.
 ##
-## **The amber starved tag and the Ammunition gauge have the same defect and are deliberately
-## left alone**: fixing them is a behaviour change to three shipped marks with two assertions
-## pinning them, which belongs to whoever owns that ticket rather than to a corner of this one.
-## It is written down here so the next person reads it rather than rediscovering it.
+## **Every mark a Machine wears is measured from here**: the amber starved tag, the
+## Ammunition gauge and the three split tags. #48 built this and used it for its own three,
+## recording that the other two had the same defect and belonged to their own ticket; #50 is
+## that ticket, and pointing them here is the whole of it.
 func _machine_roof(sim: Simulation, index: int) -> float:
 	var housing: float = Fixed.to_float(sim.query_machine_height_metres(index))
 	if index < 0 or index >= _machine_meshes.size():
@@ -4586,6 +4601,12 @@ func dangling_marker_count() -> int:
 func starved_marker_count() -> int:
 	@warning_ignore("integer_division")
 	return _starved_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where a starved tag is drawn, in Machine index order. For the smoke test, which asserts it
+## clears the body a player can see rather than asserting a number.
+func starved_marker_position(which: int) -> Vector3:
+	return _instance_position(_starved_transforms, which)
 
 
 ## How many flow arrows are drawn along the Belts that are standing. For the smoke test.
