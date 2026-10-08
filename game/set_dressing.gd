@@ -626,8 +626,9 @@ func _lay_out_one_bay(
 	# Rolling per tile instead would make it a thing to hope for, and a bay that came up
 	# solid is the wall of boxes this is here to prevent.
 	@warning_ignore("integer_division")
+	var gaps: int = maxi(cells / BAY_EMPTY_IN, 1)
 	var skipped: Dictionary = {}
-	for which: int in range(maxi(cells / BAY_EMPTY_IN, 1)):
+	for which: int in range(gaps):
 		skipped[rng.next_below(cells)] = true
 
 	# **What this bay is mostly made of.** One draw per bay rather than one per tile —
