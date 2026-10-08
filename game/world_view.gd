@@ -132,25 +132,6 @@ const SIEGE_HULK_VENT_OFFSET: float = 0.30
 ## texture and which tint — not how a vertex gets where it goes.
 const ENEMY_SKIN_SHADER: String = "res://game/enemy_skin.gdshader"
 
-## The eyes, which the committed characters carry as their own `Glow` material. An ember
-## rather than a colour out of the HUD's vocabulary: red is load-bearing on a Turret's dry
-## magazine and amber on a starved Machine, and an Enemy must not borrow either.
-##
-## **Measured, and currently invisible.** The KayKit skulls are closed meshes and their 80
-## glow vertices sit 0.13 to 0.19 m *behind* the front of the skull, so the eye sockets a
-## player sees are brow and cheek rather than openings and nothing of this reaches the
-## screen. That is a property of the art and not of the plumbing — putting the same emission
-## on the body surface renders four glowing skeletons with full bloom — so the wiring stays,
-## and the day a character ships with its glow geometry exposed it lights up for nothing.
-##
-## It is recorded here rather than worked around because every workaround is worse: moving an
-## artist's vertices outward is the renderer editing the model, and `depth_test_disabled`
-## would draw a Crawler's eyes through the Factory wall it is standing behind. The honest
-## consequence is that **the swarm has no distance-readability aid**, which is the open half
-## of this ticket — see `docs/ASSET_PIPELINE.md` section 11.
-const ENEMY_EYE_COLOUR: Color = Color(1.0, 0.42, 0.10)
-const ENEMY_EYE_ENERGY: float = 6.0
-
 ## How big a Hive is, in metres, and what colour. A mound rather than a building: it is the
 ## Enemy's, not the players', so it reads as grown rather than welded.
 const HIVE_SIZE_METRES: float = 4.0
@@ -1790,32 +1771,49 @@ func _ensure_swarm_mesh(kind: int) -> void:
 ## fantasy skeletons in a world of grimy cast iron, and a colour picked against a white
 ## background is a colour picked against the wrong thing (#32, measured on the Walls).
 ##
-## The pack splits each character into a body material and a `Glow` material for its eyes,
-## which is a gift: two surfaces, and the second one is the thing that makes a swarm readable
-## at thirty metres in a low-contrast palette.
+## **There was a second branch here and #49 removed it. The note is the deliverable.** The
+## pack splits each character into a body material and an 80-vertex `Glow` material for its
+## eye sockets, and #38 painted that surface with an ember emission and recorded it as the
+## thing that would make a swarm readable at thirty metres. It renders nothing, and the
+## documentation calling it the readability aid is what #49 was opened about.
+##
+## The plumbing was never the problem and that was checked rather than assumed: the baked
+## mesh really does carry a surface named `Glow`, the branch really did fire, and the same
+## emission on the *body* surface renders a glowing skeleton with full bloom. The geometry is
+## simply inside the skull — 0.13 m behind its front on the Minion, and wider than the skull
+## is, so what a player looks into is brow and cheek. All six committed characters carry the
+## same 80-vertex `Glow` box at the same place on the shared rig, and a render at `pair` range
+## shows the three that are cast with dark sockets, which is what settles it.
+##
+## It is gone rather than kept-in-case, because "it will light up the day somebody ships
+## different art" is an untested claim about art nobody has, and an untested claim in a
+## comment is exactly what produced this ticket. The two workarounds stay refused for #38's
+## reasons, which are good ones: moving an artist's vertices outward is the renderer editing
+## the model, and `depth_test_disabled` would draw a Crawler's eyes through the Factory wall
+## it is standing behind. **What makes the kinds readable instead is size** — see
+## `tests/cases/test_enemy_silhouette.gd` and `enemy.breaker_hit_height_metres`.
+##
+## The `Glow` surface is still drawn; it just wears the body's own tint like everything else,
+## which is what it looks like from outside a closed skull anyway. The Siege Hulk's vent is
+## untouched and is still the project's one piece of emissive geometry — and the difference
+## worth keeping in mind is that the vent is *built here*, sized and placed against the body
+## it sits on, rather than hoped for in an asset.
 func _skinned_mesh(kind: int, body: EnemyBodies.Body) -> ArrayMesh:
 	for surface: int in range(body.mesh.get_surface_count()):
 		var source: Material = body.mesh.surface_get_material(surface)
-		var glowing: bool = body.mesh.surface_get_name(surface).to_lower().contains("glow")
 		var painted: ShaderMaterial = ShaderMaterial.new()
 		painted.shader = load(ENEMY_SKIN_SHADER)
 		painted.set_shader_parameter("pose", body.pose)
 		painted.set_shader_parameter("texels_per_bone", EnemyBodies.TEXELS_PER_BONE)
-		if glowing:
-			painted.set_shader_parameter("albedo_tint", Color(0.02, 0.01, 0.01))
-			painted.set_shader_parameter("emission_colour", ENEMY_EYE_COLOUR)
-			painted.set_shader_parameter("emission_energy", ENEMY_EYE_ENERGY)
-			painted.set_shader_parameter("roughness", 1.0)
-		else:
-			var texture: Texture2D = null
-			if source is BaseMaterial3D:
-				texture = (source as BaseMaterial3D).albedo_texture
-			if texture != null:
-				painted.set_shader_parameter("albedo_texture", texture)
-				painted.set_shader_parameter("has_albedo_texture", true)
-			painted.set_shader_parameter("albedo_tint", _enemy_tint(kind))
-			painted.set_shader_parameter("metallic", _enemy_metallic(kind))
-			painted.set_shader_parameter("roughness", _enemy_roughness(kind))
+		var texture: Texture2D = null
+		if source is BaseMaterial3D:
+			texture = (source as BaseMaterial3D).albedo_texture
+		if texture != null:
+			painted.set_shader_parameter("albedo_texture", texture)
+			painted.set_shader_parameter("has_albedo_texture", true)
+		painted.set_shader_parameter("albedo_tint", _enemy_tint(kind))
+		painted.set_shader_parameter("metallic", _enemy_metallic(kind))
+		painted.set_shader_parameter("roughness", _enemy_roughness(kind))
 		body.mesh.surface_set_material(surface, painted)
 	return body.mesh
 

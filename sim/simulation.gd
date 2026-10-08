@@ -6679,14 +6679,26 @@ func _enemy_attack_interval_ticks(kind: int) -> int:
 
 ## How wide an Enemy's hit volume is, in fixed-point metres.
 ##
-## `gear.enemy_hit_radius_metres` is the Crawler's and the Breaker's, and it is tuned for a low
-## scuttling thing; a Siege Hulk is several metres across and a player who could miss one by a
-## metre would read the gun as broken rather than themselves as imprecise. One `match` beside
-## the other four, so a kind's size is where a kind's health and speed are.
+## `gear.enemy_hit_radius_metres` is the Crawler's, and it is tuned for a low scuttling thing;
+## a Siege Hulk is several metres across and a player who could miss one by a metre would read
+## the gun as broken rather than themselves as imprecise. One `match` beside the other four,
+## so a kind's size is where a kind's health and speed are.
+##
+## **The Breaker gained its own in #49, and the reason is readability rather than combat.** It
+## and the Crawler were the same KayKit rig at the same declared height, so at thirty metres
+## both were the same twenty-five pixels of dark silhouette and a player could not tell the
+## thing that eats Machines from the thing that is merely numerous. Size is the cue that
+## survives any range and any light, and this is the one authority on it: `WorldView` scales
+## the body it draws by `query_enemy_hit_height_metres`, so **a player shoots at what they can
+## see** and there is no second opinion about how big a Breaker is. The radius moved with the
+## height for exactly that reason — the drawn body is scaled uniformly, so a capsule that kept
+## the Crawler's width would be narrower than the Breaker a player is aiming at.
 func _enemy_hit_radius(kind: int) -> int:
 	match kind:
 		EnemyKind.SIEGE_HULK:
 			return _definitions.siege_hulk_hit_radius_metres
+		EnemyKind.BREAKER:
+			return _definitions.breaker_hit_radius_metres
 		_:
 			return _definitions.gear_enemy_hit_radius_metres
 
@@ -6696,6 +6708,8 @@ func _enemy_hit_height(kind: int) -> int:
 	match kind:
 		EnemyKind.SIEGE_HULK:
 			return _definitions.siege_hulk_hit_height_metres
+		EnemyKind.BREAKER:
+			return _definitions.breaker_hit_height_metres
 		_:
 			return _definitions.gear_enemy_hit_height_metres
 

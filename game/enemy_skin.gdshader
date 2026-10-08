@@ -41,8 +41,10 @@ uniform vec4 albedo_tint : source_color = vec4(1.0);
 uniform float metallic : hint_range(0.0, 1.0) = 0.0;
 uniform float roughness : hint_range(0.0, 1.0) = 0.8;
 
-uniform vec4 emission_colour : source_color = vec4(0.0);
-uniform float emission_energy = 0.0;
+// There were two emission uniforms here and #49 removed them with the branch that set
+// them. They painted the characters' own `Glow` material — their eye sockets — and the
+// geometry is inside the skull on every committed character, so nothing ever reached the
+// screen. `WorldView._skinned_mesh` carries the whole note and the measurement.
 
 // How dark an Enemy goes as its hit points run out, as a fraction taken off its albedo at
 // zero health. Carried per instance on INSTANCE_CUSTOM.y, so a Crawler a Turret has been
@@ -99,8 +101,4 @@ void fragment() {
 	ALPHA = colour.a;
 	METALLIC = metallic;
 	ROUGHNESS = roughness;
-	// Unaffected by the wound, deliberately: the eyes are what makes a Crawler readable at
-	// thirty metres, and a swarm that dims as it closes is a swarm that gets harder to see
-	// exactly when it matters.
-	EMISSION = emission_colour.rgb * emission_energy;
 }

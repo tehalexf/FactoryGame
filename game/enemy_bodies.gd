@@ -69,6 +69,57 @@ const MAX_FRAMES_PER_CLIP: int = 120
 ## play on the Golem without a `BoneMap` anywhere.
 const KAYKIT: String = "res://assets/characters/kaykit_skeletons/"
 
+## The two views a silhouette is measured in: head-on down the lane an Enemy walks, and
+## along it. Both, for `machine_silhouette.py`'s reason — a player moves, so two kinds that
+## are identical head-on and obviously different side-on are still tellable apart.
+const VIEW_FRONT: int = 0
+const VIEW_SIDE: int = 1
+
+## The frame a silhouette is rasterised in, in metres. Shared by every kind rather than
+## fitted to each, because **absolute size is part of a silhouette**: a 3.2 m Siege Hulk and
+## a 1.6 m Crawler are told apart by being different sizes, and normalising each to fill the
+## frame would throw away the one cue that survives at any range. 4.6 m clears the tallest
+## Enemy the content declares with room for a taller one.
+const SILHOUETTE_FRAME_METRES: float = 4.6
+
+## Cells across and up, and the number is the player's own resolution at thirty metres
+## rather than a chosen coarseness. `player.field_of_view_degrees` is 75 over a 720-line
+## view, which is 550 pixels a radian, so at 30 m one metre is 18.3 pixels and this frame is
+## 84 of them. **Measuring at one cell a pixel is what makes the gate ungameable**: detail
+## finer than a cell cannot move the score, and detail finer than a cell is detail a player
+## at thirty metres cannot see either. `machine_silhouette.py` argues its 28 cm a cell the
+## other way round, from the size of a hydraulic ram, because a Machine is read at fifty
+## metres and at five.
+const SILHOUETTE_CELLS: int = 84
+
+
+## How far apart two outlines are: 1 - intersection over union. 0.0 is the same outline,
+## 1.0 shares no cell. The measure `machine_silhouette.jaccard_distance` uses, so the two
+## gates report a number that means the same thing.
+static func jaccard_distance(left: PackedByteArray, right: PackedByteArray) -> float:
+	var shared: int = 0
+	var either: int = 0
+	for cell: int in range(mini(left.size(), right.size())):
+		var in_left: bool = left[cell] != 0
+		var in_right: bool = right[cell] != 0
+		if in_left and in_right:
+			shared += 1
+		if in_left or in_right:
+			either += 1
+	if either == 0:
+		return 0.0
+	return 1.0 - float(shared) / float(either)
+
+
+## How far apart two kinds look: the view that disagrees most. The *best* view rather than
+## the average, because a player walks around a Wave as readily as a Factory — two kinds
+## identical head-on but obviously different in profile are still tellable apart.
+static func separation(left: Dictionary, right: Dictionary) -> float:
+	var worst: float = 0.0
+	for view: int in [VIEW_FRONT, VIEW_SIDE]:
+		worst = maxf(worst, jaccard_distance(left[view], right[view]))
+	return worst
+
 
 ## Which character and which clips an Enemy kind is made of.
 ##
@@ -151,20 +202,7 @@ class Body extends RefCounted:
 	## Walks every `stride`-th vertex, because the point is the extent and five thousand
 	## vertices measure it no better than five hundred.
 	func drawn_extent_metres(row: int, stride: int = 7) -> Vector2:
-		var image: Image = pose.get_image()
-		var matrices: Array[Transform3D] = []
-		for bone: int in range(bone_count):
-			var rows: Array[Color] = []
-			for texel: int in range(TEXELS_PER_BONE):
-				rows.append(image.get_pixel(bone * TEXELS_PER_BONE + texel, row))
-			matrices.append(Transform3D(
-				Basis(
-					Vector3(rows[0].r, rows[1].r, rows[2].r),
-					Vector3(rows[0].g, rows[1].g, rows[2].g),
-					Vector3(rows[0].b, rows[1].b, rows[2].b)
-				),
-				Vector3(rows[0].a, rows[1].a, rows[2].a)
-			))
+		var matrices: Array[Transform3D] = _matrices_of(row)
 
 		var low: float = INF
 		var high: float = -INF
@@ -186,6 +224,125 @@ class Body extends RefCounted:
 				low = minf(low, at.y)
 				high = maxf(high, at.y)
 		return Vector2(low, high)
+
+	## The skinning matrices on one row of the pose texture, read back out of the texture
+	## exactly as the shader reads them. `drawn_extent_metres` and `silhouette` are both
+	## measurements of what a player sees, so they go through one read rather than two.
+	func _matrices_of(row: int) -> Array[Transform3D]:
+		var image: Image = pose.get_image()
+		var matrices: Array[Transform3D] = []
+		for bone: int in range(bone_count):
+			var rows: Array[Color] = []
+			for texel: int in range(TEXELS_PER_BONE):
+				rows.append(image.get_pixel(bone * TEXELS_PER_BONE + texel, row))
+			matrices.append(Transform3D(
+				Basis(
+					Vector3(rows[0].r, rows[1].r, rows[2].r),
+					Vector3(rows[0].g, rows[1].g, rows[2].g),
+					Vector3(rows[0].b, rows[1].b, rows[2].b)
+				),
+				Vector3(rows[0].a, rows[1].a, rows[2].a)
+			))
+		return matrices
+
+	## This body's outline, posed on one row of the pose texture and standing `metres` tall,
+	## as one bit a cell with row 0 at the ground — the occupancy grid
+	## `tools/assets/machine_silhouette.py` rasterises a Machine into, pointed at an Enemy.
+	##
+	## **It is skinned, scaled and projected rather than read off the rest pose**, because all
+	## three of those are what a player is looking at: the Crawler runs where the Breaker
+	## walks, `query_enemy_hit_height_metres` is what each one is drawn at, and a body baked
+	## one metre tall says nothing about either until it has been through both.
+	func silhouette(row: int, metres: float, view: int) -> PackedByteArray:
+		var cells: int = EnemyBodies.SILHOUETTE_CELLS
+		var cell: float = EnemyBodies.SILHOUETTE_FRAME_METRES / float(cells)
+		var half: float = EnemyBodies.SILHOUETTE_FRAME_METRES * 0.5
+		var grid: PackedByteArray = PackedByteArray()
+		grid.resize(cells * cells)
+		grid.fill(0)
+		var matrices: Array[Transform3D] = _matrices_of(row)
+
+		for surface: int in range(mesh.get_surface_count()):
+			var arrays: Array = mesh.surface_get_arrays(surface)
+			var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var slots: PackedFloat32Array = arrays[Mesh.ARRAY_CUSTOM0]
+			var loads: PackedFloat32Array = arrays[Mesh.ARRAY_CUSTOM1]
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+
+			# Every vertex is skinned once and the triangles are rasterised off that.
+			# Skinning inside the triangle loop would do the four-bone blend three times a
+			# face, and these meshes carry about five thousand vertices each.
+			var flat: PackedVector2Array = PackedVector2Array()
+			flat.resize(points.size())
+			for vertex: int in range(points.size()):
+				var at: Vector3 = Vector3.ZERO
+				for influence: int in range(INFLUENCES):
+					var weight: float = loads[vertex * INFLUENCES + influence]
+					if weight <= 0.0:
+						continue
+					var bone: int = int(slots[vertex * INFLUENCES + influence])
+					if bone < 0 or bone >= matrices.size():
+						continue
+					at += (matrices[bone] * points[vertex]) * weight
+				at *= metres
+				flat[vertex] = Vector2(
+					at.z if view == EnemyBodies.VIEW_SIDE else at.x, at.y
+				)
+
+			for corner: int in range(0, indices.size() - 2, 3):
+				_cover(
+					grid,
+					flat[indices[corner]],
+					flat[indices[corner + 1]],
+					flat[indices[corner + 2]],
+					cell,
+					cells,
+					half
+				)
+		return grid
+
+	## One triangle's cells, filled where it covers a cell's centre. No anti-aliasing, for
+	## `machine_silhouette.py`'s reason: a sliver that half-filled a cell would let detailing
+	## move a score that is supposed to be about gross form.
+	func _cover(
+		grid: PackedByteArray,
+		a: Vector2,
+		b: Vector2,
+		c: Vector2,
+		cell: float,
+		cells: int,
+		half: float
+	) -> void:
+		var area: float = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)
+		if absf(area) < 0.000000000001:
+			return
+		var low_column: int = maxi(0, int((minf(minf(a.x, b.x), c.x) + half) / cell))
+		var high_column: int = mini(
+			cells - 1, int((maxf(maxf(a.x, b.x), c.x) + half) / cell)
+		)
+		var low_row: int = maxi(0, int(minf(minf(a.y, b.y), c.y) / cell))
+		var high_row: int = mini(cells - 1, int(maxf(maxf(a.y, b.y), c.y) / cell))
+		for row: int in range(low_row, high_row + 1):
+			var y: float = (row + 0.5) * cell
+			var base: int = row * cells
+			for column: int in range(low_column, high_column + 1):
+				if grid[base + column] != 0:
+					continue
+				var x: float = (column + 0.5) * cell - half
+				var first: float = (
+					(b.x - a.x) * (y - a.y) - (x - a.x) * (b.y - a.y)
+				) / area
+				var second: float = (
+					(c.x - b.x) * (y - b.y) - (x - b.x) * (c.y - b.y)
+				) / area
+				var third: float = (
+					(a.x - c.x) * (y - c.y) - (x - c.x) * (a.y - c.y)
+				) / area
+				if (
+					(first >= 0.0 and second >= 0.0 and third >= 0.0)
+					or (first <= 0.0 and second <= 0.0 and third <= 0.0)
+				):
+					grid[base + column] = 1
 
 
 var _baked: Dictionary = {}
