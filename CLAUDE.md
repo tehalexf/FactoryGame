@@ -407,6 +407,16 @@ data. There is nothing per Crawler anywhere on this side of the boundary.
   rule.** It is modelled in body heights with its offset in the mesh, so it is placed with
   exactly the transform the body is placed with.
 
+**What does not read at thirty metres, and it was measured rather than hoped.** A Siege Hulk
+is unmistakable at any range and a swarm reads as a crowd of bodies rather than a row of
+boxes — but a Crawler and a Breaker are **not** distinguishable from one another past about
+twelve metres, where they separate clearly. The mitigation was to have been the characters'
+own glowing eyes, and it renders nothing: the KayKit skulls are closed meshes whose glow
+vertices sit behind the front of the skull. The plumbing is fine — the same emission on the
+body renders four glowing skeletons — so the wiring stays and no workaround was taken, since
+moving an artist's vertices is the renderer editing the model and `depth_test_disabled` would
+draw eyes through a wall. Distance readability is the open half of this ticket.
+
 Full pipeline, the casting table, why `UAL1.glb` is still unused and what three renders
 caught are in [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 11. The before and
 after are `docs/images/enemies_{pair,wave,boss}_{before,after}.png`, rebuilt with

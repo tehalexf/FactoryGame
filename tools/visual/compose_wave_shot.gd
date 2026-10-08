@@ -202,21 +202,23 @@ func _frame(camera: Camera3D, sim: Simulation, preset: String) -> void:
 		return
 
 	if preset == "distance":
-		# Thirty metres back along the line from the Factory to the Wave, which is where a
-		# player triages from mid-Wave. The shot that says whether any of this reads at the
-		# range it has to read at.
-		var swarm: Vector3 = _swarm_centre(sim, Simulation.ENEMY_KIND_CRAWLER)
-		var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
-		var node_tile: Vector3i = sim.query_node_tile(0)
-		var factory: Vector3 = Vector3(
-			(float(node_tile.x) + 2.0) * tile_size, 0.0, (float(node_tile.z) + 2.0) * tile_size
-		)
-		var toward: Vector3 = (swarm - factory)
-		if toward.length() < 0.01:
-			toward = Vector3.FORWARD
+		# **Thirty metres, at eye height, standing on the lane** — which is the view a
+		# player holding that lane actually triages from. An earlier version put the camera
+		# nine metres up looking down, and that is not a view anybody has: it compresses the
+		# Wave into the ground clutter and answers a question nobody asked. Survey View is
+		# the overhead one and it has its own preset in `compose_shot.gd`.
+		var far: Vector3 = _swarm_centre(sim, Simulation.ENEMY_KIND_CRAWLER)
+		var road: Vector3 = (_nest_centre(sim) - far)
+		if road.length() < 0.01:
+			road = Vector3.BACK
+		# Beside the lane by ten metres as well as thirty back, because thirty metres along
+		# this lane from where a Wave forms lands *inside the Nest* — the ziggurat is eight
+		# metres across and the render came back as a wall of its own paint.
+		camera.fov = 62.0
 		camera.look_at_from_position(
-			swarm - toward.normalized() * 30.0 + Vector3(0.0, 9.0, 0.0),
-			swarm + Vector3(0.0, 1.0, 0.0),
+			far + road.normalized() * 30.0 + road.normalized().cross(Vector3.UP) * 10.0
+				+ Vector3(0.0, 1.7, 0.0),
+			far + Vector3(0.0, 1.0, 0.0),
 			Vector3.UP
 		)
 		return

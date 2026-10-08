@@ -132,11 +132,22 @@ const SIEGE_HULK_VENT_OFFSET: float = 0.30
 ## texture and which tint — not how a vertex gets where it goes.
 const ENEMY_SKIN_SHADER: String = "res://game/enemy_skin.gdshader"
 
-## The eyes, which the committed characters carry as their own `Glow` material and which are
-## **the thing that makes a swarm readable at thirty metres** in a palette of dark neutrals
-## under an ochre sky. An ember rather than a colour out of the HUD's vocabulary: red is
-## load-bearing on a Turret's dry magazine and amber on a starved Machine, and an Enemy must
-## not borrow either.
+## The eyes, which the committed characters carry as their own `Glow` material. An ember
+## rather than a colour out of the HUD's vocabulary: red is load-bearing on a Turret's dry
+## magazine and amber on a starved Machine, and an Enemy must not borrow either.
+##
+## **Measured, and currently invisible.** The KayKit skulls are closed meshes and their 80
+## glow vertices sit 0.13 to 0.19 m *behind* the front of the skull, so the eye sockets a
+## player sees are brow and cheek rather than openings and nothing of this reaches the
+## screen. That is a property of the art and not of the plumbing — putting the same emission
+## on the body surface renders four glowing skeletons with full bloom — so the wiring stays,
+## and the day a character ships with its glow geometry exposed it lights up for nothing.
+##
+## It is recorded here rather than worked around because every workaround is worse: moving an
+## artist's vertices outward is the renderer editing the model, and `depth_test_disabled`
+## would draw a Crawler's eyes through the Factory wall it is standing behind. The honest
+## consequence is that **the swarm has no distance-readability aid**, which is the open half
+## of this ticket — see `docs/ASSET_PIPELINE.md` section 11.
 const ENEMY_EYE_COLOUR: Color = Color(1.0, 0.42, 0.10)
 const ENEMY_EYE_ENERGY: float = 6.0
 

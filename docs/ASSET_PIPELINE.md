@@ -782,6 +782,41 @@ clip rather than the commonest one.
 The before and after are committed: `docs/images/enemies_pair_{before,after}.png`,
 `enemies_wave_{before,after}.png` and `enemies_boss_{before,after}.png`.
 
+### What does not read at thirty metres, measured rather than hoped
+
+The acceptance criterion is "a Crawler reads as a scuttling thing rather than a box, at
+thirty metres, mid-Wave". Rendered at eye height on the lane at exactly thirty metres and
+magnified, the honest answer is split:
+
+- **A Siege Hulk is unmistakable at any range.** Twice the height of everything else, and a
+  glowing grille on its back that nothing else has.
+- **A swarm reads as a crowd of bodies rather than a row of boxes**, which is the real gain
+  and it is a large one.
+- **A Crawler and a Breaker are not distinguishable from each other at thirty metres.** At
+  1.6 m in a 62-degree field at 1600 pixels they are about twenty-five pixels tall and both
+  resolve to a dark silhouette. They separate clearly at eight to twelve metres — bone-tan
+  running skeleton against blue-steel horned walker — and not beyond that.
+
+**The mitigation that was supposed to fix this does not work, and the reason is the art.**
+The plan was the characters' own `Glow` material: an ember in each eye socket, which is what
+carries a figure in a palette of dark neutrals. It renders nothing. The KayKit skulls are
+**closed meshes** and their 80 glow vertices sit 0.13 to 0.19 m *behind* the front of the
+skull, so what a player reads as an eye socket is brow and cheek rather than an opening.
+
+This was measured rather than assumed: putting the same emission on the *body* surface
+renders four glowing skeletons with full bloom, so the shader, the uniform and the glow
+post-process are all working. The wiring is therefore left in place — a character that ships
+with exposed glow geometry lights up for nothing — and no workaround was taken, because both
+available ones are worse than the problem. Moving the vertices outward is the renderer
+editing an artist's model, and `depth_test_disabled` would draw a Crawler's eyes through the
+Factory wall it is standing behind.
+
+So **distance readability is the open half of this ticket.** The fixes worth considering, in
+rough order of honesty: a rim light or a fresnel term in `enemy_skin.gdshader`, which is
+presentation and touches no asset; a character pack whose glow geometry is exposed; or
+per-kind silhouette separation at the pose level, which is what the UAL clips above would
+buy.
+
 ### What is still placeholder-grade
 
 The KayKit characters are **stylised with oversized skulls**, which at 1.6 m reads closer to
