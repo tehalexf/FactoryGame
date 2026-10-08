@@ -8,6 +8,11 @@
 # while it stays empty.
 !/assets_licensed/.gdignore
 
+# jj (Jujutsu) keeps its own state here. This repo is colocated — git and jj
+# both drive the same working copy — and jj's store must never reach the remote.
+# See the jj section of CLAUDE.md.
+/.jj/
+
 # Godot
 .godot/
 /android/
