@@ -103,6 +103,9 @@ func _building() -> Simulation:
 
 func test_every_action_the_controller_produces_is_an_input_action() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
+	# The Build Gun out, because two of the readings below are build acts and the wheel
+	# reads by hand — a Run opens with the weapon out since #42.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var controller: PlayerController = PlayerController.new()
 
 	var sample: PlayerController.DeviceSample = _sample()
@@ -191,6 +194,9 @@ func test_rotating_and_placing_in_one_tick_places_the_rotation_the_player_can_se
 
 func test_the_wheel_steps_through_the_machines_and_wraps() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
+	# The wheel is the Machine picker only with the Build Gun out; scrolling with a weapon
+	# in hand chooses nothing, which `test_building_view` asserts from the other side.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var controller: PlayerController = PlayerController.new()
 	var count: int = sim.query_definitions().machine_count()
 	assert_true(count >= 2, "the premise of the rest")
