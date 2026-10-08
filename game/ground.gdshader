@@ -18,6 +18,43 @@
 // does: the eye finds a tile repeat in about a second, and once it has, the ground
 // is a material sample rather than a place.
 //
+// ── Breaking the repeat, and the relief under it (#42) ───────────────────────
+//
+// A playtest found the repeat anyway — *"the textures don't look so tiled"* — and
+// the reason was that each map was read **once, at one density, on one axis**.
+// Blending three maps over noise hides where one ends and the next begins; it does
+// nothing at all about the fact that each of them repeats every few metres on a
+// perfect lattice, and a lattice is what the eye is actually finding.
+//
+// `detiled` is the fix and it is two changes in one function. Each map is read
+// **twice** — once at its stated density and once turned 21 degrees off-axis and
+// scaled by the golden ratio — and the two are mixed by a noise far broader than
+// either. Turned and rescaled, the second read's lattice is incommensurate with the
+// first's, so there is no distance at which both repeat together and no repeat for
+// the eye to lock onto. Ahead of both, the sampling coordinate is **warped** by a
+// slow noise, which bends the lattice itself: a straight line of repeats becomes a
+// wandering one, which is the cheap half of the trick and does most of the work at
+// grazing angles where the repeat is most visible.
+//
+// The second half of the complaint was *"the ground should be slightly bumpy/
+// textured like real dirt"*, and the reason it was not is that this shader wrote
+// `ALBEDO` and nothing else. However worn the picture looked, the surface was
+// geometrically a sheet of glass: one normal over the whole Map, so the sun fell on
+// every square metre identically and nothing cast the tiny shadow that says
+// "ground". #20's generated set is albedo-only — there is no normal map to load —
+// so the relief is **derived rather than textured**: `ground_height` is a
+// three-octave value-noise height field in world metres, and `fragment` takes its
+// gradient by four extra evaluations and bends the world normal along it.
+//
+// Derived rather than generated on purpose. A normal map baked off the albedo would
+// be a second file to commit, to keep in step with its albedo, and to re-derive
+// whenever the texture is regenerated — and it would still repeat on the same
+// lattice the albedo does, which is the problem above. A world-space height field
+// has no lattice, costs no bytes, and is the same arithmetic at every scale.
+//
+// It fades out with distance, because a two-centimetre clod is smaller than a pixel
+// past about forty metres and a sub-pixel normal is not detail, it is noise.
+//
 // ── The grid ─────────────────────────────────────────────────────────────────
 //
 // The 2 m grid is load-bearing — a player builds against it — so it is drawn
@@ -68,6 +105,45 @@ uniform float apron_darkness = 0.78;
 
 uniform float surface_roughness = 0.97;
 
+// ── Breaking the repeat ──
+//
+// How far, in metres, the slow warp may push a sampling coordinate. Big enough that
+// the lattice visibly wanders over the width of the yard, small enough that it does
+// not smear the texture into streaks.
+uniform float detile_warp_metres = 2.4;
+// How much denser the second read of a map is than the first. The golden ratio, so
+// the two lattices share no common period and never line up anywhere.
+uniform float detile_scale_ratio = 1.618034;
+// How far the second read is turned off-axis, in radians. 21 degrees: far enough
+// that its grain runs visibly across the first's, not so far that a directional
+// texture reads as two materials.
+uniform float detile_turn_radians = 0.3665;
+
+// ── The relief ──
+//
+// How tall the derived height field is, peak to trough, in metres.
+//
+// **What is visible is the slope, not the height**, which is the thing this got
+// wrong first and cost three renders to find. Two centimetres of bump spread over a
+// metre is a one-degree tilt and a 23-degree sun cannot find it; the same two
+// centimetres over ten is twelve degrees and reads immediately. So the number that
+// matters is this one *over* `bump_metres`, the first attempt set it at 0.026 and
+// rendered a sheet of glass, and the value here was bracketed by looking: 0.12 is
+// visibly gravel, 0.03 is invisible, 0.075 is a yard.
+uniform float bump_height_metres = 0.075;
+// The coarsest feature size in that field, in metres. A clod, not a bootprint — see
+// above for why this is small rather than large.
+uniform float bump_metres = 0.11;
+// How far apart the gradient is sampled, in metres. Smaller is sharper and noisier;
+// about a fifth of `bump_metres` keeps the coarse octave smooth while still letting
+// the fine ones through.
+uniform float bump_step_metres = 0.025;
+// Where the relief stops being worth computing, in metres from the camera. Past the
+// far end a clod is smaller than a pixel on a plane seen nearly edge-on, and a
+// sub-pixel normal is not detail — it is a shimmer that follows the camera.
+uniform float bump_fade_begin = 26.0;
+uniform float bump_fade_end = 70.0;
+
 varying vec3 world_position;
 
 
@@ -87,6 +163,58 @@ float value_noise(vec2 at) {
 	float c = hashed(cell + vec2(0.0, 1.0));
 	float d = hashed(cell + vec2(1.0, 1.0));
 	return mix(mix(a, b, eased.x), mix(c, d, eased.x), eased.y);
+}
+
+
+vec2 turned_by(vec2 at, float radians) {
+	float c = cos(radians);
+	float s = sin(radians);
+	return vec2(at.x * c - at.y * s, at.x * s + at.y * c);
+}
+
+
+// One map, read so that it does not repeat on a lattice.
+//
+// Warp the coordinate on a slow noise so the lattice bends; read the map at its own
+// density; read it again turned and rescaled so the second lattice is incommensurate
+// with the first; and mix the two on a noise broader than either, so most of the
+// ground is one read or the other and only a wide soft band is both. See the header.
+vec3 detiled(sampler2D map, vec2 at, float metres) {
+	vec2 warped = at + vec2(
+		value_noise(at * 0.019) - 0.5,
+		value_noise(at * 0.019 + vec2(43.0, 17.0)) - 0.5
+	) * detile_warp_metres;
+	vec3 first = texture(map, warped / metres).rgb;
+	vec3 second = texture(
+		map, turned_by(warped, detile_turn_radians) / (metres * detile_scale_ratio)
+	).rgb;
+	// A **narrow** crossfade on purpose. Two decorrelated reads of one texture average
+	// to half its variance, so a wide band would de-tile the ground by flattening it,
+	// which trades one wrong answer for another. Narrow, and almost all of the yard is
+	// one read at full contrast with a soft seam between.
+	float which = smoothstep(0.44, 0.56, value_noise(at * 0.0091 + vec2(7.0, 61.0)));
+	return mix(first, second, which);
+}
+
+
+// How high the dirt stands at a point, in the 0..1 the gradient is taken of.
+//
+// Three octaves — clods, grit, and the fine tooth that catches a raking sun —
+// weighted so the coarsest dominates, because an even mix reads as sandpaper rather
+// than as ground.
+//
+// **Each octave is turned off the one below it.** `value_noise` is built on a square
+// lattice, so three octaves sharing an axis would lay their corners on top of each
+// other and the relief would acquire exactly the grid this file is otherwise trying
+// to break. The turns are not round numbers for the same reason the de-tiler's
+// scale ratio is not.
+float ground_height(vec2 at) {
+	vec2 scaled = at / bump_metres;
+	return (
+		value_noise(scaled) * 0.58
+		+ value_noise(turned_by(scaled, 0.71) * 2.9 + vec2(13.0, 29.0)) * 0.28
+		+ value_noise(turned_by(scaled, 1.93) * 8.3 + vec2(67.0, 3.0)) * 0.14
+	);
 }
 
 
@@ -110,9 +238,9 @@ float line_mask(vec2 across, float pitch) {
 void fragment() {
 	vec2 at = world_position.xz;
 
-	vec3 base = texture(concrete, at / concrete_metres).rgb * concrete_tint;
-	vec3 rusted = texture(worn, at / worn_metres).rgb * worn_tint;
-	vec3 sooted = texture(grime, at / grime_metres).rgb * grime_tint;
+	vec3 base = detiled(concrete, at, concrete_metres) * concrete_tint;
+	vec3 rusted = detiled(worn, at, worn_metres) * worn_tint;
+	vec3 sooted = detiled(grime, at, grime_metres) * grime_tint;
 
 	// Broad: which quarter of the yard is bare ground rather than slab.
 	float wear = value_noise(at * 0.011);
@@ -157,7 +285,33 @@ void fragment() {
 	surface = mix(mix(vec3(grey), surface, 0.55) * apron_darkness, surface, inside);
 
 	ALBEDO = surface;
-	ROUGHNESS = surface_roughness;
+
+	// **The relief.** `ground_height` has no analytic derivative, so the gradient is
+	// four extra evaluations a fragment and a central difference. The result bends the
+	// *world* normal and only then goes to view space, which is why this needs no
+	// tangent frame and no UVs — a `NORMAL_MAP` would need both, and the plane has
+	// neither. Faded out with distance for the reason in the header.
+	float relief = 1.0 - smoothstep(bump_fade_begin, bump_fade_end, distance_out);
+	if (relief > 0.002) {
+		float step_metres = bump_step_metres;
+		float east = ground_height(at + vec2(step_metres, 0.0));
+		float west = ground_height(at - vec2(step_metres, 0.0));
+		float north = ground_height(at + vec2(0.0, step_metres));
+		float south = ground_height(at - vec2(0.0, step_metres));
+		// Bare ground is rougher than slab, so the clods stand up where the concrete
+		// has worn through and lie flat where it has not. Same `wear` the albedo uses,
+		// so what you see bumpy is what you see worn.
+		float relief_gain = bump_height_metres * relief * mix(0.45, 1.0, wear);
+		vec2 slope = vec2(east - west, north - south) * relief_gain / (2.0 * step_metres);
+		vec3 bumped = normalize(vec3(-slope.x, 1.0, -slope.y));
+		NORMAL = normalize((VIEW_MATRIX * vec4(bumped, 0.0)).xyz);
+	}
+
+	// Dirt scatters and slab does not, so roughness follows the wear rather than
+	// sitting at one number. It is also the cheapest remaining de-tiler: a uniform
+	// roughness makes a whole plane catch the sun identically, which reads as one
+	// surface however many textures are blended into it.
+	ROUGHNESS = clamp(surface_roughness * mix(0.88, 1.0, wear) + soot * 0.03, 0.0, 1.0);
 	METALLIC = 0.0;
 	SPECULAR = 0.12;
 }

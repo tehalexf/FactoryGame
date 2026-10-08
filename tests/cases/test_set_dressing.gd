@@ -12,6 +12,9 @@
 ##   not move the state hash.
 ## * **It gets out of the player's way.** The whole Map is buildable, so a prop
 ##   that stayed where a Smelter went would be a prop standing inside a Smelter.
+## * **It is arranged rather than scattered** (#42). The lanes are clear and the props
+##   are aligned to the grid, which are the two halves of the complaint that made the
+##   first version of this file not good enough.
 extends TestCase
 
 
@@ -232,3 +235,100 @@ func test_the_view_stands_the_factory_in_a_yard() -> void:
 	assert_not_null(found, "the world is drawn with a yard around it")
 	assert_true(found.instance_count() > 0, "and the yard has something in it")
 	view.free()
+
+
+# ── It is arranged, not scattered (#42) ───────────────────────────────────────
+
+func test_the_lanes_from_the_nest_to_the_nodes_are_clear() -> void:
+	# The half of "clear ground where a player works" that a player *feels* rather than
+	# sees: the route from where a Run starts to where it goes first has nothing standing
+	# in it. Stains are excluded for the reason they are excluded from the Nest's apron —
+	# they are two centimetres tall and a player walks straight over one.
+	var sim: Simulation = Simulation.new(1, 1)
+	var dressing: SetDressing = _dressed(sim)
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+
+	var lanes: Dictionary = {}
+	for tile: Vector2i in dressing.clear_lane_tiles(sim):
+		lanes[tile] = true
+	assert_true(lanes.size() > 0, "a Map with Nodes on it has roads to them")
+
+	var checked: int = 0
+	for index: int in range(dressing.instance_count()):
+		if dressing.instance_kind(index) == "stain":
+			continue
+		var at: Vector3 = dressing.instance_position(index)
+		var tile: Vector2i = Vector2i(
+			int(floor(at.x / tile_size)), int(floor(at.z / tile_size))
+		)
+		checked += 1
+		assert_false(
+			lanes.has(tile),
+			"a %s is standing in the lane at %s" % [dressing.instance_kind(index), tile]
+		)
+	assert_true(checked > 0, "and there were props to check")
+	dressing.free()
+
+
+func test_everything_in_the_yard_is_turned_to_one_of_the_grids_four_directions() -> void:
+	# Alignment to the grid's own axes, which is what stops two hundred props reading as
+	# confetti. Every yaw this file produces is a multiple of a quarter turn — the bays'
+	# facings, the runs' axes and the perimeter's four sides are all quarter turns, and
+	# a stain's random turn is one too.
+	var sim: Simulation = Simulation.new(1, 1)
+	var dressing: SetDressing = _dressed(sim)
+	var quarter: float = TAU * 0.25
+	for index: int in range(dressing.instance_count()):
+		var yaw: float = dressing.instance_yaw(index)
+		var steps: float = yaw / quarter
+		assert_true(
+			absf(steps - round(steps)) < 0.001,
+			"a %s is turned %f, which is not a quarter of a turn"
+			% [dressing.instance_kind(index), yaw]
+		)
+	dressing.free()
+
+
+func test_clutter_standing_together_is_facing_together() -> void:
+	# The claim the whole arrangement rests on, and it is a claim about **neighbours**
+	# rather than about the Map. The old layout turned every scattered prop at random, so
+	# a pile of six crates wore four facings and read as spill; a bay shares its facing, so
+	# the same six read as stock. Counting facings over the whole yard proves nothing
+	# either way — several bays face several ways and the totals even out, which is
+	# exactly what the first version of this test measured and why it was wrong.
+	#
+	# So: every pair of clutter props standing within a bay's width of each other, and
+	# what share of those pairs agree. Under a random quarter turn that is one in four by
+	# construction. Under bays it is nearly all of them, and the misses are two bays whose
+	# kerbs happen to meet.
+	var sim: Simulation = Simulation.new(1, 1)
+	var dressing: SetDressing = _dressed(sim)
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	var near: float = tile_size * 2.0
+
+	var where: Array = []
+	var facing: Array = []
+	for index: int in range(dressing.instance_count()):
+		if dressing.instance_kind(index) != "clutter":
+			continue
+		where.append(dressing.instance_position(index))
+		facing.append(int(round(dressing.instance_yaw(index) / (TAU * 0.25))) % 4)
+
+	var pairs: int = 0
+	var agreed: int = 0
+	for first: int in range(where.size()):
+		for second: int in range(first + 1, where.size()):
+			var apart: Vector3 = (where[first] as Vector3) - (where[second] as Vector3)
+			if absf(apart.x) > near or absf(apart.z) > near:
+				continue
+			pairs += 1
+			if facing[first] == facing[second]:
+				agreed += 1
+
+	assert_true(pairs > 40, "there are piles in this yard to measure, got %d pairs" % pairs)
+	assert_true(
+		float(agreed) / float(pairs) > 0.8,
+		"only %d of %d neighbouring props agree on a facing — the yard is still scattered"
+		% [agreed, pairs]
+	)
+	dressing.free()

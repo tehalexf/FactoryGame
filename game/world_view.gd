@@ -1836,7 +1836,7 @@ func _sync_hud(sim: Simulation) -> void:
 	# player reads, and the wall is everything the HUD could say, so it cannot be missing
 	# from the wall. Empty once the first Delivery has landed, and an empty line is not
 	# appended.
-	var objective: String = Objective.line(sim)
+	var objective: String = Objective.line(sim, VIEWED_PLAYER)
 	if not objective.is_empty():
 		lines.append(objective)
 	lines.append("tick %d" % sim.query_tick())
@@ -2233,7 +2233,7 @@ func _brief_lines(sim: Simulation) -> PackedStringArray:
 
 	# The one line that makes the opening teach itself. Empty once it has, and an empty
 	# line is not appended — a blank row at the top of the screen is one more thing to read.
-	var objective: String = Objective.line(sim)
+	var objective: String = Objective.line(sim, VIEWED_PLAYER)
 	if not objective.is_empty():
 		lines.append(objective)
 
@@ -3066,15 +3066,31 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 		"build gun: %s facing %d" % ["nothing" if selected.is_empty() else selected, rotation]
 	)
 
-	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
-	var refusal: int = sim.query_build_refusal(
-		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation
+	# The tile the Machine would land on rather than the one under the crosshair, because
+	# for a Miner those are different since #42 and the useful one is the first. The Belt
+	# route below takes the *aim*: a Belt does not snap, and routing from a tile the player
+	# is not pointing at would be the bug this is otherwise fixing, upside down.
+	var machine: int = sim.query_player_selected_machine_index(VIEWED_PLAYER)
+	var where: BuildGun.Placement = BuildGun.placement(
+		sim, VIEWED_PLAYER, machine, rotation
 	)
-	if refusal == Simulation.Refusal.NONE:
-		lines.append("aimed at %d, %d — clear" % [tile.x, tile.z])
-	else:
+	var tile: Vector3i = where.tile
+	var refusal: int = sim.query_build_refusal(VIEWED_PLAYER, machine, tile, rotation)
+	# **The Simulation's refusal outranks the aim's**, and the locked Machine is why. Being
+	# locked is a fact about what is on the gun rather than about the ground, so a player
+	# told "no ore in range" would walk to a Node and still not be able to build — the same
+	# argument `_build_refusal` makes for putting `CONTENT_IS_LOCKED` before the tile. An
+	# aim reason is therefore what is said when the Simulation would otherwise accept.
+	if refusal != Simulation.Refusal.NONE:
 		lines.append("aimed at %d, %d — %s" % [tile.x, tile.z, BuildGun.refusal_text(refusal)])
-	lines.append_array(_belt_route_lines(sim, tile))
+	elif where.aim != BuildGun.Aim.ON_TARGET:
+		lines.append("aimed at %d, %d — %s" % [tile.x, tile.z, BuildGun.aim_text(where.aim)])
+	else:
+		lines.append(
+			"aimed at %d, %d — clear%s"
+			% [tile.x, tile.z, " (snapped to the Node)" if where.snapped else ""]
+		)
+	lines.append_array(_belt_route_lines(sim, BuildGun.aimed_tile(sim, VIEWED_PLAYER)))
 
 	var carried: PackedStringArray = PackedStringArray()
 	for item_id: String in sim.query_player_items(VIEWED_PLAYER):
@@ -3384,19 +3400,29 @@ func _sync_hologram(sim: Simulation) -> void:
 
 	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
 	var footprint: Vector2i = WorldGrid.rotated_footprint(declared.x, declared.y, rotation)
-	var tile: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
+	var machine: int = sim.query_player_selected_machine_index(VIEWED_PLAYER)
+	# **Not the raw aim: where the thing would actually land.** For a Miner that is the
+	# Node the Build Gun snapped to (#42), and this is the same call `PlayerController`
+	# puts in the intent — so the hologram is a promise the click keeps. Everything below
+	# reads `where.tile`, including the refusal, because asking the Simulation about the
+	# tile a player was *pointing* at while drawing the Machine somewhere else is the
+	# precise defect this arrangement exists to make impossible.
+	var where: BuildGun.Placement = BuildGun.placement(
+		sim, VIEWED_PLAYER, machine, rotation
+	)
+	var tile: Vector3i = where.tile
 
 	_hologram.rotation = Vector3(0.0, _yaw_for_rotation(rotation), 0.0)
 	_hologram.position = _footprint_centre(sim, tile, footprint)
 	if not dressing.begins_with("res://"):
 		_hologram.position.y += height * 0.5
 
-	var refusal: int = sim.query_build_refusal(
-		VIEWED_PLAYER, sim.query_player_selected_machine_index(VIEWED_PLAYER), tile, rotation
-	)
+	var refusal: int = sim.query_build_refusal(VIEWED_PLAYER, machine, tile, rotation)
 	var tint: StandardMaterial3D = _hologram.material_override
 	tint.albedo_color = (
-		HOLOGRAM_ALLOWED if refusal == Simulation.Refusal.NONE else HOLOGRAM_REFUSED
+		HOLOGRAM_ALLOWED
+		if refusal == Simulation.Refusal.NONE and where.aim == BuildGun.Aim.ON_TARGET
+		else HOLOGRAM_REFUSED
 	)
 
 
@@ -3537,10 +3563,18 @@ func _sync_ports(sim: Simulation) -> void:
 		var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
 		var about_to_land: MachineDefinition = definitions.machine(selected)
 		if about_to_land != null:
+			# The tile the hologram is standing on, not the one under the crosshair. Since
+			# #42 a Miner's are different, and ports drawn at the aim while the body sits
+			# on the Node would be arrows pointing at nothing.
+			var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
+			var where: BuildGun.Placement = BuildGun.placement(
+				sim,
+				VIEWED_PLAYER,
+				sim.query_player_selected_machine_index(VIEWED_PLAYER),
+				rotation
+			)
 			_mark_ports(
-				sim, ports.ports_of(selected), about_to_land,
-				BuildGun.aimed_tile(sim, VIEWED_PLAYER),
-				sim.query_player_build_rotation(VIEWED_PLAYER), into, out_of
+				sim, ports.ports_of(selected), about_to_land, where.tile, rotation, into, out_of
 			)
 
 	_input_port_transforms = into

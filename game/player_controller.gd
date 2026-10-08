@@ -585,14 +585,20 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 		var rotation: int = WorldGrid.wrap_rotation(
 			sim.query_player_build_rotation(player_id) + sample.rotate_steps
 		)
-		actions.append(
-			InputAction.build_machine(
-				player_id,
-				sim.query_player_selected_machine_index(player_id),
-				BuildGun.aimed_tile(sim, player_id),
-				rotation
+		var machine: int = sim.query_player_selected_machine_index(player_id)
+		# **Where the gun is pointing, which for a Miner is the Node it snapped to** (#42).
+		# The same call the hologram makes, so the tile a player was shown and the tile in
+		# the intent are one answer and cannot drift. See `BuildGun.snap_to_a_node` for why
+		# the snap is the aim's job and not the Simulation's.
+		var where: BuildGun.Placement = BuildGun.placement(sim, player_id, machine, rotation)
+		# An aim with nowhere to put a Miner sends nothing, exactly as an aim past
+		# `REACH_METRES` never sent a build at the horizon: this is the Build Gun deciding
+		# where it is pointing, which it has always done, and the hologram has been red
+		# with the reason written on it since before the button went down.
+		if where.aim == BuildGun.Aim.ON_TARGET:
+			actions.append(
+				InputAction.build_machine(player_id, machine, where.tile, rotation)
 			)
-		)
 
 	# **Press, drag, release.** The press anchors and commits nothing; the release decides
 	# the route and sends it as one intent. A press and a release in the same tick is a

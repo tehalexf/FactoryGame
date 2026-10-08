@@ -178,6 +178,24 @@ func _index(sim: Simulation, id: String) -> int:
 	return sim.query_definitions().machine_index(id)
 
 
+## A Map with one shallow iron Node at the origin and one Depth 3 seam ten tiles east.
+##
+## Hand-built rather than the starter Map for the reason `test_belts._sim_on_one_node`
+## is: a test about how far a snap reaches should not also be a test about where the
+## starter Map happened to put its ore. `miner_mk1` in the content above has
+## `max_depth = 1`, so the eastern seam is ore it can see and cannot lift.
+const SHALLOW_NODE: Vector3i = Vector3i(0, 0, 0)
+const DEEP_NODE: Vector3i = Vector3i(10, 0, 0)
+
+
+func _sim_with_nodes() -> Simulation:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(SHALLOW_NODE, "iron_ore", 1)
+	layout.add_node(DEEP_NODE, "iron_ore", 3)
+	layout.sort_nodes()
+	return Simulation.new(7, 1, _content(), layout)
+
+
 # ── The content these tests bring ─────────────────────────────────────────────
 
 func test_the_content_these_tests_bring_loads_cleanly() -> void:
@@ -658,6 +676,9 @@ func test_the_wall_key_lays_one_tile_of_wall_on_the_aimed_tile() -> void:
 	# A key rather than a slot on the Build Gun's Machine list, because a Wall has no row in
 	# `content/machines.csv` — it is not a Machine (DESIGN.md).
 	var sim: Simulation = _sim()
+	# A Run opens with the weapon out since #42 and a Wall is a build act, so the Build Gun
+	# comes out first — the same fixture every controller-driven build test now carries.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var controller: PlayerController = PlayerController.new()
 	var sample: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
 	sample.wall_clicked = true
@@ -707,3 +728,171 @@ func _only_of_kind(actions: Array, kind: int) -> InputAction:
 				fail("two %d actions in one tick" % kind)
 			found = action
 	return found
+
+
+# ── Snapping a Miner onto a Node (#42) ────────────────────────────────────────
+#
+# The player's words were *"miners should snap to the nearest node (within range) or show
+# red"*. A Node is one tile and a Miner is four, so hitting it means covering a flat
+# marker on a textured floor with the corner of a footprint — and a Miner one tile out is
+# placed, paid for, and silently does nothing for ever.
+#
+# **The snap is the aim's, not the Simulation's**, which is the decision this section
+# pins. `BuildGun.snap_to_a_node` is what both the hologram and the build intent read, so
+# the tile drawn and the tile built on are one answer; the Simulation goes on believing
+# what it has always believed, that the tile in an intent is the tile built on. See the
+# argument in `game/build_gun.gd`.
+
+
+func test_a_miner_aimed_near_a_node_snaps_its_footprint_onto_it() -> void:
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	var placed: BuildGun.Placement = BuildGun.snap_to_a_node(
+		sim, miner, 0, SHALLOW_NODE + Vector3i(3, 0, 2)
+	)
+	assert_eq(placed.aim, BuildGun.Aim.ON_TARGET, "there is a Node in range")
+	assert_true(placed.snapped, "and the aim moved to reach it")
+	assert_true(
+		WorldGrid.footprint_covers(placed.tile, 2, 2, SHALLOW_NODE),
+		"the 2x2 the snap chose, %s, does not cover the Node" % placed.tile
+	)
+
+
+func test_the_snapped_tile_is_what_a_build_really_lands_on() -> void:
+	# The claim the whole design rests on: the hologram and the placement are one answer.
+	# A snap the apply did not know about would draw a promise the Simulation breaks.
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	var placed: BuildGun.Placement = BuildGun.snap_to_a_node(
+		sim, miner, 0, SHALLOW_NODE + Vector3i(3, 0, 2)
+	)
+	sim.step([InputAction.build_machine(0, miner, placed.tile)])
+	assert_eq(sim.query_machine_count(), 1, "it placed")
+	assert_eq(
+		sim.query_node_under_machine(0),
+		sim.query_node_at_tile(SHALLOW_NODE),
+		"and the Miner is standing on the Node, which is the whole point"
+	)
+
+
+func test_a_miner_aimed_at_nothing_in_range_is_refused_rather_than_moved() -> void:
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	var far: Vector3i = Vector3i(40, 0, 40)
+	var placed: BuildGun.Placement = BuildGun.snap_to_a_node(sim, miner, 0, far)
+	assert_eq(placed.aim, BuildGun.Aim.NO_NODE_IN_RANGE, "no ore anywhere near")
+	assert_false(placed.snapped)
+	assert_eq(placed.tile, far, "and the aim is left where the player put it")
+	assert_ne(BuildGun.aim_text(placed.aim), "", "a red box with no words is the old bug")
+
+
+func test_a_node_this_miner_cannot_lift_says_so_rather_than_saying_nothing_is_there() -> void:
+	# Two different problems with two different answers — ore you do not mine and ore you
+	# cannot reach — so they are two reasons, the standing `GEAR_IS_LOCKED` has beside
+	# `CONTENT_IS_LOCKED`.
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	var placed: BuildGun.Placement = BuildGun.snap_to_a_node(
+		sim, miner, 0, DEEP_NODE + Vector3i(1, 0, 0)
+	)
+	assert_eq(placed.aim, BuildGun.Aim.NODE_TOO_DEEP)
+	assert_false(placed.snapped, "a Miner is not dragged onto ore it cannot work")
+	assert_ne(
+		BuildGun.aim_text(placed.aim),
+		BuildGun.aim_text(BuildGun.Aim.NO_NODE_IN_RANGE),
+		"and the two reasons do not read the same"
+	)
+
+
+func test_the_nearest_workable_node_wins() -> void:
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	# Between the two, but nearer the deep one. The deep one is not workable, so the snap
+	# has to walk past it to the shallow one rather than reporting the nearest Node.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(4, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var two: Simulation = Simulation.new(7, 1, _content(), layout)
+	var placed: BuildGun.Placement = BuildGun.snap_to_a_node(
+		two, miner, 0, Vector3i(3, 0, 0)
+	)
+	assert_true(
+		WorldGrid.footprint_covers(placed.tile, 2, 2, Vector3i(4, 0, 0)),
+		"the nearer of the two, not the first in the Map's order: %s" % placed.tile
+	)
+
+
+func test_only_a_miner_snaps() -> void:
+	# A Smelter has no business being dragged onto ore, and a player placing one beside a
+	# Miner would find it moving under their aim. Generalising this past Miners does not
+	# fall out cleanly, so it is deliberately not generalised.
+	var sim: Simulation = _sim_with_nodes()
+	var press: int = _index(sim, "press_mk1")
+	var aimed: Vector3i = SHALLOW_NODE + Vector3i(2, 0, 0)
+	var placed: BuildGun.Placement = BuildGun.snap_to_a_node(sim, press, 0, aimed)
+	assert_eq(placed.tile, aimed, "a crafter lands where it was aimed")
+	assert_eq(placed.aim, BuildGun.Aim.ON_TARGET, "and is never refused for want of ore")
+	assert_false(placed.snapped)
+
+
+func test_a_snap_is_a_function_of_the_aim_and_nothing_else() -> void:
+	# The replay claim. What crosses into the Simulation is the snapped tile, so a
+	# recorded script describes where the Miner went without being replayed to find out —
+	# but the hologram and the intent still have to agree on every frame, which they can
+	# only do if this is a pure function. Asked twice, with a Machine built in between.
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	var aimed: Vector3i = SHALLOW_NODE + Vector3i(3, 0, 2)
+	var first: BuildGun.Placement = BuildGun.snap_to_a_node(sim, miner, 0, aimed)
+	for tick: int in range(10):
+		sim.step([])
+	var second: BuildGun.Placement = BuildGun.snap_to_a_node(sim, miner, 0, aimed)
+	assert_eq(first.tile, second.tile, "the same aim is the same answer")
+	assert_eq(first.aim, second.aim)
+
+
+func test_the_rotation_the_player_is_holding_is_what_is_centred() -> void:
+	# `press_mk1` is 2x3, so a quarter turn makes it 3x2 and the origin that centres it
+	# over a tile is a different one. The Press does not snap, so this is asserted of the
+	# shared centring rather than through it.
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	for rotation: int in range(4):
+		var placed: BuildGun.Placement = BuildGun.snap_to_a_node(
+			sim, miner, rotation, SHALLOW_NODE + Vector3i(2, 0, 2)
+		)
+		var size: Vector2i = WorldGrid.rotated_footprint(2, 2, rotation)
+		assert_true(
+			WorldGrid.footprint_covers(placed.tile, size.x, size.y, SHALLOW_NODE),
+			"turned a quarter %d times, the footprint still covers the Node" % rotation
+		)
+
+
+func test_the_simulation_answers_what_a_miner_would_make_of_a_node() -> void:
+	# The two queries the snap is built out of, asserted at their own seam. They are
+	# projections about a row and a Node, so neither needs anything standing.
+	var sim: Simulation = _sim_with_nodes()
+	var miner: int = _index(sim, "miner_mk1")
+	var shallow: int = sim.query_node_at_tile(SHALLOW_NODE)
+	var deep: int = sim.query_node_at_tile(DEEP_NODE)
+	assert_true(sim.query_node_yields_for(miner, shallow), "a Miner mines iron ore")
+	assert_true(sim.query_node_yields_for(miner, deep), "including the deep seam's")
+	assert_true(sim.query_node_is_within_depth_of(miner, shallow), "Depth 1 is in reach")
+	assert_false(sim.query_node_is_within_depth_of(miner, deep), "Depth 3 is not")
+	assert_false(
+		sim.query_node_yields_for(_index(sim, "press_mk1"), shallow),
+		"and a crafter mines nothing at all"
+	)
+	assert_false(sim.query_node_yields_for(miner, 99), "an unknown Node is no Node")
+
+
+func test_asking_about_a_placement_does_not_move_the_hash() -> void:
+	# `BuildGun` is presentation and the two queries behind it are projections, so a
+	# player waving the hologram over the Map leaves the Run exactly where it was.
+	var asked: Simulation = _sim_with_nodes()
+	var idle: Simulation = _sim_with_nodes()
+	var miner: int = _index(asked, "miner_mk1")
+	for step: int in range(12):
+		BuildGun.snap_to_a_node(asked, miner, step % 4, Vector3i(step - 6, 0, step - 3))
+	assert_eq(asked.hash(), idle.hash(), "looking is free")

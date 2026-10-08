@@ -370,21 +370,33 @@ func test_a_strafing_player_leans_into_it() -> void:
 
 # ── Build mode ────────────────────────────────────────────────────────────────
 
-func test_a_run_opens_with_the_build_gun_in_hand() -> void:
+func test_a_run_opens_with_the_weapon_out() -> void:
+	# #42, the player's own words: *"the knife being out should be the default state"*. A Run
+	# used to open in build mode on the argument that the first thing it asks for is a
+	# Factory. It asks for that *second*: what a player does on the first tick is look at a
+	# world with things in it that can kill them, and a Run that opens with a tool in your
+	# hands instead of a weapon is a Run that has decided for you. The Build Gun is one
+	# keypress away and nothing is gated either way, which is what makes this a default
+	# rather than a restriction.
 	var sim: Simulation = Simulation.new()
-	assert_true(
+	assert_false(
 		sim.query_player_is_in_build_mode(0),
-		"the first thing a Run asks of a player is a Factory"
+		"a Run opens with the weapon in hand, not the Build Gun"
 	)
 	assert_eq(sim.query_player_holster_blend(0), 0, "and nothing is mid-swap")
+	assert_eq(
+		sim.query_player_build_tool(0),
+		Simulation.BUILD_TOOL_MACHINE,
+		"and the Build Gun is still holding the Machine tool for when it is drawn"
+	)
 
 
 func test_the_mode_switches_on_the_tick_the_intent_lands() -> void:
 	var sim: Simulation = Simulation.new()
-	sim.step([InputAction.set_build_mode(0, false)])
-	assert_false(sim.query_player_is_in_build_mode(0), "instant, not after the holster")
 	sim.step([InputAction.set_build_mode(0, true)])
-	assert_true(sim.query_player_is_in_build_mode(0), "and back, just as instantly")
+	assert_true(sim.query_player_is_in_build_mode(0), "instant, not after the draw")
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_false(sim.query_player_is_in_build_mode(0), "and back, just as instantly")
 
 
 func test_asking_for_the_mode_you_are_already_in_does_nothing_at_all() -> void:
@@ -392,7 +404,8 @@ func test_asking_for_the_mode_you_are_already_in_does_nothing_at_all() -> void:
 	# sixty times a second.
 	var asking: Simulation = Simulation.new()
 	var idle: Simulation = Simulation.new()
-	asking.step([InputAction.set_build_mode(0, true)])
+	# The mode a Run opens in, which since #42 is the weapon.
+	asking.step([InputAction.set_build_mode(0, false)])
 	idle.step([])
 	assert_eq(asking.hash(), idle.hash(), "a no-op leaves the Run exactly where it was")
 	assert_true(asking.hash() != 0, "and the hash is a real number to begin with")
@@ -409,7 +422,9 @@ func test_the_holster_plays_out_over_the_tuned_duration() -> void:
 	# is not that renderer has — a co-op client's HUD, a replay viewer — so it is asserted
 	# here rather than deleted.
 	var sim: Simulation = Simulation.new()
-	sim.step([InputAction.set_build_mode(0, false)])
+	# Drawing the Build Gun, because a Run opens with the weapon out since #42. The blend
+	# is about the swap and does not care which way round it goes.
+	sim.step([InputAction.set_build_mode(0, true)])
 	var peak: int = 0
 	for _i: int in range(12):
 		peak = maxi(peak, sim.query_player_holster_blend(0))
@@ -423,14 +438,15 @@ func test_the_holster_plays_out_over_the_tuned_duration() -> void:
 
 func test_what_is_drawn_crosses_over_half_way_through_the_swap() -> void:
 	var sim: Simulation = Simulation.new()
-	sim.step([InputAction.set_build_mode(0, false)])
-	assert_true(
+	sim.step([InputAction.set_build_mode(0, true)])
+	assert_false(
 		sim.query_player_held_is_build_gun(0),
-		"the Build Gun is still the thing on its way down"
+		"the weapon is still the thing on its way down"
 	)
 	_hold(sim, 8, [])
-	assert_false(
-		sim.query_player_held_is_build_gun(0), "and then the weapon is the thing coming up"
+	assert_true(
+		sim.query_player_held_is_build_gun(0),
+		"and then the Build Gun is the thing coming up"
 	)
 
 

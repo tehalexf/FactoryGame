@@ -1458,9 +1458,14 @@ func _init(
 	_player_step_phase.resize(players)
 	_player_step_phase.fill(0)
 	_player_build_mode.resize(players)
-	# A Run opens with the Build Gun out, because the first thing a Run asks of a player is
-	# a Factory. The weapon is one keypress away and nothing is gated either way.
-	_player_build_mode.fill(1)
+	# **A Run opens with the weapon out** (#42, the player's own words: *"the knife being out
+	# should be the default state"*). It used to open in build mode on the argument that the
+	# first thing a Run asks of a player is a Factory; it asks for that second. What a player
+	# does on the first tick is look at a world with things in it that can kill them, and a
+	# Run that opens with a tool in your hands has decided for you which of those two you were
+	# worried about. The Build Gun is one keypress away, nothing is gated either way, and
+	# `Objective.line` names the key — so this is a default and not a restriction.
+	_player_build_mode.fill(0)
 	_player_mode_since_tick.resize(players)
 	# Never swapped, which is different from swapped on tick 0: a Run must not open with a
 	# holster animation playing for something nobody put away.
@@ -8586,6 +8591,50 @@ func query_node_depth(index: int) -> int:
 	if not _is_node(index):
 		return 0
 	return _node_depth[index]
+
+
+## Whether a Machine's Recipe produces what a Node yields, Depth left out of it.
+##
+## **A projection about a Machine that may not exist yet**, the same category of thing
+## `query_build_refusal` is: it answers about a `content/machines.csv` row and a Node
+## rather than about anything standing, which is what lets the Build Gun ask it of the
+## Machine on the gun before a click. Nothing in the Simulation reads it; the two callers
+## are `BuildGun.placement`, which uses it to decide which Node a Miner should snap to,
+## and the HUD that says why it would not.
+##
+## It is a query rather than something `game/` works out for itself because the answer is
+## `_machine_has_its_inputs`' own answer, less the Depth clause — and a Build Gun that
+## promised a Miner would produce where the Simulation would call it starved is exactly
+## the two-copies-of-a-rule this project does not have anywhere else.
+func query_node_yields_for(machine_index: int, node_index: int) -> bool:
+	if not _is_node(node_index):
+		return false
+	var definition: MachineDefinition = _definitions.machine_at(machine_index)
+	if definition == null or not definition.is_miner():
+		return false
+	var recipe: RecipeDefinition = _definitions.recipe_at(definition.recipe_index)
+	if recipe == null:
+		return false
+	return _recipe_yields(recipe, _node_resource[node_index])
+
+
+## Whether a Machine's tier reaches the Depth a Node sits at.
+##
+## The other half of the question above, kept apart from it because **a player reading a
+## refusal wants to know which of the two is wrong** — ore this Miner does not mine and
+## ore it cannot lift are different problems with different answers, and the second one
+## is "build the next Miner up". The standing `GEAR_IS_LOCKED` has beside
+## `CONTENT_IS_LOCKED`.
+##
+## `_miner_reaches` is the authority and this is its only other caller, so `max_depth`
+## is still read in exactly one place.
+func query_node_is_within_depth_of(machine_index: int, node_index: int) -> bool:
+	if not _is_node(node_index):
+		return false
+	var definition: MachineDefinition = _definitions.machine_at(machine_index)
+	if definition == null or not definition.is_miner():
+		return false
+	return _miner_reaches(definition, node_index)
 
 
 ## The Node on a tile, or -1. Nodes occupy one tile each.

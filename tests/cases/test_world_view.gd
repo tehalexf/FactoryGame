@@ -1512,23 +1512,27 @@ func test_the_build_gun_and_the_weapon_swap_places_rather_than_popping() -> void
 	assert_true(view.weapon_is_visible(), "a Run opens with something in hand")
 	assert_eq(
 		view.weapon_model_id(),
-		WorldView.BUILD_GUN_HELD_ID,
-		"and it is the Build Gun, because a Run opens in build mode"
+		sim.query_player_weapon(0),
+		"and it is the weapon, because a Run opens with it out (#42)"
 	)
 	assert_true(_settled(sim, view), "the opening draw finishes")
 
 	# The tick the key goes down the mode has already changed and the model has not: the
-	# Build Gun is the thing being put away, and you cannot holster a thing you have already
+	# weapon is the thing being put away, and you cannot holster a thing you have already
 	# swapped out.
-	sim.step([InputAction.set_build_mode(0, false)])
+	sim.step([InputAction.set_build_mode(0, true)])
 	view.sync(sim)
-	assert_false(sim.query_player_is_in_build_mode(0), "the mode flips instantly")
-	assert_eq(view.weapon_clip_role(), WeaponAnimator.HOLSTER, "and the Build Gun goes down")
-	assert_eq(view.weapon_model_id(), WorldView.BUILD_GUN_HELD_ID, "still the thing going away")
+	assert_true(sim.query_player_is_in_build_mode(0), "the mode flips instantly")
+	assert_eq(view.weapon_clip_role(), WeaponAnimator.HOLSTER, "and the weapon goes down")
+	assert_eq(
+		view.weapon_model_id(), sim.query_player_weapon(0), "still the thing going away"
+	)
 
-	# Then they have changed over, and the weapon is what came up.
+	# Then they have changed over, and the Build Gun is what came up.
 	assert_true(_settled(sim, view), "the swap finishes")
-	assert_eq(view.weapon_model_id(), sim.query_player_weapon(0), "and the weapon is drawn")
+	assert_eq(
+		view.weapon_model_id(), WorldView.BUILD_GUN_HELD_ID, "and the Build Gun is drawn"
+	)
 	view.free()
 
 
