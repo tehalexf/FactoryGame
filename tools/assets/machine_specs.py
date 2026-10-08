@@ -357,9 +357,17 @@ def load(bodies_source: str | None = None,
     for row in parse_table(ports_source, ports_path):
         machine_id = row.get("machine_id", "")
         if machine_id not in bare:
+            # **A port declared for a Machine with no generated body is legal and is skipped
+            # here.** Since #47 this table is what the Simulation docks a Belt against, so every
+            # Machine that needs a Belt must declare its ports — including the ones art has not
+            # reached yet, which `machines.csv` defines and this file's bodies do not. There is
+            # no mesh to put a marker on, so there is nothing for the generator to do; a typo
+            # is still caught, because an id in neither table is refused below.
+            if machine_id in declared_by_simulation:
+                continue
             raise DeclarationError(
                 f"{ports_path} line {row['__line__']}: machine_id {machine_id!r} "
-                f"is not a row in {bodies_path}")
+                f"is not a row in {bodies_path} or {machines_path}")
         machine = bare[machine_id]
         port = Port(
             port_id=row.get("port_id", ""),

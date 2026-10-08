@@ -242,12 +242,21 @@ step_up_height_metres = 0.75
 # same form a Recipe's inputs and a Machine's `build_cost` use. Empty opens a Run
 # empty-handed; every Item named must be one some Recipe mentions.
 #
-# **Exactly the opening line and two plates over.** The Machines a Run opens with are the
-# ones no Delivery tier names — the Miner (8), the Smelter (12), the coal Miner (8) and
-# the Steam Boiler (16) — and the Ammo Press (14) and MG Turret (20) that the first
-# Delivery unlocks: 78 plates for the whole competent Factory, against 80 here. Belts are
-# free and demolishing refunds in full, so laying the Factory out wrong costs ticks and
-# not materials (issue #1, user story 7).
+# **Exactly the opening line and two plates over, and since #47 the Belts are in that
+# bill.** The Machines a Run opens with are the ones no Delivery tier names — the Miner (8),
+# the Smelter (12), the coal Miner (8) and the Steam Boiler (16) — and the Ammo Press (14)
+# and MG Turret (20) that the first Delivery unlocks: 78 plates of Machines. The thirty
+# tiles of Belt that join them up cost a plate each (`content/structures.csv`), so the
+# competent Factory is 108 plates against 110 here, and the invariant this line has always
+# stated is unchanged: a Run opens with the opening line and two plates over.
+#
+# **This figure moved with the Belt price and for no other reason.** 80 was the bill when a
+# Belt was free; pricing Belts without moving it would have left every measured scenario
+# unable to lay the line its Machines were standing waiting for, which is not a balance
+# finding, it is the same Factory with the cost of its Belts not budgeted. Demolishing still
+# refunds in full, Belts included, so laying the Factory out wrong still costs ticks and not
+# materials (issue #1, user story 7) — what it costs now is the *routing*, which is the
+# decision a factory game is about.
 #
 # This replaces `starting_stock_per_item`, which granted 200 of every Item in the game and
 # said in its own comment that Delivery progression would decide where materials really
@@ -261,7 +270,7 @@ step_up_height_metres = 0.75
 # What fills a magazine is an Ammo Press, a Belt into the Nest and a withdrawal at the
 # counter. Whether a Run can actually keep one full that way is a balance question nobody
 # has played yet.
-starting_stock = "iron_plate:80"
+starting_stock = "iron_plate:110"
 
 # A player's hit points, and what losing them costs.
 #

@@ -29,7 +29,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-## The other six files `Definitions.load_from_directory` insists on. Named rather
+## The other seven files `Definitions.load_from_directory` insists on. Named rather
 ## than globbed so a stray file in `content/` cannot change what is checked.
 COMPANION_FILES = (
     "machines.csv",
@@ -38,6 +38,7 @@ COMPANION_FILES = (
     "deliveries.csv",
     "gear.csv",
     "stratagems.csv",
+    "structures.csv",
 )
 
 TUNING_FILE = "tuning.toml"

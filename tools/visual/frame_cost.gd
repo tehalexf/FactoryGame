@@ -51,7 +51,7 @@ func _funded(count: int = 0) -> Definitions:
 	var text: String = tuning.get_as_text()
 	tuning.close()
 	var stocked: String = text.replace(
-		'starting_stock = "iron_plate:80"',
+		'starting_stock = "iron_plate:110"',
 		'starting_stock = "ammunition:900;coal:900;iron_ore:900;iron_plate:900"'
 	)
 	return Definitions.parse(

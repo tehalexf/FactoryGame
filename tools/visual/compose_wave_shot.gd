@@ -103,7 +103,7 @@ func _content() -> Definitions:
 		_read("res://content/recipes.csv"),
 		_read("res://content/tuning.toml")
 			.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-			.replace('starting_stock = "iron_plate:80"', 'starting_stock = "iron_plate:400"'),
+			.replace('starting_stock = "iron_plate:110"', 'starting_stock = "iron_plate:400"'),
 		EVERY_TIER,
 		_read("res://content/deliveries.csv"),
 		_read("res://content/gear.csv"),

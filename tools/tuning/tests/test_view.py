@@ -95,7 +95,7 @@ class TheStateThePageDraws(unittest.TestCase):
     def test_a_quoted_string_gets_a_text_box_without_its_quotes(self):
         entry = self.field(view.state(self.store), "player.starting_stock")
         self.assertEqual(entry["control"], "text")
-        self.assertEqual(entry["value"], "iron_plate:80")
+        self.assertEqual(entry["value"], "iron_plate:110")
 
     def test_nothing_is_marked_changed_on_a_fresh_checkout(self):
         state = view.state(self.store)

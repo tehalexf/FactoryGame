@@ -86,8 +86,8 @@ t01_munitions,Munitions Licence,1,iron_plate:1,,mg_drum_magazine,
 ## meant to get its rounds out of an Ammo Press and the Nest's store (see
 ## `content/tuning.toml`). A test about what a weapon *does* should not also have to build a
 ## Factory first, so the fixture hands the player rounds and the shipped game does not.
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
-const ARMED_STOCK: String = 'starting_stock = "ammunition:400;iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
+const ARMED_STOCK: String = 'starting_stock = "ammunition:400;iron_plate:110"'
 
 ## The Gear this file fights with. Its own table rather than the shipped one, for the reason
 ## `test_turrets` brings its own Machines: the numbers are chosen so the arithmetic in the
@@ -384,7 +384,7 @@ func test_the_drum_autocannon_devours_ammunition_where_the_bolt_rifle_sips() -> 
 func test_firing_with_no_ammunition_does_nothing_at_all_and_says_why() -> void:
 	# The first-person half of "a Turret with no Ammunition does not fire". Defence costs
 	# continuous production in a player's hands exactly as it does in a Turret's.
-	var sim: Simulation = _sim(ONE_CRAWLER, [[ARMED_STOCK, 'starting_stock = "iron_plate:80"']])
+	var sim: Simulation = _sim(ONE_CRAWLER, [[ARMED_STOCK, 'starting_stock = "iron_plate:110"']])
 	_equip(sim, "drum_autocannon")
 	_wait_for_a_crawler(sim)
 	_aim_at_the_diagonal(sim)

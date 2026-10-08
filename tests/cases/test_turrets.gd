@@ -794,7 +794,7 @@ func test_a_run_with_a_turret_mid_fight_saves_and_resumes_identically() -> void:
 # asserted here, so the fixtures below replace them with a tier that locks nothing and a
 # stock that pays for anything. `test_delivery.gd` is where the real chain is asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One

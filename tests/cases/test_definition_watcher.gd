@@ -168,6 +168,15 @@ chaff_crawlers,crawler,0,6,150,40
 """
 
 
+## A Belt and a Wall that cost the one Item these Recipes mention. The table has to be here
+## because `load_from_directory` requires it — a Run that lost its structure prices silently
+## would be a Run where a Belt quietly went back to being free.
+const STRUCTURES: String = """id,display_name,build_cost_per_tile
+belt,Belt,iron_ore:1
+wall,Wall,iron_ore:2
+"""
+
+
 func before_each() -> void:
 	DirAccess.make_dir_recursive_absolute(DIR)
 	_write(Definitions.MACHINES_FILE, MACHINES)
@@ -177,6 +186,7 @@ func before_each() -> void:
 	_write(Definitions.DELIVERIES_FILE, DELIVERIES)
 	_write(Definitions.GEAR_FILE, GEAR)
 	_write(Definitions.STRATAGEMS_FILE, STRATAGEMS)
+	_write(Definitions.STRUCTURES_FILE, STRUCTURES)
 
 
 func after_each() -> void:
@@ -188,6 +198,7 @@ func after_each() -> void:
 		Definitions.DELIVERIES_FILE,
 		Definitions.GEAR_FILE,
 		Definitions.STRATAGEMS_FILE,
+		Definitions.STRUCTURES_FILE,
 	]:
 		DirAccess.remove_absolute("%s/%s" % [DIR, file_name])
 	DirAccess.remove_absolute(DIR)

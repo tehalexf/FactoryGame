@@ -28,7 +28,7 @@ DEFAULTS = """\
 walk_speed_metres_per_second = 4
 
 # What a player starts a Run carrying.
-starting_stock = "iron_plate:80"
+starting_stock = "iron_plate:110"
 
 # Whether the sprint key is a toggle.
 sprint_is_toggle = true

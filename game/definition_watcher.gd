@@ -109,6 +109,7 @@ func _read_content_digest() -> int:
 		Definitions.DELIVERIES_FILE,
 		Definitions.GEAR_FILE,
 		Definitions.STRATAGEMS_FILE,
+		Definitions.STRUCTURES_FILE,
 		# Optional to load and watched anyway: moving a port is exactly the kind of edit
 		# somebody makes with the game running, and the arrows are what they are looking at
 		# while they do it.

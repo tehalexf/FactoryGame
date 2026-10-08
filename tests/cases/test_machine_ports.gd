@@ -35,18 +35,31 @@ func _port(ports: MachinePorts, machine_id: String, port_id: String) -> MachineP
 
 # ── Reading the table ─────────────────────────────────────────────────────────
 
-func test_the_shipped_table_loads_and_declares_the_smelters_three_ports() -> void:
+func test_the_shipped_table_declares_the_smelters_faces_tile_by_tile() -> void:
+	# A Smelter is 3x3 and declares whole faces: ore along the north, coal along the west,
+	# ingot along the south and the east. Tile by tile rather than one port per good, because
+	# #47 made the declaration the rule — a port is one tile wide, so a Machine with one
+	# declared output could not serve two Belts, and #46 made serving two Belts a feature.
 	var ports: MachinePorts = MachinePorts.parse(
 		FileAccess.get_file_as_string("res://content/machine_ports.csv"),
 		"content/machine_ports.csv"
 	)
 	assert_false(ports.has_errors(), ports.describe_errors())
 	var smelter: Array[MachinePorts.Port] = ports.ports_of("smelter_mk1")
-	assert_eq(smelter.size(), 3, "ore in, coal in, ingot out")
+	assert_eq(smelter.size(), 12, "three tiles each of two input faces and two output faces")
 	var names: PackedStringArray = PackedStringArray()
 	for port: MachinePorts.Port in smelter:
 		names.append(port.port_id)
-	assert_eq(names, PackedStringArray(["ore", "coal", "ingot"]), "in file order")
+	assert_eq(
+		names,
+		PackedStringArray([
+			"ore_n0", "ore_n1", "ore_n2",
+			"coal_w0", "coal_w1", "coal_w2",
+			"ingot_s0", "ingot_s1", "ingot_s2",
+			"ingot_e0", "ingot_e1", "ingot_e2",
+		]),
+		"in file order"
+	)
 
 
 func test_a_port_knows_whether_goods_go_in_or_come_out() -> void:

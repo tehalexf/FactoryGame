@@ -30,7 +30,7 @@ t01_open,Open Licence,1,iron_plate:1,,mg_drum_magazine,
 ## Pockets deep enough to stand a Silo up without a Factory behind it. What a Run can
 ## actually afford is `test_nest_store.gd`'s subject.
 const STOCKED: String = 'starting_stock = "iron_plate:400;ammunition:400"'
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 
 
 func _read(path: String) -> String:

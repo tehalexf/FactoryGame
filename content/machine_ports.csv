@@ -6,8 +6,43 @@
 # loads the same file through sim/csv_table.gd, so there is one declaration and
 # not two hand-maintained lists.
 #
-# machine_id   must name a row in machines.csv.
-# port_id      unique within a Machine. Names the good, not the geometry.
+# **Since #47 this is also the rule.** `_load_from_port` and `_hand_off` dock a
+# Belt against a declared port and nowhere else, so the arrow a player is shown on
+# a Machine's face is where a Belt will actually connect — which it was not before,
+# and a rule the game draws but does not enforce is worse than teaching nothing.
+# Three consequences follow, and all three are why this table grew:
+#
+#  * **A face is declared tile by tile.** A port is one tile wide, so a Machine
+#    whose goods cross a whole face has one row per tile of it. Declaring only the
+#    middle tile of a 3-wide face would make which tile a player aimed at the
+#    difference between a line that works and one that does not, for no reason a
+#    player could see — and it would make a Machine's output unbranchable.
+#  * **Branching needs more than one dock.** #46 made a Machine serve several
+#    Belts in rotation, which is a factory game's second verb after laying one. A
+#    Machine declaring a single output port could never do it, so every Machine
+#    that produces declares its whole output face.
+#  * **The port says where, not what.** A Belt docking at a declared input port may
+#    carry any Item the Machine's Recipe wants; `_accept_input` is what decides
+#    that, and it always was. So the good in a port_id is the intended routing
+#    rather than a restriction — a Smelter takes ore on its northern face and coal
+#    on its western one by design, and feeding ore in from the west works.
+#
+# A port is NOT declared for the Nest or for a Belt's own ends in the enforcing
+# sense: the Nest is not a Machine, and `_hand_off`'s Nest clause and its Belt
+# clause are separate from its Machine clause. Those rows are here because the mesh
+# generator needs them.
+#
+# machine_id   must name a row in machines.csv, or be one of the bodies that is not
+#              a Machine (`nest`, `belt_straight`). A row naming a Machine nothing
+#              defines is a WARNING naming the row, not an error — `machine_bodies.csv`
+#              declares bodies `machines.csv` has not caught up with, and data
+#              nothing reads is the thing a warning is for (the same treatment a
+#              tuning key nothing reads gets).
+# port_id      unique within a Machine. Names the good and, where a face carries
+#              several tiles of the same good, the face and tile it sits on —
+#              `ingot_s2` is plate off the third tile of the southern face. The
+#              geometry is in the columns; the suffix is there because two rows
+#              cannot share a name and a face has several tiles.
 # direction    input | output.
 # edge         Which side of the footprint the port sits on, in Godot's axes:
 #                north = -Z, south = +Z, east = +X, west = -X.
@@ -24,24 +59,96 @@
 # ground level) follows from footprint and tile alone, and is computed in one
 # place only - machine_specs.port_position_mm in tools/assets/machine_specs.py.
 machine_id,port_id,direction,edge,tile,height_mm
-miner_mk1,ore,output,south,1,900
-coal_miner_mk1,coal,output,south,1,900
-smelter_mk1,ore,input,north,1,900
-smelter_mk1,coal,input,west,1,900
-smelter_mk1,ingot,output,south,1,900
+miner_mk1,ore_n0,output,north,0,900
+miner_mk1,ore_n1,output,north,1,900
+miner_mk1,ore_e0,output,east,0,900
+miner_mk1,ore_e1,output,east,1,900
+miner_mk1,ore_s0,output,south,0,900
+miner_mk1,ore_s1,output,south,1,900
+miner_mk1,ore_w0,output,west,0,900
+miner_mk1,ore_w1,output,west,1,900
+miner_mk2,ore_n0,output,north,0,900
+miner_mk2,ore_n1,output,north,1,900
+miner_mk2,ore_e0,output,east,0,900
+miner_mk2,ore_e1,output,east,1,900
+miner_mk2,ore_s0,output,south,0,900
+miner_mk2,ore_s1,output,south,1,900
+miner_mk2,ore_w0,output,west,0,900
+miner_mk2,ore_w1,output,west,1,900
+miner_mk3,ore_n0,output,north,0,900
+miner_mk3,ore_n1,output,north,1,900
+miner_mk3,ore_e0,output,east,0,900
+miner_mk3,ore_e1,output,east,1,900
+miner_mk3,ore_s0,output,south,0,900
+miner_mk3,ore_s1,output,south,1,900
+miner_mk3,ore_w0,output,west,0,900
+miner_mk3,ore_w1,output,west,1,900
+coal_miner_mk1,coal_n0,output,north,0,900
+coal_miner_mk1,coal_n1,output,north,1,900
+coal_miner_mk1,coal_e0,output,east,0,900
+coal_miner_mk1,coal_e1,output,east,1,900
+coal_miner_mk1,coal_s0,output,south,0,900
+coal_miner_mk1,coal_s1,output,south,1,900
+coal_miner_mk1,coal_w0,output,west,0,900
+coal_miner_mk1,coal_w1,output,west,1,900
+smelter_mk1,ore_n0,input,north,0,900
+smelter_mk1,ore_n1,input,north,1,900
+smelter_mk1,ore_n2,input,north,2,900
+smelter_mk1,coal_w0,input,west,0,900
+smelter_mk1,coal_w1,input,west,1,900
+smelter_mk1,coal_w2,input,west,2,900
+smelter_mk1,ingot_s0,output,south,0,900
+smelter_mk1,ingot_s1,output,south,1,900
+smelter_mk1,ingot_s2,output,south,2,900
+smelter_mk1,ingot_e0,output,east,0,900
+smelter_mk1,ingot_e1,output,east,1,900
+smelter_mk1,ingot_e2,output,east,2,900
 press_mk1,ingot,input,north,0,900
 press_mk1,plate,output,south,1,900
 assembler_mk1,plate,input,north,0,900
 assembler_mk1,gear,input,north,2,900
 assembler_mk1,component,output,south,1,900
-steam_boiler_mk1,coal,input,west,0,900
+steam_boiler_mk1,coal_n0,input,north,0,900
+steam_boiler_mk1,coal_n1,input,north,1,900
+steam_boiler_mk1,coal_n2,input,north,2,900
+steam_boiler_mk1,coal_w0,input,west,0,900
+steam_boiler_mk1,coal_w1,input,west,1,900
 steam_boiler_mk1,steam,output,east,1,1800
 generator_mk1,steam,input,west,0,1800
-ammo_press_mk1,plate,input,north,0,900
-ammo_press_mk1,powder,input,north,1,900
-ammo_press_mk1,ammunition,output,south,0,900
-silo_mk1,shell,input,north,1,900
-silo_mk1,charge,input,north,2,900
+ammo_press_mk1,plate_n0,input,north,0,900
+ammo_press_mk1,powder_n1,input,north,1,900
+ammo_press_mk1,ammunition_s0,output,south,0,900
+ammo_press_mk1,ammunition_s1,output,south,1,900
+ammo_press_mk1,ammunition_e0,output,east,0,900
+ammo_press_mk1,ammunition_e1,output,east,1,900
+ammo_press_mk1,ammunition_e2,output,east,2,900
+ammo_press_mk1,ammunition_w0,output,west,0,900
+ammo_press_mk1,ammunition_w1,output,west,1,900
+ammo_press_mk1,ammunition_w2,output,west,2,900
+silo_mk1,charge_n0,input,north,0,900
+silo_mk1,charge_n1,input,north,1,900
+silo_mk1,charge_n2,input,north,2,900
+silo_mk1,charge_n3,input,north,3,900
+silo_mk1,charge_w0,input,west,0,900
+silo_mk1,charge_w1,input,west,1,900
+silo_mk1,charge_w2,input,west,2,900
+silo_mk1,charge_w3,input,west,3,900
+mg_turret_mk1,ammunition_n0,input,north,0,900
+mg_turret_mk1,ammunition_n1,input,north,1,900
+mg_turret_mk1,ammunition_e0,input,east,0,900
+mg_turret_mk1,ammunition_e1,input,east,1,900
+mg_turret_mk1,ammunition_s0,input,south,0,900
+mg_turret_mk1,ammunition_s1,input,south,1,900
+mg_turret_mk1,ammunition_w0,input,west,0,900
+mg_turret_mk1,ammunition_w1,input,west,1,900
+repair_pylon_mk1,plate_n0,input,north,0,900
+repair_pylon_mk1,plate_n1,input,north,1,900
+repair_pylon_mk1,plate_e0,input,east,0,900
+repair_pylon_mk1,plate_e1,input,east,1,900
+repair_pylon_mk1,plate_s0,input,south,0,900
+repair_pylon_mk1,plate_s1,input,south,1,900
+repair_pylon_mk1,plate_w0,input,west,0,900
+repair_pylon_mk1,plate_w1,input,west,1,900
 nest,delivery,input,south,1,900
 belt_straight,in,input,north,0,900
 belt_straight,out,output,south,0,900

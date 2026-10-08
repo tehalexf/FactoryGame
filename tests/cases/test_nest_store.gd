@@ -586,7 +586,8 @@ func test_determinism_banking_past_a_bill_and_withdrawing_replays_identically() 
 # Everything above runs on a fixture built to make one rule easy to see. This one runs on
 # **the shipped economy** — `content/machines.csv`, `content/recipes.csv`,
 # `content/deliveries.csv` and `content/tuning.toml`, unaltered — because the hole #27 names
-# is a balance fact and not a mechanism: 80 plate, a competent opening line that costs 78,
+# is a balance fact and not a mechanism: 110 plate, a competent opening line that costs 78 in
+# Machines and 30 more in Belt,
 # and a second Ammo Press at 14 that #10 measured as the thing you need to survive past
 # Wave 16. Before the store there was no way to pay for it. This is the proof that there is.
 #
@@ -597,18 +598,33 @@ func test_determinism_banking_past_a_bill_and_withdrawing_replays_identically() 
 # Factory can pay, not whether it can also fight.
 
 ## The whole competent opening line, in build order, and what `content/machines.csv` charges
-## for it. 78 against the 80 `player.starting_stock` grants.
+## for it. 78 of Machines, plus nine tiles of Belt at a plate each, against the 110
+## `player.starting_stock` grants — which is budgeted for the documented Factory and its thirty
+## tiles, so this compact Map leaves change. See `SPARE_PLATE_ON_WALL`.
+## The third entry of each row is the quarter turns the Machine is built with, and it is there
+## because of #47: a Belt docks against a declared port, and this line runs **east to west** —
+## ore from a Miner at x = 12 into a Smelter at x = 7, plate on westward to the Nest at x = 1.
+## A Smelter takes ore along its northern and western faces and gives plate back along its
+## southern and eastern ones, so stood square it would be facing the wrong way down this line and
+## neither Belt would connect. Turned half round it takes ore on the east and gives plate back on
+## the west, which is what the arrows on it say and what a player would do. The Boiler is the same
+## case: its coal comes from the east.
 const OPENING_LINE: Array = [
-	["miner_mk1", Vector3i(12, GROUND, 1)],
-	["smelter_mk1", Vector3i(7, GROUND, 1)],
-	["coal_miner_mk1", Vector3i(8, GROUND, 10)],
-	["steam_boiler_mk1", Vector3i(0, GROUND, 10)],
-	["ammo_press_mk1", Vector3i(14, GROUND, 10)],
-	["mg_turret_mk1", Vector3i(18, GROUND, 10)],
+	["miner_mk1", Vector3i(12, GROUND, 1), 0],
+	["smelter_mk1", Vector3i(7, GROUND, 1), 2],
+	["coal_miner_mk1", Vector3i(8, GROUND, 10), 0],
+	["steam_boiler_mk1", Vector3i(0, GROUND, 10), 2],
+	["ammo_press_mk1", Vector3i(14, GROUND, 10), 0],
+	["mg_turret_mk1", Vector3i(18, GROUND, 10), 0],
 ]
 
 ## Where the second Ammo Press goes, clear of everything above.
 const SECOND_PRESS: Vector3i = Vector3i(22, GROUND, 10)
+
+## How many tiles of Wall the opening bill's change pays for on this Map, at the two plates a
+## tile `content/structures.csv` charges. Five, which takes 23 plate down to 13 — under the 14
+## an Ammo Press costs, which is the premise the acceptance test rests on.
+const SPARE_PLATE_ON_WALL: int = 5
 
 
 ## A Map the shipped Machines fit on in one line: an iron seam and a coal seam both within a
@@ -627,7 +643,7 @@ func _shipped_layout() -> MapLayout:
 ## because a Belt is refused on a tile a Machine already stands on.
 func _build_the_opening_line(sim: Simulation) -> void:
 	for entry: Array in OPENING_LINE:
-		sim.step([InputAction.build_machine(0, _index(sim, entry[0]), entry[1])])
+		sim.step([InputAction.build_machine(0, _index(sim, entry[0]), entry[1], entry[2])])
 	sim.step([InputAction.build_belt(0, Vector3i(11, GROUND, 1), Vector3i(10, GROUND, 1))])
 	sim.step([InputAction.build_belt(0, Vector3i(6, GROUND, 1), Vector3i(5, GROUND, 1))])
 	sim.step([InputAction.build_belt(0, Vector3i(7, GROUND, 10), Vector3i(3, GROUND, 10))])
@@ -638,10 +654,21 @@ func test_a_run_funds_a_second_ammo_press_out_of_factory_output_alone() -> void:
 	assert_false(shipped.has_errors(), shipped.describe_errors())
 	var sim: Simulation = Simulation.new(SEED, 1, shipped, _shipped_layout())
 
-	assert_eq(sim.query_player_item(0, "iron_plate"), 80, "a Run opens with the shipped bill")
+	assert_eq(sim.query_player_item(0, "iron_plate"), 110, "a Run opens with the shipped bill")
 	_build_the_opening_line(sim)
 	assert_eq(sim.query_machine_count(), 6, "the whole competent opening line is standing")
-	assert_eq(sim.query_player_item(0, "iron_plate"), 2, "and it cost all but two plate")
+	# **The surplus is spent on Wall, and that is the fixture paying its way rather than a
+	# fudge.** `player.starting_stock` is budgeted for the documented Factory, which needs
+	# thirty tiles of Belt to join six Machines spread across the starter Map; this Map is
+	# deliberately compact — every Node is within a Belt's run of the Nest — so the same
+	# Machines need nine tiles and the opening bill leaves change. The premise this test is
+	# built on is empty pockets, so the change goes on Wall, which on a Map with no Breach
+	# does nothing at all to the accounting being measured.
+	assert_eq(sim.query_player_item(0, "iron_plate"), 23, "the line left change on this Map")
+	for offset: int in range(SPARE_PLATE_ON_WALL):
+		sim.step([InputAction.build_wall(0, Vector3i(26, GROUND, 1 + offset))])
+	assert_eq(sim.query_wall_count(), SPARE_PLATE_ON_WALL, "the change went up as Wall")
+	assert_eq(sim.query_player_item(0, "iron_plate"), 13, "which leaves less than a Press")
 
 	var press: int = _index(sim, "ammo_press_mk1")
 	assert_eq(
@@ -662,10 +689,10 @@ func test_a_run_funds_a_second_ammo_press_out_of_factory_output_alone() -> void:
 		),
 		"the Factory banked the plate for a second Ammo Press out of its own output"
 	)
-	assert_eq(sim.query_player_item(0, "iron_plate"), 2, "without a single plate from pockets")
+	assert_eq(sim.query_player_item(0, "iron_plate"), 13, "without a single plate from pockets")
 
 	sim.step([InputAction.withdraw_from_nest(0, _item(sim, "iron_plate"), cost)])
-	assert_eq(sim.query_player_item(0, "iron_plate"), 2 + cost, "withdrawn at the Nest")
+	assert_eq(sim.query_player_item(0, "iron_plate"), 13 + cost, "withdrawn at the Nest")
 	assert_eq(
 		sim.query_build_refusal(0, press, SECOND_PRESS, 0),
 		Simulation.Refusal.NONE,
@@ -675,7 +702,7 @@ func test_a_run_funds_a_second_ammo_press_out_of_factory_output_alone() -> void:
 	sim.step([InputAction.build_machine(0, press, SECOND_PRESS)])
 	assert_eq(sim.query_machine_count(), 7, "the second Ammo Press is standing")
 	assert_eq(sim.query_machine_id(6), "ammo_press_mk1")
-	assert_eq(sim.query_player_item(0, "iron_plate"), 2, "paid for out of the Factory, in full")
+	assert_eq(sim.query_player_item(0, "iron_plate"), 13, "paid for out of the Factory, in full")
 
 
 # ── The acceptance test: a Belt into the Nest cannot silently starve the Factory ──

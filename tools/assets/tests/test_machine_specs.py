@@ -92,18 +92,20 @@ class APortPosition(unittest.TestCase):
 
     def test_sits_at_the_centre_of_its_edge_tile_on_the_footprint_boundary(self):
         # miner_mk1 is 2x2, so 4 m x 4 m: X and Z both span -2000..+2000 mm.
-        # Its `ore` output is on the south edge (+Z), tile 1 of 0..1, so the
+        # Its `ore_s1` output is on the south edge (+Z), tile 1 of 0..1, so the
         # second 2 m tile along X: centre at -2000 + 1.5 * 2000 = +1000 mm.
+        # The port id carries the face and the tile since #47, because a face is
+        # declared tile by tile and two rows cannot share a name.
         miner = machine_specs.by_id(machine_specs.load(), "miner_mk1")
-        ore = machine_specs.port_by_id(miner, "ore")
+        ore = machine_specs.port_by_id(miner, "ore_s1")
         self.assertEqual(machine_specs.port_position_mm(miner, ore), (1000, 900, 2000))
 
     def test_runs_along_z_on_the_east_and_west_edges(self):
         # smelter_mk1 is 3x3, so 6 m x 6 m: X and Z span -3000..+3000 mm.
-        # `coal` is on the west edge (-X), tile 1 of 0..2 — the middle tile, so
+        # `coal_w1` is on the west edge (-X), tile 1 of 0..2 — the middle tile, so
         # Z is dead centre at 0.
         smelter = machine_specs.by_id(machine_specs.load(), "smelter_mk1")
-        coal = machine_specs.port_by_id(smelter, "coal")
+        coal = machine_specs.port_by_id(smelter, "coal_w1")
         self.assertEqual(machine_specs.port_position_mm(smelter, coal), (-3000, 900, 0))
 
     def test_takes_its_height_from_the_declaration_not_from_a_default(self):

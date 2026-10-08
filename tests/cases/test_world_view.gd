@@ -90,8 +90,11 @@ func test_the_hud_reads_the_nest_store_and_why_a_withdrawal_is_refused() -> void
 
 	# Spend the opening bill on Machines until the Build Gun's own Machine is out of reach,
 	# which is when a player needs to be told what to do about it.
+	# Fourteen rather than ten, since #47 raised the opening bill to 110 plate to cover the
+	# Belts the Factory needs: a Miner is 8, so thirteen of them leave six in the pocket and
+	# the fourteenth is the refusal this test is about.
 	var miner: int = sim.query_definitions().machine_index("miner_mk1")
-	for which: int in range(10):
+	for which: int in range(14):
 		sim.step([InputAction.build_machine(0, miner, Vector3i(20 + which * 3, WorldGrid.GROUND_LAYER, 20))])
 	view.sync(sim)
 	assert_true(
@@ -1554,7 +1557,7 @@ func test_the_hud_says_a_locked_machine_is_locked_rather_than_unbuildable() -> v
 # Neither is what this file asserts, so these fixtures replace them with a tier that locks
 # nothing and a stock that pays for anything.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One

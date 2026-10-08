@@ -2559,8 +2559,18 @@ func _build_picker_cells(sim: Simulation, definitions: Definitions) -> void:
 			_icon_path_for(definitions, machine)
 		)
 	# The Belt, last and apart, because it is not a Machine: no row in
-	# `content/machines.csv`, no Recipe, no cost, and its own key.
-	_add_picker_cell("C", "Belt", "free", "")
+	# `content/machines.csv`, no Recipe, and its own key. It does have a price since #47, and
+	# the cell quotes it **per tile** rather than for a route, because a cell is about the tool
+	# and the route line above is about the drag.
+	_add_picker_cell(
+		"C",
+		"Belt",
+		"%s / tile" % _bill_text(
+			definitions.structure_cost_items(Definitions.STRUCTURE_BELT),
+			definitions.structure_cost_counts(Definitions.STRUCTURE_BELT)
+		),
+		""
+	)
 
 
 ## Which key reaches a cell. Ten of them — `1` to `9` and `0` — which is the whole of the
@@ -2577,9 +2587,16 @@ func _picker_key_label(index: int) -> String:
 ## What a Machine costs, in the `item:count` form its row is written in. "free" where the
 ## column is empty, because a blank cell reads as a bug.
 func _cost_text(machine: MachineDefinition) -> String:
+	return _bill_text(machine.build_cost_items, machine.build_cost_counts)
+
+
+## A bill of Items as one line. "free" for an empty one, because a blank cell reads as a bug —
+## and a Belt, a Wall and a Machine all read their price through here, so the three cannot come
+## to word the same thing differently.
+func _bill_text(items: PackedStringArray, counts: PackedInt64Array) -> String:
 	var parts: PackedStringArray = PackedStringArray()
-	for slot: int in range(machine.build_cost_items.size()):
-		parts.append("%s %d" % [machine.build_cost_items[slot], machine.build_cost_counts[slot]])
+	for slot: int in range(items.size()):
+		parts.append("%s %d" % [items[slot], counts[slot]])
 	return "free" if parts.is_empty() else ", ".join(parts)
 
 
@@ -3564,12 +3581,12 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 ## Empty unless the Belt tool is out, because a line about a route nobody is drawing is one
 ## more line of the wall this HUD is trying to stop being.
 ##
-## **The cost reads "free" and that is honest rather than unfinished.** A Belt has no row in
-## `content/machines.csv` and so has no `build_cost` column to read; `content/tuning.toml`
-## says in as many words that the ticket giving Belts a cost should give Walls one at the
-## same time, in whatever table ends up owning both. So the number a player needs to decide
-## is the length, the cost is stated rather than implied, and the sentence changes to a bill
-## on the day there is one.
+## **The cost is the bill for the whole route, not the per-tile price**, because the per-tile
+## price is a number a player would have to multiply by the length themselves while holding a
+## mouse button down. It comes out of `query_belt_route_cost_*`, which is the same per-tile row
+## of `content/structures.csv` the Simulation charges from, so the line cannot quote one price
+## and the drag spend another. "free" where the table prices a Belt at nothing, which is what a
+## Run with no structures table does.
 func _belt_route_lines(sim: Simulation, aimed: Vector3i) -> PackedStringArray:
 	var lines: PackedStringArray = PackedStringArray()
 	if not sim.query_player_is_laying_belt(VIEWED_PLAYER):
@@ -3586,15 +3603,28 @@ func _belt_route_lines(sim: Simulation, aimed: Vector3i) -> PackedStringArray:
 		"clear" if refusal == Simulation.Refusal.NONE else BuildGun.refusal_text(refusal)
 	)
 	lines.append(
-		"belt: %s — %d tiles — free — %s"
+		"belt: %s — %d tiles — %s — %s"
 		% [
 			"drag to route, right click turns the corner" if not _belt_drag_active
 			else "release to lay",
 			length,
+			_route_cost_text(sim, from_tile, aimed),
 			verdict,
 		]
 	)
 	return lines
+
+
+## What the route in flight would cost, in the `item count` form the picker's cells use.
+## "free" where it costs nothing, because a blank reads as a bug.
+func _route_cost_text(sim: Simulation, from_tile: Vector3i, aimed: Vector3i) -> String:
+	var items: PackedStringArray = sim.query_belt_route_cost_items(
+		VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
+	)
+	var counts: PackedInt64Array = sim.query_belt_route_cost_counts(
+		VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
+	)
+	return _bill_text(items, counts)
 
 
 ## A lit sky and a ground plane with the 2 m grid marked on it, built once.

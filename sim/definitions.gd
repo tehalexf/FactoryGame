@@ -46,11 +46,18 @@ const DELIVERIES_FILE: String = "deliveries.csv"
 const GEAR_FILE: String = "gear.csv"
 const STRATAGEMS_FILE: String = "stratagems.csv"
 
-## Where a Belt may dock against a Machine. **Optional, and the only optional table**: it is
-## read for the arrows a player sees on a Machine's faces and by nothing in the Simulation,
-## so a Run with the file missing loses the arrows and loses nothing else — the rule a Machine
-## with no generated body already obeys. See `sim/machine_ports.gd` for why the Simulation
-## does not yet dock a Belt against the declaration, and which ticket should make it.
+## What a Belt and a Wall cost. Read off disk like every other table, and **defaulting to
+## free when a caller supplies no source at all** — which is the seam that makes a priced
+## Belt possible without coupling the tuning file to the Recipe table. See the file's own
+## header, and `_check_structures_against_recipes`.
+const STRUCTURES_FILE: String = "structures.csv"
+
+## Where a Belt may dock against a Machine. **Optional, and the only optional table.** A Run
+## with the file missing docks a Belt against any footprint edge tile, which is what the
+## Simulation did everywhere before #47 — a declaration that does not exist cannot be the
+## rule, and that is the seam a test bringing its own Machines works through. What stops the
+## *shipped* content reaching that looseness is `_check_ports_against_machines`, which refuses
+## a set where a Machine that needs a Belt declares no port.
 const PORTS_FILE: String = "machine_ports.csv"
 
 const MACHINE_COLUMNS: Array = [
@@ -73,6 +80,21 @@ const MACHINE_COLUMNS: Array = [
 ]
 
 const RECIPE_COLUMNS: Array = ["id", "display_name", "inputs", "outputs", "seconds"]
+
+const STRUCTURE_COLUMNS: Array = ["id", "display_name", "build_cost_per_tile"]
+
+## The Belt, as `content/structures.csv` names it. The Simulation names the structures it
+## can build, because there is a `BUILD_BELT` intent and a `BUILD_WALL` intent and no third
+## — so unlike the Machines, the set is closed and a row for anything else would be a
+## number nothing reads.
+const STRUCTURE_BELT: String = "belt"
+
+## The Wall, as `content/structures.csv` names it.
+const STRUCTURE_WALL: String = "wall"
+
+## Every structure the Simulation knows how to build, in the order they are held. Both rows
+## are required: a structure the table omits would be one whose price is a guess.
+const STRUCTURE_IDS: Array = [STRUCTURE_BELT, STRUCTURE_WALL]
 
 const WAVE_COLUMNS: Array = [
 	"id",
@@ -705,7 +727,8 @@ var _recipes: Array = []
 var _recipe_ids: PackedStringArray = PackedStringArray()
 var _item_ids: PackedStringArray = PackedStringArray()
 
-## The Items a player can spend again: every Item a Machine's `build_cost` names and every
+## The Items a player can spend again: every Item a Machine's `build_cost` names, every Item
+## a structure's `build_cost_per_tile` names, and every
 ## Item a ranged weapon fires. Interned rather than declared, exactly as `_item_ids` is —
 ## writing an Item into a build cost or a weapon's `ammunition_item` is what makes it
 ## spendable, so there is no third table to fall out of step with the other two.
@@ -730,15 +753,23 @@ var _stratagem_ids: PackedStringArray = PackedStringArray()
 ## a `FIT_COMPONENT` intent carries.
 var _gear_slot_ids: PackedStringArray = PackedStringArray()
 
+## The Belt and the Wall, out of `content/structures.csv`, in `STRUCTURE_IDS` order.
+##
+## Empty when a caller supplied no structures source, which means **both are free**. That is
+## the same thing an empty `build_cost` column means for a Machine, and it is what keeps a
+## test that brings its own Recipes working: such a test's Recipes do not mention
+## `iron_plate`, so a price that did would make its whole set an error. `load_from_directory`
+## requires the file, so a real Run can never lose the prices quietly.
+var _structures: Array = []
+
 ## Where a Belt may dock against each Machine, out of `content/machine_ports.csv`.
 ##
-## **Deliberately not in `digest()`**, and that is the one surprising thing about it. The
-## digest is the set of numbers a Run is playing by — what a lockstep client checks it agrees
-## with the Host about, and what `test_delivery` asserts a completed tier does not move. The
-## ports are read by the renderer and by nothing in the Simulation, so a client whose table
-## differs draws different arrows and simulates the same Run. The ticket that makes
-## `_load_from_port` dock against the declaration must add them, because on that day they
-## become a rule.
+## **In `digest()` since #47, which is the day it stopped being a drawing.** It used to be out
+## of the digest for a good reason — the ports were read by the renderer and by nothing in the
+## Simulation, so a client whose table differed drew different arrows and simulated the same
+## Run. `_load_from_port` and `_hand_off` now dock against the declaration, so a client whose
+## table differed would carry goods across a different wall, and the digest is what refuses
+## that rather than letting it desync.
 var _ports: MachinePorts = MachinePorts.none()
 
 ## The Gear indices of the `weapon` rows, ascending. What the weapon-select keys step
@@ -760,6 +791,7 @@ static func load_from_directory(dir_path: String) -> Definitions:
 		DELIVERIES_FILE,
 		GEAR_FILE,
 		STRATAGEMS_FILE,
+		STRUCTURES_FILE,
 	]:
 		var path: String = "%s/%s" % [dir_path, file_name]
 		if not FileAccess.file_exists(path):
@@ -784,6 +816,7 @@ static func load_from_directory(dir_path: String) -> Definitions:
 	var deliveries: String = _read_file("%s/%s" % [dir_path, DELIVERIES_FILE])
 	var gear: String = _read_file("%s/%s" % [dir_path, GEAR_FILE])
 	var stratagems: String = _read_file("%s/%s" % [dir_path, STRATAGEMS_FILE])
+	var structures: String = _read_file("%s/%s" % [dir_path, STRUCTURES_FILE])
 
 	var definitions: Definitions = parse(
 		machines,
@@ -801,7 +834,9 @@ static func load_from_directory(dir_path: String) -> Definitions:
 		"%s/%s" % [dir_path, GEAR_FILE],
 		"%s/%s" % [dir_path, STRATAGEMS_FILE],
 		ports,
-		ports_path
+		ports_path,
+		structures,
+		"%s/%s" % [dir_path, STRUCTURES_FILE]
 	)
 	return definitions
 
@@ -825,7 +860,9 @@ static func parse(
 	gear_path: String = GEAR_FILE,
 	stratagems_path: String = STRATAGEMS_FILE,
 	ports_source: String = "",
-	ports_path: String = PORTS_FILE
+	ports_path: String = PORTS_FILE,
+	structures_source: String = "",
+	structures_path: String = STRUCTURES_FILE
 ) -> Definitions:
 	var definitions: Definitions = Definitions.new()
 
@@ -841,10 +878,24 @@ static func parse(
 		stratagems_source, stratagems_path, PackedStringArray(STRATAGEM_COLUMNS)
 	)
 
+	# A source rather than a table, because an absent one is not an empty one: no structures
+	# source at all is a caller who did not ask for prices, and every structure is then free.
+	var structures: CsvTable = null
+	if not structures_source.is_empty():
+		structures = CsvTable.parse(
+			structures_source, structures_path, PackedStringArray(STRUCTURE_COLUMNS)
+		)
+
 	definitions._read_recipes(recipes)
 	definitions._intern_items()
 	definitions._read_machines(machines)
 	definitions._check_machines_against_recipes(machines)
+	# The structures straight after the Machines, because they are the other table that
+	# names an Item in a build cost and they are checked against the Recipes by the same
+	# rule — which is the whole reason they are a table rather than a tuning key.
+	if structures != null:
+		definitions._read_structures(structures)
+		definitions._check_structures_against_recipes(structures)
 	# Gear before the Delivery table, because `unlocks_gear` has to name a Gear row — the
 	# same rule `unlocks_machines` already obeys: one authority, checked rather than
 	# assumed. And **tuning last**, because `player.starting_weapon` has to name a weapon
@@ -864,10 +915,14 @@ static func parse(
 	definitions._read_waves(waves)
 	definitions._read_deliveries(deliveries)
 	definitions._read_tuning(tuning)
-	# Last, and separately, because it is the one table nothing in the Simulation reads: the
-	# ports are drawn. An empty source is the Run with no table, not a table with no rows.
+	# Last, and separately, because every cross-check it needs is about a Machine and its Recipe
+	# together. An empty source is the Run with **no table**, not a table with no rows: a
+	# declaration that does not exist cannot be the rule, so such a Run docks a Belt against any
+	# footprint edge tile exactly as the Simulation did everywhere before #47.
 	if not ports_source.is_empty():
 		definitions._ports = MachinePorts.parse(ports_source, ports_path)
+		# After the Machines, because every question it asks is about one of them.
+		definitions._check_ports_against_machines(ports_path)
 
 	# Errors are gathered in file order — machines, then Recipes, then tuning, then the
 	# Wave table, the Delivery table and the Gear table — so the report reads like a list
@@ -880,6 +935,8 @@ static func parse(
 	definitions.errors.append_array(gear.errors)
 	definitions.errors.append_array(stratagems.errors)
 	definitions.errors.append_array(definitions._ports.errors)
+	if structures != null:
+		definitions.errors.append_array(structures.errors)
 
 	if definitions.has_errors():
 		definitions._discard_content()
@@ -1216,6 +1273,16 @@ func digest() -> int:
 	for definition: MachineDefinition in _machines:
 		definition.feed_into(hasher)
 
+	# The structures, because what a Belt costs is a number the Run is playing by: a client
+	# whose table priced a Belt differently would spend a different number of plates out of a
+	# player's pockets on the same drag, which is a divergence and not a drawing difference.
+	hasher.feed_int(_structures.size())
+	for definition: StructureDefinition in _structures:
+		definition.feed_into(hasher)
+
+	# The ports, since #47 made them the rule rather than the arrows. See `_ports`.
+	_ports.feed_into(hasher)
+
 	hasher.feed_int(_waves.size())
 	for entry: WaveEntry in _waves:
 		entry.feed_into(hasher)
@@ -1476,12 +1543,18 @@ func _intern_items() -> void:
 
 
 ## Collects the Items a player can spend again, sorted: the Items the Machine table's
-## `build_cost` columns name and the Items the Gear table's weapons fire. Called once the
-## Machines and the Gear are read, because those two tables are the only sinks a player's
-## pockets have.
+## `build_cost` columns name, the Items a Belt and a Wall cost per tile, and the Items the
+## Gear table's weapons fire. Called once those three tables are read, because they are the
+## only sinks a player's pockets have.
 func _intern_spendable_items() -> void:
 	_spendable_item_ids = PackedStringArray()
 	for definition: MachineDefinition in _machines:
+		for item: String in definition.build_cost_items:
+			if _spendable_item_ids.find(item) == -1:
+				_spendable_item_ids.append(item)
+	# A Belt and a Wall are the third sink, since #47 gave them a price. An Item that only a
+	# Belt costs is still an Item a player can spend again, so the Nest banks it.
+	for definition: StructureDefinition in _structures:
 		for item: String in definition.build_cost_items:
 			if _spendable_item_ids.find(item) == -1:
 				_spendable_item_ids.append(item)
@@ -1490,6 +1563,178 @@ func _intern_spendable_items() -> void:
 		if not item.is_empty() and _spendable_item_ids.find(item) == -1:
 			_spendable_item_ids.append(item)
 	_spendable_item_ids.sort()
+
+
+# ── Reading the structure table ───────────────────────────────────────────────
+
+## Reads `content/structures.csv`: what a tile of Belt and a tile of Wall cost.
+##
+## The set of ids is closed, so both halves of that are checked here — a row naming
+## something the Simulation cannot build is refused by name, and a missing row is refused
+## by name too. That is the opposite of the Machine table, deliberately: a ninth Machine is
+## a row, and a third structure would need a `BUILD_*` intent, so there is nothing a row
+## alone could add.
+func _read_structures(table: CsvTable) -> void:
+	var seen: PackedStringArray = PackedStringArray()
+	for row: int in range(table.row_count()):
+		var id: String = table.require_id(row, "id")
+		if id.is_empty():
+			continue
+		if STRUCTURE_IDS.find(id) == -1:
+			table.report_row(
+				row,
+				(
+					'id: "%s" is not something the Simulation builds — the structures are'
+					+ " exactly %s, because those are the intents that exist"
+				) % [id, ", ".join(PackedStringArray(STRUCTURE_IDS))]
+			)
+			continue
+		if seen.find(id) != -1:
+			table.report_row(row, 'id: "%s" appears twice' % id)
+			continue
+		seen.append(id)
+
+		var definition: StructureDefinition = StructureDefinition.new()
+		definition.source_row = row
+		definition.id = id
+		definition.display_name = table.value(row, "display_name")
+		var parsed: Array = _parse_item_list(table, row, "build_cost_per_tile")
+		definition.set_build_cost(parsed[0], parsed[1])
+		_structures.append(definition)
+
+	for id: String in STRUCTURE_IDS:
+		if seen.find(id) == -1:
+			table.errors.append('%s: no row for "%s"' % [table.source_path, id])
+
+	# Held in STRUCTURE_IDS order rather than file order, so the index space the digest
+	# feeds is a property of the Simulation and not of the order somebody typed the rows in.
+	var ordered: Array = []
+	for id: String in STRUCTURE_IDS:
+		var found: StructureDefinition = _structure_named(id)
+		if found != null:
+			ordered.append(found)
+	_structures = ordered
+
+
+## The cross-checks between the ports table and the Machine table, and the pair of them is what
+## makes the declaration a rule a player can rely on.
+##
+## **The error is the one with teeth: a Machine that needs a Belt must declare a port.** After
+## #47 a Belt docks against a declared port and nowhere else, so a Machine whose Recipe takes a
+## Belt-fed input and declares no input port is a Machine no Belt can reach, and one that
+## produces an Item and declares no output port is a Machine whose output can never leave. Both
+## are Machines that cannot work, which is exactly the class of mistake a loader is for — and it
+## is what makes the Turret's ports impossible to forget, which they were until this ticket.
+##
+## **A row naming a Machine nothing defines is kept, silently, and that is deliberate — it is
+## the one place the tightening this ticket is about stops.** CLAUDE.md used to say such a row
+## was "a typo worth refusing" on the day ports became a rule, and measuring it against the
+## actual file says otherwise: `machine_ports.csv` is **shared with the mesh generator**, which
+## reads it for bodies `machines.csv` has not caught up with (`press_mk1`, `assembler_mk1`,
+## `generator_mk1`) and for the two owners that are not Machines at all. So a row this side
+## cannot use is not a row nothing uses, and warning that "nothing reads this" would be false —
+## which is worse than silence, because the project's warnings are for a number that really does
+## nothing (a tuning key nobody consults).
+##
+## A genuine typo is still caught, on the side that can see both files: `machine_specs.load`
+## refuses an id that is in neither `machine_bodies.csv` nor `machines.csv`, and the asset suite
+## runs it. `ports_of` never finds such a row here, because nothing asks about a Machine that
+## does not exist.
+func _check_ports_against_machines(path: String) -> void:
+	for definition: MachineDefinition in _machines:
+		if not _ports.declares(definition.id):
+			errors.append(
+				(
+					'%s: "%s" declares no port, and since #47 a Belt docks against a declared'
+					+ " port and nowhere else — so this Machine is one no Belt can reach"
+				) % [path, definition.id]
+			)
+			continue
+		var used: RecipeDefinition = (
+			null if definition.recipe_index == -1 else recipe_at(definition.recipe_index)
+		)
+		if used == null:
+			continue
+		if used.input_count() > 0 and not _ports.declares_flow(definition.id, MachinePorts.INTO):
+			errors.append(
+				(
+					'%s: "%s" runs "%s", which takes a Belt-fed input, and declares no input'
+					+ " port — nothing could ever feed it"
+				) % [path, definition.id, used.id]
+			)
+		if used.output_count() > 0 and not _ports.declares_flow(definition.id, MachinePorts.OUT_OF):
+			errors.append(
+				(
+					'%s: "%s" runs "%s", which produces an Item, and declares no output port —'
+					+ " nothing it makes could ever leave"
+				) % [path, definition.id, used.id]
+			)
+
+
+## The cross-check between this table and the Recipes, in the shape
+## `_check_machines_against_recipes` already has and for the same reason: an Item exists
+## because a Recipe mentions it, so a price naming one that no Recipe does is a typo and not
+## a new Item. **This check is the whole argument for the cost living in a table** rather
+## than in `content/tuning.toml`, which sits on the other side of the content directory from
+## the Recipes and could not be checked against them without coupling the two.
+func _check_structures_against_recipes(table: CsvTable) -> void:
+	for definition: StructureDefinition in _structures:
+		for item: String in definition.build_cost_items:
+			if item_index(item) == -1:
+				table.report_row(
+					definition.source_row,
+					(
+						'build_cost_per_tile: "%s" is not an Item — the Items that exist are'
+						+ " exactly the ones the Recipes mention"
+					) % item
+				)
+
+
+func _structure_named(id: String) -> StructureDefinition:
+	for definition: StructureDefinition in _structures:
+		if definition.id == id:
+			return definition
+	return null
+
+
+# ── Structures ────────────────────────────────────────────────────────────────
+
+## What one tile of a structure costs, or null for a structure this set says nothing about.
+##
+## Never an error to ask: a set loaded with no structures table prices both at nothing, which
+## is what a caller supplying no source asked for. `structure_cost_items` is the question
+## callers actually want.
+func structure(id: String) -> StructureDefinition:
+	return _structure_named(id)
+
+
+func structure_count() -> int:
+	return _structures.size()
+
+
+## What one tile of a structure costs, as parallel arrays. Empty for a free structure and
+## empty for a set with no structures table, which are the same thing on purpose.
+func structure_cost_items(id: String) -> PackedStringArray:
+	var definition: StructureDefinition = _structure_named(id)
+	if definition == null:
+		return PackedStringArray()
+	return definition.build_cost_items.duplicate()
+
+
+func structure_cost_counts(id: String) -> PackedInt64Array:
+	var definition: StructureDefinition = _structure_named(id)
+	if definition == null:
+		return PackedInt64Array()
+	return definition.build_cost_counts.duplicate()
+
+
+## How many of an Item one tile of a structure costs. 0 for an Item it does not need, for a
+## free structure and for a set with no table.
+func structure_cost_of(id: String, item_id: String) -> int:
+	var definition: StructureDefinition = _structure_named(id)
+	if definition == null:
+		return 0
+	return definition.build_cost_of(item_id)
 
 
 # ── Reading the Machine table ─────────────────────────────────────────────────
@@ -3144,6 +3389,7 @@ func _sort_deliveries() -> void:
 ## more dangerous than none, because it looks usable.
 func _discard_content() -> void:
 	_ports = MachinePorts.none()
+	_structures.clear()
 	_machines.clear()
 	_machine_ids.clear()
 	_recipes.clear()

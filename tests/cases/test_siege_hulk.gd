@@ -923,7 +923,7 @@ func test_the_bill_for_leaving_is_readable_before_the_player_commits() -> void:
 
 # ── Fixtures that keep progression out of the way ─────────────────────────────
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:80"'
+const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "ammunition:4000;coal:400;iron_ore:400;iron_plate:400"'
 
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems

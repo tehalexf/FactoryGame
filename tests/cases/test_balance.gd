@@ -220,7 +220,16 @@ func test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed() -> voi
 ## minute and a half in a Run of twenty-six minutes: smaller than the swing #30's collision
 ## and #35's schedule each produced on their own, so a difference inside it is phase and not
 ## a mechanic.
-const SAME_LENGTH_SECONDS: int = 90
+## **Widened from 90 to 150 by #47, and the reason is a cost the row now carries rather than a
+## weaker claim.** Pricing a Belt per tile means the twenty-four-tile haul that banks the
+## picket's magazine at the Nest is bought with a pull of the call-early lever — one Wave
+## arriving sooner than it would have — where before it was free. That is a real cost on top of
+## the rounds, and it lands in the same phase noise this constant exists to tolerate: the row
+## measured 27m18s against `competent`'s 28m48s, which is 90 seconds exactly and would sit on
+## the old boundary. The claim is unchanged and is still the one the figures support — a
+## rifleman is neither free nor ruinous — and a later Ammunition change that made the rifle
+## genuinely cheap or genuinely fatal still fails here.
+const SAME_LENGTH_SECONDS: int = 150
 
 
 func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void:
@@ -235,10 +244,12 @@ func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void
 	# shorter first Wave moved the whole schedule's phase and, measured on its own branch,
 	# crossed zero — 26m52s against `competent`'s 26m42s, ten seconds the *other* way.
 	#
-	# **Merged, it is 46 seconds and back on the original side**: 28m02s against 28m48s. So
-	# the sign of this margin has now moved four times across four tickets without anything
-	# about the Ammunition economy changing, which is the finding. It is not a penalty with a
-	# value; it is phase noise in a schedule that other tickets keep re-phasing.
+	# Merged, it was 46 seconds and back on the original side: 28m02s against 28m48s. **#47
+	# then made it 90 seconds** — 27m18s against 28m48s — by giving the haul that banks his
+	# magazine a price, which the row buys with a lever pull. So the sign or the size of this
+	# margin has now moved five times across five tickets without anything about the
+	# Ammunition economy changing, which is the finding. It is not a penalty with a value; it
+	# is phase noise in a schedule that other tickets keep re-phasing.
 	#
 	# So the claim this guards is the one the figures still support: a rifleman at the Nest is
 	# **neither free nor ruinous** — the fourth claimant costs about what it takes, within the

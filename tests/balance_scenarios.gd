@@ -167,7 +167,7 @@ static func by_id(scenario_id: String) -> BalanceScenario:
 ## a few minutes, and it is the control every other row is read against.
 static func bare() -> BalanceScenario:
 	return BalanceScenario.named(
-		"bare", "builds nothing — the opening 80 plate never leaves their pockets"
+		"bare", "builds nothing — the opening 110 plate never leaves their pockets"
 	)
 
 
@@ -190,7 +190,8 @@ static func opening_line() -> BalanceScenario:
 ##
 ## **The direct successor to #10's figure**, built from the same Machines on the same tiles,
 ## so the before-and-after in CLAUDE.md compares two measurements of one Factory. The bill is
-## 78 of the 80 plate a Run opens with, which is why this is *the* opening Factory rather
+## 108 of the 110 plate a Run opens with — 78 of Machines and 30 tiles of Belt, since #47
+## priced them — which is why this is *the* opening Factory rather
 ## than one of several.
 static func competent() -> BalanceScenario:
 	var scenario: BalanceScenario = BalanceScenario.named(
@@ -235,9 +236,12 @@ static func fortified() -> BalanceScenario:
 	)
 	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
 	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
-	scenario.at(3, _factory_turret_belts())
+	# The second Turret's feed waits on the lever with the Turret itself, since #47 priced a
+	# Belt: the opening bill covers the Factory's own thirty tiles and no more, so these four
+	# come out of the same bounty the Turret does.
 	scenario.at_second(60, [InputAction.call_wave_early(0)])
 	scenario.at_second(61, [_turret(FACTORY_TURRET_TILE)])
+	scenario.at_second(62, _factory_turret_belts())
 	return scenario
 
 
@@ -262,12 +266,22 @@ static func deep_digger() -> BalanceScenario:
 	)
 	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
 	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
-	scenario.at(3, _coal_belts_to_the_nest() + _ammunition_belts_to_the_nest())
+	# **The two Nest lines are laid when the Run can pay for them, not at tick 3.** #47 gave a
+	# Belt a price per tile, and these two lines are forty and twenty-four tiles — 64 plate
+	# against an opening bill budgeted for the thirty tiles the Factory itself needs. So they
+	# wait on the lever, which is the only plate a Run has early: two pulls buy the coal line
+	# and a third buys the ammunition line, and each pull is a Wave arriving sooner. That is
+	# the Belt price doing exactly what it is for — a forty-tile haul to pay a twenty-coal
+	# bill is now a visible forty-plate decision rather than a free one — and it is why this
+	# row's figure moved. The coal line's episode is the same shape it always was, two minutes
+	# later: lay it, let it divert the Boiler's fuel, tear it down once the tier is paid.
+	scenario.at_second(121, _coal_belts_to_the_nest())
+	scenario.at_second(181, _ammunition_belts_to_the_nest())
 	# The player walks to the Nest's counter and stays there: handing goods over and taking
 	# them back out both happen at that one counter. They will be bitten standing there, and
 	# the report counts it.
 	_walk_to(scenario, 10 * Simulation.TICKS_PER_SECOND, Vector3i(-3, GROUND, -3), 0)
-	# And the coal line comes back up at three minutes, which is still the decision this row
+	# And the coal line comes back down at five minutes, which is still the decision this row
 	# models even though #37 took the Nest's store out of the reason.
 	#
 	# **What is left is the Belt itself.** The store used to take 200 coal past the tier's bill
@@ -280,7 +294,7 @@ static func deep_digger() -> BalanceScenario:
 	# #46 changed, so read it as the shape of the trap rather than its current size. So the diversion a long Belt can hide inside itself is bigger than the one the Nest
 	# was hiding, and tearing the line down once the tier is paid is still a decision a player has
 	# to make. See "Findings that are not tuning" in CLAUDE.md.
-	scenario.at_second(180, _demolish_all(_coal_belts_to_the_nest_tiles()))
+	scenario.at_second(300, _demolish_all(_coal_belts_to_the_nest_tiles()))
 	# Then, once a minute: pull the lever, hand over whatever the open tier wants, take plate
 	# back out, and try to put a Mk2 on the seam. **The lever is the only plate a Run has** —
 	# `wave.call_early_bounty_per_item` is 25 of each starting Item — so paying 120 plate for
@@ -371,7 +385,14 @@ static func rifle_picket() -> BalanceScenario:
 	)
 	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
 	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
-	scenario.at(3, _ammunition_belts_to_the_nest())
+	# **The line that banks his magazine costs twenty-four plate now, and the lever is what pays
+	# for it.** #47 priced a Belt per tile and the opening bill covers the Factory's own thirty
+	# tiles, so a rifleman who wants Ammunition at the Nest buys the haul with one pull of the
+	# call-early lever — one Wave arriving sooner than it would have. That is a cost this row
+	# did not carry before and it is the right one: the rounds he spends were never free, and
+	# now neither is the Belt that brings them to him.
+	scenario.at_second(60, [InputAction.call_wave_early(0)])
+	scenario.at_second(61, _ammunition_belts_to_the_nest())
 	_walk_to(scenario, 10 * Simulation.TICKS_PER_SECOND, Vector3i(-3, GROUND, -3), 0)
 	# Rifle out, pointed down the lane the Breach feeds.
 	scenario.at_second(20, [
