@@ -16,7 +16,7 @@ tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|grou
 SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png routing
                                  # the same, through the player's own camera (placing|routing|running)
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
-tools/run_tests.sh              # the whole suite, headless. This is the CI command.
+tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
 tools/balance/measure.sh --scenario competent --verbose   # one Run, with its per-minute trace
@@ -48,6 +48,17 @@ than the engine's test runner; see
 `bash tools/git/install_hooks.sh` once per clone to install its licence guard as
 a pre-commit hook — the repository is public and purchased assets must never be
 committed.
+
+**There are three suites and CI runs all three** — `tools/run_tests.sh`,
+`tools/assets/run_tests.sh` and `tools/tuning/run_tests.sh`. See
+[.github/workflows/ci.yml](.github/workflows/ci.yml); the `all suites green` job
+is the single check. It provisions Godot 4.7.2, Blender 5.2.2 and ffmpeg
+(`.github/ci/install_toolchain.sh`, pinned and checksummed in
+`.github/ci/toolchain.env`) so that no test skips for a missing tool — a skip
+whose reason is not in `.github/ci/expected_skips.txt` fails the job, because a
+suite that silently skips part of itself is the same thing as one that does not
+run. Two of the three did not run until #40, and a tuning-defaults regression sat
+on the integration branch for days as a result.
 
 `tools/run_tests.sh` runs `--import` first on every invocation. That is not optional: `class_name`
 globals resolve through `.godot/global_script_class_cache.cfg`, which only an
