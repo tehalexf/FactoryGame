@@ -487,9 +487,10 @@ library, because what these files need is not geometry work.
 | Problem | What arrives | What the converter does |
 |---|---|---|
 | One atlas, 213 props | Every heyheythere GLB points at `../textures/atlas.png` and `../textures/atlas_glow.png` by relative URI. Carried forward, Godot decodes a 2048 square per prop and holds forty copies of one image | Strips `images`, `textures` and `samplers` out of every GLB and copies the two PNGs once into the output directory. `SetDressing` builds **one** `StandardMaterial3D` over them and overrides it onto every pool, so the whole yard draws in tens of calls rather than hundreds |
-| Two art directions | Every pack is lit and coloured for a white studio backdrop; this world is an ochre smog at late afternoon, and Shapita in particular is clean modern industrial where the palette is 1920s-40s heavy industry | Multiplies each material's `baseColorFactor` by a per-pack tint toward `dieselpunk_palette.json` — the move `convert_weapons.sh` makes on the arms. Shapita and Lukami are additionally used **only past the Map's edge**, where fog and distance do the rest |
+| Two art directions | Every pack is lit and coloured for a white studio backdrop, and all three are clean modern high-visibility industrial where the palette is 1920s-40s heavy industry: safety yellow is eleven per cent of the atlas, and sixty-one per cent of it was brighter than the brightest surface on any Machine | **`prop_grade.py` remaps the atlas onto the palette's own ramps** — see below. The far-yard packs, which keep their own materials, still get a per-pack `baseColorFactor` tint, and are additionally used **only past the Map's edge** where fog and distance do the rest |
 | Origins are not all on the floor | A high-bay light hangs below its pivot, a roof truss bears on its own zero, an overhead pipe section is modelled at 3.0 m | Records each prop's measured bounds in `props.json` beside the GLBs, read out of the POSITION accessors' own `min`/`max`. The layout then uses the pack's *own* datums rather than inventing heights: its pipe racks stand 3.37 m and its pipe sections sit at 3.03 m, so a run is simply the pieces at their own heights |
-| Emission | The glow atlas is almost entirely black — only lamps are lit | The shared material uses `EMISSION_OP_MULTIPLY`. Godot's **default operator adds**, which with a warm tint lights every crate in the yard instead of the lamps |
+| Emission | The glow atlas is almost entirely black — only lamps are lit, and two of the lit colours are a turquoise and a green | The shared material uses `EMISSION_OP_MULTIPLY`. Godot's **default operator adds**, which with a warm tint lights every crate in the yard instead of the lamps. `grade_emission` then forces every lit texel to one tungsten hue at its own brightness, because a multiply through a green texel is a neon sign |
+| Factory-clean props | The palette names soot and these have none; the pack's baked occlusion sits in `COLOR_0` over a range of 0.50 to 1.00, which is a hint of contact rather than dirt | `deepen_grime` raises it to a power and tints its dark end toward soot. That is the only per-prop geometric record of where dirt collects, so grime goes in exactly the creases and nothing has to be decided about any one prop |
 
 **heyheythere is the pack this leans on, and the reason is the grid.** It is
 authored at 1 unit to the metre on a **2 m grid with 4 m storeys**, which is
@@ -498,10 +499,54 @@ fudge — see [LICENSED_ASSETS.md](LICENSED_ASSETS.md) for the rest of its datum
 That is also why it cannot give a *Machine* its silhouette: #24 solved footprints
 deliberately and these are props, not Machines.
 
-`tools/assets/tests/test_convert_props.py` covers the whole of it on a fixture
-built in-process, without a single licensed byte, and asserts the one thing the
-two halves can drift on: every prop in the catalogue is a prop
-`game/set_dressing.gd` actually asks for.
+### The grade, which is the artistic half and lives in `prop_grade.py`
+
+The first pass at the two art directions multiplied each pack's
+`baseColorFactor` by a tint pulled toward the palette, and it was wrong twice
+over. **It did nothing at all to the props a player stands among**, because
+`SetDressing` overrides one shared material onto every heyheythere prop and an
+override replaces the factor it would have read — the atlas is the only thing
+that decides what a prop in the foreground is coloured, and the atlas went
+through untouched. And a multiply is the wrong *shape* of move anyway: these
+packs are not the wrong brightness of the right colour, they are a different art
+direction, and a safety-yellow pipe multiplied by a brown is a darker
+safety-yellow pipe.
+
+So the atlas is graded instead, texel by texel, once per distinct colour:
+
+* every texel is sorted into a **family** by hue and saturation — iron, oxide or
+  olive — and each family names a palette material it is pulled toward in hue
+  and saturation. Safety yellow goes to olive drab, which is where a painted
+  pipe in 1935 would in fact have been; process teal goes to iron, because there
+  is no teal, cyan or blue anywhere in the palette and turning it red would be as
+  wrong as leaving it teal;
+* its luminance goes through that family's **shoulder**, `ceiling * L /
+  (L + knee)`, which compresses the top without flattening it and darkens the
+  bottom. The ceilings are set so the whole atlas lands inside the Machines'
+  measured 0.03–0.14 linear albedo, and `test_prop_grade.py` walks the 8-bit
+  cube to assert it;
+* **hazard colour is moved rather than abolished.** Interwar industry painted
+  bollards and kerbs; the defect was that the yellow was everywhere and uniformly
+  bright, so there was nothing for it to be brighter than. The atlas loses all of
+  it and `game/set_dressing.gd` paints it back on `HAZARD_PROPS` — two prop ids —
+  out of the palette's own `HazardYellow`, which is the material the stand-ins
+  for those kinds already wear.
+
+One thing the grade could not fix, because it is the BRDF and not the texture:
+the shared prop material began at `metallic = 0, roughness = 1`, a perfect
+Lambertian, which is the one surface in this world that takes the sun full in the
+face. Every Machine is `metallic = 1`, lit by what it reflects and dark out of a
+filmic tonemap, so an identical albedo rendered nearly twice as bright on a
+crate. `SetDressing._purchased_material` now sits at `metallic = 0.72, roughness
+= 0.60`, which is a compromise aimed at the pipes, racking, drums, fencing and
+catwalks that are most of the set by area, and it is what lets the palette's
+values mean the same thing on a prop and on a Machine.
+
+`tools/assets/tests/test_convert_props.py` and `test_prop_grade.py` cover the
+whole of it on fixtures built in-process, without a single licensed byte. Between
+them they assert the two things the halves can drift on: every prop in the
+catalogue is a prop `game/set_dressing.gd` actually asks for, and no graded texel
+is brighter than a Machine.
 
 ## 9. Audio, which is the other path that ends outside the repository
 

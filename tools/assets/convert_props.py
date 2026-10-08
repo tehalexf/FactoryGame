@@ -42,11 +42,22 @@ the buildable edge, small in frame and behind the depth fog. Their textures are
 embedded (lukami) or absent (shapita, flat colours), so those files are copied
 through with nothing but a retint.
 
-**The retint** is the one artistic change. Every pack is lit and coloured to look
-good on a white studio backdrop; ours is an ochre smog at late afternoon. A
-multiplier on ``baseColorFactor`` darkens and desaturates toward
-``dieselpunk_palette.json`` without touching the geometry or the maps — the same
-move ``convert_weapons.sh`` makes on the arms, for the same reason.
+**The grade** is the one artistic change, and it is ``prop_grade.py`` — which is
+where the reasoning lives, because it is the half of this script that is a
+decision rather than a rewrite. The short version: every pack is lit and
+coloured for a white studio backdrop and is clean modern high-visibility
+industrial, where this world is an ochre smog at late afternoon over 1920s-40s
+heavy industry. So the atlas's texels are **remapped onto the palette's own
+ramps** — safety yellow to olive drab, process teal to iron, every family landed
+inside the Machines' measured albedo range — the glow map is forced to tungsten,
+and the baked occlusion in the vertex colours is deepened into grime.
+
+An earlier pass multiplied each pack's ``baseColorFactor`` by a tint instead.
+That did nothing whatsoever for the props a player stands among, because
+``SetDressing`` overrides one shared material onto every heyheythere prop and an
+override replaces the factor it would have read. The factor is still written —
+it is what the far-yard packs, which keep their own materials, are coloured by —
+but the foreground is the atlas, so the atlas is what is graded.
 """
 
 from __future__ import annotations
@@ -54,9 +65,19 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
-import shutil
 import struct
 import sys
+
+HERE = pathlib.Path(__file__).resolve().parent
+# By path rather than by package, because `tools/release/manifest.py` loads this
+# file through `importlib` to read the catalogue out of it and that route does
+# not put this directory on the path the way running the script does.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import prop_grade  # noqa: E402
+
+PALETTE_PATH = HERE / "dieselpunk_palette.json"
 
 JSON_CHUNK = 0x4E4F534A
 BIN_CHUNK = 0x004E4942
@@ -154,21 +175,32 @@ CATALOGUE.update(
     }
 )
 
-# How far each pack is pulled toward the Dieselpunk palette, as a multiplier on
-# `baseColorFactor`. heyheythere's atlas is already grimy and wants only a stop of
-# darkening; the other two are clean modern industrial and want a good deal more,
-# with the blue end pulled down hardest because the sky is ochre and nothing in
-# this world is cold except the fill light.
+# How far a pack that **keeps its own materials** is pulled toward the Dieselpunk
+# palette, as a multiplier on `baseColorFactor`.
+#
+# heyheythere is deliberately not in here. Every one of its props is drawn with
+# one shared `material_override` built over the atlas, so its `baseColorFactor`
+# is read by nothing at all and a tint on it was a tint on nobody — see
+# `prop_grade.py`. Its colour is decided by `grade_albedo` on the atlas instead,
+# which is the surface that actually reaches the screen.
 TINTS = {
-    HEYHEYTHERE: [0.80, 0.76, 0.70, 1.0],
     LUKAMI: [0.70, 0.66, 0.58, 1.0],
     SHAPITA: [0.64, 0.61, 0.55, 1.0],
 }
 
-# The atlas the heyheythere props share, copied once beside them. The game builds
-# one material from these and overrides it onto every prop in the pack.
+# The atlas the heyheythere props share, graded once and written beside them. The
+# game builds one material from these and overrides it onto every prop in the
+# pack, which is why this pair is where that pack's art direction is decided.
 SHARED_TEXTURES = {
     HEYHEYTHERE: ["textures/atlas.png", "textures/atlas_glow.png"],
+}
+
+# Which of the two gets which grade. The albedo is remapped onto the palette's
+# ramps; the glow map is forced to tungsten, because the pack has a turquoise and
+# a green among its lit texels and a neon sign is not a 1930s yard.
+TEXTURE_GRADES = {
+    "atlas.png": "albedo",
+    "atlas_glow.png": "emission",
 }
 
 
@@ -269,8 +301,9 @@ def bounds_of(document: dict) -> tuple[list[float], list[float]]:
 
 def convert(licensed_root: pathlib.Path, out_dir: pathlib.Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
+    palette = prop_grade.load_palette(PALETTE_PATH)
     manifest: dict[str, dict] = {}
-    copied_textures: set[str] = set()
+    graded_textures: set[str] = set()
     missing_packs: set[str] = set()
 
     for prop_id, entry in CATALOGUE.items():
@@ -282,16 +315,28 @@ def convert(licensed_root: pathlib.Path, out_dir: pathlib.Path) -> int:
         document, binary = read_glb(source)
         if pack in SHARED_TEXTURES:
             strip_images(document)
-        retint(document, TINTS[pack])
+        if pack in TINTS:
+            retint(document, TINTS[pack])
+        # Grime, which is the one part of the grade that is per prop rather than
+        # per pack: the baked occlusion in COLOR_0 is the only record in the file
+        # of where dirt would collect, and the packs are far too clean about it.
+        buffer = bytearray(binary)
+        prop_grade.deepen_grime(document, buffer)
         low, high = bounds_of(document)
-        write_glb(out_dir / f"{prop_id}.glb", document, binary)
+        write_glb(out_dir / f"{prop_id}.glb", document, bytes(buffer))
         manifest[prop_id] = {"pack": pack, "source": entry["source"], "min": low, "max": high}
 
         for relative in SHARED_TEXTURES.get(pack, []):
             name = pathlib.Path(relative).name
-            if name not in copied_textures:
-                shutil.copyfile(licensed_root / pack / relative, out_dir / name)
-                copied_textures.add(name)
+            if name in graded_textures:
+                continue
+            data = (licensed_root / pack / relative).read_bytes()
+            if TEXTURE_GRADES.get(name) == "emission":
+                data = prop_grade.grade_emission(data)
+            else:
+                data = prop_grade.grade_albedo(data, palette)
+            (out_dir / name).write_bytes(data)
+            graded_textures.add(name)
 
     for pack in sorted(missing_packs):
         print(f"note: {licensed_root / pack} is absent; its props keep their stand-ins.",
