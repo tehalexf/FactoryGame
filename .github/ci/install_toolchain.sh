@@ -130,8 +130,28 @@ install_ffmpeg() {
 	ln -sfn "$root/bin/ffprobe" "$TOOLCHAIN_BIN/ffprobe"
 }
 
+install_jj() {
+	local root="$TOOLCHAIN_DIR/jj-$JJ_VERSION"
+	if [ -x "$root/jj" ]; then
+		say "jj $JJ_VERSION already installed"
+	else
+		local archive="$TOOLCHAIN_CACHE/$JJ_ARCHIVE"
+		fetch_verified "$archive" "$JJ_SHA256" "$JJ_URL"
+		rm -rf "$root" "$root.part"
+		mkdir -p "$root.part"
+		tar -xzf "$archive" -C "$root.part"
+		mv "$root.part" "$root"
+	fi
+	# No symlink into $TOOLCHAIN_BIN, deliberately. On the developer machine the
+	# `jj` on PATH is the licence-guard wrapper that tools/git/install_hooks.sh
+	# generates, and putting the bare binary there under the same name would
+	# defeat the guard rather than install it. Everything that needs the real
+	# binary finds it by this path — see toolchain.env.
+	say "jj $JJ_VERSION at $root/jj (not symlinked onto PATH; see toolchain.env)"
+}
+
 if [ "$#" -eq 0 ]; then
-	echo "usage: $(basename "$0") [godot] [blender]" >&2
+	echo "usage: $(basename "$0") [godot] [blender] [ffmpeg] [jj]" >&2
 	exit 2
 fi
 
@@ -140,6 +160,7 @@ for what in "$@"; do
 		godot) echo "== godot $GODOT_VERSION"; install_godot ;;
 		blender) echo "== blender $BLENDER_VERSION"; install_blender ;;
 		ffmpeg) echo "== ffmpeg $FFMPEG_VERSION"; install_ffmpeg ;;
+		jj) echo "== jj $JJ_VERSION"; install_jj ;;
 		*) echo "error: unknown tool '$what'" >&2; exit 2 ;;
 	esac
 done
@@ -156,5 +177,6 @@ for what in "$@"; do
 		godot) godot --version ;;
 		blender) blender --version | head -1 ;;
 		ffmpeg) ffmpeg -version | head -1 ;;
+		jj) "$TOOLCHAIN_DIR/jj-$JJ_VERSION/jj" --version ;;
 	esac
 done

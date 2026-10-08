@@ -51,7 +51,7 @@ jobs:
   # download nothing; on a cold one they wait for this job instead of racing
   # each other for the same three archives.
   toolchain:
-    name: toolchain (godot 4.7.2, blender 5.2.2, ffmpeg 8.1.3)
+    name: toolchain (godot 4.7.2, blender 5.2.2, ffmpeg 8.1.3, jj 0.46.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,8 +61,8 @@ jobs:
         with:
           path: ~/.cache/deep-foundry-toolchain
           key: ${{ steps.key.outputs.value }}
-      - name: Download and verify all three archives
-        run: bash .github/ci/install_toolchain.sh godot blender ffmpeg
+      - name: Download and verify every archive
+        run: bash .github/ci/install_toolchain.sh godot blender ffmpeg jj
     outputs:
       cache-key: ${{ steps.key.outputs.value }}
 
@@ -143,7 +143,13 @@ jobs:
       # ffmpeg exits 0 and writes 0.048 seconds where eight were asked for. That
       # was the first thing turning this suite's skips off actually found. See
       # the note in .github/ci/toolchain.env.
-      - run: bash .github/ci/install_toolchain.sh godot blender ffmpeg
+      #
+      # jj, because tools/assets/tests/test_jj_guard.py is what checks that the
+      # licence guard still holds when the commit is made through jj rather than
+      # git. jj runs no git hooks and has no hook system, so the hook that
+      # protects `git commit` protects nothing there; the wrapper that does is
+      # only as trustworthy as its tests, and its tests skip without jj.
+      - run: bash .github/ci/install_toolchain.sh godot blender ffmpeg jj
 
       - name: The asset pipeline and the release pipeline
         run: .github/ci/run_suite.sh "asset and release pipeline" bash tools/assets/run_tests.sh

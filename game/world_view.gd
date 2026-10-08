@@ -28,16 +28,6 @@
 class_name WorldView
 extends Node3D
 
-## How high above the ground a gauge hangs over a Machine, before
-## `AMMUNITION_GAUGE_LIFT_METRES` is added. Taller than any housing in the content, so an
-## ammunition or Charge gauge clears the roof of whatever it belongs to.
-##
-## **Not a claim about how tall a Machine is.** That is `height_metres` in
-## `content/machines.csv`, which the Simulation collides against and
-## `query_machine_height_metres` reports — a placeholder box is sized from *that*, so what a
-## player walks onto and what they can see are one number.
-const MACHINE_GAUGE_HEIGHT_METRES: float = 3.0
-
 ## A Node is drawn as a low slab, so a Miner standing on one does not hide it.
 const NODE_HEIGHT_METRES: float = 0.4
 
@@ -163,7 +153,19 @@ const SHELL_MARKER_NEAR: Color = Color(1.00, 0.30, 0.15, 0.85)
 const AMMUNITION_GAUGE_WIDTH_METRES: float = 2.6
 const AMMUNITION_GAUGE_HEIGHT_METRES: float = 0.42
 const AMMUNITION_GAUGE_DEPTH_METRES: float = 0.18
-const AMMUNITION_GAUGE_LIFT_METRES: float = 1.1
+
+## How far above **its own Machine's roof** a gauge hangs, in metres.
+##
+## Measured from `query_machine_height_metres` and from nothing else. It used to be measured
+## from a `MACHINE_GAUGE_HEIGHT_METRES` constant set "taller than any housing in the
+## content", which is a second authority on how tall a Machine is and detaches the bar from
+## everything that is not the tallest: a 2.0 m Turret wore its gauge 2.1 m clear of its own
+## roof, which is #41's red rectangle floating over the Factory with nothing under it.
+##
+## Small enough that the bar reads as sitting *on* the Machine, and comfortably under
+## `STARVED_MARK_LIFT_METRES` so the amber starved tag stacks above the bar instead of
+## poking through it. Both numbers were judged in a render.
+const AMMUNITION_GAUGE_LIFT_METRES: float = 0.5
 
 ## The gauge's colours. Green with rounds to spare, amber below half, and the *backing* goes
 ## red when the magazine is empty — so a dry Turret reads as a red bar rather than as an
@@ -1081,10 +1083,7 @@ func _sync_turret_gauges(sim: Simulation) -> void:
 		var held: int = sim.query_turret_ammunition(index)
 		var capacity: int = maxi(sim.query_turret_ammunition_capacity(index), 1)
 		var fraction: float = clampf(float(held) / float(capacity), 0.0, 1.0)
-		var above: Vector3 = (
-			_machine_centre(sim, index)
-			+ Vector3(0.0, MACHINE_GAUGE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0)
-		)
+		var above: Vector3 = _gauge_height(sim, index)
 
 		_hang_gauge(
 			_turret_gauge_backings,
@@ -1134,8 +1133,7 @@ func _sync_silo_gauges(sim: Simulation) -> void:
 			_silo_gauge_backings,
 			_silo_gauge_fills,
 			slot,
-			_machine_centre(sim, index)
-			+ Vector3(0.0, MACHINE_GAUGE_HEIGHT_METRES + AMMUNITION_GAUGE_LIFT_METRES, 0.0),
+			_gauge_height(sim, index),
 			clampf(float(held) / float(capacity), 0.0, 1.0),
 			CHARGE_EMPTY if held == 0 else CHARGE_BACKING,
 			CHARGE_LOADED if loaded > 0 else CHARGE_FULL,
@@ -1190,6 +1188,22 @@ func _paint_gauge(bar: MeshInstance3D, colour: Color) -> void:
 	var skin: StandardMaterial3D = bar.material_override
 	skin.albedo_color = colour
 	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+
+
+## Where a gauge hangs: over the middle of its Machine's footprint, a fixed lift above
+## **that Machine's own roof**.
+##
+## The height comes from `query_machine_height_metres`, the same number the Simulation
+## collides against and the same number a placeholder box is sized from — so a gauge is
+## *placed* on the thing it belongs to rather than *measured* against a constant, the rule
+## a body already follows. A constant tall enough for every housing leaves the bar hanging
+## in clear air over everything shorter, which is what #41 saw.
+func _gauge_height(sim: Simulation, index: int) -> Vector3:
+	return _machine_centre(sim, index) + Vector3(
+		0.0,
+		Fixed.to_float(sim.query_machine_height_metres(index)) + AMMUNITION_GAUGE_LIFT_METRES,
+		0.0
+	)
 
 
 ## The middle of a Machine's footprint at ground level, in metres. The same placement

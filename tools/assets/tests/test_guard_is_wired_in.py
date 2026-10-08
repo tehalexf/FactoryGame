@@ -1,5 +1,11 @@
 """The guard must be impossible to forget, not merely available.
 
+The installer also puts a licence-guard wrapper in front of jj, which writes to
+~/.local/bin — so these tests run it with SKIP_JJ_WRAPPER=1. A test that reaches
+outside its temporary directory is a test that changes the machine it runs on.
+tools/assets/tests/test_jj_guard.py covers that half, pointing the installer at a
+temporary bin directory of its own.
+
 Seam: `tools/git/install_hooks.sh` run inside a repository, then ordinary
 `git commit`. A developer who has run the one-time setup cannot commit a
 licensed asset by accident.
@@ -48,7 +54,8 @@ class GuardIsWiredIn(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             repo = clone_tooling(tmp)
             subprocess.run(["bash", "tools/git/install_hooks.sh"], cwd=repo,
-                           check=True, capture_output=True, text=True)
+                           check=True, capture_output=True, text=True,
+                           env=dict(os.environ, SKIP_JJ_WRAPPER="1"))
             before = git(repo, "rev-parse", "HEAD").stdout.strip()
 
             licensed = repo / "assets_licensed" / "synty" / "Hero.fbx"
@@ -66,7 +73,8 @@ class GuardIsWiredIn(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             repo = clone_tooling(tmp)
             subprocess.run(["bash", "tools/git/install_hooks.sh"], cwd=repo,
-                           check=True, capture_output=True, text=True)
+                           check=True, capture_output=True, text=True,
+                           env=dict(os.environ, SKIP_JJ_WRAPPER="1"))
             (repo / "notes.md").write_text("fine\n")
             git(repo, "add", "notes.md")
             result = git(repo, "commit", "-m", "notes", check=False)
