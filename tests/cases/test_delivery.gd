@@ -96,146 +96,29 @@ chaff_crawlers,crawler,0,6,150,40
 
 ## Plate to build with and ore to hand over. Nothing else: this file is about what the Nest
 ## will take, so what a player is holding has to be exactly what the fixture says.
-const TUNING: String = """[player]
-walk_speed_metres_per_second = 4
-sprint_speed_multiplier = 1.8
-walk_acceleration_metres_per_second_squared = 24
-walk_deceleration_metres_per_second_squared = 9
-air_acceleration_metres_per_second_squared = 6
-air_deceleration_metres_per_second_squared = 1.5
-jump_height_metres = 1.1
-gravity_metres_per_second_squared = 22
-jump_repeats_while_held = false
-land_settle_seconds = 0.18
-land_settle_acceleration_percent = 45
-sprint_ramp_seconds = 0.45
-sprint_is_toggle = true
-bob_vertical_metres = 0.012
-bob_lateral_metres = 0.008
-bob_stride_metres = 1.6
-bob_sprint_multiplier = 1.6
-land_dip_metres = 0.035
-land_dip_seconds = 0.22
-land_dip_reference_speed_metres_per_second = 7
-lean_roll_degrees_per_metre_per_second = 0.12
-lean_pitch_degrees_per_metre_per_second = 0.06
-field_of_view_degrees = 75
-sprint_field_of_view_add_degrees = 6
-holster_seconds = 0.2
-look_sensitivity_turns_per_1000_pixels = 0.4
-eye_height_metres = 1.7
-collision_radius_metres = 0.4
-step_up_height_metres = 0.75
-health = 150
-downed_bleed_out_seconds = 20
-respawn_delay_seconds = 8
-revive_seconds = 4
-revive_reach_metres = 3
-starting_weapon = "pneumatic_wrench"
-starting_stock = "iron_ore:4;iron_plate:20"
-[belt]
-items_per_second = 4
-items_per_tile = 4
-deck_height_metres = 0.9
-[machine]
-input_buffer_crafts = 2
-[survey]
-height_metres = 26
-transition_seconds = 0.4
-pitch_degrees = 68
-[power]
-baseline_supply_kw = 300
-[nest]
-health = 6000
-height_metres = 4.2
-terrace_height_metres = 1.7
-delivery_reach_metres = 5
-store_capacity_per_item = 2
-[silo]
-load_reach_metres = 4
-max_charges_per_load = 4
-[wall]
-health = 240
-height_metres = 2.4
-[wrench]
-repair_points_per_second = 60
-reach_metres = 4
-[wave]
-telegraph_seconds = 12
-spawn_interval_seconds = 0.5
-call_early_bounty_per_item = 25
 
-[heat]
-per_craft = 2
-per_craft_per_depth = 1
-decay_per_minute = 240
-wave_interval_baseline_seconds = 150
-first_wave_interval_seconds = 50
-wave_interval_minimum_seconds = 40
-per_second_sooner = 20
-[depth]
-draw_percent_per_depth = 60
-breach_tier = 2
-breach_crafts = 40
-breach_offset_tiles = 6
-breach_telegraph_seconds = 45
-[gear]
-enemy_hit_radius_metres = 0.6
-enemy_hit_height_metres = 1.6
-view_kick_degrees_per_shot = 0.35
-view_kick_recover_seconds = 0.5
-[enemy]
-crawler_health = 30
-player_bite_reach_metres = 1.6
-crawler_speed_metres_per_second = 3
-crawler_damage = 10
-crawler_attack_interval_seconds = 1
-breaker_health = 240
-breaker_speed_metres_per_second = 2
-breaker_damage = 60
-breaker_attack_interval_seconds = 1
-breaker_breaks_ranks_within_tiles = 8
-breaker_hit_radius_metres = 0.8
-breaker_hit_height_metres = 2.2
-[siege_hulk]
-health = 1800
-speed_metres_per_second = 1
-range_metres = 60
-shell_damage = 220
-shell_blast_radius_metres = 6
-shell_interval_seconds = 6
-shell_flight_seconds = 3
-stomp_damage = 45
-frontal_armour_percent = 85
-hit_radius_metres = 1.6
-hit_height_metres = 3.2
-[hive]
-health = 1200
-heat_shadow_per_minute = 30
-hit_radius_metres = 2
-hit_height_metres = 4
-"""
+
+## A store with room for two of each Item, so a surplus reaches the cap inside a test
+## rather than inside a Run, and a stock that buys the Machines these tests stand up
+## without buying the goods a tier is asking for. Every other number is the shipped
+## file's — see `ContentFixture`.
+const SMALL_STORE: Array = [["store_capacity_per_item = 200", "store_capacity_per_item = 2"]]
+const STOCK: String = "iron_ore:4;iron_plate:20"
 
 
 func _content(
-	deliveries: String = DELIVERIES, machines: String = MACHINES, tuning: String = TUNING
+	deliveries: String = DELIVERIES, machines: String = MACHINES, overrides: Array = []
 ) -> Definitions:
-	return Definitions.parse(
-		machines,
-		RECIPES,
-		tuning,
-		WAVES,
-		deliveries,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = (
+		ContentFixture.for_case(self).tune(SMALL_STORE).tune(overrides).stock(STOCK)
 	)
+	fixture.machines = machines
+	fixture.recipes = RECIPES
+	fixture.waves = WAVES
+	fixture.deliveries = deliveries
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return fixture.definitions()
 
 
 func _sim(layout: MapLayout = null) -> Simulation:
@@ -707,7 +590,9 @@ const SOMEWHERE_CLEAR: Vector3i = Vector3i(20, GROUND, 20)
 
 func _reachable_content() -> Definitions:
 	var content: Definitions = _content(
-		DELIVERIES, MACHINES, TUNING.replace("delivery_reach_metres = 5", "delivery_reach_metres = 20")
+		DELIVERIES,
+		MACHINES,
+		[["delivery_reach_metres = 5", "delivery_reach_metres = 20"]]
 	)
 	assert_false(content.has_errors(), content.describe_errors())
 	return content
