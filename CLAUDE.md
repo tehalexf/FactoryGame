@@ -835,6 +835,17 @@ means there is no Turret there. The bars are unshaded, because a gauge a directi
 darken is a gauge a player misreads at the worst moment. The HUD says `ammo n/m` and `DRY`
 alongside, for the post-mortem rather than the fight.
 
+**A gauge hangs off its own Machine's roof, never off a constant.** The height comes from
+`query_machine_height_metres` — the same number the Simulation collides against and the same
+number a placeholder box is sized from — plus `AMMUNITION_GAUGE_LIFT_METRES`. It used to come
+from a `MACHINE_GAUGE_HEIGHT_METRES` set "taller than any housing in the content", which is a
+second authority on how tall a Machine is: it detaches the bar from everything that is not the
+tallest, and #41 was the result — a dry 2.0 m Turret wearing its red backing 2.1 m clear of its
+own roof, read as a saturated red rectangle floating over the Factory with no owner. Red is
+load-bearing here, so a red mark with nothing under it is worse than no mark. The lift also has
+to stay under `STARVED_MARK_LIFT_METRES`, which hangs off the same roof, or the amber starved
+tag draws straight through the middle of the bar; `test_world_view` asserts both bounds.
+
 ### Where the balance stands
 
 **These figures are measured, not derived.** `tools/balance/measure.sh` plays scripted
