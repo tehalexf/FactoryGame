@@ -1,6 +1,12 @@
 ## Headless test runner. Zero dependencies — no addons, no editor.
 ##
-##     godot --headless --path . --script res://tests/run_tests.gd
+##     tools/run_tests.sh
+##
+## Run it through that script rather than driving the engine directly. The script
+## is not a convenience wrapper: it imports until the cache is complete and
+## verified, and it gives the run a `user://` of its own, which every worktree of
+## this repo otherwise shares. `test_harness_self_check` fails a run that did not
+## get one, so a bare `godot --script res://tests/run_tests.gd` reports as red.
 ##
 ## Exits 0 when every test passes and 1 on any failure, load error, or an empty
 ## suite, so CI can treat the exit code as the whole answer.

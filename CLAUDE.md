@@ -3689,3 +3689,60 @@ Consequences worth knowing:
   both directions: an abort after a passing assertion must fail, and a method that
   completes must not. A guard that always fires and one that never fires are
   equally worthless, so neither case may be dropped.
+
+### Run it through `tools/run_tests.sh`, and why that is not a convenience
+
+The script does two things the engine will not do for itself. Both were found by
+measuring a flake rather than by reasoning about one, and both had previously
+been written off as "the cold-cache import race, aggravated by concurrent
+agents". Neither was.
+
+**It gives the run a private `user://`.** Godot derives the user data directory
+from the project's *name*, so every worktree of this repo resolves `user://` to
+one shared directory. That was already known for the engine log and fixed by
+naming a private log file — but the fixtures that write there were left sharing.
+`test_definition_watcher` creates `user://definition_watcher_test` in
+`before_each` and deletes it in `after_each`, and the Run-save tests write save
+files beside it, so a sibling checkout running its suite deletes the directory
+between this one's `make_dir` and its `store_string`. The symptom is four
+failures reading `Cannot call method 'store_string' on a null value` that do not
+reproduce, because by the re-run the sibling has finished. Measured at one full
+cold run in six with five to seven suites running at once.
+
+The fix points `XDG_DATA_HOME` inside `.godot/`, which is per-worktree, so the
+whole of `user://` moves rather than the three fixtures that happen to use it
+today. `test_harness_self_check.test_the_user_directory_is_private_to_this_worktree`
+asserts it took effect — a fix for a contention bug is invisible when there is no
+contention, so without that assertion the suite would quietly go back to passing
+alone and failing beside a sibling.
+
+**It insists the import actually finished.** `godot --headless --import`
+segfaults in the audio importer on roughly one cold pass in forty (measured: 2 of
+80, always part way through the `.ogg` reimport, leaving `.godot/` holding six
+files instead of the seven hundred a finished import writes). The runner used to
+discard that with `|| true` and run the suite anyway. Restoring one of those
+crashed caches byte for byte and running the suite gives **1162 passed, 8 failed**
+— in `test_machine_meshes`, `test_world_view` and `test_game_audio`, every one of
+them a missing import reported as a wrong answer, and every one of them green on
+a re-run because the next pass finishes the job. That is where the "8 failures
+that did not reproduce" came from.
+
+So a failed import is now retried, and after the passes every destination
+declared by a `.import` sidecar must exist on disk or the script exits 2 saying
+which one is missing. **A suite must never run against a cache nobody checked**:
+a missing import does not report as a missing import, it reports as a lie about
+the game.
+
+Two passes on a cold cache is also now measured rather than assumed. Checksumming
+the whole of `.godot/` after each of four consecutive cold passes shows pass 1 → 2
+changing one editor bookkeeping file and 2 → 3 → 4 changing nothing. Two is
+enough; a third buys nothing.
+
+**Concurrency itself is not the problem and the runner does not refuse it.**
+Twenty cold runs of the three turret determinism fixtures and 120 cold
+import-and-load runs, under five to seven simultaneous Godot processes, produced
+no failures at all. The import cache, the `class_name` global cache and the
+Simulation are all genuinely per-process and per-worktree — a long Run's state
+hash trajectory is identical across processes, and the `class_name` cache is
+complete even after a single pass. What concurrency does is widen the window on
+shared state, so the fix is to stop sharing state, not to serialise the agents.

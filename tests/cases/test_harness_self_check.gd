@@ -75,3 +75,32 @@ func test_arrays_compare_by_contents_across_array_types() -> void:
 	assert_eq(probe.failures.size(), 0, "a packed array equals a plain array of the same ints")
 	probe.assert_eq(packed, [1, 2, 4])
 	assert_eq(probe.failures.size(), 1, "differing contents must still fail")
+
+
+# ── The ground this run stands on ─────────────────────────────────────────────
+
+func test_the_user_directory_is_private_to_this_worktree() -> void:
+	# Godot derives `user://` from the project's *name*, so every worktree of this
+	# repo resolves it to one shared directory unless something intervenes. That
+	# has broken this suite twice: once through the engine log the runtime-abort
+	# guard reads, and once through the fixtures that write there — the Definition
+	# Watcher's tests create and delete `user://definition_watcher_test` around
+	# every method, so a sibling checkout running its own suite deletes the
+	# directory out from under this one. The symptom is a handful of failures that
+	# do not reproduce, which is the worst shape a failure can have.
+	#
+	# `tools/run_tests.sh` fixes it by pointing the user data directory inside
+	# `.godot/`, which is per-worktree. This asserts that it actually did, because
+	# a fix for a contention bug is invisible when there is no contention — the
+	# suite would go back to passing on its own and failing beside a sibling.
+	var project_directory: String = ProjectSettings.globalize_path("res://")
+	var user_directory: String = OS.get_user_data_dir()
+	assert_true(
+		user_directory.begins_with(project_directory),
+		(
+			"user:// resolves to %s, which is outside this worktree (%s) and therefore "
+			% [user_directory, project_directory]
+			+ "shared with every other checkout of this project. Run the suite through "
+			+ "tools/run_tests.sh, which gives it a private one."
+		)
+	)

@@ -210,7 +210,12 @@ class TuningStore:
         if not self.history_dir.is_dir():
             return []
         entries: list[Snapshot] = []
-        for meta_path in sorted(self.history_dir.glob("*.json"), reverse=True):
+        metas = sorted(
+            self.history_dir.glob("*.json"),
+            key=lambda path: _age_key(path.stem),
+            reverse=True,
+        )
+        for meta_path in metas:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
             entries.append(
                 Snapshot(
@@ -369,10 +374,42 @@ class TuningStore:
     def _prune(self) -> None:
         """Keep the newest `history_limit` snapshots. A long tuning session is
         hundreds of small writes, and none of them are worth unbounded disk."""
-        stems = sorted((p.stem for p in self.history_dir.glob("*.toml")), reverse=True)
+        stems = sorted(
+            (p.stem for p in self.history_dir.glob("*.toml")),
+            key=_age_key,
+            reverse=True,
+        )
         for stem in stems[self.history_limit :]:
             (self.history_dir / ("%s.toml" % stem)).unlink(missing_ok=True)
             (self.history_dir / ("%s.json" % stem)).unlink(missing_ok=True)
+
+
+def _age_key(snapshot_id: str) -> tuple[str, int]:
+    """How old a snapshot is, for sorting. Newest sorts largest.
+
+    A snapshot id is `YYYYmmdd-HHMMSS-mmm`, and a second write inside the same
+    millisecond gets `-1` appended. Ordering those by filename is a trap, and
+    `history()` fell into it: it sorted the `*.json` paths, where the extension
+    is part of the comparison, and `-` is 0x2D while `.` is 0x2E — so
+    `...123-1.json` sorts *before* `...123.json` and a reverse sort hands back
+    the older snapshot as the newest. The page's undo button restores
+    `history()[0]`, so a tie rolled back the wrong edit: it discarded the
+    second-newest change and kept the newest.
+
+    Comparing the stem as a string and the counter as a number is correct
+    whatever is appended to it. An id with no counter is the first write of its
+    millisecond, hence 0; anything that does not parse keeps its whole stem and
+    sorts as if it had no counter, which is what the old code did for anything
+    hand-dropped into the directory.
+
+    `_prune` sorts bare stems rather than filenames, so it was never wrong — a
+    stem is a prefix of its own `-1`, and a prefix sorts first. It uses this key
+    anyway, so that staying correct does not depend on noticing that.
+    """
+    pieces = snapshot_id.split("-")
+    if len(pieces) == 4 and pieces[3].isdigit():
+        return ("-".join(pieces[:3]), int(pieces[3]))
+    return (snapshot_id, 0)
 
 
 def _plain(source: str) -> str:
