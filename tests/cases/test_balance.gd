@@ -12,18 +12,17 @@
 ## every legitimate tuning change into a red suite, which is how a balance guard stops being
 ## read.
 ##
-## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision
-## in — which is why the two scenarios that walk anywhere read a little differently from
-## #26's own figures. See "What collision cost the two sorties" in CLAUDE.md.
+## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision and
+## #34's Breaker approach in. See "What #34 cost the table" in CLAUDE.md for what moved and why.
 ##
 ##     bare           4m22s   undefended
 ##     opening_line   4m04s   undefended, and sooner than bare
-##     competent     27m00s   ran dry, then Breakers took the Factory
-##     over_producer 19m36s   ran dry, 27% sooner
-##     fortified     29m15s   swarmed, with 274 rounds still in the Factory
+##     competent     29m07s   three Siege Hulks, with 96 rounds still in the Factory
+##     over_producer 20m21s   the same, 30% sooner
+##     fortified     28m45s   the same, with 112 rounds unspent — a wash against competent
 ##     deep_digger   10m48s   dug too deep, two Breaches
-##     hive_sortie   29m36s   ran dry, 2m36s later than competent
-##     rifle_picket  26m32s   ran dry, 28s sooner than competent (and 26m29s on seeds 11/29)
+##     hive_sortie   32m22s   the same, 3m15s later than competent — the longest Run measured
+##     rifle_picket  27m13s   swarmed, 1m54s sooner than competent (27m16s on seed 7)
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -100,17 +99,39 @@ func test_a_competent_factory_reaches_twenty_to_forty_minutes() -> void:
 
 func test_a_competent_factory_loses_to_a_pressure_it_can_name() -> void:
 	# The acceptance criterion that matters most, and the one a bare Run length cannot carry:
-	# a player has to be able to say what killed them. "Ran dry" is the answer here — one Ammo
-	# Press cannot keep one MG Turret fed once the Wave interval reaches its floor — and a
-	# Factory with no Ammunition anywhere in it through the last two minutes is the evidence.
+	# a player has to be able to say what killed them.
+	#
+	# **#34 changed the answer, which is the whole point of #34.** It used to be "ran dry, and
+	# then the Breakers took the Factory" — and the Breaker half of that was a rule a player
+	# could not see, because a Breaker never walked into the reach of the Turret they had built.
+	# Now a Breaker marches the lane under fire, the documented Factory holds its Machines
+	# through the whole Breaker tier with rounds to spare, and what ends the Run is the boss:
+	# three Siege Hulks that a Factory cannot answer **by design** (DESIGN.md — it outranges
+	# Turrets and its frontal armour leaves an MG doing 2) and a player on foot can.
+	#
+	# That is a nameable pressure in the strong sense: the Hulk walks in, halts and shells, the
+	# HUD draws where the shell will land, and the answer is the first-person pillar the game
+	# already ships. Asserted as "the tier arrived and Ammunition was not what ran out",
+	# because the exact figure belongs in CLAUDE.md.
 	var report: BalanceProbe.Report = _play("competent")
 	assert_true(report.shots_fired > 0, "the Turret was fed and fired")
+	assert_true(report.a_breaker_arrived, "the Breaker tier arrived")
 	assert_true(
-		report.dry_endgame_percent() >= BalanceProbe.DRY_ENDGAME_PERCENT,
-		"and ended with nothing to shoot: dry for %d%% of the endgame"
-		% report.dry_endgame_percent()
+		report.dry_endgame_percent() < BalanceProbe.DRY_ENDGAME_PERCENT,
+		"Ammunition was not what ran out: dry for %d%% of the endgame, %d rounds left"
+		% [report.dry_endgame_percent(), report.ammunition_in_the_factory]
 	)
-	assert_true(report.cause().contains("ran dry"), "named: %s" % report.cause())
+	# **And this is the assertion that says the Breaker tier was survived**, which is worth
+	# spelling out because it looks indirect. Heat is made by Machines that are working, so
+	# `siege_hulks.min_heat` of 6400 is unreachable for a Factory whose production line was
+	# eaten at 5200 — which is exactly the argument #26 set that number on. A Run that met the
+	# boss is a Run that still had five production Machines after the Breakers came, and before
+	# #34 no measured Run ever got there at all.
+	assert_true(
+		report.a_siege_hulk_arrived,
+		"and the boss did, which only a Factory that kept its line through the Breakers reaches"
+	)
+	assert_true(report.cause().contains("Siege Hulk"), "named: %s" % report.cause())
 
 
 func test_over_producing_is_a_visible_mistake() -> void:

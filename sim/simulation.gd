@@ -929,6 +929,23 @@ var _enemy_spawn_tick: PackedInt64Array = PackedInt64Array()
 ## game charges for anything.
 var _enemy_attack_cooldown: PackedInt64Array = PackedInt64Array()
 
+## Whether each Enemy has broken ranks: 1 once it steers by the Factory's field rather than
+## the Nest's, 0 while it is still marching with the Wave.
+##
+## **#34's latch, and the reason it is state rather than a predicate.** The switch is made on
+## how far the Nest and the nearest Machine are — `_flow_distance` and `_machine_flow_distance`
+## — and walking towards a Machine afterwards carries the Breaker *away* from the Nest again, so
+## a Breaker that re-decided every tick would cross back over the boundary on its first step and
+## shuffle on it for ever. Latching is both the fix and the better behaviour: a Breaker that has
+## chosen a Machine commits to it, which is what makes the turn something a player can watch
+## happen rather than a flicker. See `_breaker_has_broken_ranks` for the rule itself.
+##
+## Hashed, because it decides where an Enemy walks next, and therefore which Machine falls.
+## One entry per Enemy, every Enemy, no branch — a parallel array is parallel. It is 0 for ever
+## for a Crawler, whose two fields are the same field, and for a Siege Hulk, which steers by
+## the Nest's field by design and has its own clause in `_enemies`.
+var _enemy_broke_ranks: PackedInt64Array = PackedInt64Array()
+
 ## The point in fixed-point metres each Enemy is facing — the thing it last shelled, stomped or
 ## walked towards.
 ##
@@ -3157,6 +3174,7 @@ func _remove_enemy(index: int) -> void:
 	_enemy_health.remove_at(index)
 	_enemy_spawn_tick.remove_at(index)
 	_enemy_attack_cooldown.remove_at(index)
+	_enemy_broke_ranks.remove_at(index)
 	_enemy_face_x.remove_at(index)
 	_enemy_face_z.remove_at(index)
 	_forget_target(serial)
@@ -6251,6 +6269,10 @@ func _spawn_enemy(kind: int, tile: Vector3i) -> void:
 	_enemy_health.append(health)
 	_enemy_spawn_tick.append(_tick)
 	_enemy_attack_cooldown.append(0)
+	# Marching, always. Even a Breaker emerging a tile from a Smelter starts on the Nest's
+	# field: where it breaks ranks is a fact about the Map and not about the Breach, and a
+	# Breaker that arrived already hunting would be the behaviour #34 replaced.
+	_enemy_broke_ranks.append(0)
 	# Facing the Nest, which is where everything on this Map is ultimately going. It matters
 	# for a Siege Hulk and for nothing else: a Hulk that arrived facing its own feet would have
 	# every direction count as behind it, so its armour would be missing for the walk in.
@@ -6413,6 +6435,11 @@ func _enemies() -> void:
 	# hitch in the middle of a Wave is not.
 	var nest_field: PackedInt64Array = _flowfield()
 	var factory_field: PackedInt64Array = _machine_flowfield()
+	# Swept with the two fields above and fresh for the same reason: how far the Nest is and
+	# how far the nearest Machine is, in whole tiles, which is what #34's perimeter is
+	# compared against.
+	var nest_distance: PackedInt64Array = _flow_distance
+	var factory_distance: PackedInt64Array = _machine_flow_distance
 
 	for index: int in range(query_enemy_count()):
 		# An Enemy does not act on the tick it came through its Breach, for the reason a
@@ -6427,15 +6454,87 @@ func _enemies() -> void:
 		if kind == EnemyKind.SIEGE_HULK:
 			_siege_hulk(index, nest_field)
 			continue
-		# A Breaker steers by the Factory and a Crawler by the Nest. Falling back on the
-		# other way round is `_enemy_direction`'s job, so the field an Enemy *moves* by and
-		# the field it decides whether it is cornered by are the same field.
-		var field: PackedInt64Array = (
-			factory_field if kind == EnemyKind.BREAKER else nest_field
-		)
+		# **A Breaker marches with the Wave and then goes hunting (#34).** It steers by the
+		# Nest's field — the road every Crawler walks, and the road a player fortifies —
+		# until it is inside `enemy.breaker_breaks_ranks_within_tiles` of the Nest or of a
+		# Machine, and by the Factory's field from that tile on. A Crawler steers by the
+		# Nest's throughout. Falling back from one field onto the other is
+		# `_enemy_direction`'s job, so the field an Enemy *moves* by and the field it decides
+		# whether it is cornered by are the same field.
+		var field: PackedInt64Array = nest_field
+		if kind == EnemyKind.BREAKER:
+			if _breaker_has_broken_ranks(index, nest_distance, factory_distance):
+				field = factory_field
 		if _enemy_bites(index, kind, field, nest_field):
 			continue
 		_advance_enemy(index, field, nest_field, _enemy_step_metres(kind))
+
+
+## Whether a Breaker is hunting the Factory yet, latching it the tick it starts.
+##
+## **One sentence of rule: a Breaker marches with the Wave until it is within
+## `enemy.breaker_breaks_ranks_within_tiles` of either the Nest or a Machine, and hunts from
+## then on.** Two clauses, and both of them are needed:
+##
+## 1. **Within reach of the Nest.** The normal case, and the whole of #34. A Factory is built
+##    around its Nest, so coming inside the Nest's perimeter is coming inside the Factory — and
+##    it means the Breaker walks the *Wave's* road to get there, which is the road a player
+##    fortifies. Before this it took whichever line was shortest to a Machine, so a Turret
+##    covering the way in never saw one.
+## 2. **Within reach of a Machine.** Without it the rule says something stupid on a Map whose
+##    Factory is nowhere near its Nest: a Breaker would walk the length of the Factory, past
+##    every Machine in it, to the Nest's doorstep, and then walk all the way back. With it, a
+##    Breaker lunges at the first thing it can reach from the road it is on — which is also the
+##    more legible rule, because it makes *what a player puts beside the lane* the thing that
+##    gets eaten first.
+##
+## **Two reads of fields that are already built, and no third field.** `_flow_distance` and
+## `_machine_flow_distance` hold the exact four-connected tile count from every tile to the
+## Nest's footprint and to the nearest Machine, and both are swept already — so "is either of
+## them at hand" is two array lookups and two integer comparisons. No distance, no square root,
+## no rebuild. And a tile count means tiles of *walking*: a Machine behind a Wall is as far away
+## as the detour round it.
+##
+## Latched, because the quantities it is decided on move the wrong way afterwards: a Breaker
+## that has turned on a Machine is walking *away* from the Nest, so re-deciding every tick
+## would send it back across the boundary on its first step and leave it shuffling there.
+## Latching also says the right thing about a Breaker — once it has chosen, it commits, and the
+## turn is something a player can watch happen.
+##
+## A tile neither sweep reached — inside an obstruction, or ground walled off from both — carries
+## no distance and keeps the Breaker marching, because "unreachable" is not "at hand".
+##
+## Takes the distance arrays rather than reading the fields itself, for the reason `_enemies`
+## resolves both of them once for the whole tick: a rebuild inside the Enemy loop would make
+## the tick O(Enemies x map).
+func _breaker_has_broken_ranks(
+	index: int, nest_distance: PackedInt64Array, factory_distance: PackedInt64Array
+) -> bool:
+	if _enemy_broke_ranks[index] == 1:
+		return true
+	var perimeter: int = _definitions.breaker_breaks_ranks_within_tiles
+	if perimeter <= 0:
+		return false
+	var cell: int = _field_index(WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index]))
+	if cell == -1:
+		return false
+	var at_hand: bool = (
+		_within_field_reach(cell, nest_distance, perimeter)
+		or _within_field_reach(cell, factory_distance, perimeter)
+	)
+	if not at_hand:
+		return false
+	_enemy_broke_ranks[index] = 1
+	return true
+
+
+## Whether a swept field puts a cell's destination inside `tiles` steps of walking. False for a
+## cell the sweep never reached, which is what keeps "unreachable" from reading as "at hand".
+func _within_field_reach(cell: int, distance: PackedInt64Array, tiles: int) -> bool:
+	if cell >= distance.size():
+		return false
+	var steps: int = distance[cell]
+	return steps >= 0 and steps <= tiles
 
 
 ## Lets one Enemy bite whatever it is in contact with, and reports whether this tick was
@@ -7550,6 +7649,9 @@ func hash() -> int:
 	hasher.feed_ints(_enemy_health)
 	hasher.feed_ints(_enemy_spawn_tick)
 	hasher.feed_ints(_enemy_attack_cooldown)
+	# Which Enemies have broken ranks. Hashed because it decides which of the two fields an
+	# Enemy steers by from here on, and therefore which Machine falls next.
+	hasher.feed_ints(_enemy_broke_ranks)
 	# Which way every Enemy is facing. Hashed because it decides how much damage the *next*
 	# hit does: a Siege Hulk's armour is a function of this and of where the shooter stands, so
 	# two clients that disagreed about it would disagree about how long the boss lives.
@@ -9112,6 +9214,37 @@ func query_telegraph_ticks() -> int:
 	return _telegraph_ticks()
 
 
+## How many Enemies of a kind the Wave now being telegraphed will release, across every
+## Breach — or 0 when no Telegraph is showing.
+##
+## **The legible half of #34.** A Breaker now arrives down the same road as everything else
+## and turns on the Factory when it gets there, which is a lesson only if a player knows a
+## Breaker is in the Wave *before* it is standing in their Smelter. So the warning names its
+## tiers: six Crawlers and two Breakers is a different thing to stand somewhere for than
+## eight Crawlers, and a Telegraph that said only "a Wave" could never have taught that.
+##
+## A **projection and not state**, which is why it reads off the definition set and the Heat
+## rather than off `_wave_queue_kind`: that queue does not exist until `_begin_a_wave` composes
+## it, and composing it early would be the Wave arriving. The number is therefore a promise
+## about the Heat as it stands, and the Wave the Factory actually gets is composed from the
+## Heat at the moment it *lands* — so a line that switches on during the Telegraph can still
+## buy one more Crawler, which is the bet #12 is about and is correct to leave visible.
+##
+## Times every Breach, because `_release_from_the_breaches` releases one per Breach: a Map a
+## player has dug two holes in is attacked through both, and a warning that did not say so
+## would under-report by half.
+func query_telegraphed_wave_count_of_kind(kind: int) -> int:
+	if not query_wave_is_telegraphed():
+		return 0
+	var count: int = 0
+	for index: int in range(_definitions.wave_entry_count()):
+		var entry: WaveEntry = _definitions.wave_entry_at(index)
+		if entry == null or entry.enemy_kind != kind:
+			continue
+		count += entry.count_at_heat(_heat)
+	return count * query_breach_count()
+
+
 ## Whether the Wave now being telegraphed was called by a player rather than by the clock.
 ## Worth drawing: a called Wave is a decision somebody in the Factory made, and in co-op
 ## the other three deserve to know it was made rather than merely that a Wave is coming.
@@ -9497,6 +9630,22 @@ func query_enemy_is_bombarding(index: int) -> bool:
 	if _turret_covering(index) != -1:
 		return false
 	return _bombardment_target(index).x != BOMBARD_NOTHING
+
+
+## Whether an Enemy has broken ranks — stopped marching on the Nest and turned on the Factory.
+##
+## True only of a Breaker, and only once it has come inside
+## `enemy.breaker_breaks_ranks_within_tiles` of the Nest (#34). A Crawler never breaks ranks
+## and neither does a Siege Hulk, so this is also the predicate a renderer asks to tell the
+## threat to the Factory apart from the threat to the Nest *while it is still walking*.
+##
+## A pure read. Which Breakers have broken ranks is decided once a tick in `_enemies`, before
+## anything is asked, for the reason `_aim` is the only thing that acquires: a query that
+## latched would move the state hash by being asked a question.
+func query_enemy_has_broken_ranks(index: int) -> bool:
+	if not _is_enemy(index):
+		return false
+	return _enemy_broke_ranks[index] == 1
 
 
 ## Ticks until a Siege Hulk's next shell or stomp. One counter for both, which is why standing

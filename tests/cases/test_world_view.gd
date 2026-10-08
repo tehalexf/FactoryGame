@@ -1575,3 +1575,30 @@ func _descendants(node: Node) -> int:
 	for child: Node in node.get_children():
 		total += 1 + _descendants(child)
 	return total
+
+
+func test_the_telegraph_names_the_tiers_in_the_wave_it_is_warning_about() -> void:
+	# #34's legibility criterion, at the only place a player can read it. The geography fix
+	# brings a Breaker down the lane under fire and turns it on the Factory when it gets there;
+	# that is a lesson only if the warning said a Breaker was coming. A line reading "WAVE 12
+	# INCOMING" and nothing else cannot teach anybody where to stand.
+	var sim: Simulation = Simulation.new(1, 1, null, MapLayout.starter())
+	var view: WorldView = WorldView.new()
+	sim.step([InputAction.call_wave_early(0)])
+	view.sync(sim)
+
+	var crawlers: int = sim.query_telegraphed_wave_count_of_kind(EnemyKind.CRAWLER)
+	assert_true(crawlers > 0, "the shipped cold Wave is Crawlers")
+	assert_true(
+		view.hud_text().contains("INCOMING"),
+		"the Telegraph is still the loudest line, got %s" % view.hud_text()
+	)
+	assert_true(
+		view.hud_text().contains("%d crawler" % crawlers),
+		"and it names the tier and the count, got %s" % view.hud_text()
+	)
+	assert_false(
+		view.hud_text().contains("breaker"),
+		"a cold Factory has not earned the Breaker tier, so nothing announces one"
+	)
+	view.free()

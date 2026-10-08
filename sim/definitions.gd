@@ -237,6 +237,9 @@ const TUNING_BREAKER_DAMAGE: String = "enemy.breaker_damage"
 const TUNING_BREAKER_ATTACK_INTERVAL_SECONDS: String = (
 	"enemy.breaker_attack_interval_seconds"
 )
+const TUNING_BREAKER_BREAKS_RANKS_WITHIN_TILES: String = (
+	"enemy.breaker_breaks_ranks_within_tiles"
+)
 const TUNING_SIEGE_HULK_HEALTH: String = "siege_hulk.health"
 const TUNING_SIEGE_HULK_SPEED: String = "siege_hulk.speed_metres_per_second"
 const TUNING_SIEGE_HULK_RANGE: String = "siege_hulk.range_metres"
@@ -570,6 +573,16 @@ var breaker_damage: int = 0
 
 ## How long between one Breaker's bites, in fixed-point seconds.
 var breaker_attack_interval_seconds: int = 0
+
+## How close to the Nest a Breaker gets, in **whole tiles along its route**, before it breaks
+## ranks and steers by the Factory's field instead of the Nest's.
+##
+## A tile count rather than a distance in metres, because that is what the flowfield holds:
+## `_flow_distance` is the exact number of four-connected steps to the Nest's footprint, so
+## comparing against it is integer arithmetic with no conversion and no rounding rule — and
+## "eight tiles away" means eight tiles of *walking*, so a Machine behind a Wall is as far
+## away as the detour round it rather than as near as the straight line.
+var breaker_breaks_ranks_within_tiles: int = 0
 
 ## A Siege Hulk's hit points.
 var siege_hulk_health: int = 0
@@ -1272,6 +1285,7 @@ func digest() -> int:
 	hasher.feed_int(breaker_speed)
 	hasher.feed_int(breaker_damage)
 	hasher.feed_int(breaker_attack_interval_seconds)
+	hasher.feed_int(breaker_breaks_ranks_within_tiles)
 	hasher.feed_int(wall_health)
 	hasher.feed_int(wall_height)
 	hasher.feed_int(wrench_repair_points_per_second)
@@ -2362,6 +2376,9 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	breaker_health = tuning.require_int(TUNING_BREAKER_HEALTH)
 	breaker_speed = tuning.require_fixed(TUNING_BREAKER_SPEED)
 	breaker_damage = tuning.require_int(TUNING_BREAKER_DAMAGE)
+	breaker_breaks_ranks_within_tiles = tuning.require_int(
+		TUNING_BREAKER_BREAKS_RANKS_WITHIN_TILES
+	)
 	breaker_attack_interval_seconds = tuning.require_fixed(
 		TUNING_BREAKER_ATTACK_INTERVAL_SECONDS
 	)
@@ -2703,6 +2720,15 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				tuning,
 				TUNING_BREAKER_ATTACK_INTERVAL_SECONDS,
 				"a bite that takes no time does unbounded damage"
+			)
+		if breaker_breaks_ranks_within_tiles <= 0:
+			_report_tuning(
+				tuning,
+				TUNING_BREAKER_BREAKS_RANKS_WITHIN_TILES,
+				(
+					"a Breaker that never breaks ranks is a Crawler that hits harder — "
+					+ "the Factory has to be what it ends up hunting"
+				)
 			)
 		if siege_hulk_health <= 0:
 			_report_tuning(
@@ -3134,6 +3160,7 @@ func _discard_content() -> void:
 	breaker_speed = 0
 	breaker_damage = 0
 	breaker_attack_interval_seconds = 0
+	breaker_breaks_ranks_within_tiles = 0
 	wall_health = 0
 	wall_height = 0
 	wrench_repair_points_per_second = 0
