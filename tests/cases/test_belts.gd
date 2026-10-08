@@ -1121,3 +1121,34 @@ func test_determinism_the_branching_fixture_really_did_branch() -> void:
 		absi(first - second) <= 1,
 		"an equal share give or take one Item, not %d against %d" % [first, second]
 	)
+
+
+func test_the_shipped_smelter_can_feed_two_consumers_at_once() -> void:
+	# Finding 8's sharpest consequence, on the content a player actually plays: the Ammo Press
+	# wants 20 plate a minute and the Smelter makes 18.75, so before #46 a second Belt off that
+	# Smelter never received a single plate and `artillery` had to build a whole second ore
+	# line to feed its Silo. Shipped Machines, shipped Recipes, nothing inline.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(3, 0, 0)),
+		InputAction.build_machine(0, _smelter_index(sim), Vector3i(4, 0, -1)),
+		InputAction.build_belt(0, Vector3i(7, 0, 0), Vector3i(8, 0, 0)),
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("ammo_press_mk1"), Vector3i(9, 0, -1)
+		),
+		InputAction.build_belt(0, Vector3i(4, 0, -2), Vector3i(4, 0, -5)),
+	])
+	assert_eq(sim.query_machine_count(), 3, "the Miner, the Smelter and the Ammo Press")
+	assert_eq(sim.query_belt_count(), 3, "the ore Belt and the Smelter's two branches")
+	_run(sim, 2400)
+
+	# Both branches ran. The equal share itself is asserted on a Miner above, where the Items
+	# stay where they can be counted; here the Press eats what it is sent, which is the point.
+	var the_other_way: int = sim.query_belt_at_tile(Vector3i(4, 0, -2))
+	var elsewhere: int = sim.query_belt_item_count(the_other_way)
+	assert_true(elsewhere > 0, "the second branch carried %d plate, not none" % elsewhere)
+	assert_true(
+		sim.query_machine_output(2, "ammunition") > 0,
+		"and the Ammo Press was fed well enough to make rounds out of its branch"
+	)
