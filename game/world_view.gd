@@ -489,6 +489,29 @@ var _dangling_transforms: PackedFloat32Array = PackedFloat32Array()
 var _starved_transforms: PackedFloat32Array = PackedFloat32Array()
 var _belt_flow_transforms: PackedFloat32Array = PackedFloat32Array()
 
+## What a split is doing, drawn where it is doing it.
+##
+## #46 made a Machine share its output between its Belts in rotation and #47 decided which
+## Belts are in that rotation at all; between them the Simulation knows three things a player
+## could not see — that this Machine is a split, which branch cannot take its turn, and that
+## what neither branch can carry is banking in the Machine rather than being lost. A mechanic
+## a player cannot read is indistinguishable from a bug, which is the argument the Turret's
+## Ammunition gauge and Heat's own visibility both make.
+##
+## Four buffers because absence has to be distinguishable from each state, the reason the
+## Ammunition gauge is two meshes: a Machine with no tag is not a split, a **split** tag means
+## goods are moving, a **banking** tag in its place means both branches are stopped and the
+## buffer is growing, and at each branch's entry a post says whether that one is the blocked
+## one. Every one of them is `query_*` asked this frame and nothing is remembered.
+var _split_marks: MultiMeshInstance3D = null
+var _banking_marks: MultiMeshInstance3D = null
+var _branch_marks: MultiMeshInstance3D = null
+var _blocked_branch_marks: MultiMeshInstance3D = null
+var _split_transforms: PackedFloat32Array = PackedFloat32Array()
+var _banking_transforms: PackedFloat32Array = PackedFloat32Array()
+var _branch_transforms: PackedFloat32Array = PackedFloat32Array()
+var _blocked_branch_transforms: PackedFloat32Array = PackedFloat32Array()
+
 var _belt_drag_active: bool = false
 var _belt_drag_anchor: Vector3i = Vector3i.ZERO
 var _belt_drag_corner_axis: int = BeltRoute.ALONG_X
@@ -509,6 +532,69 @@ const STARVED_COLOUR: Color = Color(1.0, 0.78, 0.22, 0.8)
 ## at about hip height; a Machine's tag hangs over its roof, where nothing is in the way of it.
 const DANGLING_MARK_HEIGHT_METRES: float = 1.1
 const STARVED_MARK_LIFT_METRES: float = 1.2
+
+## The split marks' colours.
+##
+## A **cool process teal** for a split that is flowing, because it is not a complaint — it is
+## a player being told the thing they built is working, and the two colours already spoken for
+## are red for a mistake and amber for waiting. **Hazard yellow for banking**, taken from the
+## palette's own `HazardYellow` rather than invented, because the two prop ids that wear it in
+## the yard are the only other things in the world that do: it is this project's colour for
+## "attention, not alarm", which is exactly what an overflowing Machine wants. And the blocked
+## branch wears the **dangling red**, deliberately the same red a Belt end that leads nowhere
+## wears: both are "this line is not carrying anything and you should look here", and a third
+## red would be a third thing to learn.
+const SPLIT_COLOUR: Color = Color(0.32, 0.80, 0.78, 0.85)
+const BANKING_COLOUR: Color = Color(0.93, 0.74, 0.16, 0.9)
+const BLOCKED_BRANCH_COLOUR: Color = Color(0.95, 0.27, 0.22, 0.9)
+
+## How high a split's tag floats, in metres, and how big it is drawn.
+##
+## **Two lifts, because a render showed one number cannot satisfy both constraints.** The tag
+## sits at whichever of them is higher, and each answers a different question:
+##
+## - `SPLIT_MARK_CLEARS_THE_BODY_METRES` is measured off the body actually drawn
+##   (`_machine_roof`), and it is small. A Smelter's flue reaches about five metres over a
+##   1.5 m housing, so a tag placed off the housing alone is inside the chimney — that is #41's
+##   bug pointed inwards, and the first render of this found it. The tag has to clear what a
+##   player can see.
+## - `SPLIT_MARK_CLEARS_THE_ROOF_METRES` is measured off `query_machine_height_metres`, and it
+##   is bigger than `STARVED_MARK_LIFT_METRES`. The marks a Machine can wear have to be an
+##   *order* rather than numbers that happen not to collide: a Smelter with no ore and two
+##   Belts off it wears two of them at once.
+##
+## Taking the max is what stops the second render's failure, which was the first one's inverse:
+## at 2.1 m over a five-metre flue the tag was seven metres up, overlapping the HUD, with
+## nothing visibly under it — which is #41's actual symptom. A tag resting just above a
+## Machine's own silhouette belongs to it; one hovering two metres clear does not.
+##
+## Bigger than the posts, because this one has to read from thirty metres against a Factory
+## rather than against bare ground.
+const SPLIT_MARK_CLEARS_THE_BODY_METRES: float = 0.6
+const SPLIT_MARK_CLEARS_THE_ROOF_METRES: float = 1.85
+const SPLIT_MARK_SIZE_METRES: float = 1.3
+
+## How high a branch post stands at its Belt's entry tile, in metres, and how big it is drawn.
+##
+## Two renders set this number and both findings are the same shape — the post was behind
+## something, and the count, the colour and the position were all correct, so nothing but
+## looking at the picture could have found it.
+##
+## At **0.7 m** it was under `belt.deck_height_metres`, which is 0.9: the mark was *inside the
+## conveyor it is about*. It had been put below the hip-height dangling post on the argument
+## that the two should read apart, which is a reason about the marks and not about the world.
+##
+## At **1.55 m** it cleared the deck and was still invisible, for a reason specific to this
+## mark: **a branch's entry tile is a dock tile, which is exactly where #36 draws a port
+## arrow**. Those are 3.2 m across, warm orange, and lie flat at deck height — so a small red
+## post standing among them is red on orange at the one place they are guaranteed to coincide.
+## Nothing else in this file collides with them, because a dangling end has no Machine behind
+## it and therefore no arrow.
+##
+## So it stands **clear above the arrows** and is drawn as a pillar rather than a cube, which
+## is what makes a row of them read as markers rather than as more freight on the line.
+const BRANCH_MARK_HEIGHT_METRES: float = 2.25
+const BRANCH_MARK_SIZE_METRES: float = 1.25
 
 ## The port markers' colours. Cool for what goes in and warm for what comes out, which is
 ## the one pair of colours a player does not have to be told the meaning of twice.
@@ -616,6 +702,7 @@ func sync(sim: Simulation) -> void:
 	# there is one.
 	_sync_ports(sim)
 	_sync_connection_marks(sim)
+	_sync_split_marks(sim)
 	_sync_hud(sim)
 	_place_camera(sim)
 	# After the camera, because the weapon hangs off it.
@@ -2752,7 +2839,16 @@ func _trouble_lines(sim: Simulation) -> PackedStringArray:
 		named.append("%s %s" % [sim.query_machine_id(index), state])
 
 	var dangling: int = dangling_marker_count()
-	if named.is_empty() and dangling == 0:
+	# A branch is the one thing in a Factory whose trouble cannot be read off its own Machine:
+	# `query_machine_is_starved` has nothing to say about a Smelter whose *output* has nowhere
+	# to go, and two Belts off one Machine look identical from above whether they are sharing
+	# or one of them is stopped. The counts come off the marks rather than being worked out a
+	# second way here, exactly as the dangling-ends clause beside them does — so the post in
+	# the world and the number on screen are one decision, and the division of labour is the
+	# one #36 settled: the mark says *where*, the line says *how many*.
+	var blocked: int = blocked_branch_marker_count()
+	var banking: int = banking_marker_count()
+	if named.is_empty() and dangling == 0 and blocked == 0 and banking == 0:
 		return lines
 
 	var sentence: String = ", ".join(named) if not named.is_empty() else "all machines fed"
@@ -2760,6 +2856,13 @@ func _trouble_lines(sim: Simulation) -> PackedStringArray:
 		sentence += " and %d more" % unnamed
 	if dangling > 0:
 		sentence += " — %d belt end%s lead nowhere" % [dangling, "" if dangling == 1 else "s"]
+	if blocked > 0:
+		sentence += " — %d branch%s blocked" % [blocked, "" if blocked == 1 else "es"]
+	# Said in the same breath because it is the answer to the alarm the blocked branches
+	# raise: nothing is being destroyed, the Machine's output buffer is uncapped and the
+	# surplus is in it. A player who did not know that would tear the line down.
+	if banking > 0:
+		sentence += " — %d split%s banking the surplus" % [banking, "" if banking == 1 else "s"]
 	lines.append(sentence)
 	return lines
 
@@ -4220,6 +4323,220 @@ func _sync_connection_marks(sim: Simulation) -> void:
 	_upload(_dangling_marks, dangling)
 	_upload(_starved_marks, starved)
 	_upload(_belt_flow_arrows, flow)
+
+
+## What a split is doing, marked where it is happening: a tag over every Machine serving two
+## or more Belts, and a post at each of those Belts' entry tiles saying whether it is taking
+## its turn.
+##
+## **The three things #48 draws, in the order the ticket ranks them.** That the Machine splits
+## at all, so a player knows they built one rather than two Belts that happen to touch. Which
+## branch is blocked, which is the one a player has to act on and the one a Factory seen from
+## above cannot say. And that the surplus is banking rather than being lost, which
+## `query_machine_output_total` knows and nothing had ever shown.
+##
+## **Blocked is `query_belt_is_stalled` and not "no room at the entry".** A healthy saturated
+## branch has no room at its entry on most ticks — the room check is what rate-limits loading
+## to the Belt's rating — so marking that would flicker on a line that is working perfectly.
+## Stalled is the stable fact: the leading Item has reached the far end and whatever is there
+## will not take it.
+##
+## **And only inside a branch**, deliberately. The confusion this is drawn for is *between*
+## two Belts off one Machine; a single line that is backed up is already legible as a Belt
+## packed solid, and it is named in the HUD. A post on every stalled Belt in a late Factory
+## would be a post on most of them.
+func _sync_split_marks(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _split_marks == null:
+		_split_marks = _split_tags(SPLIT_COLOUR)
+		_banking_marks = _split_tags(BANKING_COLOUR)
+		_branch_marks = _branch_posts(SPLIT_COLOUR)
+		_blocked_branch_marks = _branch_posts(BLOCKED_BRANCH_COLOUR)
+
+	var split: PackedFloat32Array = PackedFloat32Array()
+	var banking: PackedFloat32Array = PackedFloat32Array()
+	var branch: PackedFloat32Array = PackedFloat32Array()
+	var blocked: PackedFloat32Array = PackedFloat32Array()
+
+	for index: int in range(sim.query_machine_count()):
+		var branches: int = sim.query_machine_branch_count(index)
+		if branches < 2:
+			continue
+
+		var stopped: int = 0
+		for which: int in range(branches):
+			var belt: int = sim.query_machine_branch_belt(index, which)
+			var entry: Vector3i = sim.query_belt_tile(belt, 0)
+			var yaw: float = _yaw_for_direction(sim.query_belt_direction(belt))
+			# A branch that leads nowhere already wears a red dangling post at this very
+			# tile, so marking it blocked as well would stack two reds on one tile for one
+			# mistake. Blocked means it leads somewhere and cannot get there.
+			if sim.query_belt_is_stalled(belt) and sim.query_belt_end_is_connected(belt):
+				_mark_at(sim, blocked, entry, BRANCH_MARK_HEIGHT_METRES, yaw)
+				stopped += 1
+				continue
+			_mark_at(sim, branch, entry, BRANCH_MARK_HEIGHT_METRES, yaw)
+			if sim.query_belt_is_stalled(belt):
+				stopped += 1
+
+		# Both branches stopped and the Machine still holding goods is the one case where a
+		# player needs telling that nothing is being destroyed.
+		var is_banking: bool = stopped == branches and sim.query_machine_output_total(index) > 0
+		_write_mark_over_machine(sim, banking if is_banking else split, index)
+
+	_split_transforms = split
+	_banking_transforms = banking
+	_branch_transforms = branch
+	_blocked_branch_transforms = blocked
+	_upload(_split_marks, split)
+	_upload(_banking_marks, banking)
+	_upload(_branch_marks, branch)
+	_upload(_blocked_branch_marks, blocked)
+
+
+## Writes one tag over a Machine's own roof, at `SPLIT_MARK_LIFT_METRES`.
+##
+## The position comes from `_machine_centre`, which is what `_sync_machines` seats the body
+## with and what `_turret_gauge_position` hangs the Ammunition bar from, so a tag cannot end
+## up over a different Machine from the one it is about. The height is `_machine_roof`.
+func _write_mark_over_machine(
+	sim: Simulation, into: PackedFloat32Array, index: int
+) -> void:
+	var centre: Vector3 = _machine_centre(sim, index)
+	var lift: float = maxf(
+		_machine_roof(sim, index) + SPLIT_MARK_CLEARS_THE_BODY_METRES,
+		Fixed.to_float(sim.query_machine_height_metres(index))
+			+ SPLIT_MARK_CLEARS_THE_ROOF_METRES
+	)
+	into.resize(into.size() + FLOATS_PER_INSTANCE)
+	@warning_ignore("integer_division")
+	_write_instance(
+		into,
+		into.size() / FLOATS_PER_INSTANCE - 1,
+		Vector3(centre.x, centre.y + lift, centre.z),
+		0.0
+	)
+
+
+## The top of what a player can actually see of a Machine: the taller of the housing the
+## Simulation collides against and the body the renderer is drawing.
+##
+## **This is #41's rule kept rather than bent, and a render is what found the difference.**
+## `query_machine_height_metres` is the one authority on how tall a Machine *is* — the number
+## a player stands on, the number a placeholder box is sized from — and a mark hung off a
+## constant instead is what shipped #41's ownerless red rectangle. But it is the **housing**
+## height, and several generated bodies carry a superstructure well above theirs: a Smelter's
+## housing is 1.5 m and its flue goes to about five, a Miner's is 1.8 m under a derrick. A tag
+## 2.1 m over a Smelter's housing is a tag *inside the chimney*, which is the same bug as #41
+## pointed the other way — and the count, the colour and the position were all correct, so
+## nothing but looking at the picture would have found it.
+##
+## So the roof is the **max** of the two. The Simulation's figure is a floor and never
+## contradicted, the mesh is asked only about its own extent, and neither is a constant.
+##
+## **The amber starved tag and the Ammunition gauge have the same defect and are deliberately
+## left alone**: fixing them is a behaviour change to three shipped marks with two assertions
+## pinning them, which belongs to whoever owns that ticket rather than to a corner of this one.
+## It is written down here so the next person reads it rather than rediscovering it.
+func _machine_roof(sim: Simulation, index: int) -> float:
+	var housing: float = Fixed.to_float(sim.query_machine_height_metres(index))
+	if index < 0 or index >= _machine_meshes.size():
+		return housing
+	var mesh: Mesh = _machine_meshes[index].mesh
+	if mesh == null:
+		return housing
+	# A body is modelled about the centre of its footprint with its feet on the ground, so its
+	# own AABB already runs from zero to its full height. A placeholder box is modelled about
+	# its centre and lifted, which is why that case falls back to the declared figure.
+	if not machine_body_path(index).begins_with("res://"):
+		return housing
+	return maxf(housing, mesh.get_aabb().end.y)
+
+
+## How high the top of the body drawn for a Machine is, in metres. For the smoke test, which
+## asserts the split tag clears it rather than asserting a number.
+func machine_drawn_roof_metres(sim: Simulation, index: int) -> float:
+	return _machine_roof(sim, index)
+
+
+## A MultiMesh of branch posts: a short pillar standing clear of the Belt deck at the entry
+## tile it is about. Taller than it is wide, so that a row of them along a line of Belts reads
+## as a row of markers rather than as more freight.
+func _branch_posts(colour: Color) -> MultiMeshInstance3D:
+	return _unshaded_tags(
+		Vector3(
+			BRANCH_MARK_SIZE_METRES * 0.42,
+			BRANCH_MARK_SIZE_METRES,
+			BRANCH_MARK_SIZE_METRES * 0.42
+		),
+		colour
+	)
+
+
+## A MultiMesh of split tags: a flat slab over a Machine's roof, wide rather than tall, which
+## is the shape that reads from above and from the side alike.
+func _split_tags(colour: Color) -> MultiMeshInstance3D:
+	return _unshaded_tags(
+		Vector3(
+			SPLIT_MARK_SIZE_METRES, SPLIT_MARK_SIZE_METRES * 0.3, SPLIT_MARK_SIZE_METRES
+		),
+		colour
+	)
+
+
+## One MultiMesh of boxes in one colour. Unshaded for the reason every diagnostic in this file
+## is: a mark a directional light can darken is a mark a player misreads at the worst moment.
+func _unshaded_tags(size: Vector3, colour: Color) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	var tag: BoxMesh = BoxMesh.new()
+	tag.size = size
+	instanced.mesh = tag
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## How many Machines are marked as serving a flowing split. For the smoke test, and the number
+## the HUD reports.
+func split_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _split_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many splits are marked as banking their surplus, both branches stopped.
+func banking_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _banking_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many branch posts stand at Belts that are taking their turn.
+func branch_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _branch_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How many branch posts stand at Belts that are blocked.
+func blocked_branch_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _blocked_branch_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where a split's tag is drawn, so a test can check it hangs off its own Machine's roof
+## rather than off a constant. `Vector3.ZERO` for an index nothing was marked at.
+func split_marker_position(which: int) -> Vector3:
+	return _instance_position(_split_transforms, which)
+
+
+## Where a branch post is drawn, in the canonical order the Simulation serves the branch in.
+func branch_marker_position(which: int) -> Vector3:
+	return _instance_position(_branch_transforms, which)
 
 
 ## Writes one mark over the centre of a tile.

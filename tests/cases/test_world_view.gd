@@ -1906,3 +1906,76 @@ func test_the_telegraph_names_the_tiers_in_the_wave_it_is_warning_about() -> voi
 		"a cold Factory has not earned the Breaker tier, so nothing announces one"
 	)
 	view.free()
+
+
+func test_a_split_tag_hangs_off_its_own_machines_roof_and_stacks_with_the_others() -> void:
+	# #41 again, and the reason it is asserted rather than trusted: a mark hung at a constant
+	# "taller than any housing in the content" is a second authority on how tall a Machine is,
+	# and what it shipped was a saturated red rectangle floating over the Factory with nothing
+	# under it. A Miner is 1.8 m and this tag has to be 1.8 m plus a lift, read off
+	# `query_machine_height_metres` like every other mark a Machine wears.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 0)
+		),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(6, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 1), Vector3i(6, 0, 1)),
+	])
+	view.sync(sim)
+	assert_eq(view.split_marker_count(), 1, "the Miner splits, so it wears the tag")
+
+	var housing: float = Fixed.to_float(sim.query_machine_height_metres(0))
+	assert_true(
+		view.split_marker_position(0).y >= housing + WorldView.SPLIT_MARK_CLEARS_THE_ROOF_METRES,
+		"at least one lift above the Miner's declared 1.8 m housing, got %f over %f"
+			% [view.split_marker_position(0).y, housing]
+	)
+	# And above the body actually drawn, which on this Machine is the taller of the two: a
+	# Miner's housing is 1.8 m and its derrick goes well past that, so a tag placed off the
+	# housing alone would be inside the model. That is #41's bug pointed the other way, and
+	# only a render found it — see `WorldView._machine_roof`.
+	var drawn: float = view.machine_drawn_roof_metres(sim, 0)
+	assert_true(
+		drawn > housing,
+		"the Miner's body really is taller than its housing: %f against %f" % [drawn, housing]
+	)
+	var clearance: float = view.split_marker_position(0).y - drawn
+	assert_true(
+		clearance >= WorldView.SPLIT_MARK_CLEARS_THE_BODY_METRES,
+		"and the tag clears the body too, got %f above %f" % [clearance, drawn]
+	)
+	# The other half of #41: a mark can be too high as well as too low. The second render of
+	# this had the tag seven metres up over a Smelter's flue, overlapping the HUD, with
+	# nothing visibly under it — which is exactly the ownerless rectangle #41 was about.
+	assert_true(
+		clearance < 2.0 * WorldView.SPLIT_MARK_CLEARS_THE_ROOF_METRES,
+		"and is not floating clear of the thing it is about, got %f above %f" % [clearance, drawn]
+	)
+	# The three marks a Machine can wear all hang off that same roof, so the lifts have to be
+	# an order rather than three numbers: the Ammunition bar, then the amber starved tag, then
+	# this one. Any two at the same height draw through each other.
+	assert_true(
+		WorldView.AMMUNITION_GAUGE_LIFT_METRES < WorldView.STARVED_MARK_LIFT_METRES
+			and WorldView.STARVED_MARK_LIFT_METRES < WorldView.SPLIT_MARK_CLEARS_THE_ROOF_METRES,
+		"the three stack in that order"
+	)
+	assert_true(
+		WorldView.SPLIT_MARK_CLEARS_THE_ROOF_METRES - WorldView.STARVED_MARK_LIFT_METRES
+			> WorldView.SPLIT_MARK_SIZE_METRES * 0.3,
+		"and this one clears the starved tag by more than its own thickness"
+	)
+	# The branch post stands on a Belt tile rather than on a roof, so the number it has to
+	# clear is the deck under it. At 0.7 m it was *inside* the conveyor it was about, which a
+	# render found and no count could have.
+	assert_true(
+		WorldView.BRANCH_MARK_HEIGHT_METRES
+			> Fixed.to_float(sim.query_belt_deck_height_metres())
+				+ WorldView.BRANCH_MARK_SIZE_METRES * 0.5,
+		"and a branch post stands clear of the Belt deck rather than inside it"
+	)
+	view.free()

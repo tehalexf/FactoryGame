@@ -21,6 +21,8 @@ tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and 
 ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
                                  # a Wave arriving (swarm|pair|boss|distance; + hud, + bare)
+SHOT_SCRIPT=tools/visual/compose_branch_shot.gd tools/visual/shot.sh out.png bare
+                                 # a line that branches, one side blocked (+ bare)
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -1170,6 +1172,74 @@ what exactly one of them did.
   produces the downstream-first order, under the same staleness flag, because that rebuild
   already sorts the Belts to decide where to start each chain. This is the hottest loop in the
   project and a per-tick sort of every Belt in a late-game Factory is not a thing to add to it.
+
+#### Drawing it, which is the half #46 could not do
+
+#46 shipped the mechanic and recorded what it was missing: *"Nothing draws a split. A player
+watching one Belt run full and the other half-empty cannot tell back-pressure from a bug."* #48
+is that half. The Simulation knew three things a player could not see, and a mechanic a player
+cannot read is indistinguishable from a bug — the argument Heat's visibility and the Turret's
+Ammunition gauge both make.
+
+- **Two projections, and nothing else behind the façade changed.**
+  `query_machine_branch_count` and `query_machine_branch_belt` are `_machine_behind_belt`'s
+  answer asked from the *other side* — per Machine rather than per Belt — over the canonical
+  order `_load_the_ports` serves in, so the membership a player is shown is exactly the group
+  the rotation is over. A Belt docked against a wall #47 does not declare an output on is not in
+  it: not a branch that gets no turns, not a branch.
+  `test_asking_about_a_branch_leaves_the_run_exactly_where_it_was` is the assertion that the
+  hash does not move for being asked.
+- **Blocked is `query_belt_is_stalled`, and "no room at the entry" would have been wrong.** A
+  healthy saturated branch has no entry room on most ticks — the room check is what rate-limits
+  loading to the Belt's rating — so a mark on that flickers on a line that is working perfectly.
+  Stalled is the stable fact, and it is the one a player has to act on.
+- **A mark only inside a branch**, deliberately. The confusion this exists for is *between* two
+  Belts off one Machine; a single line that is backed up already reads as a Belt packed solid
+  and is named in the HUD. A post on every stalled Belt in a late Factory is a post on most of
+  them.
+- **Three marks: a tag over the Machine, a post at each branch, and a different post at the
+  blocked one** — plus the tag going hazard yellow when every branch is stopped and the output
+  buffer is growing, which is the one moment a player needs telling that nothing is being
+  destroyed. The HUD's brief panel counts them off the marks rather than working them out a
+  second way, the arrangement its dangling-ends clause already had: the mark says *where*, the
+  line says *how many*.
+
+**Four renders decided the geometry and every one of them found something no test could.** The
+before and after are [`docs/images/branch_before.png`](docs/images/branch_before.png) and
+[`_after`](docs/images/branch_after.png), rebuilt with
+`SHOT_SCRIPT=tools/visual/compose_branch_shot.gd tools/visual/shot.sh out.png [bare]`. In order:
+
+1. **A branch post at 0.7 m is inside the Belt it is about.** `belt.deck_height_metres` is 0.9.
+   The number had been picked to sit under the hip-height dangling post so the two would read
+   apart, which is a reason about the marks and not about the world.
+2. **Then it cleared the deck and was still invisible**, for a reason peculiar to this mark: a
+   branch's entry tile **is a dock tile, which is exactly where #36 draws a port arrow**. Those
+   are 3.2 m across, warm orange and flat at deck height, so a small red post among them is red
+   on orange at the one place the two are guaranteed to coincide. Nothing else in `world_view.gd`
+   collides with them, because a dangling end has no Machine behind it and so no arrow. The post
+   now stands well clear above them.
+3. **#41 bites in both directions, and `query_machine_height_metres` is the housing.** A tag
+   2.1 m over a Smelter's declared 1.5 m is **inside its flue**, which reaches about five; the
+   Miner's 1.8 m sits under a derrick. Hung off the drawn body instead it was seven metres up,
+   overlapping the HUD, with nothing visibly under it — which is #41's actual symptom. So
+   `_machine_roof` takes the **max** of the housing and the drawn body's own AABB, and the lift
+   is the max of a small clearance over that body and a larger one over the housing that keeps
+   the mark order Ammunition gauge → starved tag → split tag. Neither number is a constant
+   standing in for a Machine's height. **The amber starved tag and the Ammunition gauge have the
+   same defect and were deliberately left alone**: that is a behaviour change to three shipped
+   marks with two assertions pinning them, and it belongs to its own ticket.
+4. **The vantage is a finding too.** A split leaves by a Machine's southern and eastern faces, so
+   a camera to the west or north has one entry directly behind the body — and a mark that is
+   behind something looks exactly like a mark that was never drawn. Three renders had a counter
+   saying "1 blocked" and a picture with none in it.
+
+`tools/visual/compose_branch_shot.gd` is a third sibling of `compose_shot.gd` and
+`compose_building_shot.gd` and needed to be: the subject is twenty metres of Factory, which at
+eye level is nose-first into a conveyor and from Survey View is a sixth of the frame under a wall
+of port arrows. It places the camera, like the first, and keeps the HUD, like the second. It
+carries `bare`, for the reason `compose_wave_shot.gd` does — the first dressed render had a
+prop standing where the tag was, and "hidden behind something" and "never drawn" are two very
+different bugs that look identical in a picture.
 
 **One fixture's premise changed and is worth knowing about**, because it is finding 8's third
 consequence arriving as a behaviour change rather than as a number.
