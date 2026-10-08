@@ -1071,7 +1071,13 @@ arrays, never as an object per Item.
     declared output could never branch. And declaring only the middle tile of a 3-wide face
     would make *which tile a player aimed at* the difference between a line that works and one
     that does not, for no reason a player could see. So the shipped table went from 21 rows to
-    77, and the arrows now draw along whole faces, which is more legible rather than less.
+    **93**, and the arrows now draw along whole faces, which is more legible rather than less.
+    (This line said 77 until #48 counted the file: 93 is what `content/machine_ports.csv` holds
+    and what #47's own commit message says, so the prose had been written mid-ticket and not
+    re-read. Every other claim in this section was checked at the same time and holds — every
+    id in `machines.csv` declares ports, the five rows naming no Machine are exactly the
+    documented warning cases (`press_mk1`, `assembler_mk1`, `generator_mk1`, `nest`,
+    `belt_straight`), and `_ports.feed_into` really is in `Definitions.digest`.)
   - **The port says where, not what.** A Belt docking at a declared input port may carry any
     Item the Recipe wants; `_accept_input` decides that and always did. The good in a port_id
     is the intended routing rather than a restriction — a Smelter takes ore on its north face
@@ -1625,6 +1631,45 @@ own roof, read as a saturated red rectangle floating over the Factory with no ow
 load-bearing here, so a red mark with nothing under it is worse than no mark. The lift also has
 to stay under `STARVED_MARK_LIFT_METRES`, which hangs off the same roof, or the amber starved
 tag draws straight through the middle of the bar; `test_world_view` asserts both bounds.
+
+#### Open: `query_machine_height_metres` is the housing, and the body is taller
+
+**#41 bites in both directions, and #48 found the other one by rendering.** The number above is
+the **housing** — what a player stands on, what a placeholder box is sized from, what `_walk`
+collides against — and several generated bodies carry a superstructure well above it. Measured
+by standing every Machine up and reading the drawn mesh's own AABB:
+
+| machine | housing | body drawn | amber starved tag at | |
+|---|---|---|---|---|
+| `miner_mk1` | 1.80 | **8.24** | 3.00 | inside the derrick, by 5.2 m |
+| `smelter_mk1` | 1.50 | **7.75** | 2.70 | inside the flue |
+| `coal_miner_mk1` | 2.00 | **6.59** | 3.20 | inside |
+| `steam_boiler_mk1` | 2.20 | **5.05** | 3.40 | inside |
+| `ammo_press_mk1` | 2.00 | **4.14** | 3.20 | inside |
+| `mg_turret_mk1` | 2.00 | 2.00 | 3.20 | ok |
+| `repair_pylon_mk1` | 2.40 | 2.40 | 3.60 | ok |
+
+So **five of the seven Machines wear their starved tag inside their own body**, and the two that
+do not are exactly the two Turrets. That is also why it was never caught: the Ammunition gauge is
+only ever worn by a Turret, both Turret meshes are exactly their declared housing, and
+`test_a_gauge_hangs_off_its_own_machines_roof_rather_than_a_fixed_height` therefore **passes for
+the wrong reason** — it pins the rule on the one Machine class where the two numbers cannot
+disagree.
+
+**The fix is `WorldView._machine_roof`, which #48 added and uses**: the **max** of
+`query_machine_height_metres` and the drawn body's own AABB. The Simulation's figure stays a
+floor and is never contradicted, the mesh is asked only about its own extent, and neither is a
+constant — which is what keeps #41's rule rather than bending it. Routing the gauge and the
+starved tag through it, and re-basing their two lifts so the stack order holds against the drawn
+roof rather than the housing, is the whole change.
+
+**Not done here, deliberately.** It moves three shipped marks that two assertions pin, and a
+Miner's tag rises 5.2 m — a visible change to every screenshot with a starved Machine in it,
+which wants its own render pass. Two things for whoever takes it: the existing assertion only
+keeps its teeth if it is **also** run against a Machine where housing and body differ, and the
+lift wants bounding from *both* ends, because #48's second render hung a tag 2.1 m over a
+five-metre flue and got seven metres of air with nothing visibly under it — which is #41's actual
+symptom arriving from the other side.
 
 ### Where the balance stands
 
