@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Put `godot` and/or `blender` on PATH in a CI runner, at the versions
+# Put `godot`, `blender` and/or `ffmpeg` on PATH in a CI runner, at the versions
 # .github/ci/toolchain.env pins.
 #
 #   .github/ci/install_toolchain.sh godot
 #   .github/ci/install_toolchain.sh blender
-#   .github/ci/install_toolchain.sh godot blender
+#   .github/ci/install_toolchain.sh godot blender ffmpeg
 #
 # Downloads go to $TOOLCHAIN_CACHE (default ~/.cache/deep-foundry-toolchain) and
-# that directory is what actions/cache keeps. The archives total ~460 MB, so a
+# that directory is what actions/cache keeps. The archives total ~590 MB, so a
 # fetch on every push would be most of the job's wall clock; on a cache hit this
 # script downloads nothing and only unpacks.
 #
@@ -112,6 +112,24 @@ install_blender() {
 	ln -sfn "$root/blender" "$TOOLCHAIN_BIN/blender"
 }
 
+install_ffmpeg() {
+	local root="$TOOLCHAIN_DIR/$FFMPEG_DIRNAME"
+	if [ -x "$root/bin/ffmpeg" ]; then
+		say "ffmpeg $FFMPEG_VERSION already installed"
+	else
+		local archive="$TOOLCHAIN_CACHE/$FFMPEG_ARCHIVE"
+		fetch_verified "$archive" "$FFMPEG_SHA256" "$FFMPEG_URL"
+		rm -rf "$root" "$root.part"
+		mkdir -p "$root.part"
+		tar -xJf "$archive" -C "$root.part" --strip-components=1
+		mv "$root.part" "$root"
+	fi
+	# Both binaries: the tests shell out to ffprobe as well as ffmpeg, and a
+	# half-installed pair is a confusing skip rather than a clear error.
+	ln -sfn "$root/bin/ffmpeg" "$TOOLCHAIN_BIN/ffmpeg"
+	ln -sfn "$root/bin/ffprobe" "$TOOLCHAIN_BIN/ffprobe"
+}
+
 if [ "$#" -eq 0 ]; then
 	echo "usage: $(basename "$0") [godot] [blender]" >&2
 	exit 2
@@ -121,6 +139,7 @@ for what in "$@"; do
 	case "$what" in
 		godot) echo "== godot $GODOT_VERSION"; install_godot ;;
 		blender) echo "== blender $BLENDER_VERSION"; install_blender ;;
+		ffmpeg) echo "== ffmpeg $FFMPEG_VERSION"; install_ffmpeg ;;
 		*) echo "error: unknown tool '$what'" >&2; exit 2 ;;
 	esac
 done
@@ -136,5 +155,6 @@ for what in "$@"; do
 	case "$what" in
 		godot) godot --version ;;
 		blender) blender --version | head -1 ;;
+		ffmpeg) ffmpeg -version | head -1 ;;
 	esac
 done

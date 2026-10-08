@@ -18,7 +18,7 @@ name: ci
 # somebody had to remember to run.
 #
 # The `ci` job at the bottom is the one to make a required status check: it is
-# green only when all four suites are.
+# green only when all three suites and the licence guard are.
 
 on:
   push:
@@ -35,7 +35,7 @@ permissions:
 jobs:
   # Kept first and kept dependency-free. This repository is public and the
   # purchased assets forbid redistribution (docs/ASSETS.md), so the guard must
-  # answer in thirty seconds without waiting on a 460 MB toolchain download.
+  # answer in thirty seconds without waiting on a 590 MB toolchain download.
   licence-guard:
     name: licence guard
     runs-on: ubuntu-latest
@@ -46,12 +46,12 @@ jobs:
       - name: No licensed asset may exist in this public repo
         run: python3 tools/assets/check_licensed_staged.py --all
 
-  # Fetch Godot and Blender once per toolchain bump rather than once per job.
+  # Fetch the toolchain once per bump rather than once per job.
   # The three test jobs below restore this same cache, so on a warm cache they
   # download nothing; on a cold one they wait for this job instead of racing
-  # each other for the same two archives.
+  # each other for the same three archives.
   toolchain:
-    name: toolchain (godot 4.7.2, blender 5.2.2)
+    name: toolchain (godot 4.7.2, blender 5.2.2, ffmpeg 8.1.3)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -61,8 +61,8 @@ jobs:
         with:
           path: ~/.cache/deep-foundry-toolchain
           key: ${{ steps.key.outputs.value }}
-      - name: Download and verify both archives
-        run: bash .github/ci/install_toolchain.sh godot blender
+      - name: Download and verify all three archives
+        run: bash .github/ci/install_toolchain.sh godot blender ffmpeg
     outputs:
       cache-key: ${{ steps.key.outputs.value }}
 
@@ -74,7 +74,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/deep-foundry-toolchain
           key: ${{ needs.toolchain.outputs.cache-key }}
@@ -116,7 +116,7 @@ jobs:
           # git repositories and run the guard against them; git has to be
           # usable, and a shallow clone of this repo is fine for that.
           fetch-depth: 0
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/deep-foundry-toolchain
           key: ${{ needs.toolchain.outputs.cache-key }}
@@ -136,16 +136,14 @@ jobs:
       # test_reproduces_the_committed_meshes_byte_for_byte compares the
       # regenerated .glb bytes against the committed ones, and a different
       # exporter version fails it rather than skipping it.
-      - run: bash .github/ci/install_toolchain.sh godot blender
-
-      # ffmpeg clears the seven test_wav_to_cue skips. Ubuntu's package is fine:
-      # those tests assert channel count, duration and where in the recording
-      # the cut landed, not exact bytes.
-      - name: ffmpeg, for the audio-cue cutter's tests
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends ffmpeg
-          ffmpeg -version | head -1
+      #
+      # ffmpeg clears the seven test_wav_to_cue skips — and it is a pinned static
+      # build rather than `apt-get install ffmpeg`, because the distro's is not
+      # new enough. ubuntu-24.04 has 6.1.1, on which the loop-cue test fails:
+      # ffmpeg exits 0 and writes 0.048 seconds where eight were asked for. That
+      # was the first thing turning this suite's skips off actually found. See
+      # the note in .github/ci/toolchain.env.
+      - run: bash .github/ci/install_toolchain.sh godot blender ffmpeg
 
       - name: The asset pipeline and the release pipeline
         run: .github/ci/run_suite.sh "asset and release pipeline" bash tools/assets/run_tests.sh
@@ -158,7 +156,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/deep-foundry-toolchain
           key: ${{ needs.toolchain.outputs.cache-key }}
