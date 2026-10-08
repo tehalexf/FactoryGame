@@ -20,6 +20,9 @@ tools/balance/measure.sh         # play every balance scenario headless and prin
 tools/balance/measure.sh --scenario competent --verbose   # one Run, with its per-minute trace
 python3 tools/tuning_dashboard.py  # edit content/tuning.toml in a browser, with reset and rollback
 tools/tuning/run_tests.sh        # that dashboard's own tests, Python
+tools/release/build_windows.sh    # a verified Windows build, from WSL2
+tools/release/build_windows.sh --push        # the same, published to itch.io
+python3 tools/release/preflight.py --push    # can I build and publish? why not?
 godot --path .                   # run the game
 godot --headless --path . --quit-after 120   # launch headless for 120 frames
 ```
@@ -2635,6 +2638,41 @@ Honest residue, so the next ticket does not have to rediscover it:
   Turret. Which of the two a second Press and a second Turret *together* fixes is unmeasured.
 - **Co-op.** Every scenario is one player. Four players on one Ammo Press is a different
   economy, and the Simulation already supports measuring it.
+
+## Shipping a build
+
+`bash tools/release/build_windows.sh` is the whole of it;
+[docs/RELEASING.md](docs/RELEASING.md) is the one-time setup and the reasoning. Two
+things in there are worth knowing before touching anything near an export.
+
+**A `.gdignore` hides a directory from the *exporter* as thoroughly as from the
+importer, and this project has two of them.** `content/.gdignore` stops Godot
+claiming every `.csv` as a translation table and `assets_licensed/.gdignore` stops
+it walking seven gigabytes of purchased WAV — and the first export of this project
+consequently contained **zero rows of `content/` and zero of the 96 licensed
+files**, while still producing a 130 MB executable that ran. So the build exports a
+**staging tree** (`tools/release/stage.py`): the project rsynced, only
+`generated/` copied out of the quarantine, both markers deleted in the copy, and an
+`importer="keep"` sidecar beside every affected file so the exporter stores raw
+bytes at raw paths. The working copy is never touched.
+
+**The failure mode is silence, so verification is the deliverable.** Weapon
+viewmodels, audio cues and set-dressing props each degrade gracefully, which is
+right for a clone and a trap for a release: a build that lost them looks worse,
+sounds worse and says nothing. Four gates, each naming the converter to run —
+`preflight.py` against the quarantine, `verify_pck.py` against the shipped
+binary's own pack index, `verify_bundled_assets.gd` opening that pack with
+`--main-pack` and counting what the game's own classes *resolved*, and the real
+`.exe` started through WSL interop for 240 frames with its log read for errors.
+The last two are both needed: the index cannot tell a loadable file from an
+unloadable one, and the loader cannot tell you which file is missing.
+
+Three facts that cost time to find: **`--script` does nothing in a release
+template** (the engine starts the main scene and never returns), the licensed
+assets go **inside the PCK and never loose beside the binary** because that is the
+line the licences draw, and **icon/version embedding is skipped on purpose** —
+it needs rcedit under Wine, which is per-machine state the repo cannot carry, and
+there is no icon art to embed yet.
 
 ## The float-to-fixed boundary
 

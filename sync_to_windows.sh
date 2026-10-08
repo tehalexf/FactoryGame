@@ -12,18 +12,24 @@ rsync -a --delete \
   --exclude 'tools/aigen/models' --exclude 'tools/aigen/output' \
   ./ /mnt/c/Users/Alex/FactoryGame/
 
-# The converted weapon viewmodels, which the whole of assets_licensed/ is
-# otherwise excluded from carrying. They are generated from purchased packs:
-# never committed, but the Windows build needs them or the weapon in frame is a
-# placeholder box. Produce them with tools/assets/convert_weapons.sh.
-if [ -d assets_licensed/generated/gear ]; then
-  mkdir -p /mnt/c/Users/Alex/FactoryGame/assets_licensed/generated/gear
+# The generated runtime assets, which the whole of assets_licensed/ is otherwise
+# excluded from carrying. They are produced from purchased packs: never
+# committed, but the running game needs them or the weapon in frame is a box,
+# the yard is untextured stand-ins, and there is no sound at all.
+#
+#   tools/assets/convert_weapons.sh   tools/assets/convert_audio.sh
+#   tools/assets/convert_props.sh
+if [ -d assets_licensed/generated ]; then
+  mkdir -p /mnt/c/Users/Alex/FactoryGame/assets_licensed/generated
   rsync -a --delete \
-    assets_licensed/generated/gear/ \
-    /mnt/c/Users/Alex/FactoryGame/assets_licensed/generated/gear/
-  echo "weapon view models: $(ls assets_licensed/generated/gear | wc -l) copied"
+    assets_licensed/generated/ \
+    /mnt/c/Users/Alex/FactoryGame/assets_licensed/generated/
+  for kind in gear audio props; do
+    count=$(ls "assets_licensed/generated/$kind" 2>/dev/null | wc -l)
+    echo "  $kind: $count file(s)"
+  done
 else
-  echo "weapon view models: none — run tools/assets/convert_weapons.sh"
+  echo "generated assets: none — run the three tools/assets/convert_*.sh scripts"
 fi
 # Rebuild the Windows-side import cache before launching.
 #
