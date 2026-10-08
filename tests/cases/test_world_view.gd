@@ -2254,3 +2254,199 @@ func test_the_ore_in_the_ground_is_painted_inside_the_palette_rather_than_bright
 			)
 	assert_ne(WorldView.ORE_IRON_GROUND, WorldView.ORE_COAL_GROUND, "and the two seams differ")
 	view.free()
+
+
+# ── The scanner ───────────────────────────────────────────────────────────────
+# The player's own words: "we need a sort of scanner to ping the nearest node while putting
+# down miners". So the hint is a mechanic rather than a line of text — a run of pings that
+# travels the ground from the player's feet out to the nearest ore they could claim, in that
+# ore's own colour, so the thing that leads you there and the thing you arrive at are
+# visibly one thing.
+#
+# **Timed by the tick and nothing else.** A pulse driven by a clock is two Runs down the same
+# script looking different, which is the rule `WeaponViewmodel` keeps by seeking its clips
+# from the tick count and the rule the audio director keeps with `tick % count`.
+
+## A Run with a Miner on the Build Gun, which is the condition the scanner runs under.
+func _scanning_run(layout: MapLayout) -> Simulation:
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	sim.step([
+		InputAction.set_build_mode(0, true),
+		InputAction.select_machine(0, sim.query_definitions().machine_index("miner_mk1")),
+	])
+	return sim
+
+
+func _ore_layout() -> MapLayout:
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 14), "iron_ore", 1)
+	layout.sort_nodes()
+	return layout
+
+
+func test_the_scanner_runs_only_while_a_miner_is_on_the_build_gun() -> void:
+	# "While putting down miners" is the condition, and it is read three ways because it is
+	# three facts: the Build Gun is in hand, the Machine tool is out, and what is on it mines.
+	# A player holding a rifle or about to place a Smelter is not looking for ore.
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "a Miner is on the gun and there is ore")
+
+	sim.step([InputAction.select_machine(0, sim.query_definitions().machine_index("smelter_mk1"))])
+	view.sync(sim)
+	assert_eq(view.ore_scanner_ping_count(), 0, "a Smelter is not a reason to hunt for ore")
+
+	sim.step([InputAction.select_machine(0, sim.query_definitions().machine_index("miner_mk1"))])
+	view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "and picking the Miner again brings it back")
+
+	sim.step([InputAction.set_build_mode(0, false)])
+	view.sync(sim)
+	assert_eq(view.ore_scanner_ping_count(), 0, "nor is a rifle")
+	view.free()
+
+
+func test_the_scanner_runs_out_to_the_ore_the_objective_line_names() -> void:
+	# One authority for where a player is being sent — `query_nearest_workable_node` — so the
+	# trail and the line cannot point at different Nodes. The pings lie on the ground between
+	# the two, in the ore's own colour, which is what makes the trail and its destination read
+	# as one mark rather than as two.
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	var node: int = sim.query_nearest_workable_node(0)
+	var target: FixedVec2 = sim.query_tile_centre_metres(sim.query_node_tile(node))
+	var at: FixedVec2 = sim.query_player_position(0)
+	var span: float = Vector2(
+		Fixed.to_float(target.x) - Fixed.to_float(at.x),
+		Fixed.to_float(target.z) - Fixed.to_float(at.z)
+	).length()
+
+	assert_true(view.ore_scanner_ping_count() > 0, "the scanner is running")
+	for ping: int in range(view.ore_scanner_ping_count()):
+		var p: Vector3 = view.ore_scanner_ping_position(ping)
+		var from_player: float = Vector2(
+			p.x - Fixed.to_float(at.x), p.z - Fixed.to_float(at.z)
+		).length()
+		assert_true(
+			from_player <= span + 1.0, "no ping overshoots the ore, got %f of %f" % [from_player, span]
+		)
+		var off_line: float = Vector2(
+			p.x - Fixed.to_float(at.x), p.z - Fixed.to_float(at.z)
+		).distance_to(
+			Vector2(
+				Fixed.to_float(target.x) - Fixed.to_float(at.x),
+				Fixed.to_float(target.z) - Fixed.to_float(at.z)
+			).normalized() * from_player
+		)
+		assert_true(off_line < 0.01, "and every ping is on the line to it, got %f" % off_line)
+		assert_eq(
+			view.ore_scanner_ping_colour(ping).r,
+			WorldView.ORE_IRON_COLOUR.r,
+			"in the ore's own colour"
+		)
+	view.free()
+
+
+func test_the_pulse_travels_and_repeats_on_the_tick_rather_than_on_a_clock() -> void:
+	# Two Runs down the same script look the same, which they could not if a pulse were
+	# driven by elapsed seconds or by how many frames the renderer happened to draw. The head
+	# is a function of `query_tick`, so it advances when the Simulation does, it does not move
+	# on a frame that stepped nothing, and it comes back round to exactly where it was one
+	# period later.
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+
+	view.sync(sim)
+	var opening: float = _scanner_head(view)
+	var pattern: Array = _scanner_pattern(view)
+
+	# One tick changes the sweep — the pings fade as the head moves past them — but it does
+	# not necessarily move the *head*, because the pings are laid every
+	# `SCANNER_STEP_METRES` and a tick carries the sweep a fraction of that. Both halves are
+	# worth asserting: the first is what makes it look alive, the second that it travels.
+	sim.step([])
+	view.sync(sim)
+	assert_ne(_scanner_pattern(view), pattern, "a tick moves the sweep on")
+	for tick: int in range(10):
+		sim.step([])
+	view.sync(sim)
+	assert_true(_scanner_head(view) > opening, "and carries the head further out")
+
+	view.sync(sim)
+	assert_eq(
+		_scanner_pattern(view),
+		_scanner_pattern(view),
+		"and a frame that stepped nothing draws the same sweep: the renderer has no clock"
+	)
+
+	# Eleven ticks have been stepped since the opening sync, so this lands the Run exactly
+	# one period on from it.
+	for tick: int in range(WorldView.SCANNER_PERIOD_TICKS - 11):
+		sim.step([])
+	view.sync(sim)
+	assert_eq(_scanner_pattern(view), pattern, "one whole period later the sweep is back")
+	view.free()
+
+
+## How far out the leading ping of the sweep has got, in metres from the player's feet. The
+## first ping is laid at the feet and never moves, so the *head* is the furthest one lit.
+func _scanner_head(view: WorldView) -> float:
+	var furthest: float = 0.0
+	var foot: Vector3 = view.ore_scanner_ping_position(0)
+	for ping: int in range(view.ore_scanner_ping_count()):
+		furthest = maxf(furthest, foot.distance_to(view.ore_scanner_ping_position(ping)))
+	return furthest
+
+
+## Every lit ping and what it is painted, as one comparable value.
+func _scanner_pattern(view: WorldView) -> Array:
+	var pattern: Array = []
+	for ping: int in range(view.ore_scanner_ping_count()):
+		pattern.append([view.ore_scanner_ping_position(ping), view.ore_scanner_ping_colour(ping)])
+	return pattern
+
+
+func test_the_scanner_goes_quiet_once_a_miner_is_working_ore() -> void:
+	# `Objective`'s shape, with nothing remembered and nothing to skip: a player who walks
+	# straight to the ore and places a Miner should barely register that a scanner existed.
+	# And it is the same question the objective line goes quiet on, so the two cannot
+	# disagree about whether the opening has taught itself.
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 14), "iron_ore", 1)
+	layout.add_node(Vector3i(0, 0, 26), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = _scanning_run(layout)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "nothing is mining yet")
+
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 14)
+		)
+	])
+	view.sync(sim)
+	assert_eq(
+		view.ore_scanner_ping_count(),
+		0,
+		"the Factory is mining, so the player has no further use for being led anywhere"
+	)
+	view.free()
+
+
+func test_the_scanner_does_not_grow_the_scene_tree() -> void:
+	var sim: Simulation = _scanning_run(_ore_layout())
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var children: int = view.get_child_count()
+	for tick: int in range(40):
+		sim.step([])
+		view.sync(sim)
+	assert_true(view.ore_scanner_ping_count() > 0, "still scanning")
+	assert_eq(view.get_child_count(), children, "every ping is one instance of one MultiMesh")
+	view.free()

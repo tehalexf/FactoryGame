@@ -22,6 +22,9 @@
 ##   turned   the same spot, turned to face the nearest shallow ore. Can you see it?
 ##   survey   the same spot in Survey View, which is where the whole Map's ore is readable
 ##            at once — including the deep seams a Mk1 cannot lift.
+##   scanner  turned towards the ore with a Miner on the Build Gun, which is the one
+##            condition the scanner runs under. The sweep is a function of the tick, so the
+##            shot names the tick it was taken on and is reproducible from it.
 ##
 ## The HUD is **left on**, as in `compose_building_shot.gd`: the objective line is half the
 ## subject, because #52's second part is the line that points you.
@@ -55,6 +58,14 @@ func _initialize() -> void:
 	# or east of it. The first survey render showed no ore at all and the mark was innocent.
 	if preset != "spawn":
 		_turn_towards(sim, _nearest_shallow_ore(sim))
+	if preset == "scanner":
+		# The Build Gun out with a Miner on it. Then ticks until the sweep is half way down
+		# the line, because a shot taken at the head of a period is a shot of one ping at the
+		# player's own feet — which is the sweep working and not a picture of it.
+		_step(sim, [InputAction.set_build_mode(0, true)])
+		_step(sim, [InputAction.select_machine(0, sim.query_definitions().machine_index("miner_mk1"))])
+		while posmod(sim.query_tick(), WorldView.SCANNER_PERIOD_TICKS) != WorldView.SCANNER_PERIOD_TICKS / 2:
+			_step(sim, [])
 	if preset == "survey":
 		_lift_into_survey(sim)
 
@@ -73,7 +84,7 @@ func _initialize() -> void:
 			image.get_width(),
 			image.get_height(),
 			preset,
-			Objective.line(sim, 0)
+			"tick %d — %s" % [sim.query_tick(), Objective.line(sim, 0)]
 		]
 	)
 	quit()

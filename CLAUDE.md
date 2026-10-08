@@ -1114,14 +1114,22 @@ what lets a client whose own files hash differently refuse instead of desyncing.
     a mark 5 m up sits 21 degrees above the horizon with nothing visibly under it. The
     collision it was avoiding cannot happen anyway, because the marks leave the moment
     anything is built on the Node.
-  - **Colour says Resource and reachability; green and violet because they are the two
-    hues no mark here has spent.** Red is a mistake, amber is waiting, hazard yellow is
-    attention, teal is a split flowing, warm orange an output port, cool blue an input,
-    cream a flow arrow — every one of those is a mark *about the Factory*. A Node is the
-    Map, like a Breach, so it reads in a family the Factory does not use. Ore no unlocked
-    Miner could lift goes inert steel rather than a dimmed version of its own colour, the
-    decision `PENDING_BREACH_HEIGHT_METRES` already records for a Breach about to open:
-    the actionable fact is "not yours yet", and a dimmed colour reads as an artefact.
+  - **Colour says Resource and reachability: iron is rose, coal is cyan.** Red is a
+    mistake, amber is waiting, hazard yellow is attention, teal is a split flowing, warm
+    orange an output port, cool blue an input, cream a flow arrow — every one of those is a
+    mark *about the Factory*, and a Node is the Map, like a Breach, so it reads in a family
+    the Factory does not use. Ore no unlocked Miner could lift goes inert steel rather than
+    a dimmed version of its own colour, the decision `PENDING_BREACH_HEIGHT_METRES` already
+    records for a Breach about to open: the actionable fact is "not yours yet", and a dimmed
+    colour reads as an artefact.
+  - **The first pair was green and violet and a render threw it away, which is #48's
+    finding again.** `HOLOGRAM_ALLOWED` is green, and the scanner below runs exactly when a
+    Miner is on the Build Gun — which is exactly when a green hologram is standing on the
+    ore. Three greens in one frame: the trail leading you there, the ore's own mark, and the
+    ghost of the Machine about to land on it. #48's was a red post on an orange arrow at the
+    one tile the two must coincide. **The colours to check a mark against are the ones it is
+    guaranteed to be seen beside, not the ones it merely shares a file with** — and the only
+    way either was found was by looking at the picture.
 - **Three projections carry it, and each exists because two callers must not disagree.**
   `query_node_is_workable_now` is the unlock set, the Resource and the Depth tier read
   together — the mark's colour and the objective line's target come out of the one
@@ -1143,6 +1151,36 @@ what lets a client whose own files hash differently refuse instead of desyncing.
   far iron 23.7 m north; the Depth 2 and Depth 3 seams are 49.7 m and 66.7 m out. So the
   opening walk is a few seconds and `MapLayout.starter()`'s "a Belt between them is a
   decision rather than a formality" is intact. **No Node moved for #52 and none needed to.**
+- **The scanner is how a player is pointed at ore, and the player specified it:** *"we
+  need a sort of scanner to ping the nearest node while putting down miners"*. A run of
+  pings travels the ground from the player's feet out to the nearest ore they could claim,
+  in that ore's own colour, so the thing that leads you and the thing you arrive at read as
+  one. It answers direction, distance and identity at once.
+  - **"While putting down miners" is three facts, each read off its own query every
+    frame**: the Build Gun is in hand, the Machine tool is out, and what is on it mines.
+    Nothing is remembered and there is no scanner mode to enter. It also goes quiet the
+    moment the Factory is mining, on `query_anything_is_mining` — the same question
+    `Objective`'s opening line goes quiet on, so the two cannot disagree about whether the
+    opening has taught itself.
+  - **`SCANNER_PERIOD_TICKS` is a count of ticks and that is the rule rather than a
+    preference.** Nothing presentational here is timed by a clock: the audio director varies
+    takes with `tick % count` and counts cooldowns in ticks, and `WeaponViewmodel` computes
+    clip time from the tick and seeks explicitly. What all three buy is that two Runs down
+    the same script look the same, and `test_world_view` asserts it from both sides — a
+    frame that stepped nothing draws the same sweep, and one whole period on it is back.
+  - **Only the lit pings are drawn at all**, and the sweep starts at the player's own feet.
+    A full dotted line standing on the ground is a path through the yard — scenery — where
+    a scanner is a thing that *sweeps*, and the empty ground between sweeps is most of what
+    makes it read as one. Starting at the first step instead of at zero left the first
+    seventh of every period with nothing lit, which reads as broken rather than as between
+    sweeps.
+  - **It is deliberately silent.** `game/audio_director.gd` would take a cue, but this
+    fires every 90 ticks for as long as a Miner is in hand, and a repeating tone is exactly
+    the nagging the player has already rejected three alarms for. Nothing in this repository
+    can listen, so an un-auditionable cue added to a mix with three outstanding complaints is
+    the wrong risk. The lever, if it is ever wanted, is a `sustained_cues` entry keyed on
+    acquisition — a *change* — rather than on every sweep, with a hero take and a Kenney
+    fallback like every other cue.
 - **`tools/visual/compose_spawn_shot.gd` frames what a player sees the moment a Run
   starts**, and it is the one view no composer framed. It refuses to improve the vantage:
   no walking, no aiming, the camera wherever the Simulation put it. `spawn` is the opening

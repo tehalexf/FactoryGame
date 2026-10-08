@@ -89,13 +89,11 @@ static func _with_the_build_gun(sim: Simulation, player_id: int, step: String) -
 ## used to read here as the first step done. The projection asks it of the Node instead, off
 ## `query_machine_is_starved` — the Simulation's own answer to "would this Machine work" — so
 ## all three cases are one clause rather than a list this file has to keep in step with
-## `_machine_has_its_inputs`. The beacon `WorldView` hangs over unworked ore goes quiet on the
-## very same function, which is what stops a mark and a hint disagreeing.
+## `_machine_has_its_inputs`. The scanner that pings the nearest ore goes quiet on that very
+## same function, which is what stops a mark and a hint disagreeing about whether the opening
+## has taught itself.
 static func _something_is_mining(sim: Simulation) -> bool:
-	for node: int in range(sim.query_node_count()):
-		if sim.query_node_is_being_worked(node):
-			return true
-	return false
+	return sim.query_anything_is_mining()
 
 
 ## Whether anything that turns one good into another is standing. A crafter rather than a
@@ -149,7 +147,7 @@ static func _anything_is_starved(sim: Simulation) -> bool:
 ## Falls back to naming the act when there is nothing to point at — a Map with no workable
 ## ore, or one whose every Node is built on. A direction to nowhere is worse than none.
 static func _where_the_ore_is(sim: Simulation, player_id: int) -> String:
-	var node: int = _nearest_ore_worth_walking_to(sim, player_id)
+	var node: int = sim.query_nearest_workable_node(player_id)
 	if node == -1:
 		return "near an ore node"
 
@@ -165,39 +163,6 @@ static func _where_the_ore_is(sim: Simulation, player_id: int) -> String:
 ## Node is one 2 m tile and a Miner's footprint is 2x2, so a player within three metres of
 ## the middle of one is standing on the ground they are being told to build on.
 const AT_YOUR_FEET_METRES: int = 3
-
-
-## The nearest Node a Run could actually work and has not already built on, or -1.
-##
-## **Workability is the Simulation's answer and not this file's.** `query_node_is_workable_now`
-## is the one place the unlock set, the Resource and the Depth tier are read together, and the
-## beacons over the ore read the very same function — a line that pointed somewhere the mark
-## called out of reach would be two opinions about one fact.
-##
-## Already built on is excluded because the step this phrase sits inside ends in a click: a
-## Miner standing on ore it cannot work leaves the step unmet, and sending a player back to
-## the tile it is occupying would be sending them somewhere nothing can be placed. The beacon
-## `WorldView` hangs over free ore leaves on that very same question, so what is marked and
-## what is pointed at are one set.
-##
-## Nearest by squared distance, so there is no square root and no rounding rule to decide a
-## tie; Nodes are walked in index order, which is canonical tile order, so two Nodes exactly
-## as far away hand the sentence to the earlier tile rather than to whichever the walk reached
-## first. The same discipline a Turret's acquisition keeps.
-static func _nearest_ore_worth_walking_to(sim: Simulation, player_id: int) -> int:
-	var nearest: int = -1
-	var nearest_squared: int = 0
-	for node: int in range(sim.query_node_count()):
-		if not sim.query_node_is_workable_now(node):
-			continue
-		if sim.query_node_is_built_on(node):
-			continue
-		var gap: FixedVec2 = _gap_to_node(sim, player_id, node)
-		var squared: int = Fixed.mul(gap.x, gap.x) + Fixed.mul(gap.z, gap.z)
-		if nearest == -1 or squared < nearest_squared:
-			nearest = node
-			nearest_squared = squared
-	return nearest
 
 
 ## From the player to the middle of a Node's tile, in fixed-point metres.

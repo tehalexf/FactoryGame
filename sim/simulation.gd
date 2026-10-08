@@ -9031,6 +9031,64 @@ func query_node_is_built_on(node_index: int) -> bool:
 	return false
 
 
+## Whether anything in the Factory is actually extracting from a Node.
+##
+## The opening step of a Run, asked of the whole Map rather than of one Node, because two
+## things go quiet on it and must go quiet together: `Objective`'s first line, and the scanner
+## that pings the nearest ore. A trail of pings still running across a Factory that is already
+## mining would be leading a player somewhere they have been.
+##
+## A projection, and the loop is here rather than in `game/` for the reason the per-Node answer
+## is: covering a Node is not working it, and that distinction belongs to
+## `_machine_has_its_inputs` rather than to whichever caller asked. Nothing reads it back.
+func query_anything_is_mining() -> bool:
+	for node: int in range(query_node_count()):
+		if query_node_is_being_worked(node):
+			return true
+	return false
+
+
+## The nearest Node this Run could claim: workable now, with nothing built on it, measured
+## from where the player is standing. -1 when there is nothing to point at.
+##
+## **One authority for "where should I go and put a Miner", because two things ask it.**
+## `Objective`'s opening line names the ore and the way to turn, and the scanner draws a trail
+## of pings out to it — and a trail running to one piece of ore while the line names another
+## would be two opinions about one question. The same argument `BeltRoute` makes for being
+## shared by the refusal, the apply and the preview.
+##
+## Both exclusions are the ones a player would make. Ore no unlocked Miner could lift is not
+## somewhere to send them, and neither is ground already built on: the act this is pointing at
+## ends in a click, and a tile with a Machine on it cannot take one.
+##
+## **Nearest by squared distance, so there is no square root and no rounding rule to decide a
+## tie**, and Nodes are walked in index order — canonical tile order — on a *strict*
+## improvement, so two Nodes exactly as far away hand the answer to the earlier tile on every
+## client. The discipline a Turret's acquisition keeps, for the same reason.
+##
+## -1 rather than a nearest-anyway, the standing `query_turret_target_serial` has: it names
+## something real or it names nothing. A projection; nothing in the Simulation reads it back.
+func query_nearest_workable_node(player_id: int) -> int:
+	if not _is_player(player_id):
+		return -1
+	var at: FixedVec2 = query_player_position(player_id)
+	var nearest: int = -1
+	var nearest_squared: int = 0
+	for node: int in range(query_node_count()):
+		if not query_node_is_workable_now(node):
+			continue
+		if query_node_is_built_on(node):
+			continue
+		var centre: FixedVec2 = query_tile_centre_metres(query_node_tile(node))
+		var gap_x: int = centre.x - at.x
+		var gap_z: int = centre.z - at.z
+		var squared: int = Fixed.mul(gap_x, gap_x) + Fixed.mul(gap_z, gap_z)
+		if nearest == -1 or squared < nearest_squared:
+			nearest = node
+			nearest_squared = squared
+	return nearest
+
+
 ## The Node on a tile, or -1. Nodes occupy one tile each.
 func query_node_at_tile(tile: Vector3i) -> int:
 	for index: int in range(query_node_count()):

@@ -721,3 +721,69 @@ func test_asking_which_ore_is_workable_does_not_move_the_hash() -> void:
 	for index: int in range(sim.query_node_count()):
 		sim.query_node_is_workable_now(index)
 	assert_eq(sim.hash(), before, "asking is a read")
+
+
+# ── Which ore a player is being pointed at ────────────────────────────────────
+# #52's scanner and #52's objective line both answer "where should I go and put a Miner",
+# and they must answer it with the same Node — a trail of pings running out to one piece of
+# ore while the line names another is two opinions about one question.
+
+func test_the_nearest_ore_a_player_could_claim_is_the_one_they_are_pointed_at() -> void:
+	# Nearest by distance from the player, not by index: the Map's canonical order is
+	# geography and has nothing to say about where somebody is standing.
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 30), "iron_ore", 1)
+	layout.add_node(Vector3i(0, 0, 8), "coal", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	assert_eq(
+		sim.query_nearest_workable_node(0),
+		sim.query_node_at_tile(Vector3i(0, 0, 8)),
+		"the coal is nearer than the iron"
+	)
+
+
+func test_ore_out_of_reach_and_ore_already_built_on_are_not_offered() -> void:
+	# Two reasons a Node is not somewhere to send a player, and the projection applies both:
+	# a seam no unlocked Miner could lift, and ground that is already taken.
+	var layout: MapLayout = MapLayout.empty()
+	layout.nest_tile = Vector3i(0, 0, 0)
+	layout.add_node(Vector3i(0, 0, 6), "iron_ore", 3)
+	layout.add_node(Vector3i(0, 0, 14), "iron_ore", 1)
+	layout.add_node(Vector3i(0, 0, 26), "coal", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	assert_eq(
+		sim.query_nearest_workable_node(0),
+		sim.query_node_at_tile(Vector3i(0, 0, 14)),
+		"the Depth 3 seam is nearer and is not offered"
+	)
+
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(0, 0, 14)
+		)
+	])
+	assert_eq(
+		sim.query_nearest_workable_node(0),
+		sim.query_node_at_tile(Vector3i(0, 0, 26)),
+		"and claimed ground is passed over for the next free Node"
+	)
+
+
+func test_a_map_with_nothing_to_claim_points_at_nothing() -> void:
+	# -1 rather than a nearest-anyway, for the reason `query_turret_target_serial` names
+	# nothing rather than a corpse: a direction to nowhere is worse than no direction.
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 12), "iron_ore", 3)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	assert_eq(sim.query_nearest_workable_node(0), -1, "nothing here is workable")
+
+
+func test_asking_where_the_nearest_ore_is_does_not_move_the_hash() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var before: int = sim.hash()
+	sim.query_nearest_workable_node(0)
+	assert_eq(sim.hash(), before, "a projection the Simulation never reads back")
