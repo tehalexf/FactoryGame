@@ -9996,6 +9996,33 @@ func query_enemy_frontal_armour_percent(index: int) -> int:
 	return _enemy_frontal_armour_percent(_enemy_kind[index])
 
 
+## How tall an Enemy of this one's kind stands, in fixed-point metres.
+##
+## **The one authority on how big an Enemy is**, and the reason it is exposed rather than
+## guessed at is #41's lesson in the other half of the renderer: a gauge hung off a
+## `MACHINE_GAUGE_HEIGHT_METRES` set "taller than anything in the content" detached itself from
+## every Machine that was not the tallest and shipped as a red rectangle with no owner. This is
+## the number `_bite` reaches a player with, `_shot_target` resolves a round against and a
+## Barrage measures, so a character mesh scaled to it is a character mesh a player can hit where
+## they can see it.
+##
+## A projection the Simulation never reads back — it asks `_enemy_hit_height` directly, which is
+## the same function — so asking cannot move the hash.
+func query_enemy_hit_height_metres(index: int) -> int:
+	if not _is_enemy(index):
+		return 0
+	return _enemy_hit_height(_enemy_kind[index])
+
+
+## How wide an Enemy of this one's kind is, in fixed-point metres — the radius of the capsule a
+## round is resolved against. The companion to `query_enemy_hit_height_metres`, and exposed for
+## the same reason.
+func query_enemy_hit_radius_metres(index: int) -> int:
+	if not _is_enemy(index):
+		return 0
+	return _enemy_hit_radius(_enemy_kind[index])
+
+
 ## How far an Enemy reaches to attack — a Siege Hulk's shelling radius, and otherwise the reach
 ## it bites a player at. In fixed-point metres, so a HUD can draw the ring a player is standing
 ## inside.

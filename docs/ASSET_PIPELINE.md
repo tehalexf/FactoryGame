@@ -649,6 +649,205 @@ are imported normally and loaded with `load`.
 `tools/assets/tests/test_wav_to_cue.py` covers the analysis and the filter
 building against synthesised signals, so none of it needs the bundle to be tested.
 
+## 11. The Enemies, which are skinned in a shader out of a texture of bone poses
+
+#18 built the intake, retargeted thirteen CC0 characters onto one shared skeleton and
+proved animation interchanges between rigs — and then nothing put a character on screen
+for twenty tickets. Every Enemy in the game was a procedurally built carapace of boxes
+sliding across the ground, and the Crawler and the Breaker were **the same mesh**. #38 is
+where that pipeline finally reaches the renderer.
+
+### The constraint, and why it rules out the obvious answer
+
+**ADR 0001: an Enemy is never a node**, and `test_world_view.test_an_enemy_is_never_a_node`
+asserts the scene tree gains zero nodes when a Wave arrives. The idiomatic answer — an
+`AnimationPlayer` and a `Skeleton3D` per Crawler — is exactly the architecture this project
+refused, and it caps out around 150-250 agents where the Chaff tier is thousands.
+
+So the animation has to live somewhere a `MultiMesh` can reach: a texture the vertex shader
+samples, and a per-instance number saying which row to read.
+
+### Bone poses, not vertex positions
+
+The established technique — and the one the ticket named — is a *vertex* animation texture:
+bake every vertex's position on every frame. For these characters that is 4858 vertices by
+about ninety frames, so **437,000 texels a kind**, and a texture whose size is a property of
+the model rather than of the rig.
+
+`game/enemy_bodies.gd` bakes the **skinning matrices** instead. 23 bones by ninety frames is
+69 by 90 — about **two thousand texels**, three orders of magnitude smaller, and it does not
+grow by one texel if somebody triples the polygon count. The shader then does the same
+four-bone linear blend any skinned mesh does.
+
+What it costs is getting the bone indices and weights to the shader. `ARRAY_BONES` is only
+readable through a `Skeleton3D`, which a `MultiMesh` has none of, so the bake moves them into
+`CUSTOM0` and `CUSTOM1` — ordinary vertex attributes that reach a shader unchanged — and
+**drops the skinning declaration**, so nothing tries to skin the mesh a second way.
+
+| | vertex VAT | bone VAT (shipped) |
+|---|---|---|
+| texels a kind | ~437,000 | ~2,000 |
+| grows with | the mesh | the rig |
+| vertex attributes needed | none | `CUSTOM0`, `CUSTOM1` |
+| shader work a vertex | one fetch | twelve fetches and a 4x4 blend |
+
+### The bake is at load time, and that is the same decision `world_view.gd` already made
+
+There is no step in `tools/assets/` and no committed derived file. `world_view.gd` already
+flattens every Machine `.glb` into one mesh per material on first use, for exactly this
+reason: **what Godot imports out of a glTF is the wrong shape to put in a `MultiMesh`**, and
+the fix is a transform of a committed asset rather than a second committed asset. A baked
+mesh and a baked texture committed beside `Skeleton_Minion.glb` would be two authorities on
+what a Crawler looks like, which is the trap `machines.csv` against `machine_bodies.csv` is
+careful to avoid.
+
+It is paid once per kind, on the **first sync** rather than on the first Enemy — before a
+Breach has released anything — because the frame a Wave arrives is the one frame of a Run
+where a hitch is least affordable, and because it keeps the no-node claim the strongest
+version of itself: zero growth, rather than "no more than one node a kind".
+
+The bake composes the poses itself rather than driving an `AnimationPlayer`, for three
+reasons and the third is the one that matters: a player has to be in a `SceneTree` to resolve
+its track paths, `advance` is a side effect on a node the bake would have to own and free,
+and interpolating an `Animation` directly is a pure read of a `Resource`.
+
+### The retarget is three lines, because section 3 did the work
+
+Every rig in this repository is already named with Godot's `SkeletonProfileHumanoid` bone
+names, so a clip drives the bone it was authored for **by matching its name**. A bone the clip
+says nothing about keeps its rest, which is section 4's "sparse rigs are fine; they simply
+cover a subset of the profile" arriving as the absence of code.
+
+One rule on top: **the root's horizontal translation is replaced by its rest on every frame.**
+The Simulation owns where an Enemy is, so a forward-travelling walk cycle baked as authored
+would slide a Crawler out of the instance transform the renderer put it in. The vertical is
+kept, because that is the body's weight.
+`test_enemy_bodies.test_a_clip_never_walks_the_body_away_from_where_the_simulation_put_it`
+holds it.
+
+### The casting
+
+`EnemyBodies.recipe_for` is the one place a kind and an asset meet, and it names the KayKit
+pack only — six characters on one rig with four libraries of 35 clips beside them, which
+section 4 already calls the worked example of keeping shared animation in one place.
+
+| Kind | Character | move | idle | attack |
+|---|---|---|---|---|
+| Crawler | `Skeleton_Minion` | `Running_A` | `Idle_A` | `Throw` |
+| Breaker | `Skeleton_Warrior` | `Walking_A` | `Idle_B` | `Throw` |
+| Siege Hulk | `Skeleton_Golem` | `Walking_A` | `Idle_A` | `Hit_A` |
+
+The Warrior is the Breaker because it is the one committed character that is visibly
+*armoured and carrying something*, which is what has to separate "the threat" from "the sense
+of threat" at thirty metres — and `Walking_A` against the Crawlers' `Running_A` is #34's
+sentence as motion: a deliberate advance down the road a player defended, against the Chaff
+sprinting past it.
+
+**Two stand-ins, named rather than hidden.** `Rig_Large` carries no attack take at all,
+because the pack's melee libraries were never intaken in #18, so a Siege Hulk's stomp plays
+`Hit_A` — a lurch rather than a swing. And `Throw` is an overarm hurl standing in for a bite.
+
+**`UAL1.glb` is still unused, and the reason is measured rather than assumed.** It carries
+120 clips including `Crawl_Fwd`, `Sprint`, `Sword_Attack` and `Punch_Cross` — exactly the
+takes this casting is short of — but its 65 bones arrive under **raw Unreal names**
+(`pelvis`, `spine_01`, `thigh_l`): of the Minion's 23 bones, exactly **one** (`Head`) matches
+by name. `tools/assets/bone_maps/quaternius_universal_humanoid.json` is the map that would
+fix it, and applying it is a small change to `EnemyBodies._pose`. What is *not* small is that
+a genuine cross-rig retarget cannot take the donor's translations: UAL's hips sit at 0.95 m
+and the Minion's at 0.34 m, so a rotation-only retarget with a hip-height ratio is wanted,
+and that is a ticket with its own renders rather than a corner of this one.
+
+### Scale comes from the Simulation, not from the artist's file
+
+A body is baked **one metre tall with its feet on the ground**, and the renderer scales it by
+`query_enemy_hit_height_metres` — the capsule a round is actually resolved against. So a
+player shoots at what they can see. A figure carried out of the bake, or a constant in
+`world_view.gd`, would be the second authority on how big an Enemy is, which is #41's
+ownerless red rectangle wearing a different costume.
+
+The normalisation is folded into **each bone matrix** rather than applied to the vertices:
+skinning is a weighted sum whose weights total one, so `P * (Σ w M v)` is `Σ w (P M) v` — one
+multiply a bone a frame instead of a second pass over five thousand vertices.
+
+### What three renders caught that reasoning did not
+
+`SHOT_SCRIPT=tools/visual/compose_wave_shot.gd bash tools/visual/shot.sh out.png <preset>`
+is the tool, with presets `swarm`, `pair`, `boss` and `distance` and two extra words — `hud`
+keeps the overlay and `bare` hides the set dressing. Three defects came out of reading an
+image, and none of them would have come out of reading the code:
+
+1. **A `custom_aabb` is in the node's space, and the node is at the world origin.** Declared
+   to stop the shader-displaced vertices being culled, it culled the entire swarm instead:
+   the render came back as empty ground with a Siege Hulk's vent floating on the horizon,
+   because the vent's `MultiMesh` had no such box and the bodies' did. There is no custom
+   AABB now; what the engine computes from the *unnormalised* mesh AABB times the instance
+   scale is conservative here by eighty per cent in every direction.
+2. **The Siege Hulk's vent was sized against the hull it replaced.** The old procedural hull
+   was a wide low sled four metres across; the same block in front of a Golem rendered as a
+   saturated orange crate that hid the boss completely. It is modelled in body heights now,
+   with its offset *in the mesh* so there is no second piece of arithmetic to disagree with,
+   and it is a grille rather than a block — the first fix made a bracket shape that read as
+   HUD stuck on a model.
+3. **The characters were the brightest thing in frame.** These are clean bone-white fantasy
+   skeletons and this palette runs 0.055 to 0.14 albedo; the first tint was 0.42 and the
+   skulls read as glazed terracotta under a low sun. Graded to 0.17 with roughness up from
+   0.62 to 0.88, which is #32's lesson about the Walls arriving again: a colour picked
+   against a white background is a colour picked against the wrong thing.
+
+A fourth came out of the same loop and is in `EnemyAnimator`: at a phase stride of seven
+ticks, two Breakers released a tick apart were three frames into a thirty-three-frame walk
+and photographed in visibly the same pose. Eleven. The number had to come from the slowest
+clip rather than the commonest one.
+
+The before and after are committed: `docs/images/enemies_pair_{before,after}.png`,
+`enemies_wave_{before,after}.png` and `enemies_boss_{before,after}.png`.
+
+### What does not read at thirty metres, measured rather than hoped
+
+The acceptance criterion is "a Crawler reads as a scuttling thing rather than a box, at
+thirty metres, mid-Wave". Rendered at eye height on the lane at exactly thirty metres and
+magnified, the honest answer is split:
+
+- **A Siege Hulk is unmistakable at any range.** Twice the height of everything else, and a
+  glowing grille on its back that nothing else has.
+- **A swarm reads as a crowd of bodies rather than a row of boxes**, which is the real gain
+  and it is a large one.
+- **A Crawler and a Breaker are not distinguishable from each other at thirty metres.** At
+  1.6 m in a 62-degree field at 1600 pixels they are about twenty-five pixels tall and both
+  resolve to a dark silhouette. They separate clearly at eight to twelve metres — bone-tan
+  running skeleton against blue-steel horned walker — and not beyond that.
+
+**The mitigation that was supposed to fix this does not work, and the reason is the art.**
+The plan was the characters' own `Glow` material: an ember in each eye socket, which is what
+carries a figure in a palette of dark neutrals. It renders nothing. The KayKit skulls are
+**closed meshes** and their 80 glow vertices sit 0.13 to 0.19 m *behind* the front of the
+skull, so what a player reads as an eye socket is brow and cheek rather than an opening.
+
+This was measured rather than assumed: putting the same emission on the *body* surface
+renders four glowing skeletons with full bloom, so the shader, the uniform and the glow
+post-process are all working. The wiring is therefore left in place — a character that ships
+with exposed glow geometry lights up for nothing — and no workaround was taken, because both
+available ones are worse than the problem. Moving the vertices outward is the renderer
+editing an artist's model, and `depth_test_disabled` would draw a Crawler's eyes through the
+Factory wall it is standing behind.
+
+So **distance readability is the open half of this ticket.** The fixes worth considering, in
+rough order of honesty: a rim light or a fresnel term in `enemy_skin.gdshader`, which is
+presentation and touches no asset; a character pack whose glow geometry is exposed; or
+per-kind silhouette separation at the pose level, which is what the UAL clips above would
+buy.
+
+### What is still placeholder-grade
+
+The KayKit characters are **stylised with oversized skulls**, which at 1.6 m reads closer to
+grotesque-cartoon than to the grimy interwar industry the rest of the palette is. That is a
+property of the committed art rather than of this pipeline, and the fix is either a different
+CC0 pack or a human deciding it is fine.
+
+And **a still image cannot tell you whether a walk cycle reads as a walk.** Everything above
+is silhouette, scale, grade and pose — enough to catch a character that is the wrong size,
+the wrong colour or inside out, and not enough to catch one that merely moves badly.
+
 ## 10. Adding an asset
 
 1. Check the licence. CC0 / permissive / self-authored → `assets/`. Anything
