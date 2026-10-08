@@ -94,6 +94,24 @@ func test_the_shared_atlas_resolves_exactly_when_the_purchased_props_do() -> voi
 	dressing.free()
 
 
+func test_the_painted_props_are_props_the_yard_actually_contains() -> void:
+	# `tools/assets/prop_grade.py` takes the safety yellow out of the purchased
+	# atlas wholesale, and `HAZARD_PROPS` is where it is deliberately put back —
+	# which only works while those names are names the layout still uses. A prop
+	# id that quietly stopped being drawn would take the last hazard colour in the
+	# yard with it and nothing else would notice.
+	var drawn: Dictionary = {}
+	for kind: String in SetDressing.KINDS:
+		for variant: String in SetDressing.KINDS[kind]:
+			drawn[variant] = true
+	for painted: String in SetDressing.HAZARD_PROPS:
+		assert_true(
+			drawn.has(painted),
+			"%s is painted hazard yellow but nothing draws it" % painted
+		)
+	assert_true(SetDressing.HAZARD_PROPS.size() > 0, "the yard has no hazard colour at all")
+
+
 # ── It is decoration, and the Simulation never hears about it ─────────────────
 
 func test_drawing_the_yard_does_not_move_the_state_hash() -> void:
