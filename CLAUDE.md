@@ -1563,9 +1563,11 @@ sessions headless to the end of the Run and reports what happened; the whole met
 scenarios and every finding live under "The joint balance pass", below. Re-run it after any
 edit to `content/` rather than reasoning about what the edit did.
 
-Shipped Map, shipped content, three seeds, measured 2026-10-08 **with #46 in** — none of these
-four rows has a Machine with two Belts off it, so #46 left every one of them exactly where #35's
-schedule did:
+Shipped Map, shipped content, three seeds, measured 2026-10-08 **with #49 in** — and these four
+figures have now survived #46, #47 and #49 unchanged. None of the four has a Machine with two
+Belts off it, so #46 left them alone; their Belts were budgeted by #47's larger opening bill; and
+#49's bigger Breaker is a capsule only a *player's* round and a bite against a *player* ever
+read, which no row here does. See "What a bigger Breaker cost the table".
 
 | Scenario | Run | Wave | Peak Heat | What killed it |
 |---|---|---|---|---|
@@ -3513,19 +3515,21 @@ declared ports, measured together, and **six of the nine rows did not move at al
 the Belt price and the declared port cost the table". It is one fresh run of
 `tools/balance/measure.sh` on the tree with #38 merged in, re-run after that merge rather than
 carried across it, because the rule this file keeps is that a measured figure is rewritten from a
-measurement and never reconciled with one.
+measurement and never reconciled with one. The eighth is **#49's bigger Breaker**, and **not one
+of the nine rows moved by a single tick** — see "What a bigger Breaker cost the table", below,
+for why that is the expected answer rather than a suspicious one.
 
-| Scenario | #26 before | #26 after | #34 | #37 | merged | #46 | **#47** | Wave | Peak Heat | What killed it, now |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | 3m22s | 3m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
-| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | 3m12s | 3m12s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
-| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | 28m48s | 28m48s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
-| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
-| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
-| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | 10m48s | 11m03s | **12m27s** | 15 | 3538 | swarmed, 16 rounds left, with **two Breaches** open |
-| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | 32m05s | 32m05s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | 28m02s | 28m02s | **27m18s** | 33 | 6051 | swarmed, 1m30s sooner than `competent` |
-| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | 16m10s | 15m22s | **16m40s** | 22 | 5433 | swarmed, **42% sooner** than `competent` |
+| Scenario | #26 before | #26 after | #34 | #37 | merged | #46 | #47 | **#49** | Wave | Peak Heat | What killed it, now |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | 3m22s | 3m22s | 3m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | 3m12s | 3m12s | 3m12s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | 28m48s | 28m48s | 28m48s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | 20m21s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | 28m45s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | 10m48s | 11m03s | 12m27s | **12m27s** | 15 | 3538 | swarmed, 16 rounds left, with **two Breaches** open |
+| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | 32m05s | 32m05s | 32m05s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | 28m02s | 28m02s | 27m18s | **27m18s** | 33 | 6051 | swarmed, 1m30s sooner than `competent` |
+| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | 16m10s | 15m22s | 16m40s | **16m40s** | 22 | 5433 | swarmed, **42% sooner** than `competent` |
 
 **#36 moved no row of this table, and that was the control its shape predicted**: it gave a
 player a Belt-routing tool and a port table to aim it with, and a scenario issues `BUILD_BELT`
@@ -3913,6 +3917,41 @@ same reason — its second branch left by the Smelter's northern wall, which is 
 now leaves by the southern one.
 
 
+### What a bigger Breaker cost the table
+
+**#49 raised a Breaker's hit volume and every one of the nine rows is bit-identical to #47's,
+on all three seeds, down to the Wave number, the peak Heat and the list of Machines lost.** The
+change was made for readability — a Crawler and a Breaker were the same dark silhouette at
+thirty metres — but `enemy.breaker_hit_radius_metres` and `breaker_hit_height_metres` are the
+capsule a round is resolved against, so it is a combat quantity and was measured rather than
+reasoned about.
+
+**The null result is explained by who reads that capsule, and it is a shorter list than it
+looks.** Grep `_enemy_hit_radius` and `_enemy_hit_height` and there are exactly two consumers:
+
+- **`_shot_target`** — a *player's* ranged weapon, which resolves against the capsule with three
+  tests in the order that rejects most cheaply.
+- **`_enemy_bite_reach`** — `enemy.player_bite_reach_metres` plus the radius, so how close an
+  Enemy has to be to bite a *player*.
+
+**A Turret reads neither.** `_fire` takes its target from `_turret_target_index`, which acquires
+on the distance to the Enemy's *point* against `range_tiles` and never against a hit volume at
+all — so the thing that does nearly all of the killing in every row of this table is untouched
+by construction. That is the whole of why nothing moved, and it is worth knowing in its own
+right: **a Breaker's size is a fact about what a player can shoot and what can bite a player,
+and not a fact about the Factory's own defence.**
+
+Of the nine scenarios only `rifle_picket` fires a player's weapon, and it is the row least able
+to show the difference: it reaches the Breaker tier's 5200 Heat only in its last minutes, and it
+ends with 18 rounds left because it has been rationing throughout. So the one row that *could*
+have moved had almost no Breaker to shoot at while it still had rounds.
+
+**The one balance consequence that is real and unmeasured** is the other consumer: a Breaker
+bites a player from 0.2 m further out than it did, because reach is measured from the hull and
+the hull got wider. Nothing in the nine scenarios stands next to a Breaker on purpose — the
+same hole that leaves hand repair under fire unmeasured — so that is an arithmetic claim, and it
+is listed under "What is still unmeasured" with the others rather than dressed up as a finding.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
@@ -3933,6 +3972,11 @@ Two consequences worth knowing before anybody quotes a variance:
   on seed 7 against 26m29s on seeds 11 and 29; on #35's branch it spread eleven seconds; on the
   merged schedule and through #46 it was identical again at 28m02s. **#47 split it once more**:
   27m18s, 27m20s and 26m39s, a spread of 39 seconds, with peak Heat 6051, 6001 and 5892.
+
+  **#49 re-measured all three seeds and reproduced those six figures exactly** — 27m18s, 27m20s
+  and 26m39s at peak Heat 6051, 6001 and 5892 — which is the first time any row of this table
+  has been independently re-derived by a later ticket rather than carried forward. A table whose
+  whole value is that somebody can re-derive it is worth occasionally re-deriving.
 
   The last paragraph of this bullet used to warn that the spread going to zero was not an
   improvement anybody made and that the next ticket to re-phase the schedule might split the
@@ -4068,6 +4112,13 @@ Honest residue, so the next ticket does not have to rediscover it:
 - **Hand repair under fire.** No scenario picks up a wrench to save a Machine, because chasing a
   Breaker open-loop is not possible. `wrench.repair_points_per_second` against
   `enemy.breaker_damage` is still an arithmetic claim.
+- **What a bigger Breaker is worth to a player, in both directions**, which is #49's residue.
+  It is easier to shoot — a 2.2 m by 0.8 m capsule against the Crawler's 1.6 by 0.6 — and it
+  bites from 0.2 m further out, because reach is measured from the hull. Neither showed in the
+  table, for the reason given in "What a bigger Breaker cost the table": a Turret resolves on
+  the Enemy's point and never on the capsule, and the one scenario that fires a player's weapon
+  barely meets a Breaker before it ends. Both are about aiming and spacing through a mouse,
+  which is the same category as `gear.enemy_hit_radius_metres` itself.
 - **Walls.** Nothing in the nine scenarios builds one, so `wall.health` against
   `enemy.breaker_damage` is likewise unplayed — and since #47 so is **what a Wall costs**. Two
   plates a tile was priced against a Belt's one, on the argument that a Wall's whole job is to be
