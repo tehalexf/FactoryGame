@@ -3234,6 +3234,55 @@ than trusting it. The conversion, and the four things about those FBX that bite,
   and that distinction is the point of a holster. **Modelling a Build Gun is the ticket that
   gets it back**, and it is art rather than code.
 
+### Framing is read off the pack, never nudged
+
+The one defect this whole arrangement could not catch, and the shape is worth keeping
+because every future viewmodel runs the same risk.
+
+A player reported that *"the attack animation ... the khfing animation -- it doesnt work
+now"*. Nothing was broken and nothing was recent. `WeaponAnimator` entered `FIRE` on the
+tick the trigger went and held it for 32 of the Pneumatic Wrench's 35-tick interval;
+`WeaponViewmodel` resolved that role to `Knife_Attack_1_Anim` through the `"attack"`
+needle; the skeleton moved under the seek. **The swing ran in full and could not be
+seen**, because `convert_weapons.sh` framed the arms with the viewer standing inside
+them: `--offset=0.0,0.16,-0.18` put the elbows on the near plane and the forearms
+splayed around the view.
+
+Three things in that worth carrying forward:
+
+- **The middle number of an `--offset` is *forward*.** It is written in Blender's axes,
+  where +Y is the horizontal depth axis the exporter's Y-up conversion sends to glTF
+  -Z — the way the camera looks. Read as "back" or as "up" it walks the eye into the
+  model. `test_the_middle_number_of_an_offset_is_forward_and_not_up` pins it on the
+  fixture.
+- **A pack that ships no camera still answers where the eye goes.** The two `Weapon
+  pack` rifles use `--origin-object Camera001`; RgsDev has none, so #28 guessed. It did
+  not have to: `Prefabs/FPSController.prefab` parents those arms to a `WeaponHolder` at
+  (0, 0, 0) under the camera, so the model's own origin *is* the eye and the only hand
+  number is the drop from eye to hands. **Look for the prefab before reaching for a
+  nudge.** `test_no_weapon_is_framed_by_pushing_it_forward_into_the_camera` refuses a
+  recipe that pushes one forward again, and both tests run on the committed fixture
+  because `.github/ci/expected_skips.txt` is explicit that a licensed-asset skip is a
+  test that stopped covering anything.
+- **A state machine with no nodes proves the role, and only a render proves the frame.**
+  Every assertion in `test_weapon_viewmodel.gd` was true throughout, and that is the
+  point rather than a failing: `WeaponAnimator` answers *what should be playing* and has
+  no opinion about whether it is on screen. The defect lived in the one gap that
+  arrangement leaves, and the only instrument that found it was
+  `tools/visual/shot.sh` pointed at the player's own camera.
+
+And the reason it surfaced when it did: **#42 made the weapon the default hand**
+(`_player_build_mode.fill(0)`), so a player now opens every Run looking at the wrench
+instead of switching to it deliberately. The recipe had not changed since 95ee59c
+created it. "It doesn't work *now*" was exactly right about the experience and exactly
+wrong about the cause — a default moved, and a two-year-old framing error became the
+first thing anybody sees.
+
+The drop that replaced it, 0.10, was bracketed by rendering: 0.18 puts the knife half
+off the bottom of the frame. **It is a feel number and no harness has an opinion about
+it** — whether the swing reads as a swing rather than as an arm across the view is for
+a human with a mouse.
+
 What is still placeholder-grade is the *surface*: the packs reference textures they do not
 ship, so the arms and the weapons are repainted from `dieselpunk_palette.json` rather than
 textured. Recovering the real maps is a nicer-looking ticket of its own.

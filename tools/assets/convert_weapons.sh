@@ -105,18 +105,33 @@ else
   echo "note: $weapon_pack is absent; the two ranged weapons keep their placeholders." >&2
 fi
 
-# RgsDev has no authoring camera at all, so the arms are framed by hand. The rig
-# is in metres with its origin at the neck and the arms reaching along -Y, so it
-# needs the same half turn the Weapon pack does and a drop to put the eye above
-# the shoulders rather than between them. These numbers came from looking at the
-# render, which is the only way to find them.
+# RgsDev ships no authoring camera, so there is no `--origin-object` to frame
+# against — but the pack still answers the question, and that is the correction
+# here. `Prefabs/FPSController.prefab` parents these arms to a `WeaponHolder` at
+# (0, 0, 0) under the camera, so **the model's own origin is already the eye**
+# and the only hand number it needs is the drop from the eye to the hands. That
+# drop was bracketed by rendering: 0.18 puts the knife half off the bottom of the
+# frame, 0.10 holds it up where the swing reads end to end.
+#
+# It shipped as `--offset=0.0,0.16,-0.18`, and the middle number is the bug. An
+# offset is written in Blender's axes, where +Y is the horizontal depth axis that
+# the exporter's Y-up conversion sends to glTF -Z — the way the camera looks. So
+# 0.16 walked the viewer 16 cm *into* the arms: the elbows landed on the near
+# plane, the forearms splayed around the view, and the Knife_Attack take played
+# in full with almost none of it on screen. The swing was never broken; it was
+# never visible. #42 made the weapon the default hand and a player finally saw
+# it. `tools/assets/tests/test_fbx_to_viewmodel.py` pins both halves — the axis,
+# and that no recipe pushes a viewmodel forward again.
+#
+# The rig still needs the half turn the Weapon pack does: it reaches along -Y,
+# which the conversion would otherwise put behind the camera.
 if [ -d "$rgsdev" ]; then
   convert \
     --input "$rgsdev/Arms_Combat_Knife.fbx" \
     --output "$out_dir/pneumatic_wrench.glb" \
     --scale 1.0 \
     --rotate=0,0,180 \
-    --offset=0.0,0.16,-0.18 \
+    --offset=0.0,0.0,-0.10 \
     --material-colour "Skin=40442F,0,0.58" \
     --material-colour "Gloves=211F1E,0,0.8" \
     --material-colour "Fingers=211F1E,0,0.8" \

@@ -16,6 +16,7 @@ loose weapon part, a `default` take holding every action end to end, and a weapo
 body that arrives unparented and unanimated.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -163,6 +164,20 @@ class FramesTheModelAgainstTheAuthoringCamera(unittest.TestCase):
         framed = self.root_transform("--origin-object", "EyePoint", "--offset", "0,0,-0.2")
         self.assertAlmostEqual(framed["translation"][1], -1.9, places=3)
 
+    def test_the_middle_number_of_an_offset_is_forward_and_not_up(self):
+        # The axis that bit. An offset is written in **Blender's** axes, where Y is
+        # the horizontal depth axis and Z is up, and the exporter's Y-up conversion
+        # then sends Blender +Y to glTF -Z. So the middle number of `--offset` moves
+        # the model the way the camera is looking — it is *forward*, not back and not
+        # up — and a recipe author who reads it as either of those pushes the model
+        # into the camera rather than away from it. That is exactly how the Pneumatic
+        # Wrench came to be framed with the viewer standing inside its arms.
+        pushed = self.root_transform("--origin-object", "EyePoint", "--offset", "0,0.2,0")
+        self.assertAlmostEqual(pushed["translation"][2], -0.2, places=3,
+                               msg="Blender +Y is glTF -Z, which is the way the camera looks")
+        self.assertAlmostEqual(pushed["translation"][1], -1.7, places=3,
+                               msg="and it leaves the height the framing chose alone")
+
     def test_scale_is_carried_by_the_root_rather_than_left_on_each_object(self):
         scaled = self.root_transform("--scale", "0.5")
         for axis in range(3):
@@ -231,6 +246,37 @@ class TheRecipeIsTheRecord(unittest.TestCase):
         self.assertIn("/assets_licensed/", ignored)
         seam = (REPO / "game" / "weapon_viewmodel.gd").read_text()
         self.assertIn('"res://assets_licensed/', seam)
+
+    def test_no_weapon_is_framed_by_pushing_it_forward_into_the_camera(self):
+        """A viewmodel is framed from the pack, never nudged towards the viewer.
+
+        The two `Weapon pack` rifles are framed by `--origin-object Camera001`, which
+        is the camera the vendor authored them against. The RgsDev arms ship no camera
+        object, so the recipe has to say where the eye goes by hand — and the pack
+        answers that itself: `Prefabs/FPSController.prefab` parents the arms to a
+        `WeaponHolder` at (0, 0, 0) under the camera, so **the model's own origin is
+        the eye** and the only correction it needs is the drop from eye to hands.
+
+        A positive middle number moves the model the way the camera looks (the test
+        above pins that axis), which walks the viewer into the arms rather than back
+        from them. That is what shipped: `--offset=0.0,0.16,-0.18` put the elbows on
+        the near plane, so the arms splayed around the view and the swing happened
+        almost entirely off screen — the Pneumatic Wrench's attack animation ran
+        correctly and could not be seen.
+        """
+        # Command lines only. The comment above the RgsDev block quotes the offset
+        # that shipped, because the reason it was wrong is worth keeping next to the
+        # number that replaced it, and a check that read it would never go green.
+        lines = [line for line in self.recipe.splitlines() if not line.lstrip().startswith("#")]
+        offsets = re.findall(r"--offset=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)", "\n".join(lines))
+        self.assertTrue(offsets, "the recipe declares no --offset to check")
+        for offset in offsets:
+            forward = float(offset[1])
+            self.assertLessEqual(
+                forward, 0.0,
+                "--offset=%s pushes a viewmodel %.2f m the way the camera looks, "
+                "which puts the eye inside the arms" % (",".join(offset), forward)
+            )
 
     def test_it_is_a_no_op_rather_than_an_error_without_the_packs(self):
         # Most clones do not have them, and `tools/assets/run_tests.sh` must not
