@@ -112,8 +112,10 @@ Present for perceived scale.
 
 **Breaker** — A full-fidelity Enemy that preferentially attacks Machines rather
 than players. The reason Machine mortality is felt rather than merely true. It
-steers towards the Factory rather than the Nest, and falls back on the Nest only
-when there is nothing left to break.
+**marches with the Wave towards the Nest, breaks ranks once the Nest or a Machine
+is within reach, and hunts the Factory from there** — so it arrives down the road
+a player fortified and then turns on what they built. It falls back on the Nest
+only when there is nothing left to break.
 
 **Siege Hulk** — A slow Enemy that walks to a stand-off beyond Turret range and
 bombards the Factory from there, in telegraphed shells. Cannot be answered by defenses —
