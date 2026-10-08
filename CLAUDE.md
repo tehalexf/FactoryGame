@@ -795,17 +795,21 @@ rounds around minute twenty-four and is still 96 deep when the Nest falls. **One
 spend what one Press makes**, which is a different and better problem to have than the old one,
 and it is why the second Turret in `fortified` is now a wash rather than a two-minute gain.
 
-**The way to survive past thirty minutes is a second Ammo Press and the Smelter and Miner
-behind it** — production is the defence, in the most literal arithmetic available. Which a Run
-can buy: the call-early lever pays `wave.call_early_bounty_per_item` of each starting Item, and
-the Nest's store hands back whatever a Belt banked. `test_nest_store.gd` proves that end to
-end; see the Nest's store, below.
+**The measured way past thirty minutes is to walk out and clear a Hive**, which is the only
+thing in Milestone 1 that moves Heat permanently: `hive_sortie` is 32m22s against `competent`'s
+29m07s, and it is the longest Run the harness has recorded. A second Ammo Press is still the
+*arithmetic* answer to the middle of the Run — production is the defence, in the most literal
+form available — but since #34 the thing a one-Press Factory ends up short of is not rounds. It
+ends with 96 of them. Both are buyable: the call-early lever pays
+`wave.call_early_bounty_per_item` of each starting Item, and the Nest's store hands back
+whatever a Belt banked. `test_nest_store.gd` proves that end to end; see the Nest's store, below.
 
 Two things a later ticket should know:
 
 - **A Machine's output buffer is uncapped**, so a Belt that fills up banks the surplus in the
   Ammo Press indefinitely. The stockpile a player builds between Waves is real and unbounded,
-  and it is what carries minutes seventeen to twenty-five.
+  and it is what carries the middle of the Run — it peaks at 454 rounds around minute
+  twenty-four and is still 96 deep when the Nest falls.
 - **A Turret on the Nest's lane now defends the Factory, and #34 is the whole of why.** A
   Breaker used to steer by the *Factory* flowfield from the moment it emerged, so it never
   walked into the reach of a Turret placed to cover the Nest — the `competent` Factory lost all
