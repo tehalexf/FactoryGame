@@ -3085,11 +3085,18 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 	# route below takes the *aim*: a Belt does not snap, and routing from a tile the player
 	# is not pointing at would be the bug this is otherwise fixing, upside down.
 	var machine: int = sim.query_player_selected_machine_index(VIEWED_PLAYER)
-	var where: BuildGun.Placement = BuildGun.placement(
-		sim, VIEWED_PLAYER, machine, rotation
-	)
+	var where: BuildGun.Placement = BuildGun.placement(sim, VIEWED_PLAYER, machine, rotation)
 	var tile: Vector3i = where.tile
-	var refusal: int = sim.query_build_refusal(VIEWED_PLAYER, machine, tile, rotation)
+	# The same door the hologram and the click go through, so the panel cannot report a
+	# tile as clear while the Build Gun is on the player's back.
+	var refusal: int = BuildGun.build_refusal(
+		sim,
+		VIEWED_PLAYER,
+		sim.query_player_is_in_build_mode(VIEWED_PLAYER),
+		machine,
+		tile,
+		rotation
+	)
 	# **The Simulation's refusal outranks the aim's**, and the locked Machine is why. Being
 	# locked is a fact about what is on the gun rather than about the ground, so a player
 	# told "no ore in range" would walk to a Node and still not be able to build — the same
@@ -3377,9 +3384,11 @@ func _ground_material(tile_size: float, build_extent: float) -> ShaderMaterial:
 ## drum occupy their footprint very differently.
 ##
 ## Everything here is a query. The aim comes from `BuildGun`, which derives it from where
-## the Simulation says the camera is; the refusal comes from `query_build_refusal`, which
-## is the same rule a build obeys. Nothing is remembered between frames, so there is no
-## way for the hologram to promise a placement the Simulation would refuse.
+## the Simulation says the camera is; the refusal comes from `BuildGun.build_refusal`, which
+## is the same function the click goes through — the Simulation's own rule about the tile,
+## plus the one fact that lives on this side of the boundary, which is whether the Build Gun
+## is in the player's hands at all. Nothing is remembered between frames, so there is no way
+## for the hologram to promise a placement the next click will not make.
 func _sync_hologram(sim: Simulation) -> void:
 	if _hologram == null:
 		_hologram = MeshInstance3D.new()
@@ -3389,12 +3398,50 @@ func _sync_hologram(sim: Simulation) -> void:
 		_hologram.material_override = fresh
 		add_child(_hologram)
 
+	# What the Build Gun would do with a click, asked once and used three times: where the
+	# promise stands, whether there is one to draw at all, and what colour it is.
+	#
+	# **`where.tile` is not the tile under the crosshair.** For a Miner it is the Node the
+	# gun snapped to (#42), and `BuildGun.placement` is the same call `PlayerController`
+	# puts in the intent — so the hologram is a promise the click keeps. Everything below
+	# reads it, the refusal included: asking the Simulation about the tile a player was
+	# *pointing* at while drawing the Machine somewhere else is the precise defect this
+	# whole arrangement exists to make impossible.
+	#
+	# `BuildGun.build_refusal` is likewise the same door the click goes through, so the
+	# hologram cannot promise a placement the next click will not make — #35's playtest
+	# found it still drawn, and still green, with a rifle in frame.
+	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
+	var machine: int = sim.query_player_selected_machine_index(VIEWED_PLAYER)
+	var where: BuildGun.Placement = BuildGun.placement(sim, VIEWED_PLAYER, machine, rotation)
+	var tile: Vector3i = where.tile
+	var refusal: int = BuildGun.build_refusal(
+		sim,
+		VIEWED_PLAYER,
+		sim.query_player_is_in_build_mode(VIEWED_PLAYER),
+		machine,
+		tile,
+		rotation
+	)
+
 	var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
 	var definition: MachineDefinition = sim.query_definitions().machine(selected)
-	# Not with the Belt tool out. The route preview is what the button would do then, and two
-	# previews of two different acts over one tile is a player guessing which.
+	# **Hidden rather than reddened, for two reasons that are the same reason.** A red
+	# hologram says "not *there*" and invites a player to aim somewhere else, so it is the
+	# right answer only when aiming elsewhere would help. Neither of these is that:
+	#
+	#   the hand   a holstered Build Gun is a fact about what the player is holding, and
+	#              nowhere they aim will change it (#35, which found the hologram still
+	#              drawn and still green with a rifle in frame);
+	#   the tool   with the Belt tool out the route preview is what the button would do, and
+	#              two previews of two different acts over one tile is a player guessing
+	#              which (#36).
+	#
+	# A promise nobody can keep is better not made than made in red.
 	_hologram.visible = (
-		definition != null and not sim.query_player_is_laying_belt(VIEWED_PLAYER)
+		definition != null
+		and refusal != Simulation.Refusal.BUILD_GUN_IS_HOLSTERED
+		and not sim.query_player_is_laying_belt(VIEWED_PLAYER)
 	)
 	if not _hologram.visible:
 		return
@@ -3412,26 +3459,13 @@ func _sync_hologram(sim: Simulation) -> void:
 		_hologram.material_override = skin
 		_hologram_dressing = dressing
 
-	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
 	var footprint: Vector2i = WorldGrid.rotated_footprint(declared.x, declared.y, rotation)
-	var machine: int = sim.query_player_selected_machine_index(VIEWED_PLAYER)
-	# **Not the raw aim: where the thing would actually land.** For a Miner that is the
-	# Node the Build Gun snapped to (#42), and this is the same call `PlayerController`
-	# puts in the intent — so the hologram is a promise the click keeps. Everything below
-	# reads `where.tile`, including the refusal, because asking the Simulation about the
-	# tile a player was *pointing* at while drawing the Machine somewhere else is the
-	# precise defect this arrangement exists to make impossible.
-	var where: BuildGun.Placement = BuildGun.placement(
-		sim, VIEWED_PLAYER, machine, rotation
-	)
-	var tile: Vector3i = where.tile
 
 	_hologram.rotation = Vector3(0.0, _yaw_for_rotation(rotation), 0.0)
 	_hologram.position = _footprint_centre(sim, tile, footprint)
 	if not dressing.begins_with("res://"):
 		_hologram.position.y += height * 0.5
 
-	var refusal: int = sim.query_build_refusal(VIEWED_PLAYER, machine, tile, rotation)
 	var tint: StandardMaterial3D = _hologram.material_override
 	tint.albedo_color = (
 		HOLOGRAM_ALLOWED
@@ -3877,9 +3911,13 @@ func note_belt_drag(active: bool, anchor: Vector3i, corner_axis: int) -> void:
 	_belt_drag_corner_axis = corner_axis
 
 
-## Whether the Machine hologram is being drawn at all. It is not, with the Belt tool out:
-## two previews of two different acts over one tile is a player guessing which one the
-## button would do.
+## Whether the Build Gun's promise is in frame at all. For the tests, and for `_sync_ports`,
+## which hangs the about-to-land Machine's port arrows off the same answer.
+##
+## False in three cases, and none of them is a refusal a player could aim their way out of:
+## with the Build Gun holstered (#35), with the Belt tool out, because the route preview is
+## what the button would do and two previews over one tile is a player guessing (#36), and
+## while the Build Gun is holding a Machine the definition set does not have.
 func hologram_is_visible() -> bool:
 	return _hologram != null and _hologram.visible
 

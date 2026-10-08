@@ -1,8 +1,12 @@
 ## Where the Build Gun is pointing, and what to tell a player when it refuses.
 ##
 ## The tool through which all construction happens, available at all times including
-## mid-Wave (GLOSSARY.md). There is no mode to enter: nothing here asks whether building
-## is allowed, because nothing in the Simulation would answer.
+## mid-Wave (GLOSSARY.md). **There is no mode to enter and nothing in the Simulation asks
+## whether building is allowed** — but this file is where the one fact about the *input*
+## lives, because build mode is what the left mouse button means and that is presentation.
+## `hand_refusal` is it, and it is the only thing that returns
+## `Refusal.BUILD_GUN_IS_HOLSTERED`: a player holding a rifle builds exactly as well as one
+## holding the Build Gun, they just are not doing it with this click.
 ##
 ## It holds no state. The aim is a function of what the Simulation says about the camera,
 ## so the controller and the renderer can both ask and cannot disagree — the controller
@@ -255,6 +259,56 @@ static func aimed_tool_tile(sim: Simulation, player_id: int) -> Vector3i:
 	)
 
 
+## Why the Build Gun would do nothing at all, whatever it is aimed at, or `Refusal.NONE`.
+##
+## **The whole of what build mode decides, written once.** #35's playtest found the
+## hologram still drawn and still green with a rifle in frame, because the renderer asked
+## `query_build_refusal` — which has never heard of the mode and must not — while the
+## controller carried four separate inline `and in_build_mode` tests. That is two answers
+## to one question, which is the shape `query_build_refusal` exists to prevent.
+##
+## It takes the mode as an argument rather than reading it, and that is the load-bearing
+## detail. `PlayerController` routes by the mode the player will be in once *this tick's*
+## `B` has applied, so a player who presses `B` and clicks in the same tick gets the act of
+## the mode they are swapping to; the renderer draws the mode the Simulation is holding
+## now. Those are different values on exactly one tick in a swap, and both are correct —
+## so the rule is a function of the mode and the callers each supply the one they mean.
+##
+## Nothing in the Simulation is being asked for permission. Building is never gated: an
+## `InputAction.build_machine` that reaches the façade is applied whatever is in the
+## player's hands (`test_nothing_in_the_simulation_asks_the_mode_for_permission`). What is
+## decided here is what one button *means*, which is this layer's job and no one else's.
+static func hand_refusal(build_gun_in_hand: bool) -> int:
+	if build_gun_in_hand:
+		return Simulation.Refusal.NONE
+	return Simulation.Refusal.BUILD_GUN_IS_HOLSTERED
+
+
+## Why a placement would not happen, or `Refusal.NONE`: the hand first, then the
+## Simulation's own rule about the tile.
+##
+## The one function both the hologram and the click go through, so what a player is shown
+## and what their click does cannot disagree — the same bargain `query_build_refusal` and
+## `_apply_build_machine` already have on the other side of the boundary, extended by the
+## one fact that lives on this side.
+##
+## **The hand is checked before the ground**, for the reason the ground is checked before
+## the wallet: what is in your hands is the more immediate fact and the one a player fixes
+## with one key.
+static func build_refusal(
+	sim: Simulation,
+	player_id: int,
+	build_gun_in_hand: bool,
+	machine_index: int,
+	tile: Vector3i,
+	rotation: int
+) -> int:
+	var hand: int = hand_refusal(build_gun_in_hand)
+	if hand != Simulation.Refusal.NONE:
+		return hand
+	return sim.query_build_refusal(player_id, machine_index, tile, rotation)
+
+
 ## What to show a player when a placement is refused.
 ##
 ## The wording lives on this side of the boundary and the *rule* lives in the Simulation,
@@ -301,5 +355,10 @@ static func refusal_text(refusal: int) -> String:
 			return "nobody to pick up"
 		Simulation.Refusal.NO_TEAMMATE:
 			return "nobody else is here"
+		Simulation.Refusal.BUILD_GUN_IS_HOLSTERED:
+			# Rarely read, because the hologram is hidden rather than reddened when the
+			# gun is away — a promise you cannot see needs no caption. It is here so the
+			# reason is never a silence, which is what this function exists to prevent.
+			return "the Build Gun is holstered — [B] to draw it"
 		_:
 			return "cannot build there"

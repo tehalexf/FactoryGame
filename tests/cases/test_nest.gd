@@ -26,10 +26,11 @@ chaff_crawlers,crawler,0,2,0,2
 ## All three schedule keys move together: `Definitions` refuses a Telegraph longer than
 ## the minimum interval and a minimum interval above the baseline, because a schedule that
 ## contradicts itself is content somebody broke rather than a fixture.
-## `interval` is the gap between Waves in seconds, as text, and both schedule keys take it
-## together: `Definitions` refuses a minimum interval above the baseline, because a schedule
-## that contradicts itself is content somebody broke rather than a fixture. Pass "1" for a
-## stream of Waves and the shipped "150" for exactly one.
+## `interval` is the gap between Waves in seconds, as text, and all three schedule keys take
+## it together: `Definitions` refuses a minimum interval above the baseline, or a first
+## interval below the minimum, because a schedule that contradicts itself is content somebody
+## broke rather than a fixture. Pass "1" for a stream of Waves and the shipped "150" for
+## exactly one.
 func _quick_content(nest_health: int = 40, interval: String = "1") -> Definitions:
 	return Definitions.parse(
 		_read("res://content/machines.csv"),
@@ -40,6 +41,10 @@ func _quick_content(nest_health: int = 40, interval: String = "1") -> Definition
 			. replace(
 				"wave_interval_baseline_seconds = 150",
 				"wave_interval_baseline_seconds = %s" % interval
+			)
+			. replace(
+				"first_wave_interval_seconds = 90",
+				"first_wave_interval_seconds = %s" % interval
 			)
 			. replace(
 				"wave_interval_minimum_seconds = 40",
@@ -178,8 +183,11 @@ func test_a_run_opens_before_the_first_wave_with_a_countdown_to_it() -> void:
 	assert_eq(sim.query_wave_number(), 0, "no Wave has arrived yet")
 	assert_eq(
 		sim.query_ticks_until_next_wave(),
-		150 * Simulation.TICKS_PER_SECOND,
-		"a Run opens cold, so the first Wave is a whole baseline interval away"
+		90 * Simulation.TICKS_PER_SECOND,
+		(
+			"heat.first_wave_interval_seconds — a Run opens cold, and the opening gap is its"
+			+ " own number because it is the one nobody has had the chance to shorten (#35)"
+		)
 	)
 	assert_eq(sim.query_enemy_count(), 0, "and no Enemies are on the Map")
 

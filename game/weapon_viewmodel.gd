@@ -216,6 +216,10 @@ func _facts(sim: Simulation, player_id: int) -> WeaponAnimator.Facts:
 	facts.is_melee = sim.query_player_weapon_is_melee(player_id)
 	facts.reach_metres = Fixed.to_float(sim.query_player_weapon_range_metres(player_id))
 	facts.survey_blend = Fixed.to_float(sim.query_player_survey_blend(player_id))
+	# The one figure here that is tuning rather than a per-player query, and it is read
+	# through `query_definitions` like every other number this layer needs: a swap is the
+	# same length for everybody in the Run.
+	facts.swap_seconds = Fixed.to_float(sim.query_definitions().player_holster_seconds)
 	return facts
 
 

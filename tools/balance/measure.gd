@@ -62,8 +62,12 @@ func _initialize() -> void:
 	print("DEEP FOUNDRY — balance measurement")
 	print("Map: starter (one Breach, two Hives). Content: content/ as shipped.")
 	print(
-		"Wave baseline %ds, floor %ds, a second sooner per %d Heat; decay %d/min less %d/min per Hive."
+		(
+			"First Wave %ds, baseline %ds after that, floor %ds, a second sooner per %d Heat;"
+			+ " decay %d/min less %d/min per Hive."
+		)
 		% [
+			Fixed.floor_to_int(definitions.heat_first_wave_interval_seconds),
 			Fixed.floor_to_int(definitions.heat_wave_interval_baseline_seconds),
 			Fixed.floor_to_int(definitions.heat_wave_interval_minimum_seconds),
 			definitions.heat_per_second_sooner,

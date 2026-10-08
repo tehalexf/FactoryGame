@@ -16,7 +16,11 @@ func _run(sim: Simulation, ticks: int) -> void:
 # ── The previewed route ───────────────────────────────────────────────────────
 
 func test_nothing_is_previewed_until_the_belt_tool_is_out() -> void:
+	# With the Build Gun drawn: a Run opens with the weapon out since #42, and since #35
+	# a holstered gun draws no hologram at all — which is a different claim from this one
+	# and has its own test.
 	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 	assert_eq(view.belt_preview_tile_count(), 0, "the Machine tool draws a hologram instead")
@@ -195,6 +199,7 @@ func test_the_hologram_shows_the_ports_of_the_machine_about_to_land() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([
+		InputAction.set_build_mode(0, true),
 		InputAction.select_machine(0, sim.query_definitions().machine_index("smelter_mk1"))
 	])
 	view.sync(sim)

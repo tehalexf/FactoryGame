@@ -520,6 +520,19 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 		in_build_mode = not in_build_mode
 		actions.append(InputAction.set_build_mode(player_id, in_build_mode))
 
+	# **Whether the Build Gun is in hand, asked once, through the rule the renderer
+	# also asks.** #35's playtest found the hologram drawn and green over a click that
+	# did nothing: every build act below tested `in_build_mode` inline and
+	# `_sync_hologram` tested something else, which is exactly the disagreement
+	# `query_build_refusal` exists to prevent. `BuildGun.hand_refusal` is now the one
+	# answer and both sides read it.
+	#
+	# It is resolved here, beside the holster and ahead of the tool, because every act
+	# in this function that needs it needs the mode the player will be in once *this*
+	# tick's `B` has applied — the same rule that makes a scroll-and-click place what
+	# the player scrolled to.
+	var gun_in_hand: bool = BuildGun.hand_refusal(in_build_mode) == Simulation.Refusal.NONE
+
 	if sample.mouse_motion != Vector2.ZERO:
 		actions.append(
 			InputAction.look(
@@ -533,7 +546,7 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# the reason the holster is resolved first: a player who presses the Belt key and clicks
 	# in the same tick gets the act of the tool they are swapping *to*.
 	var build_tool: int = sim.query_player_build_tool(player_id)
-	if sample.belt_clicked and in_build_mode:
+	if sample.belt_clicked and gun_in_hand:
 		build_tool = (
 			Simulation.BUILD_TOOL_MACHINE if build_tool == Simulation.BUILD_TOOL_BELT
 			else Simulation.BUILD_TOOL_BELT
@@ -545,7 +558,7 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# that already makes a scroll-and-click place what the player scrolled to.
 	if (
 		sample.machine_picked != -1
-		and in_build_mode
+		and gun_in_hand
 		and sample.machine_picked < sim.query_definitions().machine_count()
 	):
 		actions.append(InputAction.select_machine(player_id, sample.machine_picked))
@@ -579,7 +592,13 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# Build Gun out places; the same click with the weapon out fires, further down. Nothing
 	# is being *forbidden* here and the Simulation has no opinion on any of it — this is one
 	# button producing one of two intents, which is the whole of what build mode is.
-	if sample.place_clicked and in_build_mode and build_tool == Simulation.BUILD_TOOL_MACHINE:
+	#
+	# **The hand and the tool are two questions and both are asked.** `gun_in_hand` is
+	# whether the Build Gun is out at all, through the one rule `_sync_hologram` reads;
+	# `build_tool` is which tool #36 put on it. A click builds a Machine when the gun is
+	# in hand *and* the Machine tool is on it, and the two compose rather than one
+	# standing in for the other.
+	if sample.place_clicked and gun_in_hand and build_tool == Simulation.BUILD_TOOL_MACHINE:
 		# The rotation the player will be holding once this tick's rotate has applied,
 		# so rotating and placing in the same tick places the Machine they can see.
 		var rotation: int = WorldGrid.wrap_rotation(
@@ -604,7 +623,14 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	# the route and sends it as one intent. A press and a release in the same tick is a
 	# click, which is one tile of Belt — so the cheap act and the considered one are the
 	# same gesture at two speeds.
-	if build_tool == Simulation.BUILD_TOOL_BELT and in_build_mode:
+	#
+	# #35's single-key Belt run is gone and that is #36's doing, not a casualty of this
+	# merge: `belt_clicked` now swaps the tool rather than laying a fixed run, and the
+	# route a player drags is strictly more than the four tiles straight ahead it
+	# replaced. What #35 contributes here is the hand: `gun_in_hand` in place of the
+	# inline `in_build_mode`, so a holstered player cannot start a drag the hologram is
+	# not drawing.
+	if build_tool == Simulation.BUILD_TOOL_BELT and gun_in_hand:
 		if sample.place_clicked:
 			_belt_dragging = true
 			_belt_drag_anchor = BuildGun.aimed_tile(sim, player_id)
@@ -620,10 +646,10 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 			)
 			_belt_dragging = false
 
-	if sample.wall_clicked and in_build_mode:
+	if sample.wall_clicked and gun_in_hand:
 		actions.append(InputAction.build_wall(player_id, BuildGun.aimed_tile(sim, player_id)))
 
-	if sample.demolish_clicked and in_build_mode:
+	if sample.demolish_clicked and gun_in_hand:
 		actions.append(InputAction.demolish(player_id, BuildGun.aimed_tile(sim, player_id)))
 
 	# Sent every tick the key is down and never on the edge, because the Simulation consumes

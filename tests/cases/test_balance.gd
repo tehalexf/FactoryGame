@@ -12,18 +12,20 @@
 ## every legitimate tuning change into a red suite, which is how a balance guard stops being
 ## read.
 ##
-## Measured on 2026-10-07, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision,
-## #34's Breaker approach and #37's two rules in. **#37 moved none of the eight rows of record**;
-## see "What #37 cost the table" in CLAUDE.md for why that is the control it deserved.
+## Measured on 2026-10-08, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision,
+## #34's Breaker approach, #37's two rules **and** #35's separate first-Wave interval in — one
+## run on the merged tree, because #34, #37 and #35 each re-measured on their own branch and the
+## schedule's two ends belong to different tickets. Every scenario ends on the same tick on all
+## three seeds. See "The table, measured 2026-10-08" in CLAUDE.md for which ticket owns which row.
 ##
-##     bare           4m22s   undefended
-##     opening_line   4m04s   undefended, and sooner than bare
-##     competent     29m07s   three Siege Hulks, with 96 rounds still in the Factory
-##     over_producer 20m21s   the same, 30% sooner
+##     bare           3m22s   undefended — #35's shorter first Wave, a minute off
+##     opening_line   3m12s   undefended, and sooner than bare
+##     competent     28m48s   a Siege Hulk standing, with 96 rounds still in the Factory
+##     over_producer 20m21s   the same, 29% sooner
 ##     fortified     28m45s   the same, with 112 rounds unspent — a wash against competent
 ##     deep_digger   10m48s   dug too deep, two Breaches
-##     hive_sortie   32m22s   the same, 3m15s later than competent — the longest Run measured
-##     rifle_picket  27m16s   swarmed, 1m51s sooner than competent (27m13s on seeds 11 and 29)
+##     hive_sortie   32m05s   the same, 3m17s later than competent — the longest Run measured
+##     rifle_picket  28m02s   swarmed, 46s sooner than competent
 ##     artillery     16m10s   swarmed, 44% sooner — one Stratagem fired on two Charges
 extends TestCase
 
@@ -215,23 +217,44 @@ func test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed() -> voi
 		)
 
 
+## How much of a Run two scenarios may differ by and still count as the same length. A
+## minute and a half in a Run of twenty-six minutes: smaller than the swing #30's collision
+## and #35's schedule each produced on their own, so a difference inside it is phase and not
+## a mechanic.
+const SAME_LENGTH_SECONDS: int = 90
+
+
 func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void:
-	# #17's open question, measured. A Bolt Rifle spends `ammunition` at 75 rounds a minute
-	# out of the Nest's store; the Press makes 37. So a player who leans on the trigger is
-	# competing with his own Turret, and the Run is shorter for it even though the rounds went
-	# into Crawlers either way.
+	# #17's open question, measured — and **the claim has now flipped, so what is asserted is
+	# what was measured.** A Bolt Rifle spends `ammunition` at 75 rounds a minute out of the
+	# Nest's store against a Press that makes 37, so the mechanism is real: a player who
+	# leans on the trigger is competing with his own Turret. What the harness cannot show any
+	# more is that it *costs* anything end to end.
 	#
-	# This is also the only scenario a seed can reach at all, and the only row in the table
-	# that is not bit-identical across seeds: 26m32s on seed 7 against 26m29s on 11 and 29.
-	# Three seconds in twenty-six minutes — the spread moves where the rounds go without
-	# moving how long the Nest stands, which is why the row above is the whole of the seed
-	# story and why this one is asserted against `competent` rather than against a figure.
+	# #26 measured a two-minute penalty. #30's collision moved the picket's open-loop stance
+	# and took it to 28 seconds. #34's Breaker approach took it back out to 1m54s. #35's
+	# shorter first Wave moved the whole schedule's phase and, measured on its own branch,
+	# crossed zero — 26m52s against `competent`'s 26m42s, ten seconds the *other* way.
+	#
+	# **Merged, it is 46 seconds and back on the original side**: 28m02s against 28m48s. So
+	# the sign of this margin has now moved four times across four tickets without anything
+	# about the Ammunition economy changing, which is the finding. It is not a penalty with a
+	# value; it is phase noise in a schedule that other tickets keep re-phasing.
+	#
+	# So the claim this guards is the one the figures still support: a rifleman at the Nest is
+	# **neither free nor ruinous** — the fourth claimant costs about what it takes, within the
+	# phase noise of the schedule. A later Ammunition change that made the rifle genuinely
+	# cheap or genuinely fatal would move it outside `SAME_LENGTH_SECONDS` and fail here.
 	var competent: BalanceProbe.Report = _play("competent")
 	var picket: BalanceProbe.Report = _play("rifle_picket")
 	assert_true(picket.nest_fell, "the Run ends")
+	var apart: int = absi(picket.end_tick - competent.end_tick)
 	assert_true(
-		picket.end_tick < competent.end_tick,
-		"and sooner for the rifle: %s against %s" % [picket.clock(), competent.clock()]
+		apart <= SAME_LENGTH_SECONDS * Simulation.TICKS_PER_SECOND,
+		(
+			"the rifle should cost about what it takes: %s against %s"
+			% [picket.clock(), competent.clock()]
+		)
 	)
 
 

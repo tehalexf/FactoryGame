@@ -530,6 +530,84 @@ func test_belt_laying_lives_in_build_mode() -> void:
 	)
 
 
+func test_every_build_act_goes_through_the_one_hand_rule() -> void:
+	# #35's second report — *"the hologram should not be placable in gun mode"* — covering
+	# every build act rather than only the two that had tests. It is the net under collapsing
+	# the inline readings of the mode into `BuildGun.hand_refusal`: the renderer, the panel
+	# and all of these now ask one function, so there is no longer a version of this that can
+	# be fixed in one place and left wrong in another.
+	#
+	# **One sample per act, not one sample with every flag set.** #36 gave the Build Gun two
+	# tools and made `belt_clicked` swap between them, so the flags are no longer independent:
+	# setting them all at once swaps to the Belt tool and the Machine click then correctly
+	# does nothing. Driving each act through the gesture that really produces it is both the
+	# honest test and the one that keeps meaning something the next time the scheme moves.
+	var acts: Array = [
+		["a Machine", InputAction.Kind.BUILD_MACHINE, "place_clicked"],
+		["a Wall", InputAction.Kind.BUILD_WALL, "wall_clicked"],
+		["a demolition", InputAction.Kind.DEMOLISH, "demolish_clicked"],
+		# The tool swap is a build act too: it is the Build Gun's own control, and a
+		# holstered gun has no tool to change.
+		["the tool swap", InputAction.Kind.SET_BUILD_TOOL, "belt_clicked"],
+	]
+
+	for act: Array in acts:
+		# `_building()`, because a Run opens with the weapon out since #42 and both halves
+		# of this test name the hand they are about rather than inheriting one.
+		var sim: Simulation = _building()
+		var controller: PlayerController = PlayerController.new()
+		var sample: PlayerController.DeviceSample = _sample()
+		sample.set(act[2] as String, true)
+
+		assert_true(
+			_kinds(controller.actions_for_tick(sim, 0, sample)).has(act[1] as int),
+			"%s happens with the Build Gun out" % act[0]
+		)
+		sim.step([InputAction.set_build_mode(0, false)])
+		assert_false(
+			_kinds(controller.actions_for_tick(sim, 0, sample)).has(act[1] as int),
+			"%s does not, with a rifle out" % act[0]
+		)
+
+	# A Belt route is the one act that is a *gesture* rather than a click: press, drag,
+	# release, with a press and a release in one tick being the one-tile case. So it needs the
+	# Belt tool on the gun first, which is a second tick either way.
+	var sim: Simulation = _building()
+	var controller: PlayerController = PlayerController.new()
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var drag: PlayerController.DeviceSample = _sample()
+	drag.place_clicked = true
+	drag.primary_released = true
+
+	assert_true(
+		_kinds(controller.actions_for_tick(sim, 0, drag)).has(InputAction.Kind.BUILD_BELT),
+		"a Belt route happens with the Build Gun out"
+	)
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_false(
+		_kinds(controller.actions_for_tick(sim, 0, drag)).has(InputAction.Kind.BUILD_BELT),
+		"a Belt route does not, with a rifle out"
+	)
+
+
+func test_holding_a_rifle_does_not_stop_a_player_building() -> void:
+	# The line this must not cross, from the other side. The four acts above are about what
+	# a *button* means; the Simulation is not being asked for permission, and an intent that
+	# reaches it is applied whatever is in the player's hands. If this ever goes red, the
+	# refusal has leaked out of `game/` and into the build path —
+	# `test_nothing_in_the_simulation_asks_the_mode_for_permission` says the same thing
+	# about the Simulation's own refusal.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, false)])
+	assert_false(sim.query_player_is_in_build_mode(0), "the premise")
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("miner_mk1"), Vector3i(6, 0, 6), 0
+		)
+	])
+	assert_eq(sim.query_machine_count(), 1, "building is never gated")
+
+
 func test_no_two_actions_share_a_key() -> void:
 	# The thing three branches landing at once kept nearly doing. #29 moved the Belt to `C`
 	# while #17 was putting the Silo's charge counter there, and `T` was quietly bound to
