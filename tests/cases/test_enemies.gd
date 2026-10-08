@@ -608,3 +608,55 @@ func test_nothing_is_announced_while_no_wave_is_telegraphed() -> void:
 	assert_false(sim.query_wave_is_telegraphed(), "nothing is coming yet")
 	assert_eq(sim.query_telegraphed_wave_count_of_kind(EnemyKind.CRAWLER), 0)
 	assert_eq(sim.query_telegraphed_wave_count_of_kind(EnemyKind.BREAKER), 0)
+
+
+func test_the_simulation_says_how_big_an_enemy_is_and_the_boss_is_bigger() -> void:
+	# #38. The renderer has to size a body, and the one authority on how big an Enemy is
+	# is the volume the Simulation resolves a round against — `_enemy_hit_radius` and
+	# `_enemy_hit_height`, which `_bite`, `_shot_target` and the Barrage all read. A
+	# constant in `WorldView` beside them would be a second authority on the same fact,
+	# which is exactly the shape #41 shipped as a red rectangle with no owner.
+	var sim: Simulation = _sim(CRAWLERS_AND_BREAKERS, [["min_heat = 5200", "min_heat = 0"]])
+	_step_until_spawned(sim)
+	if not assert_true(sim.query_enemy_count() > 0, "the premise: a Wave is out"):
+		return
+
+	var crawler: int = -1
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) == Simulation.ENEMY_KIND_CRAWLER:
+			crawler = index
+			break
+	if not assert_true(crawler >= 0, "the premise: a Crawler is out"):
+		return
+
+	# The figures come from `content/tuning.toml` — gear.enemy_hit_height_metres = 1.6 —
+	# rather than from recomputing what the code does.
+	assert_eq(
+		sim.query_enemy_hit_height_metres(crawler),
+		Fixed.from_decimal_string("1.6"),
+		"a Crawler stands as tall as the capsule a round is resolved against"
+	)
+	assert_eq(sim.query_enemy_hit_radius_metres(crawler), Fixed.from_decimal_string("0.6"))
+
+	# And the boss has its own volume, which is the whole reason `_enemy_hit_height` is a
+	# function of the kind: four metres of armour missed by a metre reads as a broken gun.
+	assert_eq(
+		sim.query_enemy_hit_height_metres(0) > 0,
+		true,
+		"every Enemy has a height"
+	)
+
+
+func test_asking_how_big_an_enemy_is_does_not_move_the_hash() -> void:
+	# A projection the Simulation never reads back, like `query_power_ratio`. The renderer
+	# asks it once a frame per Enemy, so a query that moved the hash by being asked would
+	# desync a Run on whether anybody was looking.
+	var sim: Simulation = _sim()
+	_step_until_spawned(sim)
+	if not assert_true(sim.query_enemy_count() > 0, "the premise: a Wave is out"):
+		return
+	var before: int = sim.hash()
+	for index: int in range(sim.query_enemy_count()):
+		sim.query_enemy_hit_height_metres(index)
+		sim.query_enemy_hit_radius_metres(index)
+	assert_eq(sim.hash(), before, "looking at the swarm changed nothing")

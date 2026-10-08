@@ -354,6 +354,68 @@ Three rules the renderer holds to, each with a test:
   reach the thousands — `test_world_view` asserts the scene tree does not grow by a node
   for any of them.
 
+### The Enemies wear characters now, and the animation is in a texture
+
+#38, and the ticket's own complaint was that the thing a player spends a whole Run shooting
+at was the least finished thing in frame: a procedurally built carapace of boxes, sliding
+across the ground with no animation, and **the same mesh for a Crawler and a Breaker** — so
+the only thing separating "the sense of threat" from "the threat" on screen was a line of
+HUD. Meanwhile thirteen committed CC0 characters that #18 had retargeted onto one shared
+skeleton had never been drawn by anything.
+
+**An Enemy is still never a node, and that is what shapes the whole solution.** The
+idiomatic answer is an `AnimationPlayer` per Crawler and it is exactly the architecture ADR
+0001 refused. So the animation lives in a texture the vertex shader samples
+(`game/enemy_skin.gdshader`), and which row an Enemy is on arrives as per-instance custom
+data. There is nothing per Crawler anywhere on this side of the boundary.
+
+- **It bakes bone poses, not vertex positions**, which is the one real engineering decision
+  in it. A vertex animation texture is 4858 vertices by ninety frames — 437,000 texels a
+  kind, growing with the model. Skinning matrices are 23 bones by ninety frames: about two
+  thousand texels, and it does not grow by one texel if the mesh triples. The price is that
+  `ARRAY_BONES` is only readable through a `Skeleton3D`, so `EnemyBodies` moves the indices
+  and weights into `CUSTOM0` and `CUSTOM1` and drops the skinning declaration.
+- **The bake is at load time and commits nothing**, because `world_view.gd` already
+  flattens every Machine `.glb` on first use for exactly this reason: what Godot imports out
+  of a glTF is the wrong *shape* for a `MultiMesh`, and the fix is a transform of a
+  committed asset rather than a second committed asset. A baked mesh beside the artist's
+  file would be two authorities on what a Crawler looks like.
+- **One MultiMesh a kind, created on the first sync** — before a Breach has released
+  anything. Eagerly rather than on the first Enemy, so `test_an_enemy_is_never_a_node`
+  asserts *zero* growth rather than "no more than one a kind", and so the bake is paid at
+  load rather than on the frame the first Wave arrives.
+- **A body is baked one metre tall and scaled by `query_enemy_hit_height_metres`** — the
+  capsule a round is actually resolved against, newly exposed as a query for this. So a
+  player shoots at what they can see; a constant in the renderer would be #41's ownerless
+  red rectangle in a different costume. The normalisation is folded into each **bone
+  matrix**, because skinning is a weighted sum whose weights total one, so `P * (Σ w M v)`
+  is `Σ w (P M) v`.
+- **Nothing is timed by a clock and nothing is drawn at random.** `game/enemy_animator.gd`
+  is a `RefCounted` with no state about the Run at all — one step stronger than
+  `WeaponAnimator`, which has transitions with lengths to remember. A `Facts` of four
+  queries goes in, a role and a frame come out, and the frame is integer arithmetic over the
+  tick, the Enemy's spawn tick and its **serial**. The serial is what de-locksteps six
+  Crawlers released on one tick; it is issued once and never reused (#9), where an RNG draw
+  would have cost the Run a draw and a clock would have cost it determinism.
+- **A kind with no cast character draws the procedural carapace**, which is the rule a
+  Machine with no generated `.glb` already obeys. Adding an Enemy kind is four tuning keys
+  and a row, and it is never blocked on art.
+- **The Siege Hulk's vent survived, and it is still the only place geometry carries a
+  rule.** It is modelled in body heights with its offset in the mesh, so it is placed with
+  exactly the transform the body is placed with.
+
+Full pipeline, the casting table, why `UAL1.glb` is still unused and what three renders
+caught are in [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 11. The before and
+after are `docs/images/enemies_{pair,wave,boss}_{before,after}.png`, rebuilt with
+`SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png <preset>`.
+
+**What it costs**, measured with `ENEMY_COUNT=<n> tools/visual/frame_cost.sh` against the
+same scenario before and after: `WorldView.sync` goes from 3.22 ms to 4.32 ms at 18 Enemies
+and from 3.80 ms to 4.56 ms at 71, so about **a millisecond of a 16.67 ms frame**, plus
+1.4 M primitives and 17 MB of video memory. That is the CPU rebuild only — the skinning is
+in a vertex shader and Xvfb is llvmpipe, so **the GPU half of this is unmeasured here** and
+wants a machine with a real card.
+
 The lighting is the other half of the art pipeline. The generated surfaces are physically
 based and mostly metal, and a metal lit by an ambient *colour* has nothing to reflect, so
 it renders as a dark smear whatever its albedo says. `_sync_scenery` therefore takes both
@@ -1143,9 +1205,10 @@ arrays rather than a class**. See the Siege Hulk section.
 
 - An Enemy is an index into parallel `PackedInt64Array`s — serial, kind, position in
   fixed-point metres, health, spawn tick, bite cooldown, and the point it is facing. There is no Enemy class, no
-  Enemy instance and no node. `WorldView` draws the whole swarm through one
-  `MultiMeshInstance3D`, and `test_world_view` asserts that the scene tree does not
-  grow by a single node when a Wave arrives.
+  Enemy instance and no node. `WorldView` draws the swarm through one `MultiMeshInstance3D`
+  **per kind** — three nodes since #38 gave each kind its own character mesh, bounded by
+  `EnemyKind.KIND_NAMES` and created before the first Wave — and `test_world_view` asserts
+  that the scene tree does not grow by a single node when a Wave arrives.
 - **Index order is ascending spawn serial, always.** Spawns append; `_enemy_serial`
   rises strictly with index. Every loop over Enemies therefore walks them in the one
   order every client agrees on. The purity lint catches a float; it would never catch

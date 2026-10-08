@@ -1,0 +1,713 @@
+## The thing a `MultiMesh` draws an Enemy with: one character mesh, and one texture of
+## skinning matrices covering every frame of every clip that Enemy plays.
+##
+## **The constraint this file exists to satisfy is ADR 0001's: an Enemy is never a node.**
+## The Chaff tier is thousands of Crawlers and `test_world_view` asserts the scene tree
+## does not gain one node when a Wave arrives, so an `AnimationPlayer` per Crawler — the
+## idiomatic answer, and the one that caps out around 150-250 agents — is exactly the
+## architecture this project refused. The animation therefore has to live somewhere a
+## `MultiMesh` can reach, which means a texture the vertex shader samples and a per-instance
+## number saying which row to read.
+##
+## ### Bone poses, not vertex positions
+##
+## The technique named in the ticket is a vertex animation texture: bake every vertex's
+## position on every frame. For these characters that is 4858 vertices by ninety frames —
+## 437,000 texels a kind, three kinds, and a texture whose size is a property of the model
+## rather than of the rig.
+##
+## This bakes the **skinning matrices** instead: 23 bones by ninety frames is 69 by 90, about
+## two thousand texels, and it does not grow by one texel if somebody triples the polygon
+## count. The shader then does the four-bone linear blend any skinned mesh does. The one
+## thing it costs is getting the bone indices and weights to the shader, and `ARRAY_BONES`
+## is only readable through a `Skeleton3D` — which is why `_surface_arrays` moves them into
+## `CUSTOM0` and `CUSTOM1`, ordinary vertex attributes that reach a shader unchanged.
+##
+## ### Why the bake is at load time rather than in `tools/assets/`
+##
+## `world_view.gd` already flattens every Machine `.glb` into one mesh per material on first
+## use, and the reason is the same one: **what Godot imports out of a glTF is the wrong
+## shape to put in a `MultiMesh`**, and the fix is a transform of a committed asset rather
+## than a second committed asset. A `tools/assets/` bake step would commit a derived mesh and
+## a derived texture beside the artist's file and give the project two authorities on what a
+## Crawler looks like — the thing `machines.csv` against `machine_bodies.csv` is careful to
+## avoid. So this is that same flattening with a skinning bake attached.
+##
+## It is paid once per kind, lazily, on the frame the first Enemy of that kind appears. See
+## `_bake` for what that costs.
+##
+## ### Nothing here is chosen at random and nothing is timed by a clock
+##
+## The bake is a pure function of the committed `.glb`s, so two Runs get the same texture,
+## and `EnemyAnimator` picks the row out of hashed Simulation facts. The animation is as
+## reproducible as the Simulation is, which is the rule `WeaponViewmodel` keeps by computing
+## clip time from the tick count and seeking explicitly.
+class_name EnemyBodies
+extends RefCounted
+
+## A skinning matrix is a 3x4 affine, so three RGBA texels hold one bone.
+const TEXELS_PER_BONE: int = 3
+
+## How many bone influences a vertex keeps. Godot's glTF importer gives four unless the
+## surface asks for eight, and all thirteen committed characters use four — so a fifth
+## influence is a case the committed art does not contain, and `_surface_arrays` drops
+## and renormalises rather than silently scaling the vertex towards the origin.
+const INFLUENCES: int = 4
+
+## The bake's frame rate. Half the Simulation's tick rate, so `EnemyAnimator` advances one
+## frame every two ticks — an exact integer division rather than a ratio with a rounding
+## rule, which is the arrangement every other counted thing in this project has.
+const FRAMES_PER_SECOND: float = 30.0
+
+## The longest any one clip may be baked for, in frames. A ceiling rather than an
+## expectation: an idle take is often several seconds and a texture row a frame is cheap,
+## but a library carrying a two-minute clip should not silently become a 3600-row texture.
+const MAX_FRAMES_PER_CLIP: int = 120
+
+## Where the committed CC0 characters live. One pack, because its six characters and four
+## animation libraries share one rig — which is what makes a clip authored for the Minion
+## play on the Golem without a `BoneMap` anywhere.
+const KAYKIT: String = "res://assets/characters/kaykit_skeletons/"
+
+
+## Which character and which clips an Enemy kind is made of.
+##
+## **This is the whole of the casting, and it is the one place a kind and an asset meet.**
+## The Golem is the Siege Hulk and the Minion is the Crawler because the ticket says so and
+## because they are the obvious reads; the Warrior is the Breaker because it is the one
+## committed character that is visibly *armoured and carrying something*, which is what has
+## to separate "the threat" from "the sense of threat" at thirty metres.
+class Recipe extends RefCounted:
+	## The character `.glb`, which carries the mesh and the rig and no animation at all.
+	var character: String = ""
+	## The animation libraries to resolve clip names against, in order. KayKit ships its
+	## animation as separate files on a shared rig — the arrangement
+	## `docs/ASSET_PIPELINE.md` section 4 calls the worked example of doing it right — so
+	## movement and everything else are two files.
+	var libraries: PackedStringArray = PackedStringArray()
+	## Role to clip name. A role is what the game asks for and a clip name is what the pack
+	## happens to call it, which is the split `WeaponAnimator.CLIP_NEEDLES` already makes.
+	var clips: Dictionary = {}
+
+	func _init(
+		from_character: String, from_libraries: PackedStringArray, from_clips: Dictionary
+	) -> void:
+		character = from_character
+		libraries = from_libraries
+		clips = from_clips
+
+
+## One kind's baked body.
+class Body extends RefCounted:
+	## One `Mesh`, one surface per source material, ready to go in a `MultiMesh`.
+	var mesh: ArrayMesh = null
+	## The skinning matrices: `bone_count * TEXELS_PER_BONE` across, `frame_total` down.
+	var pose: ImageTexture = null
+	var bone_count: int = 0
+	var frame_total: int = 0
+
+	var _frames: Dictionary = {}
+	var _first_row: Dictionary = {}
+	var _root_offsets: PackedFloat32Array = PackedFloat32Array()
+
+	## How many frames a role's clip runs for, or 1 for a role this body has no clip for —
+	## never 0, because a count of 0 is a modulus by zero in the animator.
+	func frames_of(role: String) -> int:
+		return int(_frames.get(role, 1))
+
+	## Which row of the pose texture is this frame of this role's clip. Out-of-range frames
+	## are wrapped rather than clamped, because the animator's own modulus is the thing
+	## that should decide and a second clamp here would hide a disagreement.
+	func row_of(role: String, frame: int) -> int:
+		var frames: int = frames_of(role)
+		var first: int = int(_first_row.get(role, 0))
+		return first + posmod(frame, frames)
+
+	## Where the root bone sits on this row, relative to its rest, in metres. The suite
+	## reads it to assert a walk cycle does not travel; nothing in the renderer does.
+	func root_offset_metres(row: int) -> Vector3:
+		if row < 0 or (row + 1) * 3 > _root_offsets.size():
+			return Vector3.ZERO
+		return Vector3(
+			_root_offsets[row * 3 + 0], _root_offsets[row * 3 + 1], _root_offsets[row * 3 + 2]
+		)
+
+	## What `EnemyAnimator.set_frame_counts` wants.
+	func frame_counts() -> Dictionary:
+		return _frames.duplicate()
+
+	## How low and how high the body stands on one row of the pose texture, in metres,
+	## **measured by doing what the shader does**: read the matrices back out of the
+	## texture, blend them by the weights on `CUSTOM1`, and look at where the vertices
+	## land.
+	##
+	## The suite reads it to check the scale, and it is deliberately the long way round. A
+	## figure carried out of `_bake` would be the normalisation restated — 0 and 1 by
+	## construction, which is an assertion that cannot disagree with the code and so says
+	## nothing. This is an independent measurement of the thing a player will see, and it
+	## fails if the matrices are written to the wrong texel, composed in the wrong order,
+	## or folded with the wrong normalisation.
+	##
+	## Walks every `stride`-th vertex, because the point is the extent and five thousand
+	## vertices measure it no better than five hundred.
+	func drawn_extent_metres(row: int, stride: int = 7) -> Vector2:
+		var image: Image = pose.get_image()
+		var matrices: Array[Transform3D] = []
+		for bone: int in range(bone_count):
+			var rows: Array[Color] = []
+			for texel: int in range(TEXELS_PER_BONE):
+				rows.append(image.get_pixel(bone * TEXELS_PER_BONE + texel, row))
+			matrices.append(Transform3D(
+				Basis(
+					Vector3(rows[0].r, rows[1].r, rows[2].r),
+					Vector3(rows[0].g, rows[1].g, rows[2].g),
+					Vector3(rows[0].b, rows[1].b, rows[2].b)
+				),
+				Vector3(rows[0].a, rows[1].a, rows[2].a)
+			))
+
+		var low: float = INF
+		var high: float = -INF
+		for surface: int in range(mesh.get_surface_count()):
+			var arrays: Array = mesh.surface_get_arrays(surface)
+			var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			var slots: PackedFloat32Array = arrays[Mesh.ARRAY_CUSTOM0]
+			var loads: PackedFloat32Array = arrays[Mesh.ARRAY_CUSTOM1]
+			for vertex: int in range(0, points.size(), maxi(stride, 1)):
+				var at: Vector3 = Vector3.ZERO
+				for influence: int in range(INFLUENCES):
+					var weight: float = loads[vertex * INFLUENCES + influence]
+					if weight <= 0.0:
+						continue
+					var bone: int = int(slots[vertex * INFLUENCES + influence])
+					if bone < 0 or bone >= matrices.size():
+						continue
+					at += (matrices[bone] * points[vertex]) * weight
+				low = minf(low, at.y)
+				high = maxf(high, at.y)
+		return Vector2(low, high)
+
+
+var _baked: Dictionary = {}
+
+
+## The body for an Enemy kind, baked on the first ask and handed out again after.
+##
+## Returns null for a kind nobody has cast a character for and for one whose character is
+## not on disk. **That is an ordinary state and not a warning**, the rule a Machine with no
+## generated `.glb` already obeys: adding an Enemy kind is four tuning keys and a row, and it
+## is never blocked on art. `WorldView` draws the procedural carapace it always drew.
+func body_for(kind: int) -> Body:
+	if _baked.has(kind):
+		return _baked[kind]
+	var body: Body = _bake(kind)
+	_baked[kind] = body
+	return body
+
+
+## Which character and clips each kind is made of.
+##
+## Static and in one place, so the casting is readable without reading the bake. A kind with
+## no entry has no body, which is what makes adding a kind cost nothing here.
+static func recipe_for(kind: int) -> Recipe:
+	var medium: PackedStringArray = PackedStringArray([
+		KAYKIT + "animations/Rig_Medium_MovementBasic.glb",
+		KAYKIT + "animations/Rig_Medium_General.glb",
+	])
+	var large: PackedStringArray = PackedStringArray([
+		KAYKIT + "animations/Rig_Large_MovementBasic.glb",
+		KAYKIT + "animations/Rig_Large_General.glb",
+	])
+	match kind:
+		EnemyKind.CRAWLER:
+			# Chaff: the smallest, barest character in the pack, running. `Running_A`
+			# rather than a walk because what Chaff has to read as is *numerous and
+			# coming*, and because it is the clearest possible contrast with the Breaker
+			# marching behind it.
+			return Recipe.new(
+				KAYKIT + "minion/Skeleton_Minion.glb",
+				medium,
+				{
+					EnemyAnimator.MOVE: "Running_A",
+					EnemyAnimator.IDLE: "Idle_A",
+					EnemyAnimator.ATTACK: "Throw",
+				}
+			)
+		EnemyKind.BREAKER:
+			# The threat rather than the sense of it, so: the armoured character, carrying
+			# a sword and a shield, **walking**. #34 made a Breaker march the Nest's own
+			# lane before it turns on the Factory, and `Walking_A` is that sentence as
+			# motion — a deliberate advance down the road a player defended, against the
+			# Crawlers sprinting past it.
+			return Recipe.new(
+				KAYKIT + "warrior/Skeleton_Warrior.glb",
+				medium,
+				{
+					EnemyAnimator.MOVE: "Walking_A",
+					EnemyAnimator.IDLE: "Idle_B",
+					EnemyAnimator.ATTACK: "Throw",
+				}
+			)
+		EnemyKind.SIEGE_HULK:
+			# The boss, and the Golem is four metres of it. `Rig_Large` carries no attack
+			# take at all — the pack's melee libraries were never intaken (#18) — so a
+			# stomp plays `Hit_A`, which is a lurch rather than a swing. Named here rather
+			# than hidden, because it is the one role in this file that is a stand-in.
+			return Recipe.new(
+				KAYKIT + "golem/Skeleton_Golem.glb",
+				large,
+				{
+					EnemyAnimator.MOVE: "Walking_A",
+					EnemyAnimator.IDLE: "Idle_A",
+					EnemyAnimator.ATTACK: "Hit_A",
+				}
+			)
+	return null
+
+
+## Bakes one kind: load the character, load its libraries, walk every frame of every clip
+## composing a skinning matrix per bone, and write the lot into one float texture.
+##
+## **The cost is bones times frames and not vertices times frames**, which is what makes it
+## affordable at load time: 23 bones over about 150 frames is 3,450 transforms a kind, each
+## one a couple of multiplies up a 23-deep hierarchy. The mesh is walked exactly once, to
+## move its bone attributes into `CUSTOM0` and `CUSTOM1`.
+##
+## **It composes the poses itself rather than driving an `AnimationPlayer`.** Three reasons,
+## and the third is the one that matters: a player has to be in a `SceneTree` to resolve its
+## track paths, `advance` is a side effect on a node this function would have to own and
+## free, and interpolating an `Animation` directly is a pure read of a `Resource` — which is
+## what makes the retarget below expressible at all.
+func _bake(kind: int) -> Body:
+	var recipe: Recipe = recipe_for(kind)
+	if recipe == null or not ResourceLoader.exists(recipe.character):
+		return null
+	var scene: PackedScene = load(recipe.character) as PackedScene
+	if scene == null:
+		return null
+	var root: Node = scene.instantiate()
+	var skeleton: Skeleton3D = _first_skeleton(root)
+	if skeleton == null:
+		root.free()
+		return null
+
+	var bones: int = skeleton.get_bone_count()
+	var bone_of_name: Dictionary = {}
+	for bone: int in range(bones):
+		bone_of_name[skeleton.get_bone_name(bone)] = bone
+
+	# Where every bone sits with no animation on it. Composed up the hierarchy here rather
+	# than taken from `get_bone_global_rest`, so that the rest and the animated poses go
+	# through exactly one piece of arithmetic and cannot disagree about it.
+	var rest_local: Array[Transform3D] = []
+	for bone: int in range(bones):
+		rest_local.append(skeleton.get_bone_rest(bone))
+	var rest_global: Array[Transform3D] = _compose(skeleton, rest_local)
+
+	# The inverse bind matrices, which are what take a vertex out of the mesh's own space
+	# and into the bone's. Resolved by **name**: Godot's glTF importer leaves
+	# `Skin.get_bind_bone` at -1 and names the bind instead, which is checked rather than
+	# assumed because a silent -1 would index the first bone for every vertex.
+	var surfaces: Array = []
+	var binds: Array[Transform3D] = []
+	var bind_resolved: bool = false
+	for child: Node in skeleton.get_children():
+		if not (child is MeshInstance3D):
+			continue
+		var holder: MeshInstance3D = child
+		if holder.mesh == null:
+			continue
+		if not bind_resolved and holder.skin != null:
+			binds = _binds(holder.skin, bone_of_name, bones)
+			bind_resolved = true
+		for surface: int in range(holder.mesh.get_surface_count()):
+			surfaces.append([holder.mesh, surface])
+	if not bind_resolved or surfaces.is_empty():
+		root.free()
+		return null
+
+	# The rest pose's extent, which is what the normalisation is derived from. Measured on
+	# the skinned rest rather than on the raw vertices, because a rig whose mesh is authored
+	# away from its rest would otherwise normalise to the wrong number.
+	var low: float = INF
+	var high: float = -INF
+	for entry: Array in surfaces:
+		var arrays: Array = (entry[0] as ArrayMesh).surface_get_arrays(entry[1])
+		var points: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var indices: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+		var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+		var per: int = INFLUENCES
+		if points.size() > 0 and indices.size() / points.size() == 8:
+			per = 8
+		for vertex: int in range(points.size()):
+			var at: Vector3 = _skinned(
+				points[vertex], vertex, per, indices, weights, rest_global, binds
+			)
+			low = minf(low, at.y)
+			high = maxf(high, at.y)
+	if not (high > low):
+		root.free()
+		return null
+	# `P`, the normalisation: one metre tall with its feet on the ground. Folded onto every
+	# bone matrix rather than applied to the vertices, because skinning is a weighted sum
+	# whose weights total 1, so `P * (sum w M v)` is `sum w (P M) v` — one multiply a bone a
+	# frame instead of a second pass over five thousand vertices.
+	var scale: float = 1.0 / (high - low)
+	var normalise: Transform3D = Transform3D(
+		Basis.from_scale(Vector3.ONE * scale), Vector3(0.0, -low * scale, 0.0)
+	)
+
+	var body: Body = Body.new()
+	body.bone_count = bones
+
+	# Every clip, in a fixed order, so the texture's rows are a function of the recipe and
+	# not of whatever order a Dictionary iterates in. That is determinism rule four applied
+	# to an asset: the roles are sorted, so two Runs lay out the same texture.
+	var clips: Array = recipe.clips.keys()
+	clips.sort()
+	var animations: Dictionary = _animations(recipe)
+	var rows: Array[Transform3D] = []
+	var root_offsets: PackedFloat32Array = PackedFloat32Array()
+	for role: String in clips:
+		var clip: Animation = animations.get(recipe.clips.get(role, ""), null) as Animation
+		var frames: int = 1
+		if clip != null:
+			frames = clampi(
+				int(round(clip.length * FRAMES_PER_SECOND)), 1, MAX_FRAMES_PER_CLIP
+			)
+		body._first_row[role] = rows.size() / bones
+		body._frames[role] = frames
+		for frame: int in range(frames):
+			var at: float = 0.0
+			if clip != null and frames > 1:
+				at = clip.length * float(frame) / float(frames)
+			var local: Array[Transform3D] = _pose(
+				clip, at, skeleton, rest_local, bone_of_name
+			)
+			var posed: Array[Transform3D] = _compose(skeleton, local)
+			var offset: Vector3 = local[0].origin - rest_local[0].origin
+			root_offsets.append_array(
+				PackedFloat32Array([offset.x, offset.y, offset.z])
+			)
+			for bone: int in range(bones):
+				rows.append(normalise * posed[bone] * binds[bone])
+
+	body.frame_total = rows.size() / bones
+	body._root_offsets = root_offsets
+	body.pose = _texture(rows, bones, body.frame_total)
+	body.mesh = _flatten(surfaces, rest_global, binds)
+	root.free()
+	return body
+
+
+## Every bone's transform relative to the skeleton, from its transform relative to its
+## parent. One walk, in index order, which Godot guarantees puts a parent before its child.
+func _compose(skeleton: Skeleton3D, local: Array[Transform3D]) -> Array[Transform3D]:
+	var out: Array[Transform3D] = []
+	out.resize(local.size())
+	for bone: int in range(local.size()):
+		var parent: int = skeleton.get_bone_parent(bone)
+		if parent < 0:
+			out[bone] = local[bone]
+		else:
+			out[bone] = out[parent] * local[bone]
+	return out
+
+
+## One frame of a clip as a local transform per bone.
+##
+## **This is the retarget, and it is three lines of it**, because
+## `docs/ASSET_PIPELINE.md` section 3 did the work: every rig in this repository is already
+## named with Godot's `SkeletonProfileHumanoid` bone names, so a clip drives the bone it was
+## authored for by *matching its name*. A bone the clip says nothing about keeps its rest,
+## which is how a sparse rig plays a clip authored for a denser one — section 4's "sparse
+## rigs are fine; they simply cover a subset of the profile".
+##
+## The root's **horizontal** translation is replaced by its rest on every frame. The
+## Simulation owns where an Enemy is, so a forward-travelling walk cycle baked as authored
+## would slide a Crawler out of the instance transform the renderer put it in. The vertical
+## is kept, because that is the body's weight.
+func _pose(
+	clip: Animation,
+	at: float,
+	skeleton: Skeleton3D,
+	rest_local: Array[Transform3D],
+	bone_of_name: Dictionary
+) -> Array[Transform3D]:
+	var local: Array[Transform3D] = rest_local.duplicate()
+	if clip == null:
+		return local
+	for track: int in range(clip.get_track_count()):
+		var bone: int = int(bone_of_name.get(String(clip.track_get_path(track).get_concatenated_subnames()), -1))
+		if bone < 0:
+			continue
+		var was: Transform3D = local[bone]
+		match clip.track_get_type(track):
+			Animation.TYPE_POSITION_3D:
+				var moved: Vector3 = clip.position_track_interpolate(track, at)
+				if skeleton.get_bone_parent(bone) < 0:
+					moved = Vector3(rest_local[bone].origin.x, moved.y, rest_local[bone].origin.z)
+				local[bone] = Transform3D(was.basis, moved)
+			Animation.TYPE_ROTATION_3D:
+				var turned: Quaternion = clip.rotation_track_interpolate(track, at)
+				local[bone] = Transform3D(
+					Basis(turned).scaled(was.basis.get_scale()), was.origin
+				)
+			Animation.TYPE_SCALE_3D:
+				var sized: Vector3 = clip.scale_track_interpolate(track, at)
+				local[bone] = Transform3D(
+					Basis(was.basis.get_rotation_quaternion()).scaled(sized), was.origin
+				)
+	return local
+
+
+## Every clip in every library the recipe names, by name. Earlier libraries win, so a recipe
+## can put the movement file first and know which `T-Pose` it got.
+func _animations(recipe: Recipe) -> Dictionary:
+	var out: Dictionary = {}
+	for path: String in recipe.libraries:
+		if not ResourceLoader.exists(path):
+			continue
+		var scene: PackedScene = load(path) as PackedScene
+		if scene == null:
+			continue
+		var root: Node = scene.instantiate()
+		var player: AnimationPlayer = _first_player(root)
+		if player != null:
+			for name: String in player.get_animation_list():
+				if not out.has(name):
+					out[name] = player.get_animation(name)
+		root.free()
+	return out
+
+
+## The inverse bind matrix per bone, resolved by name because Godot's glTF importer leaves
+## the bind's bone index at -1 and names it instead. A bone no bind mentions gets the
+## inverse of its own rest, which is what an unskinned bone's bind would have been.
+func _binds(
+	skin: Skin, bone_of_name: Dictionary, bones: int
+) -> Array[Transform3D]:
+	var out: Array[Transform3D] = []
+	out.resize(bones)
+	for bone: int in range(bones):
+		out[bone] = Transform3D.IDENTITY
+	var filled: PackedByteArray = PackedByteArray()
+	filled.resize(bones)
+	for bind: int in range(skin.get_bind_count()):
+		var bone: int = skin.get_bind_bone(bind)
+		if bone < 0:
+			bone = int(bone_of_name.get(skin.get_bind_name(bind), -1))
+		if bone < 0 or bone >= bones:
+			continue
+		out[bone] = skin.get_bind_pose(bind)
+		filled[bone] = 1
+	return out
+
+
+## Where one vertex of the rest pose ends up, through the same weighted sum the shader does.
+## Used only to measure the body's height; the shader is what draws it.
+func _skinned(
+	at: Vector3,
+	vertex: int,
+	per: int,
+	indices: PackedInt32Array,
+	weights: PackedFloat32Array,
+	poses: Array[Transform3D],
+	binds: Array[Transform3D]
+) -> Vector3:
+	var out: Vector3 = Vector3.ZERO
+	var total: float = 0.0
+	for influence: int in range(per):
+		var slot: int = vertex * per + influence
+		if slot >= weights.size():
+			break
+		var weight: float = weights[slot]
+		if weight <= 0.0:
+			continue
+		var bone: int = indices[slot]
+		if bone < 0 or bone >= poses.size():
+			continue
+		out += (poses[bone] * binds[bone] * at) * weight
+		total += weight
+	if total <= 0.0:
+		return at
+	return out / total
+
+
+## The skinning matrices as a float texture: three texels a bone across, one row a frame
+## down, holding the three rows of each 3x4 affine.
+##
+## `FORMAT_RGBAF` and built in memory, so no importer is involved — the trap `content/`
+## and `assets_licensed/` both carry a `.gdignore` for. An eight-bit texture would have
+## quantised a two-metre character to eight millimetres, which is visible as a shimmer on a
+## held pose.
+func _texture(rows: Array[Transform3D], bones: int, frames: int) -> ImageTexture:
+	var image: Image = Image.create(bones * TEXELS_PER_BONE, frames, false, Image.FORMAT_RGBAF)
+	for frame: int in range(frames):
+		for bone: int in range(bones):
+			var matrix: Transform3D = rows[frame * bones + bone]
+			var basis: Basis = matrix.basis
+			var origin: Vector3 = matrix.origin
+			for row: int in range(3):
+				image.set_pixel(
+					bone * TEXELS_PER_BONE + row,
+					frame,
+					Color(
+						basis.x[row], basis.y[row], basis.z[row], origin[row]
+					)
+				)
+	return ImageTexture.create_from_image(image)
+
+
+## Every surface of every mesh under the skeleton, as one `ArrayMesh` with a surface per
+## source material — `world_view.gd`'s `_flatten` for a character, and for the same reason:
+## nine `MeshInstance3D`s are nine nodes and a shape a `MultiMesh` cannot take at all.
+func _flatten(
+	surfaces: Array, rest_global: Array[Transform3D], binds: Array[Transform3D]
+) -> ArrayMesh:
+	var by_material: Dictionary = {}
+	var order: Array = []
+	for entry: Array in surfaces:
+		var mesh: ArrayMesh = entry[0]
+		var surface: int = entry[1]
+		var material: Material = mesh.surface_get_material(surface)
+		var key: String = "" if material == null else material.resource_name
+		if not by_material.has(key):
+			by_material[key] = []
+			order.append(key)
+		by_material[key].append(entry)
+
+	var out: ArrayMesh = ArrayMesh.new()
+	for key: String in order:
+		var merged: Array = _merge(by_material[key])
+		if merged.is_empty():
+			continue
+		out.add_surface_from_arrays(
+			Mesh.PRIMITIVE_TRIANGLES,
+			merged,
+			[],
+			{},
+			(
+				Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM0_SHIFT
+				| Mesh.ARRAY_CUSTOM_RGBA_FLOAT << Mesh.ARRAY_FORMAT_CUSTOM1_SHIFT
+			)
+		)
+		var source: Material = (by_material[key][0][0] as ArrayMesh).surface_get_material(
+			by_material[key][0][1]
+		)
+		out.surface_set_name(out.get_surface_count() - 1, key)
+		out.surface_set_material(out.get_surface_count() - 1, source)
+	return out
+
+
+## Several surfaces sharing a material, concatenated into one set of surface arrays with the
+## bone indices and weights moved into `CUSTOM0` and `CUSTOM1`.
+##
+## **`ARRAY_BONES` is dropped**, deliberately and not as an oversight: a surface that still
+## declared bones would be a mesh Godot tries to skin through a `Skeleton3D` the `MultiMesh`
+## does not have. The shader is what skins this now, and the only way it can see an influence
+## is as an ordinary vertex attribute.
+func _merge(entries: Array) -> Array:
+	var points: PackedVector3Array = PackedVector3Array()
+	var normals: PackedVector3Array = PackedVector3Array()
+	var uvs: PackedVector2Array = PackedVector2Array()
+	var slots: PackedFloat32Array = PackedFloat32Array()
+	var loads: PackedFloat32Array = PackedFloat32Array()
+	var indices: PackedInt32Array = PackedInt32Array()
+
+	for entry: Array in entries:
+		var arrays: Array = (entry[0] as ArrayMesh).surface_get_arrays(entry[1])
+		var source: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		if source.is_empty():
+			continue
+		var base: int = points.size()
+		points.append_array(source)
+		var source_normals: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		for vertex: int in range(source.size()):
+			normals.append(
+				source_normals[vertex] if vertex < source_normals.size() else Vector3.UP
+			)
+		var source_uvs: PackedVector2Array = arrays[Mesh.ARRAY_TEX_UV]
+		for vertex: int in range(source.size()):
+			uvs.append(source_uvs[vertex] if vertex < source_uvs.size() else Vector2.ZERO)
+
+		var bones: PackedInt32Array = arrays[Mesh.ARRAY_BONES]
+		var weights: PackedFloat32Array = arrays[Mesh.ARRAY_WEIGHTS]
+		var per: int = INFLUENCES
+		if bones.size() / maxi(source.size(), 1) == 8:
+			per = 8
+		for vertex: int in range(source.size()):
+			_influences(vertex, per, bones, weights, slots, loads)
+
+		var source_indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		if source_indices.is_empty():
+			for vertex: int in range(source.size()):
+				indices.append(base + vertex)
+		else:
+			for slot: int in range(source_indices.size()):
+				indices.append(base + source_indices[slot])
+
+	if points.is_empty():
+		return []
+	var out: Array = []
+	out.resize(Mesh.ARRAY_MAX)
+	out[Mesh.ARRAY_VERTEX] = points
+	out[Mesh.ARRAY_NORMAL] = normals
+	out[Mesh.ARRAY_TEX_UV] = uvs
+	out[Mesh.ARRAY_CUSTOM0] = slots
+	out[Mesh.ARRAY_CUSTOM1] = loads
+	out[Mesh.ARRAY_INDEX] = indices
+	return out
+
+
+## One vertex's four strongest influences, renormalised so they sum to one.
+##
+## A surface with eight influences a vertex keeps the four heaviest, because `CUSTOM0` is
+## four floats and a fifth would need a third attribute for a case the committed art does
+## not contain. Renormalising is what stops that dropping shrink a vertex toward the origin,
+## which reads as a character collapsing into its own feet.
+func _influences(
+	vertex: int,
+	per: int,
+	bones: PackedInt32Array,
+	weights: PackedFloat32Array,
+	slots: PackedFloat32Array,
+	loads: PackedFloat32Array
+) -> void:
+	var picked: Array = []
+	for influence: int in range(per):
+		var slot: int = vertex * per + influence
+		if slot >= weights.size():
+			break
+		picked.append([weights[slot], bones[slot]])
+	picked.sort_custom(func(a: Array, b: Array) -> bool: return a[0] > b[0])
+	var total: float = 0.0
+	for influence: int in range(mini(INFLUENCES, picked.size())):
+		total += picked[influence][0]
+	for influence: int in range(INFLUENCES):
+		if influence < picked.size() and total > 0.0:
+			slots.append(float(picked[influence][1]))
+			loads.append(picked[influence][0] / total)
+		else:
+			slots.append(0.0)
+			loads.append(1.0 if influence == 0 and total <= 0.0 else 0.0)
+
+
+func _first_skeleton(node: Node) -> Skeleton3D:
+	if node is Skeleton3D:
+		return node
+	for child: Node in node.get_children():
+		var found: Skeleton3D = _first_skeleton(child)
+		if found != null:
+			return found
+	return null
+
+
+func _first_player(node: Node) -> AnimationPlayer:
+	if node is AnimationPlayer:
+		return node
+	for child: Node in node.get_children():
+		var found: AnimationPlayer = _first_player(child)
+		if found != null:
+			return found
+	return null

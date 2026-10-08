@@ -26,7 +26,27 @@ const MEASURED_FRAMES: int = 120
 ## Factory. The opening eighty plate buys a Miner, a Smelter and a Boiler, which
 ## is a worked example rather than a load — and what this measures is the load.
 ## Every other number is the real file's.
-func _funded() -> Definitions:
+## How many Enemies of each swarm kind to put on the Map, taken off the command line:
+##
+##   ENEMY_COUNT=200 bash tools/visual/frame_cost.sh
+##
+## The shipped Wave table puts six Crawlers on the Map at Heat 1, which is the honest
+## *typical* load and is not the one a scale claim is made about. ADR 0001's whole Enemy
+## target is thousands of array entries, so the number that settles whether the renderer can
+## carry it has to be asked for rather than waited for.
+func _wave_table(count: int) -> String:
+	if count <= 0:
+		return _read("res://content/waves.csv")
+	@warning_ignore("integer_division")
+	var each: int = maxi(count / 3, 1)
+	return (
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "chaff_crawlers,crawler,0,%d,0,%d\n" % [each * 2, each * 2]
+		+ "shock_breakers,breaker,0,%d,0,%d\n" % [each, each]
+	)
+
+
+func _funded(count: int = 0) -> Definitions:
 	var tuning: FileAccess = FileAccess.open("res://content/tuning.toml", FileAccess.READ)
 	var text: String = tuning.get_as_text()
 	tuning.close()
@@ -38,7 +58,7 @@ func _funded() -> Definitions:
 		_read("res://content/machines.csv"),
 		_read("res://content/recipes.csv"),
 		stocked,
-		_read("res://content/waves.csv"),
+		_wave_table(count),
 		_read("res://content/deliveries.csv"),
 		_read("res://content/gear.csv"),
 		_read("res://content/stratagems.csv"),
@@ -55,7 +75,8 @@ func _read(path: String) -> String:
 
 
 func _initialize() -> void:
-	var funded: Definitions = _funded()
+	var asked: int = int(OS.get_environment("ENEMY_COUNT"))
+	var funded: Definitions = _funded(asked)
 	if funded.has_errors():
 		push_error(funded.describe_errors())
 	var sim: Simulation = Simulation.new(1, 1, funded)
@@ -63,7 +84,7 @@ func _initialize() -> void:
 	root.add_child(view)
 
 	_build_a_full_factory(sim)
-	_bring_a_wave(sim)
+	_bring_a_wave(sim, asked)
 
 	print("Factory: %d Machines, %d Belts, %d Walls" % [
 		sim.query_machine_count(), sim.query_belt_count(), sim.query_wall_count()
@@ -163,9 +184,14 @@ func _build_a_full_factory(sim: Simulation) -> void:
 
 ## Call the Wave in and let it arrive, so the swarm is on the Map while the cost
 ## is taken. A Wave is the busiest the renderer ever gets.
-func _bring_a_wave(sim: Simulation) -> void:
+func _bring_a_wave(sim: Simulation, wanted: int = 0) -> void:
 	sim.step([InputAction.call_wave_early(0)])
-	for tick: int in range(3000):
+	for tick: int in range(6000):
 		sim.step([])
-		if sim.query_enemy_count() > 0 and tick > 900:
+		if wanted > 0:
+			# A Wave trickles out of its Breaches rather than arriving at once, so asking
+			# for two hundred means waiting for two hundred rather than for the Telegraph.
+			if sim.query_enemy_count() >= wanted:
+				break
+		elif sim.query_enemy_count() > 0 and tick > 900:
 			break
