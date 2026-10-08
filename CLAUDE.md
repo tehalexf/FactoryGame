@@ -164,6 +164,20 @@ Three things it is careful about:
   absent**, exactly as the viewmodels are, and a clone without them walks the same
   layout drawing self-authored stand-ins out of the committed Machine materials.
   See [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 8.
+- **And they are graded into the palette rather than tinted toward it.** The
+  packs are clean modern high-visibility industrial — safety yellow, process
+  teal, white — and the first pass multiplied each pack's `baseColorFactor` by a
+  colour pulled toward `dieselpunk_palette.json`. That changed nothing where it
+  mattered: the whole heyheythere set is drawn through one shared
+  `material_override` built over the atlas, so the factor it tinted is read by
+  nobody, and the foreground pipe runs stayed the brightest and newest-looking
+  things in a world of grimy cast iron. `tools/assets/prop_grade.py` remaps the
+  **atlas** onto the palette's own ramps at conversion time instead, forces the
+  glow map to tungsten, and deepens the pack's baked occlusion into grime; the
+  shared material went metallic, because a Lambertian crate beside a metal
+  Machine renders twice as bright from the same albedo whatever the texture says.
+  Hazard colour is not gone, it is **placed**: two prop ids wear the palette's own
+  `HazardYellow` and nothing else in the yard does.
 
 **The light** kept #25's shape — ambient and reflections off the sky, filmic
 tonemap, SSAO, depth fog — and changed four things. The sun dropped from 41 to 23
