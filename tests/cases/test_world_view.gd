@@ -1104,9 +1104,48 @@ func test_a_turret_wears_an_ammunition_gauge_and_nothing_else_does() -> void:
 	var where: Vector3 = view.turret_gauge_position(0)
 	assert_true(is_equal_approx(where.x, 22.0), "expected x 22.0, got %f" % where.x)
 	assert_true(is_equal_approx(where.z, 10.0), "expected z 10.0, got %f" % where.z)
+	# Machine 1 is the Turret; machine 0 is the Miner, and asserting against the wrong
+	# Machine's height is how a gauge hanging in the wrong place went unnoticed.
 	assert_true(
-		where.y > Fixed.to_float(sim.query_machine_height_metres(0)),
+		where.y > Fixed.to_float(sim.query_machine_height_metres(1)),
 		"and above its roof, not inside it"
+	)
+	view.free()
+
+
+func test_a_gauge_hangs_off_its_own_machines_roof_rather_than_a_fixed_height() -> void:
+	# #41: a bright red rectangle floating in mid-air over the Factory with nothing under
+	# it, which turned out to be a dry MG Turret's gauge hung from a constant set "taller
+	# than any housing in the content". The Turret is 2.0 m, the constant put the bar at
+	# 4.1 m, and a mark 2.1 m clear of its own roof has visibly stopped belonging to
+	# anything. The height of a Machine has one authority — `query_machine_height_metres` —
+	# and this is the renderer asking it rather than keeping a second copy.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("mg_turret_mk1"), Vector3i(10, 0, 4)
+		),
+	])
+	view.sync(sim)
+
+	var roof: float = Fixed.to_float(sim.query_machine_height_metres(0))
+	var clearance: float = view.turret_gauge_position(0).y - roof
+	assert_true(
+		is_equal_approx(clearance, WorldView.AMMUNITION_GAUGE_LIFT_METRES),
+		"the bar sits one lift above the Turret's own 2.0 m roof, got %f above %f"
+			% [clearance, roof]
+	)
+	assert_true(
+		clearance > WorldView.AMMUNITION_GAUGE_HEIGHT_METRES * 0.5,
+		"clear of the roof rather than sunk into it"
+	)
+	# The other mark a Machine can wear hangs from the same roof. The bar has to stay under
+	# it, or an amber starved tag draws straight through the middle of a red gauge.
+	assert_true(
+		clearance + WorldView.AMMUNITION_GAUGE_HEIGHT_METRES * 0.5
+			< WorldView.STARVED_MARK_LIFT_METRES,
+		"and below the starved tag, so the two marks stack instead of intersecting"
 	)
 	view.free()
 
