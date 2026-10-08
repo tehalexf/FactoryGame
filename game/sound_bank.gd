@@ -161,11 +161,21 @@ const CATALOGUE: Dictionary = {
 	CALL_WAVE_LEVER: ["call_wave_lever", ["impactMetal_heavy_000", "impactMetal_heavy_002"], -2.0],
 
 	# ── Waves ────────────────────────────────────────────────────────────────
-	# A warning you cannot hear is not a warning, so the klaxon is the loudest
-	# non-diegetic cue in the game.
-	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["forceField_003"], -5.0],
+	# **The Telegraph cue is the quietest thing in this table, deliberately** (#42).
+	# It used to be the loudest, on the argument that a warning you cannot hear is
+	# not a warning. That argument is wrong here and the player said so twice: the
+	# Telegraph is already a countdown, a gauge and a named Wave composition on the
+	# HUD, so the sound is not carrying the warning on its own and does not have to
+	# win against the Factory to do its job. At -22 it sits *under* both ambience
+	# beds — a knock from across the yard rather than a siren over your head — and
+	# what makes it noticeable is that it is a transient against a continuous bed,
+	# which needs no level at all. See `tools/assets/convert_audio.sh` for the cue.
+	TELEGRAPH_KLAXON: ["telegraph_klaxon", ["forceField_003"], -22.0],
 	WAVE_BEGIN: ["wave_begin", ["lowFrequency_explosion_001"], -3.0],
-	BREACH_OPENS: ["breach_opens", ["impactGlass_heavy_000", "impactGlass_heavy_003"], -4.0],
+	# Down three from -4 and rolled off above 2.4 kHz in the cut (#42): still a loud
+	# one-shot, because a Breach opening is an event and being startled by one is the
+	# right answer — but no longer the brightest thing in a game of low industry.
+	BREACH_OPENS: ["breach_opens", ["impactGlass_heavy_000", "impactGlass_heavy_003"], -7.0],
 
 	# ── Weapons ──────────────────────────────────────────────────────────────
 	# Three layers on one shot. The body carries the pressure, the crack carries the

@@ -480,6 +480,52 @@ Three rules, each with a test:
   is data, and the asset suite fails if `convert_audio.sh` cuts a cue the game
   never plays.
 
+### The Telegraph is a cue, not a siren
+
+Three attempts, and the third one is a different category rather than a better pick
+inside the same one. The first was a trailer alarm in quarter notes — a designed
+cinematic sting, which this file's own standard rules out. The second was measured and
+argued for at length: a motorcycle horn an octave down, low-passed to 700 Hz so the
+fundamental led, cut as a one-shot so the attack survived. The player heard it and said
+**"the klaxon is AWFUL, just make it very subtle"**.
+
+Two goes at "the right alarm" is enough evidence that the category is wrong. **A siren's
+job is to demand attention continuously, and nothing here needs that.** The Telegraph is
+already a countdown, a gauge and the Wave's named composition on the HUD — "nothing
+arrives unannounced" is satisfied before the audio says a word — so the sound's job is to
+make a player *look up*, not to warn them. It can be a knock.
+
+So it is a **geofon hit**: a struck steel plate, which is what a works alarm was before
+electricity, and which is a short dull thud with a long tail of nothing. Cut five seconds
+long and left mostly empty, high-passed at 90 Hz and low-passed at 600, and still in
+`LOOPING_CUES` so it rearticulates about every five seconds and stops on the tick the
+Telegraph does. The gaps are the point: a sound that stops is one a player can think over.
+
+Measured, with each cue's catalogue gain applied, because "subtle" has to be a number:
+
+| cue | gain | integrated | centroid | peak |
+|---|---|---|---|---|
+| Telegraph, before | −9 dB | −19.0 LUFS | 953 Hz | −10.1 dBFS |
+| **Telegraph, now** | **−22 dB** | **−43.3 LUFS** | **148 Hz** | **−23.2 dBFS** |
+| `factory_bed` | −16 dB | −36.4 LUFS | 565 Hz | −23.8 dBFS |
+| `factory_busy` | −14 dB | −36.9 LUFS | 1920 Hz | −17.3 dBFS |
+| `turret_fire` | −12 dB | −26.0 LUFS | 332 Hz | −12.9 dBFS |
+| `wave_begin` | −3 dB | −17.8 LUFS | 335 Hz | −3.9 dBFS |
+
+It is **genuinely quiet**, said plainly: its peak is level with the quiet ambience bed's
+and six decibels under the busy one, and it is the lowest-centred sound in the game by a
+factor of two. What makes it noticeable at that level is that it is a transient against a
+continuous bed, which costs no loudness at all.
+`test_the_telegraph_cue_is_the_quietest_thing_in_the_catalogue` holds it there.
+
+**There is no separate Breach klaxon** — the Telegraph's is the only sustained warning in
+the game. The nearest thing is `breach_opens`, and it had the same defect from the same
+instinct: a 4610 Hz centroid, which is a bright splattery crack in the ear's most
+sensitive band, in a game whose palette is low industry. Rolled off above 2.4 kHz and down
+three decibels, to a 1996 Hz centroid. It stays a **loud one-shot**, and that is the
+difference: a Breach opening happens once and being startled by it is the right response.
+What was wrong there was the band, not the level.
+
 The recordings are long source material rather than game SFX, so
 `tools/assets/convert_audio.sh` is the recipe — which recording becomes which cue
 and why — over `tools/assets/wav_to_cue.py`, which measures the in-point rather

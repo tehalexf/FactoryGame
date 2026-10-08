@@ -211,17 +211,59 @@ cue call_wave_lever "OBJFurn_Barber Chair, Foot Pump" \
   --duration 1.3 --semitones -9 --search 0:8
 
 # ── Waves ─────────────────────────────────────────────────────────────────────
-# The Telegraph. A warning you cannot hear is not a warning, so this is a loop
-# that runs for exactly as long as the Telegraph does and stops with it.
-cue telegraph_klaxon "EffectiveTrailer_Alarms_Vol2_QuarterNotes" \
-  --mode loop --start 2.0 --duration 4.0 --seam 0.4 --channels 2
+# The Telegraph, and **the third attempt at it, which is not an alarm** (#42).
+#
+# The player's verdict on the second was *"the klaxon is AWFUL, just make it very
+# subtle"*. The first was a trailer alarm in quarter notes — a designed cinematic
+# sting, which is the thing this file's own standard rules out. The second was a
+# motorcycle horn an octave down and low-passed to 700 Hz, measured and argued for
+# at length, and the player hated that too. Three goes at "the right alarm" is
+# enough evidence that **the category is wrong**, not the pick inside it.
+#
+# What a siren does is demand attention, continuously, for as long as it runs, and
+# nothing in this game needs that: the Telegraph is already on the HUD with a
+# countdown, a gauge and the Wave's composition on it (CLAUDE.md, "nothing arrives
+# unannounced"). The audio does not have to carry the warning on its own. It has to
+# make a player *look up*.
+#
+# So it is a **struck plate heard from across the yard**: a geofon hit, which is a
+# low metal thud with a short ring and a long tail of nothing. That is what a works
+# alarm was before electricity — somebody hitting a length of rail with a hammer —
+# so it belongs in a 1930s foundry in a way a vehicle horn never did, and it is
+# low, dull and over almost immediately, which are the three things a siren is not.
+#
+# Cut long and left mostly empty on purpose. The hit is under a second and the file
+# runs five, so `LOOPING_CUES` rearticulates it about every five seconds: a slow,
+# quiet knock that keeps going until the Wave arrives, rather than a tone held
+# across the whole Telegraph. The gap is the point — a sound that stops is a sound a
+# player can think over.
+#
+# Filtered hard and low. 320 Hz low-pass takes off the metallic ring that makes a
+# struck plate read as *near*, and a 45 Hz high-pass takes off the subsonic thump
+# that would otherwise eat headroom nobody can hear. What is left is the body of the
+# hit: dull, distant and below everything the Factory is doing. The level is in
+# `game/sound_bank.gd` and is the other half of this; see the note there.
+cue telegraph_klaxon "DSGNImpt_Metal Hit Thud Thump Low Ring Geofon 1" \
+  --duration 5.0 --start 0.0 --lowpass 600 --highpass 90 --channels 2
 
 cue wave_begin "Cinematic Horn Braam, Epic, Cinematic, Dark, Instrument, Huge-32" \
   --duration 3.0 --search 0:5
 
 # A Breach opening. Heavy designed smash, down a fourth: the ground giving way.
+#
+# **Rolled off above 2.4 kHz** (#42). There is no separate Breach klaxon — the only
+# sustained warning in the game is the Telegraph's, above — but this is the nearest
+# thing to one and it had the same defect for the same reason: the cut measured a
+# 4610 Hz centroid, which is a bright splattery crack sitting squarely in the ear's
+# most sensitive band, in a game whose whole palette is low industrial. The source
+# is a gore splatter and it was audibly a gore splatter at the top end.
+#
+# It stays a **loud one-shot**, and that is the difference from the klaxon: a Breach
+# opening is an event, it happens once, and being startled by it is the correct
+# response. What was wrong was the band, not the level — so the level moved three
+# decibels and the top moved an octave.
 cue breach_opens "GORESplt_Gore Designed Transient Heavy Impact Smash" \
-  --duration 2.0 --semitones -5 --search 0:4
+  --duration 2.0 --semitones -5 --lowpass 2400 --search 0:4
 
 # ── Weapons: layered fire, reload, impact ─────────────────────────────────────
 # Fire is **three cues played together**, because one file never sounds like a gun:
