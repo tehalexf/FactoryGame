@@ -168,6 +168,14 @@ const HIT_HIVE: int = 2
 ## that has not happened, so the hologram can show the reason before the click rather
 ## than after it, and `_apply_build_machine` consults the same function so the two can
 ## never disagree.
+## The Machine tool: a click places what the Build Gun is holding. What a Run opens on.
+const BUILD_TOOL_MACHINE: int = 0
+
+## The Belt tool: a press, a drag and a release lay a Belt route. A Belt is not a Machine
+## and cannot sit on the Machine list, so it is a tool rather than one more position.
+const BUILD_TOOL_BELT: int = 1
+
+
 enum Refusal {
 	## Nothing in the way. The placement would succeed.
 	NONE = 0,
@@ -442,6 +450,15 @@ var _player_step_phase: PackedInt64Array = PackedInt64Array()
 ## over two numbers that are hashed anyway.
 var _player_build_mode: PackedInt64Array = PackedInt64Array()
 var _player_mode_since_tick: PackedInt64Array = PackedInt64Array()
+
+## Which tool is on each player's Build Gun: `BUILD_TOOL_MACHINE` or `BUILD_TOOL_BELT`.
+##
+## State here for the three reasons `_player_build_mode` is, and **consulted by nothing**
+## for the same reason: a tool decides what the mouse means, never what a player may do.
+## Grep this name and the only callers are its two queries, `_apply_set_build_tool` and
+## `_apply_select_machine` — which puts the Machine tool back, because scrolling to a
+## Smelter is a player saying they want to place one.
+var _player_build_tool: PackedInt64Array = PackedInt64Array()
 
 ## The throttle each player asked for this tick, in their own frame: forward and
 ## strafe, each in [-ONE, ONE].
@@ -1416,6 +1433,9 @@ func _init(
 	# Never swapped, which is different from swapped on tick 0: a Run must not open with a
 	# holster animation playing for something nobody put away.
 	_player_mode_since_tick.fill(-1)
+	_player_build_tool.resize(players)
+	# The Machine tool, because the first thing a Run asks of a player is a Miner on a Node.
+	_player_build_tool.fill(BUILD_TOOL_MACHINE)
 	_player_intent_forward.resize(players)
 	_player_intent_strafe.resize(players)
 	_player_intent_forward.fill(0)
@@ -1599,6 +1619,8 @@ func _apply(action: InputAction) -> void:
 			_apply_jump(action)
 		InputAction.Kind.SET_BUILD_MODE:
 			_apply_set_build_mode(action)
+		InputAction.Kind.SET_BUILD_TOOL:
+			_apply_set_build_tool(action)
 		InputAction.Kind.SELECT_MACHINE:
 			_apply_select_machine(action)
 		InputAction.Kind.ROTATE_BUILD:
@@ -1702,6 +1724,24 @@ func _apply_set_build_mode(action: InputAction) -> void:
 		return
 	_player_build_mode[action.player_id] = wanted
 	_player_mode_since_tick[action.player_id] = _tick
+
+
+## Puts a tool on a player's Build Gun.
+##
+## Asking for the tool already in hand is a no-op whose hash does not move, so leaning on
+## the key is not an act. An unknown tool leaves the Build Gun holding what it held, for
+## the reason a `SELECT_MACHINE` naming no Machine does: a selection that silently became
+## "nothing" would leave a player clicking at nothing.
+##
+## `_player_can_act` is deliberately not consulted, exactly as `_apply_set_build_mode`
+## does not: what is in a player's hands changes nothing about the world.
+func _apply_set_build_tool(action: InputAction) -> void:
+	if not _is_player(action.player_id):
+		return
+	var wanted: int = action.build_tool_wanted()
+	if wanted != BUILD_TOOL_MACHINE and wanted != BUILD_TOOL_BELT:
+		return
+	_player_build_tool[action.player_id] = wanted
 
 
 ## Records whether a player is holding Survey View. Moving the camera is `_survey`'s
@@ -3245,6 +3285,10 @@ func _apply_select_machine(action: InputAction) -> void:
 	if definition == null:
 		return
 	_player_selected_machine[action.player_id] = definition.id
+	# Choosing a Machine is a player saying they want to place one, so it puts the Machine
+	# tool back in their hands. The alternative is a Belt mode they have to remember to
+	# leave, which is a mode in the sense this project does not have.
+	_player_build_tool[action.player_id] = BUILD_TOOL_MACHINE
 
 
 ## Turns a player's Build Gun by a signed number of quarter turns.
@@ -5249,30 +5293,52 @@ func _opening_stratagem() -> String:
 ## The run is stored as an anchor, a direction and a length rather than as a list of
 ## tiles, because that is three integers instead of a growing array and the tiles are
 ## recoverable from it exactly.
+## Lays the route a released drag asked for, or nothing at all.
+##
+## **The route is what crosses, and it lands whole or not at all.** A route half-laid up
+## to the first obstruction would be a player having to demolish what they did not ask
+## for, so the refusal is consulted over every tile of the route before the first Belt
+## appears. `_belt_route_refusal` is the same function `query_belt_route_refusal` reports
+## to the preview, which is what makes the red tiles a player saw and the Belts they got
+## one rule rather than two.
 func _apply_build_belt(action: InputAction) -> void:
 	var from_tile: Vector3i = action.belt_from_tile()
 	var to_tile: Vector3i = action.belt_to_tile()
+	var corner_axis: int = action.belt_corner_axis()
 
-	var direction: int = WorldGrid.direction_from_to(from_tile, to_tile)
-	if direction == -1:
+	if _belt_route_refusal(action.player_id, from_tile, to_tile, corner_axis) != Refusal.NONE:
 		return
 
-	var tiles: int = WorldGrid.tiles_between(from_tile, to_tile)
-	var step: Vector3i = WorldGrid.direction_step(direction)
-	for offset: int in range(tiles):
-		var tile: Vector3i = from_tile + step * offset
-		if not WorldGrid.is_buildable(tile):
-			return
-		if query_belt_at_tile(tile) != -1 or query_machine_at_tile(tile) != -1:
-			return
-		if query_wall_at_tile(tile) != -1:
-			return
-		if _nest_covers(tile):
-			return
+	for run: BeltRoute.Run in _belt_route_runs(action.player_id, from_tile, to_tile, corner_axis):
+		_lay_belt(run.from, run.direction, run.length_tiles())
 
-	_belt_tile_x.append(from_tile.x)
-	_belt_tile_y.append(from_tile.y)
-	_belt_tile_z.append(from_tile.z)
+
+## The runs a route breaks into, including the one-tile case a drag that never moved means.
+##
+## A one-tile Belt still has to be aimed and two identical tiles do not say which way, so
+## the aim is the player's own facing — authoritative fixed-point state the Simulation
+## already holds, read the same way by the apply and by the projection the preview asks, so
+## the preview cannot point one way and the Belt another.
+func _belt_route_runs(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> Array:
+	if from_tile == to_tile and _is_player(player_id):
+		return [
+			BeltRoute.Run.new(
+				from_tile,
+				from_tile,
+				WorldGrid.direction_from_turns(query_player_yaw_turns(player_id))
+			)
+		]
+	return BeltRoute.segments(from_tile, to_tile, corner_axis)
+
+
+## Stands one straight run of Belt up. The one place a Belt joins the Factory, so a route
+## of two runs cannot fall out of step with a route of one.
+func _lay_belt(entry: Vector3i, direction: int, tiles: int) -> void:
+	_belt_tile_x.append(entry.x)
+	_belt_tile_y.append(entry.y)
+	_belt_tile_z.append(entry.z)
 	_belt_direction.append(direction)
 	_belt_tiles.append(tiles)
 	_belt_item_ids.append(PackedStringArray())
@@ -5281,6 +5347,55 @@ func _apply_build_belt(action: InputAction) -> void:
 	# A new deck a player can stand on, and the one structure that changes the height field
 	# without changing either of the Enemies' fields.
 	_solid_height_stale = true
+
+
+## Why a dragged route would be refused, or `Refusal.NONE`.
+##
+## The single authority on whether a route may be laid, in the shape `_build_refusal`
+## already has: the apply obeys it and `query_belt_route_refusal` reports it, so what the
+## preview shows and what the drag does cannot disagree.
+##
+## The **first** obstruction in route order, so a player dragging a long line reads about
+## the tile nearest the end they started from rather than about whichever one the loop
+## happened to reach last.
+func _belt_route_refusal(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> int:
+	# A player who is Downed or dead is not building. **Still not a build mode** — nothing
+	# here asks whether building is currently permitted, it asks whether *this* player is
+	# on their feet, which is a fact about them in the same way their wallet is.
+	var blocked: int = _act_refusal(player_id)
+	if blocked != Refusal.NONE:
+		return blocked
+
+	var runs: Array = _belt_route_runs(player_id, from_tile, to_tile, corner_axis)
+	if runs.is_empty():
+		# No route at all: two tiles on different layers. There are no diagonal Belts and
+		# no Belt between storeys (DESIGN.md), so this is the same answer an unreachable
+		# tile gets.
+		return Refusal.OFF_THE_MAP
+
+	for run: BeltRoute.Run in runs:
+		var step: Vector3i = WorldGrid.direction_step(run.direction)
+		for offset: int in range(run.length_tiles()):
+			var refusal: int = _belt_tile_refusal(run.from + step * offset)
+			if refusal != Refusal.NONE:
+				return refusal
+	return Refusal.NONE
+
+
+## Why one tile of a route would be refused, or `Refusal.NONE`. What the preview tints a
+## tile by, and what the whole-route refusal is the first non-`NONE` of.
+func _belt_tile_refusal(tile: Vector3i) -> int:
+	if not WorldGrid.is_buildable(tile):
+		return Refusal.OFF_THE_MAP
+	if query_belt_at_tile(tile) != -1 or query_machine_at_tile(tile) != -1:
+		return Refusal.OCCUPIED
+	if query_wall_at_tile(tile) != -1:
+		return Refusal.OCCUPIED
+	if _nest_covers(tile):
+		return Refusal.OCCUPIED
+	return Refusal.NONE
 
 
 ## Swaps in a new definition set, or refuses to.
@@ -7334,6 +7449,9 @@ func hash() -> int:
 	# anything consults it for permission. See `_player_build_mode`.
 	hasher.feed_ints(_player_build_mode)
 	hasher.feed_ints(_player_mode_since_tick)
+	# Which tool is out, for the reason the mode is: a replay has to reproduce the swap, or
+	# every drag after it means something different.
+	hasher.feed_ints(_player_build_tool)
 	hasher.feed_ints(_player_survey_held)
 	hasher.feed_ints(_player_sprint_held)
 	hasher.feed_ints(_player_survey_ticks)
@@ -7821,6 +7939,22 @@ func query_player_is_in_build_mode(player_id: int) -> bool:
 	if not _is_player(player_id):
 		return false
 	return _player_build_mode[player_id] != 0
+
+
+## Which tool is on a player's Build Gun: `BUILD_TOOL_MACHINE` or `BUILD_TOOL_BELT`.
+##
+## **Read by `game/player_controller.gd` to decide what the primary button means, and by
+## nothing in the Simulation.** The Machine tool for a player this Run does not have, so a
+## caller that asks about nobody is told about the ordinary case rather than crashing.
+func query_player_build_tool(player_id: int) -> int:
+	if not _is_player(player_id):
+		return BUILD_TOOL_MACHINE
+	return _player_build_tool[player_id]
+
+
+## Whether a player has the Belt tool out — the one the preview and the HUD actually ask.
+func query_player_is_laying_belt(player_id: int) -> bool:
+	return query_player_build_tool(player_id) == BUILD_TOOL_BELT
 
 
 ## How far the thing in a player's hands is out of frame, in [0, Fixed.ONE] — 0 at rest, 1
@@ -9672,6 +9806,26 @@ func query_belt_length_tiles(index: int) -> int:
 	if not _is_belt(index):
 		return 0
 	return _belt_tiles[index]
+
+
+## Why the route a player is dragging would be refused, or `Refusal.NONE`.
+##
+## A projection of state that has not changed, in the shape `query_build_refusal` already
+## has: asking costs nothing and changes nothing, which is what lets the preview ask every
+## frame about a route nobody has committed to and put the reason on screen **before** the
+## drag is released. `_apply_build_belt` consults the same function, so the route a player
+## was told was clear is the route that lands.
+func query_belt_route_refusal(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> int:
+	return _belt_route_refusal(player_id, from_tile, to_tile, corner_axis)
+
+
+## Why one tile of a route would be refused, or `Refusal.NONE`. What the preview tints each
+## tile by, so the obstruction is marked where it is rather than described in a line of text
+## somewhere else.
+func query_belt_tile_refusal(tile: Vector3i) -> int:
+	return _belt_tile_refusal(tile)
 
 
 ## Which way a Belt carries, as a `WorldGrid` direction. -1 for an unknown Belt.

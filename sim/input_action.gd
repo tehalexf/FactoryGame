@@ -51,12 +51,25 @@ enum Kind {
 	## afterwards so a hot-reload that renumbers the table cannot renumber a Factory
 	## that is already standing.
 	BUILD_MACHINE = 3,
-	## Lay a Belt along a straight run of tiles. args = [from x, y, z, to x, y, z].
+	## Lay a Belt route. args = [from x, y, z, to x, y, z, corner axis].
 	##
-	## Both ends travel because a Belt is a run rather than a tile: a player drags one
-	## out, and sending the whole run as one intent means a dragged Belt either lands
-	## or is refused, never half-lands. A run that is not axis-aligned on one layer is
-	## refused — there are no diagonal Belts on a 2 m grid (DESIGN.md).
+	## Both ends travel because a Belt is a run rather than a tile: a player presses,
+	## drags and releases, and sending the whole route as one intent means a dragged
+	## route either lands or is refused, never half-lands. **The route is what crosses**
+	## — not the drag that produced it, and not the tiles the mouse happened to pass
+	## over.
+	##
+	## The seventh argument is the corner: `BeltRoute.ALONG_X` travels along x before
+	## turning, `BeltRoute.ALONG_Z` along z. A route is an L, so it becomes one Belt or
+	## two, and a route that is already straight means the same thing under either
+	## reading. The argument was **added** rather than replacing the action, so every
+	## recorded script written when a Belt was a straight run still means what it meant:
+	## an absent seventh argument reads as 0, which is `ALONG_X`.
+	##
+	## Two identical tiles are a drag that never moved, which is one tile of Belt aimed
+	## along the player's own facing — authoritative Simulation state, so nothing crosses
+	## here that was not already a fact about the Run. The argument `PAINT` makes for
+	## carrying no aim at all.
 	##
 	## No Belt definition index travels. Unlike a Machine, a Belt has no row in
 	## `content/machines.csv`: it is not a Machine (GLOSSARY.md keeps the two apart),
@@ -337,6 +350,23 @@ enum Kind {
 	## Switching is instant, unlimited, and works mid-Wave; `player.holster_seconds` delays
 	## only the animation.
 	SET_BUILD_MODE = 24,
+	## Puts the Machine tool or the Belt tool on a player's Build Gun. args = [tool].
+	##
+	## A Belt is not a Machine and has no row in `content/machines.csv`, so it cannot be
+	## one more position on the Machine list — but a player laying one still has to be able
+	## to say so and have the mouse mean it. That is what a *tool* is: with the Machine tool
+	## out a click places what the Build Gun is holding, and with the Belt tool out a press,
+	## a drag and a release lay a route.
+	##
+	## **The resulting tool travels rather than a flip**, for the three reasons
+	## `SET_BUILD_MODE` carries a mode: a recorded script describes what the player ended up
+	## holding without being replayed to find out, two intents in one tick cannot cancel
+	## out, and asking for the tool already in hand is a no-op whose hash does not move.
+	##
+	## **It is not a gate.** Nothing in the Simulation consults it — no refusal, no build
+	## path. A `BUILD_BELT` sent with the Machine tool out lays Belt and a `BUILD_MACHINE`
+	## sent with the Belt tool out places a Machine, exactly as build mode forbids nothing.
+	SET_BUILD_TOOL = 25,
 }
 
 ## Most pixels of mouse travel one `LOOK` action may carry on either axis. Far more
@@ -399,6 +429,13 @@ static func survey_view(acting_player: int, held: bool) -> InputAction:
 	return InputAction.new(
 		Kind.SURVEY_VIEW, acting_player, PackedInt64Array([1 if held else 0])
 	)
+
+
+## Puts a tool on a player's Build Gun: `Simulation.BUILD_TOOL_MACHINE` or
+## `Simulation.BUILD_TOOL_BELT`. The resulting tool travels rather than a flip, for the
+## reason the resulting mode does.
+static func set_build_tool(acting_player: int, tool_kind: int) -> InputAction:
+	return InputAction.new(Kind.SET_BUILD_TOOL, acting_player, PackedInt64Array([tool_kind]))
 
 
 ## Replaces the Simulation's content definitions with `definitions`.
@@ -507,12 +544,30 @@ static func rotate_build(acting_player: int, quarter_turns: int) -> InputAction:
 ## Lays a Belt along the straight run from one tile to another, both ends included.
 ## The Items travel from `from_tile` towards `to_tile`, so the aim is also the
 ## direction of flow.
+##
+## Kept for the runs that really are straight — a fixture, a test, a recorded script
+## older than the drag. It is `build_belt_route` with the corner left at its default,
+## which a straight route ignores.
 static func build_belt(acting_player: int, from_tile: Vector3i, to_tile: Vector3i) -> InputAction:
+	return build_belt_route(acting_player, from_tile, to_tile, BeltRoute.ALONG_X)
+
+
+## Lays a Belt route: a run along one axis, a corner, a run along the other.
+##
+## What a released drag sends. `corner_axis` is `BeltRoute.ALONG_X` or
+## `BeltRoute.ALONG_Z` and decides which leg comes first — the one thing about the
+## shape a player chooses, and therefore the one thing that has to travel so a replay
+## lays the route they saw rather than the route the arithmetic would have picked.
+static func build_belt_route(
+	acting_player: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> InputAction:
 	return InputAction.new(
 		Kind.BUILD_BELT,
 		acting_player,
 		PackedInt64Array([
-			from_tile.x, from_tile.y, from_tile.z, to_tile.x, to_tile.y, to_tile.z
+			from_tile.x, from_tile.y, from_tile.z,
+			to_tile.x, to_tile.y, to_tile.z,
+			corner_axis,
 		])
 	)
 
@@ -525,6 +580,13 @@ func belt_from_tile() -> Vector3i:
 ## The tile a `BUILD_BELT` action ends its run at — the end Items leave from.
 func belt_to_tile() -> Vector3i:
 	return Vector3i(_arg(3), _arg(4), _arg(5))
+
+
+## Which way a `BUILD_BELT` action's route bends. 0 — `BeltRoute.ALONG_X` — for an
+## action recorded before routes had a corner, which is the same thing a straight run
+## means under either reading.
+func belt_corner_axis() -> int:
+	return _arg(6)
 
 
 ## The Machine definition index a `BUILD_MACHINE` action names.
@@ -718,6 +780,11 @@ func jump_is_held() -> bool:
 ## Whether a `SET_BUILD_MODE` action asks for the Build Gun or for the weapon.
 func build_mode_is_wanted() -> bool:
 	return args.size() > 0 and args[0] != 0
+
+
+## Which tool a `SET_BUILD_TOOL` action asks for.
+func build_tool_wanted() -> int:
+	return _arg(0)
 
 
 ## Pixels of rightward mouse travel a `LOOK` action carries, fixed-point.

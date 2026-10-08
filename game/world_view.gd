@@ -328,11 +328,53 @@ var _hud: Label = null
 var _hud_layer: CanvasLayer = null
 var _camera: Camera3D = null
 
+## The previewed Belt route: one flat slab a tile, in two buffers — the tiles that would be
+## laid and the tiles that would be refused.
+##
+## **Two MultiMeshes rather than one with per-instance colour**, because the question a
+## player is asking of it is binary and because two counts are two things a test can read.
+## The arrows are a third, one a tile, pointing the way Items would travel, because a route
+## with no direction on it is a route a player has to work out from which end they started
+## dragging.
+##
+## Nothing here is remembered state. The route is recomputed every frame from the drag the
+## controller is holding and `BeltRoute`, and the refusal comes from the Simulation's own
+## projection — the same one the release will consult — so what is drawn red and what would
+## be refused cannot disagree on the frame it matters.
+var _belt_preview: MultiMeshInstance3D = null
+var _belt_preview_refused: MultiMeshInstance3D = null
+var _belt_preview_arrows: MultiMeshInstance3D = null
+var _belt_preview_transforms: PackedFloat32Array = PackedFloat32Array()
+var _belt_preview_refused_transforms: PackedFloat32Array = PackedFloat32Array()
+var _belt_preview_arrow_transforms: PackedFloat32Array = PackedFloat32Array()
+
+## The drag the controller is holding, handed over once a frame by `Main`.
+##
+## A reading on its way in, exactly as it is in the controller: the renderer is told where
+## the button went down so it can draw the route that *would* cross, and the Simulation is
+## still the only thing that knows a Belt was laid. `Main` is where the two meet because the
+## controller and the view are both its children and neither may reach for the other.
+var _belt_drag_active: bool = false
+var _belt_drag_anchor: Vector3i = Vector3i.ZERO
+var _belt_drag_corner_axis: int = BeltRoute.ALONG_X
+
 
 ## Hologram colours. Green where a Machine would land, red where it would be refused —
 ## and the HUD says *why* in words, because a red box only says "no".
 const HOLOGRAM_ALLOWED: Color = Color(0.35, 0.85, 0.45, 0.45)
 const HOLOGRAM_REFUSED: Color = Color(0.9, 0.25, 0.2, 0.45)
+
+## The flow arrows' colour: a warm cream that reads against the dark decks, the green of a
+## clear preview and the red of a refused one alike.
+const FLOW_ARROW_COLOUR: Color = Color(0.98, 0.88, 0.62, 0.85)
+
+## How high off the ground the previewed route floats, in metres. Just clear of the grid
+## markings, so a preview over bare ground is unmistakably a preview and not a Belt.
+const BELT_PREVIEW_HEIGHT_METRES: float = 0.06
+
+## How high the flow arrows float above the preview and above a running Belt's deck. Enough
+## to clear the deck and the Items on it without becoming the thing a player looks at.
+const FLOW_ARROW_LIFT_METRES: float = 0.08
 
 ## How far the ground plane extends past the **buildable** Map, in tiles. The plane used
 ## to stop exactly where the Simulation stops accepting a build, and the consequence was
@@ -379,6 +421,7 @@ func sync(sim: Simulation) -> void:
 	_sync_walls(sim)
 	_sync_items(sim)
 	_sync_hologram(sim)
+	_sync_belt_preview(sim)
 	_sync_hud(sim)
 	_place_camera(sim)
 	# After the camera, because the weapon hangs off it.
@@ -2590,6 +2633,7 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 		lines.append("aimed at %d, %d — clear" % [tile.x, tile.z])
 	else:
 		lines.append("aimed at %d, %d — %s" % [tile.x, tile.z, BuildGun.refusal_text(refusal)])
+	lines.append_array(_belt_route_lines(sim, tile))
 
 	var carried: PackedStringArray = PackedStringArray()
 	for item_id: String in sim.query_player_items(VIEWED_PLAYER):
@@ -2601,6 +2645,46 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 	if sim.query_player_is_sprinting(VIEWED_PLAYER):
 		lines.append("sprinting")
 
+	return lines
+
+
+## The route the drag in flight would lay: how long it is, what it costs, and why it would be
+## refused — all three **before the button comes up**, which is the whole point of the
+## projection being a projection.
+##
+## Empty unless the Belt tool is out, because a line about a route nobody is drawing is one
+## more line of the wall this HUD is trying to stop being.
+##
+## **The cost reads "free" and that is honest rather than unfinished.** A Belt has no row in
+## `content/machines.csv` and so has no `build_cost` column to read; `content/tuning.toml`
+## says in as many words that the ticket giving Belts a cost should give Walls one at the
+## same time, in whatever table ends up owning both. So the number a player needs to decide
+## is the length, the cost is stated rather than implied, and the sentence changes to a bill
+## on the day there is one.
+func _belt_route_lines(sim: Simulation, aimed: Vector3i) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	if not sim.query_player_is_laying_belt(VIEWED_PLAYER):
+		return lines
+
+	var from_tile: Vector3i = _belt_drag_anchor if _belt_drag_active else aimed
+	var length: int = maxi(
+		BeltRoute.length_tiles(from_tile, aimed, _belt_drag_corner_axis), 1
+	)
+	var refusal: int = sim.query_belt_route_refusal(
+		VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
+	)
+	var verdict: String = (
+		"clear" if refusal == Simulation.Refusal.NONE else BuildGun.refusal_text(refusal)
+	)
+	lines.append(
+		"belt: %s — %d tiles — free — %s"
+		% [
+			"drag to route, right click turns the corner" if not _belt_drag_active
+			else "release to lay",
+			length,
+			verdict,
+		]
+	)
 	return lines
 
 
@@ -2836,8 +2920,12 @@ func _sync_hologram(sim: Simulation) -> void:
 
 	var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
 	var definition: MachineDefinition = sim.query_definitions().machine(selected)
-	_hologram.visible = definition != null
-	if definition == null:
+	# Not with the Belt tool out. The route preview is what the button would do then, and two
+	# previews of two different acts over one tile is a player guessing which.
+	_hologram.visible = (
+		definition != null and not sim.query_player_is_laying_belt(VIEWED_PLAYER)
+	)
+	if not _hologram.visible:
 		return
 
 	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
@@ -2869,6 +2957,192 @@ func _sync_hologram(sim: Simulation) -> void:
 	tint.albedo_color = (
 		HOLOGRAM_ALLOWED if refusal == Simulation.Refusal.NONE else HOLOGRAM_REFUSED
 	)
+
+
+## What the player is told the drag would do: a slab on every tile of the route, the ones
+## that would be refused in red, and an arrow a tile pointing the way Items would travel.
+##
+## **The route is `BeltRoute`'s, the refusal is the Simulation's, and this draws what they
+## say.** Nothing here decides anything about a route: a preview with its own opinion about
+## where a corner goes or about what is in the way is the defect this whole arrangement
+## exists to make impossible — a player would see a green line and get a refusal.
+##
+## Before the press there is no drag and the preview is the single tile under the aim, which
+## is exactly what a click would lay. That is the one case where the route's two ends are the
+## same tile, and `BeltRoute` deliberately calls that no route at all — the direction of a
+## one-tile Belt is the player's facing and the Simulation owns it, so the preview asks for
+## the same thing the intent will.
+func _sync_belt_preview(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _belt_preview == null:
+		_belt_preview = _preview_slabs(tile_size, HOLOGRAM_ALLOWED)
+		_belt_preview_refused = _preview_slabs(tile_size, HOLOGRAM_REFUSED)
+		_belt_preview_arrows = _flow_arrows(tile_size, FLOW_ARROW_COLOUR)
+
+	var laying: bool = sim.query_player_is_laying_belt(VIEWED_PLAYER)
+	_belt_preview.visible = laying
+	_belt_preview_refused.visible = laying
+	_belt_preview_arrows.visible = laying
+	if not laying:
+		_belt_preview_transforms.resize(0)
+		_belt_preview_refused_transforms.resize(0)
+		_belt_preview_arrow_transforms.resize(0)
+		_belt_preview.multimesh.instance_count = 0
+		_belt_preview_refused.multimesh.instance_count = 0
+		_belt_preview_arrows.multimesh.instance_count = 0
+		return
+
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
+	var from_tile: Vector3i = _belt_drag_anchor if _belt_drag_active else aimed
+	var runs: Array = BeltRoute.segments(from_tile, aimed, _belt_drag_corner_axis)
+
+	var clear: PackedFloat32Array = PackedFloat32Array()
+	var refused: PackedFloat32Array = PackedFloat32Array()
+	var arrows: PackedFloat32Array = PackedFloat32Array()
+	if runs.is_empty():
+		# The drag that never moved: one tile, aimed along the player's facing, which is the
+		# direction the Simulation will give the Belt.
+		runs = [
+			BeltRoute.Run.new(
+				from_tile,
+				from_tile,
+				WorldGrid.direction_from_turns(sim.query_player_yaw_turns(VIEWED_PLAYER))
+			)
+		]
+
+	for run: BeltRoute.Run in runs:
+		var step: Vector3i = WorldGrid.direction_step(run.direction)
+		var yaw: float = _yaw_for_direction(run.direction)
+		for offset: int in range(run.length_tiles()):
+			var tile: Vector3i = run.from + step * offset
+			var centre: FixedVec2 = sim.query_tile_centre_metres(tile)
+			var ground: float = Fixed.to_float(sim.query_layer_height_metres(tile.y))
+			var at: Vector3 = Vector3(
+				Fixed.to_float(centre.x), ground + BELT_PREVIEW_HEIGHT_METRES,
+				Fixed.to_float(centre.z)
+			)
+			var into: PackedFloat32Array = (
+				clear if sim.query_belt_tile_refusal(tile) == Simulation.Refusal.NONE
+				else refused
+			)
+			into.resize(into.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_instance(into, into.size() / FLOATS_PER_INSTANCE - 1, at, yaw)
+			arrows.resize(arrows.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_instance(
+				arrows,
+				arrows.size() / FLOATS_PER_INSTANCE - 1,
+				Vector3(at.x, ground + FLOW_ARROW_LIFT_METRES, at.z),
+				yaw
+			)
+
+	_belt_preview_transforms = clear
+	_belt_preview_refused_transforms = refused
+	_belt_preview_arrow_transforms = arrows
+	_upload(_belt_preview, clear)
+	_upload(_belt_preview_refused, refused)
+	_upload(_belt_preview_arrows, arrows)
+
+
+## Hands a MultiMesh its instances, or tells it there are none. The buffer may only be
+## assigned when there is at least one instance to put in it.
+func _upload(into: MultiMeshInstance3D, transforms: PackedFloat32Array) -> void:
+	@warning_ignore("integer_division")
+	var count: int = transforms.size() / FLOATS_PER_INSTANCE
+	into.multimesh.instance_count = count
+	if count > 0:
+		into.multimesh.buffer = transforms
+
+
+## A MultiMesh of flat translucent slabs, one a tile. The shape of a tile of Belt before
+## there is a tile of Belt.
+func _preview_slabs(tile_size: float, colour: Color) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	var slab: BoxMesh = BoxMesh.new()
+	slab.size = Vector3(tile_size * 0.82, 0.04, tile_size * 0.82)
+	instanced.mesh = slab
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## A MultiMesh of flat chevrons, each pointing along its own **local +z** — which is where
+## `_write_instance` puts a yaw's forward, so one yaw out of `_yaw_for_direction` aims it
+## down the flow.
+##
+## Built by hand rather than out of a primitive because every primitive that is a wedge
+## points along an axis this does not want, and baking the correction into the vertices is
+## cheaper than a second transform per instance on a mesh drawn hundreds of times.
+func _flow_arrows(tile_size: float, colour: Color) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	instanced.mesh = _chevron_mesh(tile_size * 0.3)
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## One flat arrowhead in the xz plane, apex at +z, drawn both ways round so it reads from
+## above and from underneath a Belt deck.
+func _chevron_mesh(reach: float) -> Mesh:
+	var vertices: PackedVector3Array = PackedVector3Array([
+		Vector3(0.0, 0.0, reach),
+		Vector3(-reach * 0.8, 0.0, -reach * 0.6),
+		Vector3(reach * 0.8, 0.0, -reach * 0.6),
+		Vector3(0.0, 0.0, reach),
+		Vector3(reach * 0.8, 0.0, -reach * 0.6),
+		Vector3(-reach * 0.8, 0.0, -reach * 0.6),
+	])
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## How many tiles of route are being previewed. For the smoke test, and the number the HUD
+## reports as a length.
+func belt_preview_tile_count() -> int:
+	@warning_ignore("integer_division")
+	return (
+		_belt_preview_transforms.size() + _belt_preview_refused_transforms.size()
+	) / FLOATS_PER_INSTANCE
+
+
+## How many of them are marked as refused. For the smoke test.
+func belt_preview_refused_tile_count() -> int:
+	@warning_ignore("integer_division")
+	return _belt_preview_refused_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where the drag the renderer is drawing started, and which way its corner bends. Handed
+## over by `Main` once a frame, straight off the controller.
+func note_belt_drag(active: bool, anchor: Vector3i, corner_axis: int) -> void:
+	_belt_drag_active = active
+	_belt_drag_anchor = anchor
+	_belt_drag_corner_axis = corner_axis
+
+
+## Whether the Machine hologram is being drawn at all. It is not, with the Belt tool out:
+## two previews of two different acts over one tile is a player guessing which one the
+## button would do.
+func hologram_is_visible() -> bool:
+	return _hologram != null and _hologram.visible
 
 
 ## Where the hologram is standing, in metres. For the smoke test.

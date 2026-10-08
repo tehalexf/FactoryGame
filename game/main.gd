@@ -136,6 +136,17 @@ func _capture_the_mouse() -> void:
 func _process(delta: float) -> void:
 	advance_frame(delta)
 	if _world_view != null:
+		# The drag in flight, handed from the input producer to the renderer so the preview
+		# is the route that would cross. Neither may reach for the other, and this is the one
+		# place both are in scope. It is a device reading on its way in, like the mouse
+		# buffer it sits next to — the Simulation is still the only thing that knows a Belt
+		# was laid.
+		if _controller != null and _simulation != null:
+			_world_view.note_belt_drag(
+				_controller.is_dragging_a_belt(),
+				_controller.belt_drag_anchor(),
+				_controller.belt_corner_axis(_simulation, LOCAL_PLAYER)
+			)
 		_world_view.sync(_simulation)
 	# After the view, so a cue about a Machine that has just appeared is played in
 	# the same frame the Machine is drawn in rather than the frame before it.

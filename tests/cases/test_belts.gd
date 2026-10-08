@@ -46,10 +46,25 @@ func test_a_belt_occupies_every_tile_of_its_run() -> void:
 	assert_eq(sim.query_belt_at_tile(Vector3i(0, 0, 3)), -1, "the run stops where it stops")
 
 
-func test_a_belt_that_is_not_axis_aligned_is_refused() -> void:
+func test_no_belt_ever_runs_diagonally() -> void:
+	# Two tiles off one axis used to be refused outright. Since #36 they are a *route*:
+	# a run along one axis, a corner, and a run along the other. The claim this test
+	# exists for is unchanged and is the one that matters — there is no diagonal Belt on
+	# a 2 m grid (DESIGN.md) — so what it asserts is that every Belt the route produced
+	# runs along one of the grid's four directions. `test_belt_routing.gd` owns the shape
+	# of the route itself.
 	var sim: Simulation = Simulation.new(1, 1)
 	sim.step([InputAction.build_belt(0, Vector3i(0, 0, 0), Vector3i(2, 0, 2))])
-	assert_eq(sim.query_belt_count(), 0, "there is no diagonal Belt on a 2 m grid")
+	assert_eq(sim.query_belt_count(), 2, "one Belt per straight run")
+	for index: int in range(sim.query_belt_count()):
+		var entry: Vector3i = sim.query_belt_tile(index, 0)
+		var exit_tile: Vector3i = sim.query_belt_tile(
+			index, sim.query_belt_length_tiles(index) - 1
+		)
+		assert_true(
+			entry.x == exit_tile.x or entry.z == exit_tile.z,
+			"Belt %d runs along one axis" % index
+		)
 
 
 func test_a_belt_off_the_map_or_off_the_ground_layer_is_refused() -> void:
@@ -770,7 +785,11 @@ func test_laying_a_belt_changes_the_hash() -> void:
 func test_a_refused_belt_leaves_the_hash_where_it_was() -> void:
 	var refused: Simulation = Simulation.new(1, 1)
 	var idle: Simulation = Simulation.new(1, 1)
-	refused.step([InputAction.build_belt(0, Vector3i(0, 0, 0), Vector3i(3, 0, 3))])
+	# Off the Map, which is still a refusal. Two tiles off one axis is not one any more —
+	# since #36 it is a route that corners — so the route that gets refused here is one
+	# whose far end is outside the Map altogether.
+	var outside: int = refused.query_grid_half_extent_tiles() + 1
+	refused.step([InputAction.build_belt(0, Vector3i(0, 0, 0), Vector3i(outside, 0, 3))])
 	idle.step([])
 	assert_eq(refused.hash(), idle.hash(), "a Belt that could not be laid is not a Belt")
 
