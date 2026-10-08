@@ -1028,11 +1028,17 @@ and deciding that competition inside `_advance_belt` meant deciding it in the or
 happened to be advanced in, which is the one order this section is at pains not to let anything
 depend on.
 
-**Splitting the pass costs nothing, because the two halves cannot see each other.** A Belt fed
-by a Machine port is never also fed by another Belt — the tile behind its entry is a Machine
-footprint tile or it is not, and `_hand_off` checks for a Machine before it checks for a Belt —
-so no Belt's entry room is touched by both. That is why #46 moved every Factory in every fixture
-onto a new code path and changed what exactly one of them did.
+**The two halves meet on exactly one tile, and the order between them is deliberate.** A Belt fed
+by a Machine port is usually not fed by another Belt as well — the tile behind its entry is a
+Machine footprint tile or it is not, and `_hand_off` checks for a Machine before it checks for a
+Belt. But two runs pointing different ways *can* land a hand-off on that same entry, and then one
+of the two is refused. Loading last means the **upstream Belt gets the slot**, which is the right
+way round rather than an accident: an Item on a Belt has nowhere else to go and backs the whole
+line up behind it, where a Machine's output buffer is uncapped and banks the surplus safely.
+Before #46 the port cut in and stalled the line feeding it, and
+`test_an_item_already_on_a_belt_beats_a_machine_port_for_the_same_slot` is the pin on the new
+rule. Everywhere else, #46 moved every Factory in every fixture onto a new code path and changed
+what exactly one of them did.
 
 - **The rotation is one integer per Machine, `_machine_port_cursor`, and it is hashed.** Which of
   its Belts a Machine gave first claim to last. One more parallel per-Machine array, indexed

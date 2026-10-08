@@ -2300,10 +2300,16 @@ func _survey_blend(player_id: int) -> int:
 ## A Machine's output buffer is one pot and each Belt takes at most one Item a tick, so two
 ## Belts off one Machine compete; deciding that inside `_advance_belt` would mean deciding it
 ## in the order the Belts happen to be advanced in, which is the one order this section is at
-## pains not to let anything depend on. The split costs nothing, because the two passes cannot
-## see each other: a Belt fed by a Machine port is never also fed by another Belt — the tile
-## behind its entry is a Machine footprint tile or it is not — so no Belt's entry room is
-## touched by both.
+## pains not to let anything depend on.
+##
+## **The two passes meet on exactly one tile, and the order between them is deliberate.** A Belt
+## whose entry a Machine port reaches is usually not reachable by another Belt as well — the tile
+## behind its entry is a Machine footprint tile or it is not — but two runs pointing different
+## ways can land a hand-off on that same entry. Loading last means the **upstream Belt gets the
+## slot and the port is refused**, which is the right way round: an Item on a Belt has nowhere
+## else to go and backs the whole line up behind it, where a Machine's output buffer is uncapped
+## and banks the surplus safely. Before #46 the port cut in and stalled the line feeding it.
+## `test_an_item_already_on_a_belt_beats_a_machine_port_for_the_same_slot` pins it.
 ##
 ## The Belts are walked **downstream first** (`_belt_update_order`), never in index
 ## order, so a line's behaviour is a function of its geography and not of the order its

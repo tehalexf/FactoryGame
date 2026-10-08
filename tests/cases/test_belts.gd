@@ -1152,3 +1152,59 @@ func test_the_shipped_smelter_can_feed_two_consumers_at_once() -> void:
 		sim.query_machine_output(2, "ammunition") > 0,
 		"and the Ammo Press was fed well enough to make rounds out of its branch"
 	)
+
+
+## A Miner whose Belt runs east, on content fast enough to saturate it — and, optionally, a
+## second Miner whose Belt runs south and hands its Items onto that first Belt's **entry tile**.
+## That tile is the one place a Machine port and another Belt's far end can both reach, which
+## happens whenever the two runs point different ways.
+func _contested_entry_sim(with_the_upstream_belt: bool) -> Simulation:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(2, 0, -5), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, _fast_content(), layout)
+	var actions: Array = [
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(5, 0, 0)),
+	]
+	if with_the_upstream_belt:
+		actions.append(InputAction.build_machine(0, _miner_index(sim), Vector3i(2, 0, -5)))
+		actions.append(InputAction.build_belt(0, Vector3i(2, 0, -3), Vector3i(2, 0, -1)))
+	sim.step(actions)
+	return sim
+
+
+func test_an_item_already_on_a_belt_beats_a_machine_port_for_the_same_slot() -> void:
+	# The one place #46's two passes meet, and the one ordering it changed. A Belt's entry can
+	# be reached both by the Machine behind it and by another Belt's far end; whichever gets the
+	# slot, the other is refused. Loading after every hand-off means the **upstream Belt wins**,
+	# which is the better of the two rules rather than an accident: an Item on a Belt has nowhere
+	# else to go and backs the whole line up behind it, where a Machine's output buffer is
+	# uncapped and banks the surplus safely. Before #46 the port cut in and stalled the line
+	# feeding it.
+	#
+	# Measured as the difference between two Factories, because both Miners mine the same ore
+	# and an Item on the contested Belt carries no label saying where it came from.
+	var alone: Simulation = _contested_entry_sim(false)
+	var contested: Simulation = _contested_entry_sim(true)
+	assert_eq(alone.query_belt_count(), 1, "one run, port-fed")
+	assert_eq(contested.query_belt_count(), 2, "and the same run with a Belt joining its entry")
+	_run(alone, 600)
+	_run(contested, 600)
+	assert_eq(
+		contested.query_belt_item_count(contested.query_belt_at_tile(Vector3i(2, 0, 0))),
+		alone.query_belt_item_count(alone.query_belt_at_tile(Vector3i(2, 0, 0))),
+		"the contested Belt carries the same Items either way; a slot is a slot"
+	)
+	assert_true(
+		contested.query_machine_output(0, "iron_ore")
+		> alone.query_machine_output(0, "iron_ore"),
+		(
+			"but the Machine behind it banked %d ore against %d, because the upstream Belt took "
+			+ "the slots its port would have had"
+		) % [
+			contested.query_machine_output(0, "iron_ore"),
+			alone.query_machine_output(0, "iron_ore"),
+		]
+	)
