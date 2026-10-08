@@ -165,12 +165,62 @@ def _run(command: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
+# The oldest ffmpeg this cutter's loop mode actually works on.
+#
+# **Found by turning CI on, and it had been true all along.** ubuntu-24.04 ships
+# 6.1.1, and on 6.1.1 `--mode loop` **exits 0 and writes a 0.048-second file where
+# twenty-four seconds were asked for**: something in the
+# `asplit`/`atrim`/`asetpts`/`amix` seam behaves differently, so the bed comes out
+# silently almost empty rather than wrong and obvious. Every cue-cutting test passes
+# on 7.0.2 and on 8.1.3.
+#
+# #40 pinned 8.1.3 in `.github/ci/toolchain.env` so CI stops being whatever the
+# runner image ships. That protects CI and nothing else: **a developer or an agent
+# running `convert_audio.sh` on a distro ffmpeg still got the near-empty bed, with
+# nothing anywhere saying why.** A requirement that lives only in CI configuration is
+# not a requirement the tool has. So it is checked here, on every invocation, and the
+# refusal names both versions.
+FFMPEG_MINIMUM_MAJOR = 7
+
+_VERSION_LINE = re.compile(r"\bversion\s+n?(\d+)\.")
+
+
+def tool_major_version(version_output: str) -> int | None:
+    """The major version out of an `ffmpeg -version` banner, or None if it has none.
+
+    Split out from the subprocess so the parsing is testable without installing four
+    ffmpegs. The forms that occur in the wild, all of which this has to read:
+
+        ffmpeg version 7.0.2-static https://johnvansickle.com/...   -> 7
+        ffmpeg version n8.1.3-...                                   -> 8   (BtbN builds)
+        ffmpeg version 6.1.1-3ubuntu5                               -> 6   (Debian/Ubuntu)
+        ffmpeg version N-120345-g1a2b3c4                             -> None (a git build)
+
+    **None means "cannot tell", and the caller proceeds.** A nightly build carries no
+    release number, and refusing a toolchain this cannot assess would make the cutter
+    unusable on a perfectly good one — where the cost of allowing it is bounded,
+    because `test_a_loop_is_stereo_and_exactly_as_long_as_it_was_told` is the
+    behavioural check and it fails loudly on a version that really is too old. The
+    guard's job is to refuse what it can positively identify, not to guess.
+    """
+    found = _VERSION_LINE.search(version_output)
+    return int(found.group(1)) if found else None
+
+
 def _require_tools(ffmpeg: str, ffprobe: str) -> None:
     for tool in (ffmpeg, ffprobe):
         if shutil.which(tool) is None:
             raise CueError(
                 "'%s' is not on PATH. Install ffmpeg, or set FFMPEG/FFPROBE." % tool
             )
+    major = tool_major_version(_run([ffmpeg, "-version"]).stdout)
+    if major is not None and major < FFMPEG_MINIMUM_MAJOR:
+        raise CueError(
+            "'%s' is ffmpeg %d and this needs %d or newer: on 6.x a looped cue is"
+            " written silently almost empty rather than failing. Install a newer"
+            " build — .github/ci/toolchain.env pins the one CI uses — or set FFMPEG"
+            " to one." % (ffmpeg, major, FFMPEG_MINIMUM_MAJOR)
+        )
 
 
 def source_duration_seconds(path: Path, ffprobe: str = "ffprobe") -> float:

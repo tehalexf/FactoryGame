@@ -40,6 +40,25 @@ writes, snapshots before every write, and marks what differs from the shipped
 defaults. `python3 tools/tuning_dashboard.py --check` reports the same thing
 without a browser.
 
+**Adding or renaming a key in `content/tuning.toml` means re-baselining the dashboard's
+own copy**, with `python3 tools/tuning_dashboard.py --adopt-defaults`, as the genuine
+last step after the numbers have settled.
+`tools/tuning/tests/test_store.py::test_the_shipped_defaults_match_the_shipped_tuning_file`
+asserts the two files declare the same keys, and it is the only thing that notices —
+`tools/tuning/run_tests.sh` is a separate suite from the engine's, so a key added without
+the re-baseline leaves the Godot suite green and that one red. #34 did exactly that and it
+sat red on `integration/milestone-1` for hours, because at the time CI ran only the asset
+suite. #40 fixed the CI half; this is the half a person has to remember.
+
+**It is also a merge trap, and the shape is worth knowing.** The defaults file is a
+*generated copy of a branch's own tuning file*, so two branches that each added a key each
+re-baseline it, and the merge then has two mechanically-plausible versions of a file that is
+supposed to be derived. Taking either side wholesale is wrong whenever the other side also
+moved a value. The resolution is never to hand-merge it: take whichever side, then **re-run
+`--adopt-defaults` and let it be regenerated from the merged `content/tuning.toml`**, and
+check 'same keys, same values' rather than reading the diff. A textual merge that happens to
+come out right is luck and not a method.
+
 `tools/run_tests.sh` exits 0 when green and non-zero on any failure, load error,
 or an unfiltered run that executed no tests. Set `GODOT=/path/to/godot` to use a
 specific binary.
@@ -74,6 +93,18 @@ import pass rebuilds, so a newly added class otherwise fails with a confusing
 | Godot | 4.7.2 stable | On `PATH` as `godot`. ADR 0001 originally said 4.6; amended. |
 | scons | 4.11.1 | For GDExtension builds. Not needed yet. |
 | Blender | 5.2.2 LTS | Art pipeline. glTF 2.0 ships; FBX is intake only. |
+| ffmpeg | **7 or newer** | Audio cue cutting. A hard floor, not a preference — see below. |
+
+**The ffmpeg floor is a real requirement and it bites silently.** On 6.x —  which is
+what ubuntu-24.04 ships — `wav_to_cue.py --mode loop` **exits 0 and writes a
+0.048-second file where twenty-four seconds were asked for**: something in the
+`asplit`/`atrim`/`asetpts`/`amix` seam behaves differently, so an ambience bed comes
+out almost empty rather than wrong and obvious. #40 found it by turning CI on and
+pinned 8.1.3 in `.github/ci/toolchain.env`; `wav_to_cue.FFMPEG_MINIMUM_MAJOR` then
+makes it a property of the **tool** rather than of CI, because a requirement that
+lives only in a workflow file is one a developer runs straight past. The cutter now
+refuses a 6.x by name on every invocation, and a build with no release number — a
+nightly — is allowed through as "cannot tell" rather than guessed at.
 
 GDScript, not C#. C++ via GDExtension only when profiling demands it.
 

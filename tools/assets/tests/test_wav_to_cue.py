@@ -167,6 +167,71 @@ class ParsingAnFfmpegReport(unittest.TestCase):
             wav_to_cue.parse_levels("[Parsed_astats_0 @ 0x0] Overall\n")
 
 
+class TheFfmpegVersionFloor(unittest.TestCase):
+    """The cutter refuses an ffmpeg it knows writes near-empty loops.
+
+    #40 turned CI on and found that ubuntu-24.04's ffmpeg 6.1.1 exits 0 and writes a
+    0.048-second file where twenty-four seconds were asked for. It pinned 8.1.3 for
+    CI, which protects CI and leaves every local run on a distro ffmpeg getting the
+    same silent near-empty bed. This is the half that makes it a property of the tool.
+    """
+
+    def test_the_version_forms_that_actually_occur_are_all_read(self):
+        for banner, expected in (
+            ("ffmpeg version 7.0.2-static https://johnvansickle.com/ffmpeg/", 7),
+            ("ffmpeg version n8.1.3-26-g1f2e3d4 Copyright (c) 2000-2026", 8),
+            ("ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023", 6),
+            ("ffprobe version 10.2.0 Copyright (c)", 10),
+        ):
+            with self.subTest(banner=banner):
+                self.assertEqual(wav_to_cue.tool_major_version(banner), expected)
+
+    def test_a_build_with_no_release_number_is_unknown_rather_than_refused(self):
+        # A nightly carries no version. Refusing a toolchain the guard cannot assess
+        # would make the cutter unusable on a good one, and the behavioural test
+        # below still fails loudly on a build that really is too old.
+        self.assertIsNone(
+            wav_to_cue.tool_major_version("ffmpeg version N-120345-g1a2b3c4")
+        )
+        self.assertIsNone(wav_to_cue.tool_major_version(""))
+
+    def test_the_floor_is_the_version_whose_loop_mode_works(self):
+        # Not an arbitrary number: 6.x is the one observed to write a near-empty loop.
+        self.assertEqual(wav_to_cue.FFMPEG_MINIMUM_MAJOR, 7)
+
+    def test_ci_pins_an_ffmpeg_that_satisfies_the_floor(self):
+        # The two places this requirement is written down have to agree, or CI would
+        # install a build the cutter then refuses — or worse, stop installing one and
+        # go back to the distro's.
+        env = REPO / ".github" / "ci" / "toolchain.env"
+        if not env.exists():
+            self.skipTest("no CI toolchain pin in this checkout")
+        pinned = re.search(r"^FFMPEG_VERSION=n?(\d+)\.", env.read_text(), re.M)
+        self.assertIsNotNone(pinned, "toolchain.env must pin a numbered ffmpeg")
+        self.assertGreaterEqual(
+            int(pinned.group(1)),
+            wav_to_cue.FFMPEG_MINIMUM_MAJOR,
+            "CI's pinned ffmpeg is older than the cutter's own floor",
+        )
+
+
+@unittest.skipIf(FFMPEG is None, "ffmpeg is not installed")
+class TheInstalledFfmpegIsUsable(unittest.TestCase):
+    def test_the_ffmpeg_on_this_machine_passes_the_tools_own_check(self):
+        # Belt and braces: if this fails, every other ffmpeg test in this file is
+        # about to fail for a reason that has nothing to do with what it asserts.
+        wav_to_cue._require_tools(FFMPEG, FFPROBE)
+        self.assertGreaterEqual(
+            wav_to_cue.tool_major_version(
+                subprocess.run(
+                    [FFMPEG, "-version"], capture_output=True, text=True
+                ).stdout
+            )
+            or wav_to_cue.FFMPEG_MINIMUM_MAJOR,
+            wav_to_cue.FFMPEG_MINIMUM_MAJOR,
+        )
+
+
 class FindingTheOnset(unittest.TestCase):
     """`astats` is left cumulative, so the report is a staircase."""
 
