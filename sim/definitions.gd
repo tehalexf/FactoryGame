@@ -704,6 +704,18 @@ var _machine_ids: PackedStringArray = PackedStringArray()
 var _recipes: Array = []
 var _recipe_ids: PackedStringArray = PackedStringArray()
 var _item_ids: PackedStringArray = PackedStringArray()
+
+## The Items a player can spend again: every Item a Machine's `build_cost` names and every
+## Item a ranged weapon fires. Interned rather than declared, exactly as `_item_ids` is —
+## writing an Item into a build cost or a weapon's `ammunition_item` is what makes it
+## spendable, so there is no third table to fall out of step with the other two.
+##
+## **Deliberately not every Item a Delivery tier asks for.** A bill is paid *before* the
+## store, so an Item the open tier wants never needs banking — and banking against a tier
+## that is not open yet is the store doing the Delivery chain's job, which is the whole of
+## the trap #37 is about: a coal Belt a player ran to pay one tier went on diverting the
+## Boiler's fuel into a pot the Run had no way to spend.
+var _spendable_item_ids: PackedStringArray = PackedStringArray()
 var _waves: Array = []
 var _deliveries: Array = []
 var _gear: Array = []
@@ -840,6 +852,10 @@ static func parse(
 	# can answer. Nothing in the three tables reads a tuning value, so the order costs
 	# nothing.
 	definitions._read_gear(gear)
+	# The spendable Items, once both tables that can take an Item out of a player's pockets
+	# have been read: a build cost and a weapon's magazine. Nothing after this point adds a
+	# sink, so this is where the question "could a player spend this again" becomes answerable.
+	definitions._intern_spendable_items()
 	# Stratagems after the Machines and before the Delivery table, for the two reasons the
 	# Gear table sits where it does: a `sentry` row has to name a Turret in `machines.csv`,
 	# and `unlocks_stratagems` has to name a row here. One authority each, checked rather
@@ -978,6 +994,23 @@ func item_id(index: int) -> String:
 	if index < 0 or index >= _item_ids.size():
 		return ""
 	return _item_ids[index]
+
+
+## Whether a player could spend this Item again once it is back in their pockets: it pays
+## for a Machine, or a weapon fires it.
+##
+## **The Nest's store asks this, and it is the whole of what the store is for** — "where
+## Factory output becomes something a player can spend again" (CLAUDE.md). An Item with no
+## sink banked at the Nest is not surplus, it is a Factory's fuel converted into a number
+## nobody can turn back into anything, which is exactly how a coal Belt into the Nest came to
+## starve the Boiler that coal was mined for. See `Simulation._nest_store_room`.
+func item_can_be_spent(item_id: String) -> bool:
+	return _spendable_item_ids.has(item_id)
+
+
+## Every spendable Item id, sorted.
+func spendable_item_ids() -> PackedStringArray:
+	return _spendable_item_ids.duplicate()
 
 
 # ── Wave composition ──────────────────────────────────────────────────────────
@@ -1440,6 +1473,23 @@ func _intern_items() -> void:
 
 	for definition: RecipeDefinition in _recipes:
 		definition.resolve_items(_item_ids)
+
+
+## Collects the Items a player can spend again, sorted: the Items the Machine table's
+## `build_cost` columns name and the Items the Gear table's weapons fire. Called once the
+## Machines and the Gear are read, because those two tables are the only sinks a player's
+## pockets have.
+func _intern_spendable_items() -> void:
+	_spendable_item_ids = PackedStringArray()
+	for definition: MachineDefinition in _machines:
+		for item: String in definition.build_cost_items:
+			if _spendable_item_ids.find(item) == -1:
+				_spendable_item_ids.append(item)
+	for definition: GearDefinition in _gear:
+		var item: String = definition.ammunition_item
+		if not item.is_empty() and _spendable_item_ids.find(item) == -1:
+			_spendable_item_ids.append(item)
+	_spendable_item_ids.sort()
 
 
 # ── Reading the Machine table ─────────────────────────────────────────────────
@@ -3099,6 +3149,7 @@ func _discard_content() -> void:
 	_recipes.clear()
 	_recipe_ids.clear()
 	_item_ids.clear()
+	_spendable_item_ids.clear()
 	_waves.clear()
 	_deliveries.clear()
 	_gear.clear()

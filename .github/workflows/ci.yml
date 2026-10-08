@@ -1,0 +1,206 @@
+name: ci
+
+# Every test in the repository, on every push and pull request.
+#
+# This workflow replaces .github/workflows/assets.yml, which ran the licence
+# guard and the asset-pipeline suite and nothing else. There are three suites:
+#
+#   tools/run_tests.sh         the Simulation and the Godot layer, 1085 tests
+#   tools/assets/run_tests.sh  the asset pipeline and the release pipeline
+#   tools/tuning/run_tests.sh  the tuning dashboard, 113 tests
+#
+# Two of the three had never run in CI. That was not a theoretical gap: the
+# integration branch was red for days because a ticket added
+# `enemy.breaker_breaks_ranks_within_tiles` to content/tuning.toml without
+# adding it to tools/tuning/defaults/tuning.toml, and
+# test_the_shipped_defaults_match_the_shipped_tuning_file had been failing ever
+# since. Nothing noticed, because the only thing that could notice was a script
+# somebody had to remember to run.
+#
+# The `ci` job at the bottom is the one to make a required status check: it is
+# green only when all three suites and the licence guard are.
+
+on:
+  push:
+  pull_request:
+
+# A second push to the same branch makes the first one's answer worthless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Kept first and kept dependency-free. This repository is public and the
+  # purchased assets forbid redistribution (docs/ASSETS.md), so the guard must
+  # answer in thirty seconds without waiting on a 590 MB toolchain download.
+  licence-guard:
+    name: licence guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: No licensed asset may exist in this public repo
+        run: python3 tools/assets/check_licensed_staged.py --all
+
+  # Fetch the toolchain once per bump rather than once per job.
+  # The three test jobs below restore this same cache, so on a warm cache they
+  # download nothing; on a cold one they wait for this job instead of racing
+  # each other for the same three archives.
+  toolchain:
+    name: toolchain (godot 4.7.2, blender 5.2.2, ffmpeg 8.1.3)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: key
+        run: echo "value=toolchain-${{ runner.os }}-${{ hashFiles('.github/ci/toolchain.env') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/deep-foundry-toolchain
+          key: ${{ steps.key.outputs.value }}
+      - name: Download and verify all three archives
+        run: bash .github/ci/install_toolchain.sh godot blender ffmpeg
+    outputs:
+      cache-key: ${{ steps.key.outputs.value }}
+
+  # ---------------------------------------------------------------- suite 1/3
+  godot-suite:
+    name: Simulation and Godot layer
+    needs: toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/deep-foundry-toolchain
+          key: ${{ needs.toolchain.outputs.cache-key }}
+      - run: bash .github/ci/install_toolchain.sh godot
+
+      # The import cache is deliberately NOT cached between runs.
+      #
+      # tools/run_tests.sh imports twice when .godot/ is absent, and its comment
+      # says why: one pass imports the glTF files, and the scenes Godot derives
+      # from them are not reliably resolvable until a pass that starts with those
+      # imports already in place. With a single pass the Machine-mesh tests
+      # failed about one cold run in four. A CI runner is always cold, which
+      # makes CI the only place that path runs routinely — so caching .godot/
+      # here would quietly retire the one code path that most needs exercising,
+      # and a fresh clone is exactly the state a contributor is in.
+      - name: Every test in the Simulation and the Godot layer, headless
+        run: .github/ci/run_suite.sh "Simulation and Godot layer" bash tools/run_tests.sh
+
+      # The runtime-abort guard reads the engine's log, and a failure in that
+      # area is close to undiagnosable from the summary line alone.
+      - name: Keep the engine log when something failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-engine-log
+          path: .godot/test_run.log
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- suite 2/3
+  asset-pipeline:
+    name: asset and release pipeline
+    needs: toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # test_licence_guard.py and test_guard_is_wired_in.py build throwaway
+          # git repositories and run the guard against them; git has to be
+          # usable, and a shallow clone of this repo is fine for that.
+          fetch-depth: 0
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/deep-foundry-toolchain
+          key: ${{ needs.toolchain.outputs.cache-key }}
+
+      # Blender, and not "Blender-dependent tests self-skip", which is what the
+      # old workflow said and did.
+      #
+      # Without Blender this suite reports OK having run 138 tests with 19
+      # skipped; with Blender, Godot and ffmpeg it runs 172 with none skipped.
+      # The 34-test gap is two modules — test_fbx_to_gltf and
+      # test_fbx_to_viewmodel — skipping at setUpModule, so their tests are not
+      # even counted in the total: the suite looked smaller rather than looking
+      # incomplete. A suite that silently drops a fifth of itself is the same
+      # failure mode as one that never runs.
+      #
+      # Blender is pinned to 5.2.2 because
+      # test_reproduces_the_committed_meshes_byte_for_byte compares the
+      # regenerated .glb bytes against the committed ones, and a different
+      # exporter version fails it rather than skipping it.
+      #
+      # ffmpeg clears the seven test_wav_to_cue skips — and it is a pinned static
+      # build rather than `apt-get install ffmpeg`, because the distro's is not
+      # new enough. ubuntu-24.04 has 6.1.1, on which the loop-cue test fails:
+      # ffmpeg exits 0 and writes 0.048 seconds where eight were asked for. That
+      # was the first thing turning this suite's skips off actually found. See
+      # the note in .github/ci/toolchain.env.
+      - run: bash .github/ci/install_toolchain.sh godot blender ffmpeg
+
+      - name: The asset pipeline and the release pipeline
+        run: .github/ci/run_suite.sh "asset and release pipeline" bash tools/assets/run_tests.sh
+
+  # ---------------------------------------------------------------- suite 3/3
+  tuning-dashboard:
+    name: tuning dashboard
+    needs: toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/deep-foundry-toolchain
+          key: ${{ needs.toolchain.outputs.cache-key }}
+
+      # Godot, because seven of these tests ask the game's own loader whether a
+      # tuning file would actually load and skip without it — and those are the
+      # ones that make `--check` worth trusting.
+      - run: bash .github/ci/install_toolchain.sh godot
+
+      # An import pass before the suite. The loader check launches Godot against
+      # this project, and on a cold checkout the `class_name` globals it needs
+      # only exist once .godot/global_script_class_cache.cfg has been built; see
+      # CLAUDE.md's Test runner section.
+      - name: Build the class cache the loader check needs
+        run: godot --headless --path . --import >/dev/null 2>&1 || true
+
+      - name: The tuning dashboard's own tests
+        run: .github/ci/run_suite.sh "tuning dashboard" bash tools/tuning/run_tests.sh
+
+  # The single pass/fail. Make this the required check on the default branch;
+  # the jobs above are its detail, not four separate verdicts to remember.
+  ci:
+    name: all suites green
+    if: always()
+    needs: [licence-guard, godot-suite, asset-pipeline, tuning-dashboard]
+    runs-on: ubuntu-latest
+    steps:
+      # `needs` alone does not fail an aggregating job when a dependency fails
+      # if that job declares `if: always()`, and without `always()` it would be
+      # skipped rather than red — and a skipped required check blocks forever
+      # rather than reporting. So the result is asserted explicitly.
+      - name: Every suite must have passed
+        run: |
+          printf 'licence guard:     %s\n' '${{ needs.licence-guard.result }}'
+          printf 'godot suite:       %s\n' '${{ needs.godot-suite.result }}'
+          printf 'asset pipeline:    %s\n' '${{ needs.asset-pipeline.result }}'
+          printf 'tuning dashboard:  %s\n' '${{ needs.tuning-dashboard.result }}'
+          for r in '${{ needs.licence-guard.result }}' \
+                   '${{ needs.godot-suite.result }}' \
+                   '${{ needs.asset-pipeline.result }}' \
+                   '${{ needs.tuning-dashboard.result }}'; do
+            if [ "$r" != "success" ]; then
+              echo "::error title=A suite did not pass::see the failing job above"
+              exit 1
+            fi
+          done
+          echo "all four green"

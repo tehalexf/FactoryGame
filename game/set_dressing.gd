@@ -82,6 +82,17 @@ const KINDS: Dictionary = {
 	],
 }
 
+## The purchased props that are *painted*, and the only hazard colour in the
+## yard. Small, free-standing, and the two kinds whose stand-ins already wear the
+## palette's `HazardYellow` — see `_hazard_material` for why the list is two
+## entries long and not twenty.
+const HAZARD_PROPS: Array = ["bollard", "jersey_barrier"]
+
+## How much brighter than the palette's own hazard material a painted prop is
+## multiplied, because the graded atlas underneath it is darker than the tread
+## plate that material was written for.
+const HAZARD_GAIN: float = 2.4
+
 ## How far from the Nest, and from each Node, the yard keeps clear, in tiles. A
 ## player's first act is to put a Miner on a Node and their Factory grows out of
 ## the Nest, so those two are where dressing is most in the way and least wanted.
@@ -170,6 +181,7 @@ var _group_meshes: Dictionary = {}
 ## Prop id -> Mesh, or null for one that is not on disk. Loaded once.
 var _prop_meshes: Dictionary = {}
 var _shared_material: StandardMaterial3D = null
+var _hazard_shared_material: StandardMaterial3D = null
 var _material_cache: Dictionary = {}
 var _stand_in_cache: Dictionary = {}
 ## What the Factory looked like when the pools were last filled. Rebuilding every
@@ -684,7 +696,7 @@ func _make_pool(key: String) -> MultiMeshInstance3D:
 		material = built[1]
 	else:
 		mesh = _prop_mesh(key)
-		material = _purchased_material()
+		material = _hazard_material() if key in HAZARD_PROPS else _purchased_material()
 	if mesh == null:
 		return null
 
@@ -800,8 +812,24 @@ func _purchased_material() -> StandardMaterial3D:
 		return _shared_material
 	_shared_material = StandardMaterial3D.new()
 	_shared_material.vertex_color_use_as_albedo = true
-	_shared_material.roughness = 1.0
-	_shared_material.metallic = 0.0
+	# **The yard is made of steel, and the light has to agree.** This started at
+	# metallic 0 and roughness 1 — a perfect Lambertian — which is the one surface
+	# in this world that takes the sun full in the face. Every Machine is
+	# `metallic = 1.0`, so a Machine is lit by what it *reflects* and comes out of
+	# a filmic tonemap dark; a diffuse crate beside it under a 3.2-energy sun and a
+	# 1.7-energy sky comes out near twice as bright from the same albedo. Grading
+	# the atlas into the palette's values (`tools/assets/prop_grade.py`) fixed the
+	# colour and could not fix that, because it is the BRDF and not the texture:
+	# the props were the brightest things in frame for the same reason a white
+	# plastic bucket is the brightest thing on a scrapyard.
+	#
+	# The atlas carries no metallic mask and one number has to do for a pallet and
+	# a pipe, so this is a compromise aimed at the pipes, the racking, the drums,
+	# the fencing and the catwalks — which is most of the set by area. It puts the
+	# props on the same response curve as the Machines, which is what lets the
+	# palette's values mean the same thing on both.
+	_shared_material.roughness = 0.60
+	_shared_material.metallic = 0.72
 	_shared_material.texture_filter = (
 		BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 	)
@@ -825,6 +853,37 @@ func _purchased_material() -> StandardMaterial3D:
 		_shared_material.emission_energy_multiplier = 2.2
 		_shared_material.emission = Color(1.0, 0.86, 0.62)
 	return _shared_material
+
+
+## The shared material again, in the palette's own hazard yellow.
+##
+## `tools/assets/prop_grade.py` takes the safety yellow out of the atlas
+## wholesale — eleven per cent of it was high-visibility yellow, which is a real
+## aesthetic and is a present-day refinery's rather than a 1930s yard's. But the
+## answer to that is not *no* hazard colour: interwar industry painted bollards
+## and kerbs, and a yellow stripe reads as period when everything round it is
+## filthy. What was wrong was that the yellow was everywhere and uniformly
+## bright, so there was nothing for it to be brighter *than*.
+##
+## So it comes back here, on `HAZARD_PROPS` and nowhere else, out of the
+## palette's own `HazardYellow` — which is the same material the stand-in for
+## these kinds already wears, so the two paths now agree about where in a yard
+## hazard colour belongs instead of only one of them having an opinion.
+func _hazard_material() -> StandardMaterial3D:
+	if _hazard_shared_material != null:
+		return _hazard_shared_material
+	var shared: StandardMaterial3D = _purchased_material()
+	_hazard_shared_material = shared.duplicate() as StandardMaterial3D
+	var palette: StandardMaterial3D = _material("HazardYellow") as StandardMaterial3D
+	if palette == null:
+		return _hazard_shared_material
+	# `albedo_color` multiplies the atlas, exactly as the palette's own hazard
+	# material multiplies the tread plate it is painted over, and for the same
+	# reason: the texture carries the surface and the colour carries the paint.
+	# The gain is because the graded atlas is darker than that tread plate and a
+	# bollard that is merely a browner bollard has not been painted.
+	_hazard_shared_material.albedo_color = palette.albedo_color * HAZARD_GAIN
+	return _hazard_shared_material
 
 
 ## Load a PNG from the gitignored prop directory. `load()` cannot: the importer

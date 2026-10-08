@@ -522,6 +522,13 @@ delivery_reach_metres = 5
 # independently also means no Item is named here: the set of Items is whatever the Recipes
 # mention, and a key called `store_capacity_iron_plate` would be a second Item table, which
 # is the same argument `player.starting_stock` makes for being one quoted bill.
+#
+# **This is the cap, not the whole of the room.** Since #37 the store has room only for an
+# Item a player could spend again — one a Machine's `build_cost` names or a weapon fires —
+# because the store is where Factory output becomes spendable and an Item with no sink banked
+# here is a Factory's own fuel turned into a number nobody can use. So coal has room for 0
+# of these 200 however this number is set, and a coal Belt run to the Nest to pay a tier packs
+# up the moment that tier is paid. See `Definitions.item_can_be_spent`.
 store_capacity_per_item = 200
 
 [silo]

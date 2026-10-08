@@ -676,3 +676,107 @@ func test_a_run_funds_a_second_ammo_press_out_of_factory_output_alone() -> void:
 	assert_eq(sim.query_machine_count(), 7, "the second Ammo Press is standing")
 	assert_eq(sim.query_machine_id(6), "ammo_press_mk1")
 	assert_eq(sim.query_player_item(0, "iron_plate"), 2, "paid for out of the Factory, in full")
+
+
+# ── The acceptance test: a Belt into the Nest cannot silently starve the Factory ──
+#
+# #26 measured a Run that spent 98% of itself in Power deficit because a coal Belt the player
+# had run to the Nest to pay `t01_munitions` went on diverting half of the one coal Node for
+# the rest of the Run. The tier wanted 20 coal and the store would then take 200 more, and
+# nothing anywhere said "the tier is paid, stop sending coal" — so the Factory browned out and
+# the cause was a Belt doing exactly what it had been told, somewhere else entirely.
+#
+# #37's answer is the rule this project already has: the store refuses what it has no room
+# for, the Belt backs up, and the diversion ends itself. What was missing was a reason for the
+# store to have no room, and it is that **coal is not something a player can spend again**.
+# Nothing's `build_cost` names it and no weapon fires it, so 200 banked coal was a Factory's
+# fuel turned into a number with no sink. See `Definitions.item_can_be_spent`.
+#
+# On the shipped economy, like the acceptance test above it, and on the same Breach-free Map:
+# what is being measured is whether the Factory keeps its own fuel, not whether it can fight.
+
+## Where the coal Belt into the Nest leaves the coal Miner and how it gets to the Nest's
+## eastern wall: north out of the Miner's own face at (8, 9), then west along z = 4 into the
+## footprint at (4, 4). Both legs are clear of the Smelter at (7, 1).
+const COAL_TO_THE_NEST: Array = [
+	[Vector3i(8, GROUND, 9), Vector3i(8, GROUND, 5)],
+	[Vector3i(8, GROUND, 4), Vector3i(5, GROUND, 4)],
+]
+
+
+## The same opening line, plus the coal Belt a player runs to pay `t01_munitions`. The coal Miner
+## now feeds the Boiler's Belt and the Nest's, which is the diversion — and because Belts are
+## walked in canonical order and this one's entry at (8, 9) precedes the Boiler's at (7, 10), the
+## Nest is served *first*. That is the worst case on purpose: the Boiler gets only what the Nest
+## will not take, so if the refusal does not arrive the Factory browns out.
+func _build_the_opening_line_and_divert_coal(sim: Simulation) -> void:
+	_build_the_opening_line(sim)
+	for leg: Array in COAL_TO_THE_NEST:
+		sim.step([InputAction.build_belt(0, leg[0], leg[1])])
+
+
+func test_a_coal_belt_into_the_nest_pays_the_tier_and_then_stops_diverting_the_boilers_fuel() -> void:
+	var shipped: Definitions = Simulation.new(SEED, 1).query_definitions()
+	assert_false(shipped.has_errors(), shipped.describe_errors())
+	assert_false(
+		shipped.item_can_be_spent("coal"),
+		"coal pays for nothing and no weapon fires it, so the store has no room for it"
+	)
+	assert_true(shipped.item_can_be_spent("iron_plate"), "where plate buys every Machine there is")
+
+	var sim: Simulation = Simulation.new(SEED, 1, shipped, _shipped_layout())
+	_build_the_opening_line_and_divert_coal(sim)
+
+	# `t01_munitions` wants 20 coal, and the Belt is how it gets paid: that much diversion is
+	# the price of progression and a player can read it off the bill.
+	assert_true(
+		_step_until(
+			sim, 20000, func() -> bool: return sim.query_completed_deliveries().size() >= 1
+		),
+		"the coal Belt paid the opening tier"
+	)
+	assert_eq(sim.query_completed_deliveries()[0], "t01_munitions")
+
+	# And then the diversion ends itself. The Nest stops taking coal the moment the bill is
+	# paid, so the line packs up from the far end backwards — the Nest's own leg first, then
+	# the Miner's — until the Miner has nowhere to put coal but the Boiler's Belt. Nothing is
+	# destroyed getting there: every lump the Nest refused is still standing on the line.
+	var diverted: int = sim.query_belt_at_tile(COAL_TO_THE_NEST[0][0])
+	assert_true(diverted != -1, "the diverting Belt is still standing — nobody demolished it")
+	assert_true(
+		_step_until(sim, 20000, func() -> bool: return sim.query_belt_is_full(diverted)),
+		"the whole diverting line packed solid, back to the Miner's own face"
+	)
+	assert_true(sim.query_belt_is_stalled(diverted), "stalled, where a player can see it")
+	assert_eq(sim.query_nest_store("coal"), 0, "and not one lump of coal was ever banked")
+
+	# The whole of what the trap cost, measured where a player would feel it: the grid.
+	assert_false(
+		sim.query_power_is_in_deficit(),
+		"and the Factory is not browned out: %d kW supplied against %d kW asked"
+		% [sim.query_power_supply_kw(), sim.query_power_demand_kw()]
+	)
+	var boiler: int = -1
+	for index: int in range(sim.query_machine_count()):
+		if sim.query_machine_id(index) == "steam_boiler_mk1":
+			boiler = index
+	assert_true(boiler != -1, "the Boiler is standing")
+	assert_false(sim.query_machine_is_starved(boiler), "and it is burning coal, not waiting for it")
+
+
+func test_a_belt_carrying_something_spendable_into_the_nest_still_banks_it() -> void:
+	# The control the clause above deserves. The same Map, the same line, the same Nest — and
+	# the Smelter's plate Belt, which is the one #27 is about, is untouched: plate buys every
+	# Machine in the game, so the store has room for it and a Factory still funds itself out of
+	# its own output. The rule is about the Item, not about the Belt.
+	var shipped: Definitions = Simulation.new(SEED, 1).query_definitions()
+	var sim: Simulation = Simulation.new(SEED, 1, shipped, _shipped_layout())
+	_build_the_opening_line_and_divert_coal(sim)
+
+	assert_true(
+		_step_until(
+			sim, 20000, func() -> bool: return sim.query_nest_store("iron_plate") >= 14
+		),
+		"the Smelter's plate was banked past the bill, exactly as #27 asks"
+	)
+	assert_eq(sim.query_nest_store("coal"), 0, "while the coal was not")

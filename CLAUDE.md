@@ -18,7 +18,7 @@ tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|grou
 SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png routing
                                  # the same, through the player's own camera (placing|routing|running)
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
-tools/run_tests.sh              # the whole suite, headless. This is the CI command.
+tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
 tools/balance/measure.sh --scenario competent --verbose   # one Run, with its per-minute trace
@@ -50,6 +50,17 @@ than the engine's test runner; see
 `bash tools/git/install_hooks.sh` once per clone to install its licence guard as
 a pre-commit hook — the repository is public and purchased assets must never be
 committed.
+
+**There are three suites and CI runs all three** — `tools/run_tests.sh`,
+`tools/assets/run_tests.sh` and `tools/tuning/run_tests.sh`. See
+[.github/workflows/ci.yml](.github/workflows/ci.yml); the `all suites green` job
+is the single check. It provisions Godot 4.7.2, Blender 5.2.2 and ffmpeg
+(`.github/ci/install_toolchain.sh`, pinned and checksummed in
+`.github/ci/toolchain.env`) so that no test skips for a missing tool — a skip
+whose reason is not in `.github/ci/expected_skips.txt` fails the job, because a
+suite that silently skips part of itself is the same thing as one that does not
+run. Two of the three did not run until #40, and a tuning-defaults regression sat
+on the integration branch for days as a result.
 
 `tools/run_tests.sh` runs `--import` first on every invocation. That is not optional: `class_name`
 globals resolve through `.godot/global_script_class_cache.cfg`, which only an
@@ -166,6 +177,20 @@ Three things it is careful about:
   absent**, exactly as the viewmodels are, and a clone without them walks the same
   layout drawing self-authored stand-ins out of the committed Machine materials.
   See [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 8.
+- **And they are graded into the palette rather than tinted toward it.** The
+  packs are clean modern high-visibility industrial — safety yellow, process
+  teal, white — and the first pass multiplied each pack's `baseColorFactor` by a
+  colour pulled toward `dieselpunk_palette.json`. That changed nothing where it
+  mattered: the whole heyheythere set is drawn through one shared
+  `material_override` built over the atlas, so the factor it tinted is read by
+  nobody, and the foreground pipe runs stayed the brightest and newest-looking
+  things in a world of grimy cast iron. `tools/assets/prop_grade.py` remaps the
+  **atlas** onto the palette's own ramps at conversion time instead, forces the
+  glow map to tungsten, and deepens the pack's baked occlusion into grime; the
+  shared material went metallic, because a Lambertian crate beside a metal
+  Machine renders twice as bright from the same albedo whatever the texture says.
+  Hazard colour is not gone, it is **placed**: two prop ids wear the palette's own
+  `HazardYellow` and nothing else in the yard does.
 
 **The light** kept #25's shape — ambient and reflections off the sky, filmic
 tonemap, SSAO, depth fog — and changed four things. The sun dropped from 41 to 23
@@ -652,6 +677,12 @@ same Factory in two orders and comparing every Item position tick by tick.
 - A tick runs **Belts before Machines**: an Item delivered this tick is usable this
   tick, and an Item produced this tick is collected on the next, which is the same rule a
   freshly built Machine follows.
+- **Two Belts off one Machine is a priority, not a half-share.** `_load_from_port` walks Belts
+  in canonical order and each takes one Item from the Machine behind its entry, so the Belt
+  whose entry tile comes first is filled every tick and the second gets only what the first has
+  no room for. That is a real mechanism and not a bug — it is how back-pressure composes — but
+  it is not a splitter, and three measured Factory facts fall out of it. See the splitter finding
+  under "The joint balance pass".
 
 ## The one Power grid
 
@@ -693,6 +724,18 @@ GLOSSARY.md and DESIGN.md, and it is the whole model.
   names the Machine's row. All three generator classes GLOSSARY.md names — Steam,
   Electric, Exotic — are this one role, differing in fuel chain and failure mode,
   which are rows rather than code.
+- **A generator that is half fed supplies half a generator, and that is how one coal Node
+  pays for a Silo.** Supply is totalled over the Machines `_machine_would_work` says are
+  working, so a Boiler holding no coal contributes nothing *this tick* and a Boiler holding
+  coal contributes all 600 kW — which means a Boiler fed at two thirds of its appetite is
+  worth two thirds of 600 kW averaged over time rather than being a Boiler that does not
+  count. The shipped coal Node yields 40 coal a minute against a Boiler's 30, so it is
+  **1.33 Boilers' worth of fuel**: split across two Boilers it is about 800 kW of average
+  supply instead of 600, and 300 + 800 against the opening Factory's 660 is what leaves room
+  for a Silo's 400. #26 read the same two numbers as "there is no second Boiler to be had"
+  and recorded "Milestone 1 cannot power a Silo" as a finding; the arithmetic is a *rate* and
+  not a count, and `artillery` in the balance harness is the Run that demonstrates it. **No
+  number changed for this** — the Power was always there to be built toward.
 - **`power.baseline_supply_kw` exists because the Factory would otherwise deadlock.**
   Machines are throttled by the grid, a Steam Boiler burns Belt-delivered coal, and
   coal needs a Miner: a Factory starting on nothing but its own generators could
@@ -2442,6 +2485,23 @@ spending and the thing you defend.
   *go*. And it is a number in `hash()` and in the save file with no bound on it at all.
   Bounded, a full store refuses the hand-off and the Belt packs up, which is the rule a full
   input buffer already obeys rather than a new one — so "nothing is destroyed" keeps its teeth.
+- **The store has room only for an Item a player could spend again, and that is what stops a
+  Belt into the Nest starving the Factory that feeds it.** `Definitions.item_can_be_spent` is
+  the question — an Item some Machine's `build_cost` names, or one a weapon fires — and
+  `_nest_store_room` returns zero for anything else, so the cap above is a ceiling rather
+  than the whole of the room. **Coal is the case this exists for.** Nothing is paid for in
+  coal and no weapon fires it, so 200 banked coal was a Factory's own fuel converted into a
+  number with no sink: #26 measured a Run that spent 98% of itself in Power deficit because a
+  coal Belt a player had run to the Nest to pay `t01_munitions`' 20 coal went on diverting the
+  Boiler's fuel for the rest of the Run, with the player having done nothing they could see.
+  Now the bill takes its 20 and the store refuses the next lump, the Belt packs up where it
+  can be seen, and **the diversion ends itself** — which is the back-pressure rule a full
+  input buffer already obeys rather than a new concept. The *bill* still takes coal whenever a
+  tier asks for it (`t03_deep_survey` wants 200), because a bill is paid before the store and
+  a tier asking for coal is the Delivery chain making that diversion a visible, finite
+  decision. **Deliberately not every Item a tier asks for**: banking against a tier that is
+  not open yet is the store doing the chain's job, and it was the whole of the trap.
+  `test_nest_store.gd`'s second acceptance test plays it on the shipped economy.
 - **Per Item, not one pot.** One shared total would let a Belt of coal crowd plate out of the
   store: a cross-Item interaction nobody tuned, and one whose outcome depended on which Belt
   happened to arrive first. One number applied to each Item independently also names no Item
@@ -2642,25 +2702,36 @@ player both spend: artillery competes with the magazine rather than being free o
 up. `silo.max_charges_per_load` is 4 against a capacity of 8, so a full Silo is two strikes
 rather than one big button.
 
-**#26 did not measure the Silo, and the reason is a finding rather than an omission.** A Silo
-draws 400 kW. The opening Factory the whole measurement is built on draws **660** of the 900
-that one Steam Boiler and the Nest's baseline plant supply between them, so a Silo beside it
-asks for 1,060 and the grid throttles everything — and the shipped Map has **one coal Node**,
-yielding 40 coal a minute against the 30 a Boiler burns, so there is no second Boiler to be
-had. A Milestone 1 Run cannot power a Silo and the Ammo Press that feeds it at the same time.
-So the question "does building a Silo stop a Run feeding its Turrets" is not yet askable:
-**the Power grid refuses the Silo before the Ammo Press has to argue with it.**
+**#26 could not measure the Silo and recorded why as a finding; #37 measured it, and what the
+finding turned out to be was arithmetic.** A Silo draws 400 kW and the opening Factory draws
+**660** of the 900 one Steam Boiler and the Nest's baseline plant supply between them, so a
+Silo beside it asks for 1,060. The step that does not follow is the next one: the shipped Map
+has one coal Node yielding 40 coal a minute against the 30 a Boiler burns, which #26 read as
+"there is no second Boiler to be had". A Boiler is on the grid only *while it is burning*, so
+40 coal a minute is **1.33 Boilers burning** rather than one Boiler burning and 10 coal a
+minute piling up on a Belt — two Boilers on one Node are worth about 800 kW of average supply
+instead of 600, and 300 + 800 pays for the Silo. See "The one Power grid".
 
-That makes the twenty-rounds-a-Charge figure still the number most likely to be wrong, and it
-puts a second one beside it: a Milestone 1 Run has no way to power a Silo, which is either a
-Map question (a second coal Node) or a content question (a second generator class, which
-DESIGN.md already lists) and is in neither case a tuning change #26 could make. The rifle
-measurement is the nearest available proxy and it is not encouraging — 75 rounds a minute out
-of a 37-a-minute Press costs the Run three minutes, and a Silo asks for 60 a minute. See the
-Gear section, and "The joint balance pass" below.
+So **a Milestone 1 Run can power a Silo, and the Silo is something it builds toward.** The
+`artillery` row of the balance harness is the Run: a second Boiler on the same coal Node, a
+second Miner and Smelter on the spare iron Node — because the Ammo Press already takes every
+plate the first Smelter makes, so the Silo's plate has to be *made* rather than diverted —
+ninety-six plate found seven pulls of the call-early lever at a time, and then a walk, a dial,
+an irreversible load and five seconds of standing still. It fires a **Sentry Drop**, which is
+the one Stratagem the shipped chain does not lock, and the Run is a third shorter than
+`competent` for all of it. **Nothing in `content/` changed to make that true.**
 
-The third number still unmeasured is `paint_seconds`: five seconds is a guess at how long a
-player can be asked to be helpless, and it is the whole feel of the mechanic.
+Two things that measurement settles and one it sharpens. The twenty-rounds-a-Charge figure is
+**not** the number most likely to be wrong: the Silo is a third claimant on the Press and the
+Press's Turret line is sixty rounds of Belt, so the Silo is fed out of what the Turret's line
+cannot hold and a Charge every forty seconds is comfortable. What costs the Run is the 400 kW
+and the seven lever pulls, not the rounds. And the plate is the real bottleneck, which no
+amount of tuning the Recipe would have shown.
+
+`paint_seconds` is still unmeasured — five seconds is a guess at how long a player can be asked
+to be helpless, and it is the whole feel of the mechanic. `artillery` fires a three-second
+Sentry Drop rather than the five-second Barrage, because `artillery_barrage` is locked behind
+`t03_deep_survey` and a Run that has paid for that is a different measurement.
 
 ## The joint balance pass
 
@@ -2697,42 +2768,54 @@ it from several methods.
 
 ### The table, measured 2026-10-08
 
-Seeds 7, 11 and 29, and after this merge **every scenario ends on the same tick on all three** —
-`rifle_picket`, the one row that used to spread, now varies only in peak Heat (6186 / 6178 /
-6174) and not in when it ends. See "What the seed can reach", below.
+Seeds 7, 11 and 29, and **every scenario ends on the same tick on all three.** `rifle_picket`,
+the one row that has ever spread, now differs only in peak Heat — 6186, 6178, 6174 — and not in
+when it ends. See "What the seed can reach", below.
 
-**All four columns are the same eight scenarios through the same harness.** The first two differ
-by four numbers in one content file and nothing else. The third adds #30's collision and #34's
-Breaker approach. The fourth adds #35's separate `heat.first_wave_interval_seconds`, and it is
-the one this branch measured: #34 and #35 both re-measured the table on their own branches and
-**neither branch's figures survive the merge**, because the two changes move opposite ends of the
-same schedule. Hand-merging the two tables would have recorded a third set of numbers that no
-Run ever produced, so this column is one fresh run of `tools/balance/measure.sh` on the merged
-tree. See "What collision cost the two sorties", "What #34 cost the table" and "What the shorter
-first Wave cost", below.
+**Every column is the same scenarios through the same harness.** The first two differ by four
+numbers in one content file and nothing else. The third adds #30's collision and #34's Breaker
+approach. The fourth adds #37's two rules and the ninth scenario they made measurable, and moved
+not one of the eight rows of record. The fifth adds #35's separate
+`heat.first_wave_interval_seconds`, and it is **one fresh run of `tools/balance/measure.sh` on
+the merged tree** — because #34, #37 and #35 each re-measured on their own branch, the schedule's
+two ends belong to different tickets, and hand-merging three tables would record figures no Run
+ever produced. See "What collision cost the two sorties", "What #34 cost the table", "What #37
+cost the table" and "What the shorter first Wave cost", below.
 
-| Scenario | #26 before | #26 after | #34 | **merged** | Wave | Peak Heat | What killed it, now |
-|---|---|---|---|---|---|---|---|
-| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
-| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
-| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
-| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
-| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
-| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
-| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
-| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m13s | **28m02s** | 34 | 6186 | swarmed, 46s sooner than `competent` |
+| Scenario | #26 before | #26 after | #34 | #37 | **merged** | Wave | Peak Heat | What killed it, now |
+|---|---|---|---|---|---|---|---|---|
+| `bare` — builds nothing | 4m22s | 4m22s | 4m22s | 4m22s | **3m22s** | 1 | 0 | undefended: the first Wave alone |
+| `opening_line` — the line, no Turret | 3m39s | 4m04s | 4m04s | 4m04s | **3m12s** | 1 | 615 | undefended, and *sooner than `bare`* |
+| `competent` — six Machines, one MG on the lane | 17m45s | 27m00s | 29m07s | 29m07s | **28m48s** | 35 | 6725 | **a Siege Hulk standing**, 96 rounds still in it |
+| `over_producer` — the same plus an unbelted Miner | 10m30s | 19m36s | 20m21s | 20m21s | **20m21s** | 25 | 6841 | the same, **29% sooner** than `competent` |
+| `fortified` — a second MG over the Factory | 8m08s | 29m15s | 28m45s | 28m45s | **28m45s** | 35 | 6716 | the same, 112 rounds unspent — **a wash** |
+| `deep_digger` — pays the chain, digs Depth 2 | 8m13s | 10m48s | 10m48s | 10m48s | **10m48s** | 11 | 2565 | **dug too deep**: two Breaches |
+| `hive_sortie` — clears the eastern Hive | 19m13s | 29m36s | 32m22s | 32m22s | **32m05s** | 39 | 6672 | the same, 3m17s *later* — the longest Run measured |
+| `rifle_picket` — a rifleman on the same Press | 8m04s | 26m32s | 27m16s | 27m16s | **28m02s** | 34 | 6186 | swarmed, 46s sooner than `competent` |
+| `artillery` — grows a Silo and fires it | — | — | — | 16m10s | **16m10s** | 21 | 5584 | swarmed, **44% sooner** than `competent` |
 
-**Where the two tickets met.** The pattern in that last column is clean once you know which
-ticket owns which end of a Run. #35 shortened the *first* Wave interval, so it moves the rows
-that end during the first Wave and nothing else: `bare` and `opening_line` lose a minute each
-and are the only rows where #35's own figures survive intact. #34 changed what happens in the
-*late* tiers, so it moves the rows that get there: every long Run now ends with a Siege Hulk
-standing rather than having run dry. The four rows that end in between — `over_producer`,
-`fortified`, `deep_digger` — are **bit-identical to #34's**, because a Factory that dies at
-minute twenty never notices where the first Wave started.
+**#36 moved no row of this table, and that was the control its shape predicted**: it gave a
+player a Belt-routing tool and a port table to aim it with, and a scenario issues `BUILD_BELT`
+directly rather than dragging a mouse.
 
-`competent` is the one row both tickets touch, and it lands at 28m48s, nineteen seconds short of
-#34's 29m07s: #35's earlier first Wave costs it that much and no more.
+`rifle_picket`'s **27m16s** in the #34 column corrects a transcription error — 27m13s is the
+figure on seeds 11 and 29, and seed 7, which the table quotes throughout, printed 27m16s.
+Corrected openly rather than quietly, because the whole value of this table is that somebody can
+re-derive it.
+
+**Which ticket owns which row.** The last column is legible once you know that a Run has two ends
+and different tickets own them. #35 shortened the *first* Wave interval, so it moves the rows that
+end during the first Wave and nothing else: `bare` and `opening_line` lose a minute each, and they
+are the only rows where #35's own branch figures survive the merge intact. #34 changed the *late*
+tiers, so it moves the rows that reach them — every long Run now ends with a Siege Hulk standing
+rather than having run dry. #37 made a Silo powerable, which did not move a row but added the row
+a Silo was always missing. And the three rows that end in between — `over_producer`, `fortified`,
+`deep_digger` — are **bit-identical across the last three columns**, because a Factory that dies
+at minute twenty never notices where the first Wave started.
+
+`competent` is the one row #34 and #35 both touch: 28m48s, nineteen seconds short of #34's
+29m07s, which is what #35's earlier first Wave costs it and no more.
+
 
 **The loop the spec asks for lands.** Build nothing and lose in three minutes. Build the opening
 Factory and get twenty-eight, lost to a boss with a name and an answer. Walk out and clear a Hive
@@ -2842,14 +2925,14 @@ exactly what its shape predicts:
 | `fortified` | 28m45s | 28m45s | — |
 | `deep_digger` | 10m48s | 10m48s | — |
 | `hive_sortie` | 32m22s | 32m05s | −17s |
-| `rifle_picket` | 27m13s | 28m02s | **+49s** |
+| `rifle_picket` | 27m16s | 28m02s | **+46s** |
 
 The two undefended rows lose a minute, because the first Wave is the only Wave they see. Three
 rows do not move at all: a Factory that dies at minute twenty never notices where the first Wave
 started. The long rows lose under twenty seconds. Nothing in `content/waves.csv` was touched, so
 the curve #26 measured is intact and what moved is only where it starts.
 
-`rifle_picket` going the *other* way by 49 seconds is the one figure here that is not obvious,
+`rifle_picket` going the *other* way by 46 seconds is the one figure here that is not obvious,
 and it is the same mechanism as everything else in this row's history: moving the schedule's
 phase moves where every round the picket fires goes, and this time it moved them somewhere that
 bought time rather than cost it.
@@ -2863,7 +2946,7 @@ the mechanic's own lesson arriving in the first minute instead of the third, and
 
 **`rifle_picket`'s sign has now moved four times, and that is the finding.** #26 measured a
 rifleman at the Nest costing two minutes. #30's collision took it to 28 seconds. #34's Breaker
-approach took it back out to 1m54s. Measured on #35's own branch it crossed zero — 26m52s
+approach took it back out to 1m51s. Measured on #35's own branch it crossed zero — 26m52s
 against `competent`'s 26m42s, ten seconds the *other* way. **Merged, it is 46 seconds and back
 on the original side**: 28m02s against 28m48s.
 
@@ -2885,7 +2968,7 @@ measuring what it looks like it is measuring.
 > interval then merged on top and moved five of these rows again — see "What the shorter first
 > Wave cost" for that delta and the **merged** column for where they actually stand. The two
 > claims here that the merge changed in kind rather than in degree are `rifle_picket`, whose
-> 1m54s is now 46s and whose *sign* has since moved twice more, and `fortified`, whose
+> 1m51s is now 46s and whose *sign* has since moved twice more, and `fortified`, whose
 > twenty-two-second margin is now three seconds. The reasoning is what this section is for and
 > the reasoning is unaffected.
 
@@ -2920,7 +3003,7 @@ that does to a Run:
   for either row.** The honest reading is that `fortified`'s row was measuring the workaround to
   a bug, and the workaround is now worth nothing.
 - **`over_producer` and `rifle_picket` both moved by about forty-five seconds** and both claims
-  got *stronger*. Over-producing costs 30% of the Run rather than 27%; the rifleman costs 1m54s
+  got *stronger*. Over-producing costs 30% of the Run rather than 27%; the rifleman costs 1m51s
   rather than 28s. Same reason in both cases: a Factory that keeps its Machines has further to
   fall, so the thing it wasted is measured against a longer Run.
 - **`bare`, `opening_line` and `deep_digger` did not move at all.** None of them reaches
@@ -2936,6 +3019,43 @@ that kept its Machines alive and its Turrets fed", which was unreachable in prac
 *because* of the bug #34 fixed. It is now reached by four rows. **That number is not newly
 wrong; it is newly doing what it was tuned to do**, and moving it to put the boss back out of
 the harness's sight would be tuning for the instrument rather than for the game.
+
+### What #37 cost the table
+
+**#37 changed two rules and added a ninth row, and the eight rows of record did not move by a
+single tick.** That is worth as much as the new row is: both changes are about failure modes the
+table could not see, so a table that *had* moved would have meant one of them had a side effect
+nobody asked for.
+
+**The new row is the acceptance criterion.** `artillery` is `competent` plus four Machines, four
+Belts and a Silo that gets loaded and fired — 16m10s, Wave 21, one Stratagem called in on two
+Charges with nothing wasted, and 8 Charges banked at the peak, which is the Silo's whole
+`charge_capacity`. Three things it settles:
+
+- **A Milestone 1 Run can power a Silo, and nothing in `content/` had to change.** A second
+  Boiler on the one coal Node is worth about 800 kW of average supply rather than 600, because a
+  Boiler is on the grid only while it burns. See "The one Power grid" for the arithmetic and
+  "The Silo… Where the balance stands" for what #26 read instead.
+- **What it costs is the Run, not the rounds.** 16m10s against `competent`'s 29m07s is 44% of
+  the Run, and the Ammunition was never the binding constraint: 298 shots fired, 52 rounds
+  still in the Factory, and a Silo that filled to capacity. What it actually paid was **seven
+  pulls of the call-early lever** for ninety-six plate, and **31% of the Run in Power deficit**
+  with 1,060 kW of demand against about 1,100 kW of average supply. Artillery is a Factory
+  running flat out, which is exactly the standing the Heat system is built to punish.
+- **Plate is the bottleneck nobody had measured.** A Silo's Recipe is a plate and twenty rounds,
+  and the Smelter makes 18.75 plate a minute against an Ammo Press that wants 20 — so a second
+  Belt off that Smelter is served *after* the Press's by canonical Belt order and never gets a
+  single plate. The Silo's plate has to be **made** rather than diverted, which is why the row
+  builds a second Miner and Smelter on the spare iron Node. That is the opposite of the
+  twenty-rounds-a-Charge worry #26 recorded.
+
+**The Nest's store fix moved nothing measurable, and the reason is the row that was supposed to
+show it.** `deep_digger` tears its coal Belt down at three minutes, so it never spent long
+against the store's cap. Measured with that demolish *removed*, the Run is **6m20s with 98% of
+it in Power deficit** — which is #26's finding reproduced, and the store is no longer most of
+it: forty tiles of Belt hold 160 coal of their own before back-pressure reaches the Miner, and
+that line's entry precedes the Boiler's in canonical Belt order so it is served first. So the
+store's 200 is gone and 180 remain, which is the new finding below rather than a fix that failed.
 
 ### What the seed can reach
 
@@ -2987,17 +3107,25 @@ recorded here instead, which is what #26 asked for.
    See the flowfield section for the mechanism and "What #34 cost the table" for what it did to
    all eight rows. The lesson the trap replaced: **a Breaker comes down the road, under fire,
    and lunges at the first thing you built beside it.**
-2. **A Belt into the Nest banks the surplus for ever, so a Belt nobody tears down is a
-   permanent tax.** `t01_munitions` wants 20 coal; the store will then take 200 more. The first
-   `deep_digger` ran its whole Run with the Boiler short of coal and 98% of it in Power deficit,
-   because nothing in the game says "the tier is paid, stop sending coal". A player has to notice
-   and demolish, which the scenario now does at three minutes. Whether that is friction or
-   tedium is a design question; it is not a number.
-3. **Milestone 1 cannot power a Silo.** The opening Factory draws 660 of 900 and a Silo wants
-   400; the Map has one coal Node yielding 40 coal a minute against a Boiler's 30, so there is
-   no second Boiler. #17's question — does a Silo stop a Run feeding its Turrets — is not yet
-   askable. Either a second coal Node (a Map change) or the second generator class DESIGN.md
-   already lists (a content ticket) has to come first.
+2. ~~**A Belt into the Nest banks the surplus for ever, so a Belt nobody tears down is a
+   permanent tax.**~~ **Fixed by #37**, and the fix is the rule this project already had: the
+   Nest refuses what it has no room for and the Belt packs up. What was missing was a reason for
+   the store to have no room, and it is that **coal is not something a player can spend again**.
+   `t01_munitions` wanted 20 coal and the store would then take 200 more — a Factory's own fuel
+   converted into a number nothing in the game has a sink for, which is the opposite of what the
+   store is for. Now the bill takes its 20 and the next lump is refused, so the diversion ends
+   itself in seconds instead of running for the length of a Run. See "The Nest's store, and the
+   faucet it is". The lesson the trap replaced: **the Nest banks what you could spend, and
+   nothing else; everything else backs up where you can see it.**
+3. ~~**Milestone 1 cannot power a Silo.**~~ **Fixed by #37, and it turned out not to be a design
+   question at all.** The arithmetic was a count where it should have been a rate: a Boiler is on
+   the grid only while it is *burning*, so one coal Node's 40 coal a minute is 1.33 Boilers
+   burning rather than one Boiler burning and 10 coal a minute piling up on a Belt. Two Boilers
+   on one Node supply about 800 kW averaged over time, and 300 + 800 against 660 leaves room for
+   a Silo's 400. No second coal Node, no second generator class, **no number changed** — the
+   Power was always there to be built toward, and the `artillery` row is the Run that builds
+   toward it. #17's question is now asked and answered: a Silo does *not* stop a Run feeding its
+   Turrets, because what it actually competes for is plate and Power.
 4. **The Siege Hulk's frontal arc is not expensive, it is very nearly immune.** 85% off 15
    leaves an MG doing 2, and off a Bolt Rifle's 30 leaves 4 — so 1800 hit points is 900 Turret
    rounds or 450 rifle shots from the front. DESIGN.md says the Hulk must be answered on foot,
@@ -3019,7 +3147,28 @@ recorded here instead, which is what #26 asked for.
    `BalanceProbe` did — yields 9,830,400 and an "at the interval floor" verdict that is always
    true. Anything reading a `_seconds` field off `Definitions` goes through `Fixed.floor_to_int`
    or the same `Fixed.mul` the Simulation uses.
-8. **"The Turret ran dry" has to be measured on the Factory, not on the Turret.** A destroyed
+8. **A splitter in this game is a priority, not a half-share — and that is the half of #37's
+   second trap that is still open.** `_load_from_port` walks Belts in canonical order and takes
+   one Item from the Machine behind each entry, so a Machine with two Belts off it fills the
+   first one that has room *every tick*. Two Belts only alternate when the first is backed up.
+   Three consequences, all measured: the Ammo Press feeds its Turret line and the Silo gets what
+   that line cannot hold, which is fine; a second Belt off the Smelter never receives a single
+   plate, because the Press takes the lot, which is why `artillery` has to build a second ore
+   line; and `deep_digger`'s coal Belt to the Nest is served **before** the Boiler's purely
+   because its entry tile has a smaller x, which is the invisible part of the starvation #37
+   fixed the visible part of. The CLAUDE.md sentence claiming the Press "alternates" between two
+   lines was wrong and is corrected where it stands. A fair round-robin would need "which Belt
+   was served last" as hashed state in the one function every Belt goes through, which is a
+   bigger change than #37's two findings and belongs to whichever ticket owns Belt routing.
+9. **A long Belt is a long buffer, and a Belt pointed at the Nest hides its diversion inside
+   itself.** `deep_digger`'s coal line is forty tiles, which is 160 coal before back-pressure
+   reaches the Miner at all — eight times what the tier it was built to pay actually wanted.
+   With the demolish removed the Run is 6m20s and 98% browned out even with #37's store fix in.
+   Unlike the store this is at least *visible* — it is a Belt packed solid with coal — and it is
+   bounded by something the player built rather than by a number in `tuning.toml`. But "I ran a
+   Belt to the Nest and my Factory browned out for four minutes" is still a lesson nothing says
+   out loud, and the HUD is where it would be said.
+10. **"The Turret ran dry" has to be measured on the Factory, not on the Turret.** A destroyed
    Turret holds no rounds and contributes no ticks, so a per-Turret ratio reports 0% for the
    most common ending there is: the Ammunition ran out, and then the Breakers ate the Turret.
    `DRY_ENDGAME_PERCENT` is measured against "no Ammunition anywhere in the Factory".
@@ -3036,7 +3185,14 @@ Honest residue, so the next ticket does not have to rediscover it:
   `enemy.breaker_damage` is still an arithmetic claim.
 - **Walls.** Nothing in the eight scenarios builds one, so `wall.health` against
   `enemy.breaker_damage` is likewise unplayed.
-- **The Silo, the Stratagems and the Painting**, for the Power reason above.
+- **Two of the three Stratagems, and the Painting's length.** The Silo itself is measured now —
+  `artillery` powers one, loads it and fires it — but what it fires is a **Sentry Drop**, because
+  that is the one row the shipped Delivery chain does not lock: `supply_drop` sits behind
+  `t02_deep_mining` and `artillery_barrage` behind `t03_deep_survey`. So a Barrage's 150 points
+  over six tiles and a Supply Drop into a player's own pockets are still arithmetic, and so is
+  `silo.paint_seconds` — five seconds of being helpless is the whole feel of the mechanic and a
+  three-second Sentry Drop is not the same question. **The next scenario worth writing is
+  `deep_digger` with a Silo**, which is the only Run that reaches a Barrage at all.
 - **Answering a Siege Hulk on foot**, for the flanking reason above — and it is now the single
   biggest hole in the table rather than a footnote. Before #34 no scenario reached 6400 Heat at
   all; now **four of them do**, and all four end with Siege Hulks standing that nothing they own
