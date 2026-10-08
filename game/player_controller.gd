@@ -564,7 +564,13 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 		actions.append(InputAction.select_machine(player_id, sample.machine_picked))
 		build_tool = Simulation.BUILD_TOOL_MACHINE
 
-	if sample.machine_steps != 0:
+	# **The wheel reads by hand, exactly as the number row above it does.** A player
+	# holding a rifle who scrolls is not choosing a Machine — they have no hologram to
+	# aim and nothing on screen would change, so the only effect was to silently
+	# re-point the Build Gun they would draw next. That is the same disagreement #35
+	# found between the hologram and the four inline build-mode tests: a reading that
+	# is gated on one side and not the other.
+	if sample.machine_steps != 0 and gun_in_hand:
 		var chosen: int = _stepped_machine(sim, player_id, sample.machine_steps)
 		if chosen != -1:
 			actions.append(InputAction.select_machine(player_id, chosen))
