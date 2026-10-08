@@ -46,6 +46,13 @@ const DELIVERIES_FILE: String = "deliveries.csv"
 const GEAR_FILE: String = "gear.csv"
 const STRATAGEMS_FILE: String = "stratagems.csv"
 
+## Where a Belt may dock against a Machine. **Optional, and the only optional table**: it is
+## read for the arrows a player sees on a Machine's faces and by nothing in the Simulation,
+## so a Run with the file missing loses the arrows and loses nothing else — the rule a Machine
+## with no generated body already obeys. See `sim/machine_ports.gd` for why the Simulation
+## does not yet dock a Belt against the declaration, and which ticket should make it.
+const PORTS_FILE: String = "machine_ports.csv"
+
 const MACHINE_COLUMNS: Array = [
 	"id",
 	"display_name",
@@ -702,6 +709,17 @@ var _stratagem_ids: PackedStringArray = PackedStringArray()
 ## a `FIT_COMPONENT` intent carries.
 var _gear_slot_ids: PackedStringArray = PackedStringArray()
 
+## Where a Belt may dock against each Machine, out of `content/machine_ports.csv`.
+##
+## **Deliberately not in `digest()`**, and that is the one surprising thing about it. The
+## digest is the set of numbers a Run is playing by — what a lockstep client checks it agrees
+## with the Host about, and what `test_delivery` asserts a completed tier does not move. The
+## ports are read by the renderer and by nothing in the Simulation, so a client whose table
+## differs draws different arrows and simulates the same Run. The ticket that makes
+## `_load_from_port` dock against the declaration must add them, because on that day they
+## become a rule.
+var _ports: MachinePorts = MachinePorts.none()
+
 ## The Gear indices of the `weapon` rows, ascending. What the weapon-select keys step
 ## through, so a fourth weapon joins the list by being a row.
 var _weapon_gear_indices: PackedInt64Array = PackedInt64Array()
@@ -732,6 +750,12 @@ static func load_from_directory(dir_path: String) -> Definitions:
 			unreadable.errors.append("%s: no such file" % path)
 		return unreadable
 
+	# The one table that may be absent. Everything above is load-bearing and its absence is
+	# an error named by path; this one is art's half of a declaration and a Run without it
+	# simply draws no port arrows.
+	var ports_path: String = "%s/%s" % [dir_path, PORTS_FILE]
+	var ports: String = _read_file(ports_path) if FileAccess.file_exists(ports_path) else ""
+
 	var machines: String = _read_file("%s/%s" % [dir_path, MACHINES_FILE])
 	var recipes: String = _read_file("%s/%s" % [dir_path, RECIPES_FILE])
 	var tuning: String = _read_file("%s/%s" % [dir_path, TUNING_FILE])
@@ -754,7 +778,9 @@ static func load_from_directory(dir_path: String) -> Definitions:
 		"%s/%s" % [dir_path, WAVES_FILE],
 		"%s/%s" % [dir_path, DELIVERIES_FILE],
 		"%s/%s" % [dir_path, GEAR_FILE],
-		"%s/%s" % [dir_path, STRATAGEMS_FILE]
+		"%s/%s" % [dir_path, STRATAGEMS_FILE],
+		ports,
+		ports_path
 	)
 	return definitions
 
@@ -776,7 +802,9 @@ static func parse(
 	waves_path: String = WAVES_FILE,
 	deliveries_path: String = DELIVERIES_FILE,
 	gear_path: String = GEAR_FILE,
-	stratagems_path: String = STRATAGEMS_FILE
+	stratagems_path: String = STRATAGEMS_FILE,
+	ports_source: String = "",
+	ports_path: String = PORTS_FILE
 ) -> Definitions:
 	var definitions: Definitions = Definitions.new()
 
@@ -811,6 +839,10 @@ static func parse(
 	definitions._read_waves(waves)
 	definitions._read_deliveries(deliveries)
 	definitions._read_tuning(tuning)
+	# Last, and separately, because it is the one table nothing in the Simulation reads: the
+	# ports are drawn. An empty source is the Run with no table, not a table with no rows.
+	if not ports_source.is_empty():
+		definitions._ports = MachinePorts.parse(ports_source, ports_path)
 
 	# Errors are gathered in file order — machines, then Recipes, then tuning, then the
 	# Wave table, the Delivery table and the Gear table — so the report reads like a list
@@ -822,6 +854,7 @@ static func parse(
 	definitions.errors.append_array(deliveries.errors)
 	definitions.errors.append_array(gear.errors)
 	definitions.errors.append_array(stratagems.errors)
+	definitions.errors.append_array(definitions._ports.errors)
 
 	if definitions.has_errors():
 		definitions._discard_content()
@@ -852,6 +885,12 @@ func describe_warnings() -> String:
 
 
 # ── Machines ──────────────────────────────────────────────────────────────────
+
+## Where a Belt may dock against each Machine. Never null: a Run with no table has a set with
+## no ports in it, so a caller asks the same question either way.
+func machine_ports() -> MachinePorts:
+	return _ports
+
 
 func machine_count() -> int:
 	return _machines.size()
@@ -3028,6 +3067,7 @@ func _sort_deliveries() -> void:
 ## Throws away everything a broken load managed to read. Half a definition set is
 ## more dangerous than none, because it looks usable.
 func _discard_content() -> void:
+	_ports = MachinePorts.none()
 	_machines.clear()
 	_machine_ids.clear()
 	_recipes.clear()

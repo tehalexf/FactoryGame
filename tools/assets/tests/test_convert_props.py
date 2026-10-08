@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import convert_props  # noqa: E402
+import prop_grade  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[3]
 RECIPE = REPO / "tools" / "assets" / "convert_props.sh"
@@ -31,11 +32,14 @@ RECIPE = REPO / "tools" / "assets" / "convert_props.sh"
 JSON_CHUNK = 0x4E4F534A
 BIN_CHUNK = 0x004E4942
 
-# A one-pixel PNG. Small enough to inline and real enough to be copied.
+# A four-pixel atlas: the pack's safety yellow, its process teal, white and
+# black. Small enough to inline and real enough to be *graded* — which the
+# earlier one-pixel fixture was not, because it was copied rather than decoded
+# and nothing had ever checked its adler32.
 PNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d49484452000000010000000108020000"
-    "00907753de0000000c4944415408d76360606000000005000152db2d"
-    "b80000000049454e44ae426082"
+    "89504e470d0a1a0a0000000d49484452000000020000000208020000"
+    "00fdd49a73000000164944415478da6338324bc72e299ee1d3a74f0c"
+    "0c0c002a2205604d4400030000000049454e44ae426082"
 )
 
 
@@ -135,26 +139,43 @@ class ConvertPropsTest(unittest.TestCase):
         self.assertTrue((self.out / "atlas.png").is_file())
         self.assertTrue((self.out / "atlas_glow.png").is_file())
 
-    def test_a_material_with_no_colour_of_its_own_still_gets_the_tint(self):
-        # The pack's materials carry a texture and no `baseColorFactor`, which
-        # defaults to white — so the tint has to be written in rather than scaled.
+    def test_the_atlas_is_graded_on_the_way_out_rather_than_copied(self):
+        # The one that matters, and the one the first pass got wrong. Every
+        # heyheythere prop is drawn with a single `material_override` built over
+        # this atlas, so the atlas is the only thing that decides what a prop in
+        # the foreground is coloured — a tint on a `baseColorFactor` nothing
+        # reads was a tint on nobody. See `prop_grade.py`.
         self._stand_up_a_pack(convert_props.HEYHEYTHERE, ["glb/crate_large.glb"])
         self._convert()
-        factor = read_glb(self.out / "crate_large.glb")["materials"][0][
-            "pbrMetallicRoughness"
-        ]["baseColorFactor"]
-        self.assertEqual(factor, convert_props.TINTS[convert_props.HEYHEYTHERE])
-
-    def test_a_material_that_has_a_colour_is_multiplied_rather_than_replaced(self):
-        self._stand_up_a_pack(
-            convert_props.HEYHEYTHERE, ["glb/crate_large.glb"], [0.5, 0.5, 0.5, 1.0]
+        written = (self.out / "atlas.png").read_bytes()
+        self.assertNotEqual(written, PNG, "the atlas went through ungraded")
+        _, _, _, pixels = prop_grade.read_png(written)
+        self.assertLessEqual(
+            sum(
+                channel * weight
+                for channel, weight in zip(
+                    [prop_grade.SRGB_TO_LINEAR[value] for value in pixels[:3]],
+                    prop_grade.LUMA,
+                )
+            ),
+            0.14,
+            "a graded texel is brighter than the brightest Machine surface",
         )
+
+    def test_the_pack_that_keeps_its_own_materials_still_gets_its_tint(self):
+        # The far-yard packs are not on the shared atlas and are drawn from their
+        # own materials, so for them the `baseColorFactor` is still the knob.
+        self._stand_up_a_pack(convert_props.LUKAMI, ["Smooth/GLB/Storage_Silo.glb"])
         self._convert()
-        factor = read_glb(self.out / "crate_large.glb")["materials"][0][
+        factor = read_glb(self.out / "yard_silo.glb")["materials"][0][
             "pbrMetallicRoughness"
         ]["baseColorFactor"]
-        tint = convert_props.TINTS[convert_props.HEYHEYTHERE]
-        self.assertAlmostEqual(factor[0], 0.5 * tint[0], places=5)
+        self.assertEqual(factor, convert_props.TINTS[convert_props.LUKAMI])
+
+    def test_the_atlas_pack_is_not_tinted_as_well_as_graded(self):
+        # Belt and braces would be a double darkening, and worse, a second
+        # authority on what these props are coloured.
+        self.assertNotIn(convert_props.HEYHEYTHERE, convert_props.TINTS)
 
     def test_the_manifest_records_where_each_prop_came_from_and_how_big_it_is(self):
         # The packs disagree about origins — a high-bay light hangs below its pivot
