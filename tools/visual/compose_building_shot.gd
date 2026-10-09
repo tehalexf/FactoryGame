@@ -1,6 +1,7 @@
 ## Composes a screenshot of the **act of building** and writes it to a PNG.
 ##
 ##   bash tools/visual/shot.sh out.png placing    SHOT_SCRIPT=tools/visual/compose_building_shot.gd
+##   bash tools/visual/shot.sh out.png "opening bare"   (the same, with the yard hidden)
 ##
 ## A tool, not part of the game, and a sibling of `compose_shot.gd` rather than a
 ## replacement for it: that one frames the Factory from a chosen vantage to judge how the
@@ -14,6 +15,16 @@
 ##   placing   a Machine on the Build Gun, its ports arrowed, over a clear tile
 ##   routing   a Belt drag in flight, cornering, with a refused tile in it
 ##   running   a fed line, flowing, with the Machines reading as fed
+##
+## And a fourth, `opening`, which is #55's and exists because **none of the three can see
+## its question**. The claim is about tick 0 — that the hologram, the lit hotbar cell and
+## the objective line all name the same Machine before a player has done anything — and
+## `placing` puts a Smelter on the gun by hand, which is the one act that makes the opening
+## selection invisible. So `opening` builds nothing, walks nowhere and selects nothing: it
+## refuses to improve the vantage, the way `compose_spawn_shot.gd` does, because what is
+## under test is the state a Run is handed. The single exception is one `B`, which is the
+## keypress the objective line itself is telling the player to make, and without it there is
+## no Build Gun in frame to be pointed at anything.
 ##
 ## The HUD is **left on**, unlike the composition shots: here it is half the subject.
 extends SceneTree
@@ -37,9 +48,22 @@ var _surveying: bool = false
 
 
 func _initialize() -> void:
-	var arguments: PackedStringArray = OS.get_cmdline_user_args()
-	var out_path: String = "shot.png" if arguments.size() < 1 else arguments[0]
-	var preset: String = "routing" if arguments.size() < 2 else arguments[1]
+	var given: PackedStringArray = OS.get_cmdline_user_args()
+	var out_path: String = "shot.png" if given.size() < 1 else given[0]
+	# `shot.sh` forwards exactly two arguments, so extra words ride in on the second one
+	# separated by spaces: `shot.sh out.png "opening bare"`. Split rather than add a third
+	# parameter to a script five composers already share — `compose_wave_shot.gd`'s note.
+	var arguments: PackedStringArray = PackedStringArray()
+	for word: String in " ".join(given.slice(1)).split(" ", false):
+		arguments.append(word)
+	var preset: String = "routing" if arguments.size() < 1 else arguments[0]
+	# `bare` hides the yard, the way `compose_branch_shot.gd` and `compose_wave_shot.gd`
+	# carry one. Two reasons here and they point the same way. A prop standing where a HUD
+	# claim is, is the difference between "drawn and wrong" and "drawn and hidden", which a
+	# picture cannot tell apart. And the set dressing is loaded from the **purchased** packs
+	# when they are linked, so a render meant to be committed to a public repository has to
+	# leave them out — the rule that keeps the swing strip out of `docs/images/`.
+	var bare: bool = arguments.has("bare")
 
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
@@ -48,23 +72,35 @@ func _initialize() -> void:
 	_node_tile = sim.query_node_tile(_first_iron_node(sim))
 	_build_the_opening_line(sim, preset)
 	# Long enough that ore is on the Belt and the Smelter has crafted, which is what makes
-	# the "running" shot a shot of a Factory rather than of a diagram.
-	for tick: int in range(240):
-		sim.step([])
-
-	_stand_the_player_where_the_work_is(sim, preset)
+	# the "running" shot a shot of a Factory rather than of a diagram. Not for `opening`:
+	# four seconds of a Run is four seconds of a Wave clock, and the subject there is the
+	# state a Run is *handed* rather than one it has got into.
+	if preset != "opening":
+		for tick: int in range(240):
+			sim.step([])
+		_stand_the_player_where_the_work_is(sim, preset)
 	var drag: Array = _set_up_the_shot(sim, view, preset)
 
 	for frame: int in range(FRAMES_TO_SETTLE):
 		await process_frame
 		view.note_belt_drag(drag[0], drag[1], drag[2])
 		view.sync(sim)
+		if bare:
+			_hide_the_yard(view)
 
 	await RenderingServer.frame_post_draw
 	var image: Image = root.get_texture().get_image()
 	image.save_png(out_path)
 	print("wrote %s (%dx%d) — %s" % [out_path, image.get_width(), image.get_height(), preset])
 	quit()
+
+
+## Takes the set dressing out of frame. The props are decoration and carry nothing the
+## Simulation knows about, so hiding them changes no claim the shot is making.
+func _hide_the_yard(view: WorldView) -> void:
+	for child: Node in view.get_children():
+		if child is SetDressing:
+			(child as SetDressing).visible = false
 
 
 ## The first Depth 1 iron Node, by the index order the Simulation sorted them into.
@@ -78,6 +114,11 @@ func _first_iron_node(sim: Simulation) -> int:
 ## A Miner on the Node and a Smelter across from it, and for the running shot the Belt
 ## between them and a Boiler to keep the grid up.
 func _build_the_opening_line(sim: Simulation, preset: String) -> void:
+	# `opening` is a picture of a Run that has built nothing, which is the only state the
+	# opening selection is readable in: one Machine placed and the objective line has moved
+	# on to the next step.
+	if preset == "opening":
+		return
 	var definitions: Definitions = sim.query_definitions()
 	sim.step([
 		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), _node_tile)
@@ -275,6 +316,10 @@ func _set_up_the_shot(sim: Simulation, view: WorldView, preset: String) -> Array
 	# the bottom of it is the Build Gun in the way of the subject.
 	if preset != "running":
 		_step(sim, [InputAction.set_build_mode(0, true)])
+	# And that press is the whole of the `opening` preset. Nothing selected, because what it
+	# is a picture of is what the Simulation put on the gun by itself.
+	if preset == "opening":
+		return [false, Vector3i.ZERO, BeltRoute.ALONG_X]
 	if preset == "placing":
 		_step(sim, [
 			InputAction.select_machine(0, definitions.machine_index("smelter_mk1")),

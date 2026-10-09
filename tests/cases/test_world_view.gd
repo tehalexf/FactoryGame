@@ -228,6 +228,16 @@ func test_the_hologram_stands_on_the_tile_the_build_gun_is_aimed_at() -> void:
 func test_the_hologram_is_green_on_clear_ground_and_red_on_a_machine() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	sim.step([InputAction.set_build_mode(0, true)])
+	# **A Machine that can stand anywhere, which #55 made something to say out loud.** This
+	# test is about green-on-clear against red-on-occupied, and a Run now opens on the Miner
+	# — which is refused on bare rock whatever the tile's occupancy, because a Miner snaps to
+	# a Node or points nowhere (#42). The Ammo Press is what a Run opened on before #55, so
+	# the walk below is the one it always made.
+	sim.step([
+		InputAction.select_machine(
+			0, sim.query_definitions().machine_index("ammo_press_mk1")
+		)
+	])
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 	assert_false(view.hologram_is_refused(), "clear ground with the Build Gun out")
@@ -277,6 +287,17 @@ func test_the_hud_does_not_call_a_tile_clear_while_the_build_gun_is_away() -> vo
 	# Drawn first: a Run opens with the weapon out since #42, so "clear" is what the panel
 	# says once the gun is in hand rather than what it opens saying.
 	sim.step([InputAction.set_build_mode(0, true)])
+	# **And a Machine that can stand anywhere** (#55). What this asserts is that the panel
+	# says "clear" with the gun in hand and stops saying it when the gun goes away — so the
+	# tile has to be one the gun would actually take. A Run now opens on the Miner, which is
+	# refused on bare rock wherever it is aimed, because a Miner snaps to a Node or points
+	# nowhere (#42); that is a true refusal and a different test's subject. The Ammo Press is
+	# what a Run opened on before #55, so this reads what it always read.
+	sim.step([
+		InputAction.select_machine(
+			0, sim.query_definitions().machine_index("ammo_press_mk1")
+		)
+	])
 	view.sync(sim)
 	assert_true(view.hud_text().contains("clear"), "clear ground with the Build Gun out")
 
@@ -313,8 +334,11 @@ func test_the_hud_names_what_is_on_the_build_gun_and_what_is_in_hand() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
+	# What is **on the gun**, asked of the Simulation rather than spelled as the first row by
+	# id. The two were the same thing until #55 named the opening Machine in content, and the
+	# line this is about has always claimed to report the selection rather than the table.
 	assert_true(
-		view.hud_text().contains("build gun: %s" % sim.query_definitions().machine_ids()[0]),
+		view.hud_text().contains("build gun: %s" % sim.query_player_selected_machine(0)),
 		view.hud_text()
 	)
 	assert_true(view.hud_text().contains("iron_plate"), view.hud_text())
