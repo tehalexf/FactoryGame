@@ -247,35 +247,41 @@ class TheRecipeIsTheRecord(unittest.TestCase):
         seam = (REPO / "game" / "weapon_viewmodel.gd").read_text()
         self.assertIn('"res://assets_licensed/', seam)
 
-    def test_no_weapon_is_framed_by_pushing_it_forward_into_the_camera(self):
-        """A viewmodel is framed from the pack, never nudged towards the viewer.
+    def test_a_viewmodel_with_no_authoring_camera_is_pushed_out_in_front_of_the_eye(self):
+        """A rig framed by hand is framed *away* from the viewer, never at the origin.
 
         The two `Weapon pack` rifles are framed by `--origin-object Camera001`, which
-        is the camera the vendor authored them against. The RgsDev arms ship no camera
-        object, so the recipe has to say where the eye goes by hand — and the pack
-        answers that itself: `Prefabs/FPSController.prefab` parents the arms to a
-        `WeaponHolder` at (0, 0, 0) under the camera, so **the model's own origin is
-        the eye** and the only correction it needs is the drop from eye to hands.
+        is the camera the vendor authored them against, and need no offset at all. The
+        RgsDev arms ship no camera object, so the recipe places the eye by hand — and
+        the thing that has twice been got wrong is which way to place it.
 
-        A positive middle number moves the model the way the camera looks (the test
-        above pins that axis), which walks the viewer into the arms rather than back
-        from them. That is what shipped: `--offset=0.0,0.16,-0.18` put the elbows on
-        the near plane, so the arms splayed around the view and the swing happened
-        almost entirely off screen — the Pneumatic Wrench's attack animation ran
-        correctly and could not be seen.
+        `Prefabs/FPSController.prefab` parents those arms to a `WeaponHolder` at
+        (0, 0, 0) under the camera, so the model's own origin is the eye. That is the
+        reason the recipe needs an offset rather than the reason it does not: the hands
+        are posed about 21 cm in front of that origin, which puts the knife hand 44
+        degrees off the axis at rest and throws it behind the camera at the top of the
+        swing. `--offset=0.0,0.0,-0.10` shipped on exactly that reasoning and is the
+        build a player reported the knife animation still not playing in.
+
+        The middle number is forward, and forward is away from the viewer — the test
+        above pins that axis against the exporter. So a hand-framed viewmodel's forward
+        push is strictly positive, and this refuses the zero that shipped as firmly as
+        it would refuse a negative one.
         """
-        # Command lines only. The comment above the RgsDev block quotes the offset
-        # that shipped, because the reason it was wrong is worth keeping next to the
-        # number that replaced it, and a check that read it would never go green.
+        # Command lines only. The comment above the RgsDev block quotes both offsets
+        # that were wrong, because the reasons they were wrong are worth keeping next
+        # to the number that replaced them, and a check that read them would never go
+        # green.
         lines = [line for line in self.recipe.splitlines() if not line.lstrip().startswith("#")]
         offsets = re.findall(r"--offset=(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)", "\n".join(lines))
         self.assertTrue(offsets, "the recipe declares no --offset to check")
         for offset in offsets:
             forward = float(offset[1])
-            self.assertLessEqual(
+            self.assertGreater(
                 forward, 0.0,
-                "--offset=%s pushes a viewmodel %.2f m the way the camera looks, "
-                "which puts the eye inside the arms" % (",".join(offset), forward)
+                "--offset=%s leaves a viewmodel %.2f m in front of the eye, so the arms "
+                "are posed around the camera rather than out where they can be seen"
+                % (",".join(offset), forward)
             )
 
     def test_it_is_a_no_op_rather_than_an_error_without_the_packs(self):

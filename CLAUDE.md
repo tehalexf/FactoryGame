@@ -17,6 +17,8 @@ tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op witho
 tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|ground). Needs Xvfb.
 SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png routing
                                  # the same, through the player's own camera (placing|routing|running)
+SHOT_SCRIPT=tools/visual/compose_swing_shot.gd tools/visual/shot.sh out.png
+                                 # a strip, one frame per tick, of the weapon in frame mid-swing
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
@@ -3342,54 +3344,73 @@ than trusting it. The conversion, and the four things about those FBX that bite,
   and that distinction is the point of a holster. **Modelling a Build Gun is the ticket that
   gets it back**, and it is art rather than code.
 
-### Framing is read off the pack, never nudged
+### Framing is measured against the frustum, never argued about
 
-The one defect this whole arrangement could not catch, and the shape is worth keeping
-because every future viewmodel runs the same risk.
+The one defect this whole arrangement could not catch. It was reported three times and
+fixed wrongly once, and both halves of that are worth keeping, because every future
+viewmodel runs the same risk.
 
-A player reported that *"the attack animation ... the khfing animation -- it doesnt work
-now"*. Nothing was broken and nothing was recent. `WeaponAnimator` entered `FIRE` on the
-tick the trigger went and held it for 32 of the Pneumatic Wrench's 35-tick interval;
-`WeaponViewmodel` resolved that role to `Knife_Attack_1_Anim` through the `"attack"`
-needle; the skeleton moved under the seek. **The swing ran in full and could not be
-seen**, because `convert_weapons.sh` framed the arms with the viewer standing inside
-them: `--offset=0.0,0.16,-0.18` put the elbows on the near plane and the forearms
-splayed around the view.
+A player reported that the knife *"doesnt work"*, twice. Nothing in the code was broken
+and nothing was recent: `WeaponAnimator` enters `FIRE` on the tick the trigger goes and
+holds it for 32 of the Pneumatic Wrench's 35-tick interval, `WeaponViewmodel` resolves
+that role to `Knife_Attack_1_Anim` through the `"attack"` needle, the clip is 0.53 s with
+43 tracks that all resolve, and the skeleton moves under the seek. **Every one of those is
+assertable headless and every one of them was true the whole time.** What a player could
+not do was *see* the swing, because `convert_weapons.sh` framed the arms too close to the
+eye for the reach of the take.
 
-Three things in that worth carrying forward:
-
-- **The middle number of an `--offset` is *forward*.** It is written in Blender's axes,
-  where +Y is the horizontal depth axis the exporter's Y-up conversion sends to glTF
-  -Z — the way the camera looks. Read as "back" or as "up" it walks the eye into the
-  model. `test_the_middle_number_of_an_offset_is_forward_and_not_up` pins it on the
-  fixture.
-- **A pack that ships no camera still answers where the eye goes.** The two `Weapon
-  pack` rifles use `--origin-object Camera001`; RgsDev has none, so #28 guessed. It did
-  not have to: `Prefabs/FPSController.prefab` parents those arms to a `WeaponHolder` at
-  (0, 0, 0) under the camera, so the model's own origin *is* the eye and the only hand
-  number is the drop from eye to hands. **Look for the prefab before reaching for a
-  nudge.** `test_no_weapon_is_framed_by_pushing_it_forward_into_the_camera` refuses a
-  recipe that pushes one forward again, and both tests run on the committed fixture
-  because `.github/ci/expected_skips.txt` is explicit that a licensed-asset skip is a
-  test that stopped covering anything.
+- **The middle number of an `--offset` is *forward*, and forward is away from the
+  viewer.** It is written in Blender's axes, where +Y is the horizontal depth axis the
+  exporter's Y-up conversion sends to glTF -Z — which is the way a Godot camera looks. So
+  a **positive** middle number pushes the model out in front of the eye, which is what
+  framing a viewmodel by hand means. `test_the_middle_number_of_an_offset_is_forward_and_not_up`
+  pins the axis on the committed fixture.
+- **"The model's own origin is the eye" is the reason the recipe needs an offset, not the
+  reason it does not.** RgsDev ships no authoring camera, so #28 guessed a framing where
+  the two `Weapon pack` rifles use `--origin-object Camera001`. The first fix found
+  `Prefabs/FPSController.prefab`, which parents those arms to a `WeaponHolder` at
+  (0, 0, 0) under the camera, and concluded that the hand number should therefore be only
+  a drop — shipping `--offset=0.0,0.0,-0.10`. The prefab fact is true and the conclusion
+  does not follow: a rig authored around a camera still has its *hands* 21 cm in front of
+  that origin and 20 cm to the right of it, so at the origin the knife hand sits 44
+  degrees off the axis at rest and the swing throws it **behind the camera**. That build
+  is the one the player described as the knife still not playing, and it was worse than
+  what it replaced.
+- **The number is bracketed by measuring the take against the frustum.** `player.field_of_view_degrees`
+  is 75 vertical, which at 16:9 is 53.8 degrees of horizontal half-angle. The worst thing
+  `Knife_Attack_1_Anim` asks for is the `Hand_R` bone a third of a second in, and that
+  single reading orders every candidate: 0.00 forward is 89.7 degrees (behind the camera),
+  0.16 is 59.2 (the strike is off screen, which is the original defect), 0.30 is 47.7 and
+  0.36 is 43.8 but reads small and low. **0.30 forward and 0.24 down** is the nearest
+  framing that keeps the whole swing in frame, and it tolerates the field of view being
+  tuned down to about 68 degrees before the strike clips again. The recipe carries that
+  table beside the number.
 - **A state machine with no nodes proves the role, and only a render proves the frame.**
-  Every assertion in `test_weapon_viewmodel.gd` was true throughout, and that is the
-  point rather than a failing: `WeaponAnimator` answers *what should be playing* and has
-  no opinion about whether it is on screen. The defect lived in the one gap that
-  arrangement leaves, and the only instrument that found it was
-  `tools/visual/shot.sh` pointed at the player's own camera.
+  Every assertion in `test_weapon_viewmodel.gd` was true through all three reports, and
+  that is the arrangement working rather than failing: `WeaponAnimator` answers *what
+  should be playing* and must have no opinion about whether it is on screen. What was
+  missing was any instrument on the other side of that seam, which is why the first fix
+  could be reasoned into being worse. **`tools/visual/compose_swing_shot.gd` is that
+  instrument**: one frame per tick of a swing, through the player's own camera, which is
+  the only form of evidence that a swing is visible.
+
+  ```
+  SHOT_SCRIPT=tools/visual/compose_swing_shot.gd bash tools/visual/shot.sh out.png
+  ```
+
+  Its strip may **not** be committed, unlike the contact sheets in `docs/images/`: it is a
+  picture of the purchased arms and is as non-redistributable as the FBX they came from.
 
 And the reason it surfaced when it did: **#42 made the weapon the default hand**
 (`_player_build_mode.fill(0)`), so a player now opens every Run looking at the wrench
-instead of switching to it deliberately. The recipe had not changed since 95ee59c
-created it. "It doesn't work *now*" was exactly right about the experience and exactly
-wrong about the cause — a default moved, and a two-year-old framing error became the
-first thing anybody sees.
+instead of switching to it deliberately. The recipe had not changed since 95ee59c created
+it. "It doesn't work *now*" was exactly right about the experience and exactly wrong about
+the cause.
 
-The drop that replaced it, 0.10, was bracketed by rendering: 0.18 puts the knife half
-off the bottom of the frame. **It is a feel number and no harness has an opinion about
-it** — whether the swing reads as a swing rather than as an arm across the view is for
-a human with a mouse.
+**What the frustum reading cannot settle is whether the swing reads as a swing.** The arms
+are low-poly and pass close to the view, so the strike is most of a forearm crossing the
+frame. That it is *in* the frame is measured; that it is *good* is for a human with a
+mouse.
 
 What is still placeholder-grade is the *surface*: the packs reference textures they do not
 ship, so the arms and the weapons are repainted from `dieselpunk_palette.json` rather than
