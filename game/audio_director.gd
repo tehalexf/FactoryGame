@@ -176,6 +176,12 @@ class Snapshot extends RefCounted:
 	var shots_remaining: int = -1
 	var player_health: int = -1
 	var player_downed: bool = false
+	## Whether the player is on their feet at all — Downed *or* dead is off them. The fact
+	## `PLAYER_DOWN` fires on, because a body hits the deck once however it got there, and
+	## because `player_downed` is **never true on a solo Run** (GLOSSARY.md). Opens `true`,
+	## so a Run whose first frame finds somebody already down does not thud for it; the
+	## opening frame reports no diffs anyway.
+	var player_on_their_feet: bool = true
 	var player_grounded: bool = true
 	var player_position: Vector3 = Vector3.ZERO
 	## How far the player has walked since the last footstep, in metres.
@@ -350,6 +356,7 @@ func _read(sim: Simulation) -> Snapshot:
 	now.shots_remaining = sim.query_player_shots_remaining(LOCAL_PLAYER)
 	now.player_health = sim.query_player_health(LOCAL_PLAYER)
 	now.player_downed = sim.query_player_is_downed(LOCAL_PLAYER)
+	now.player_on_their_feet = sim.query_player_is_alive(LOCAL_PLAYER)
 	now.player_grounded = sim.query_player_is_grounded(LOCAL_PLAYER)
 	now.player_position = _ground(sim.query_player_position(LOCAL_PLAYER))
 	now.run_over = sim.query_run_is_over()
@@ -555,7 +562,16 @@ func _player_cues(sim: Simulation, was: Snapshot, now: Snapshot, cues: Array) ->
 
 	if now.player_health < was.player_health:
 		cues.append(Cue.new(SoundBank.PLAYER_HURT))
-	if now.player_downed and not was.player_downed:
+	# **On leaving their feet, not on going Downed**, and that is a bug fix rather than a
+	# refinement. `query_player_is_downed` is **never true on a solo Run** — there is nobody to
+	# revive you, so a solo player at zero health goes straight to dead (GLOSSARY.md) — so this
+	# branch fired on no solo death ever, and the most consequential event in a Run was
+	# completely silent. #54's own description credits it with a thud it never made.
+	#
+	# One edge covers both states, which is also the right thing to say about it: a body
+	# hitting the deck sounds the same whether a teammate is coming for it or not, and a player
+	# who goes Downed and *then* bleeds out has fallen once, so they thud once.
+	if was.player_on_their_feet and not now.player_on_their_feet:
 		cues.append(Cue.new(SoundBank.PLAYER_DOWN))
 	if now.player_grounded and not was.player_grounded:
 		cues.append(Cue.new(SoundBank.PLAYER_LAND))

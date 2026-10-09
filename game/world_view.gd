@@ -528,6 +528,19 @@ var _hud: Label = null
 var _hud_layer: CanvasLayer = null
 var _camera: Camera3D = null
 
+## The death overlay (#54): a tint over the whole screen and two lines of large type.
+## **Built once and then shown, hidden and recoloured** — the rule every other thing in this
+## file obeys, so a Run that kills a player forty times does not grow the scene tree by a
+## node. It holds nothing: the colour, the opacity and both strings are a function of three
+## queries, read every frame.
+var _mortality_tint: ColorRect = null
+var _mortality_caption: Label = null
+var _mortality_detail: Label = null
+
+## The crosshair, held so that it can be taken away from a player who is not aiming at
+## anything. See `_sync_mortality_overlay`.
+var _crosshair_mark: Control = null
+
 ## What the HUD could say, and what it is saying.
 ##
 ## **Fifty-three appended lines, drawn over the Factory they describe.** Every one of them
@@ -860,6 +873,64 @@ const MACHINES_LISTED: int = 5
 ## How long each arm of the crosshair is, in pixels. Small: it marks where the Build Gun
 ## points without becoming a thing a player looks at instead of the Factory.
 const CROSSHAIR_ARM_PIXELS: float = 13.0
+
+
+# ── Dying, where a player can see it happen (#54) ─────────────────────────────
+#
+# **The most consequential thing that happens to a player used to be invisible**, and a
+# render is what established that rather than a reading of the code. `_gear_lines` does put
+# `DEAD — back at the Nest in 7s` on the HUD in the same small type as `power 660/900 kW` —
+# but `_gear_lines` is only reached by `hud_text()`, the whole wall behind `[H]`. The brief
+# panel a player is actually reading is `_brief_lines`, and it has never mentioned death at
+# all. So a solo death was presented by nothing on screen whatsoever except the weapon
+# dropping out of frame. See `docs/images/death_before.png`, which is a dead player.
+#
+# The collapse in `_place_camera` is most of the fix; this is the half that answers "at a
+# glance, without reading".
+#
+# Three rules it keeps, and each is the reason one of the numbers below is what it is.
+#
+# **It costs nothing.** `player.respawn_delay_seconds` is the entire price of dying
+# (GLOSSARY.md, DESIGN.md), so there is no fade a player waits through and nothing to
+# dismiss: the overlay comes up *inside* the collapse, driven by the very same
+# `query_player_collapse_blend`, and leaves inside the rise. One number drives the view, the
+# tint and the caption, so they cannot disagree about how far down a body is.
+#
+# **A Downed player must still be able to read the Map, and a dead one has nothing to read.**
+# So the two tints are different in strength as well as in hue: Downed is light and warm,
+# because the only useful thing a bleeding player can do is watch for a teammate coming, and
+# a screen they cannot see through would take that away. Dead is darker and neutral, because
+# there is nothing to do but wait — and that difference is the second half of what tells the
+# two states apart, the posture being the first.
+#
+# **Neither is a flash.** The player has rejected four separate attempts at sound in this
+# project for being too loud, and a sudden full-screen red is the visual form of exactly
+# that: it startles, it is the thing a player remembers instead of the Factory, and it is
+# unreadable on a cheap panel. These are tints over a scene that stays visible, eased in over
+# the half-second a body takes to go over.
+
+## How far down the screen is tinted at full collapse, and in what colour. The alpha is the
+## ceiling: it is multiplied by the collapse blend, so nothing is ever more tinted than the
+## body is down.
+const DOWNED_TINT: Color = Color(0.32, 0.05, 0.04, 0.34)
+const DEAD_TINT: Color = Color(0.02, 0.02, 0.03, 0.62)
+
+## The caption, in type a player cannot fail to notice, against the HUD's own small face.
+## **The word is the state and the line under it is what to do about it** — wait for a
+## teammate, or wait out a clock.
+const MORTALITY_CAPTION_FONT_PIXELS: int = 54
+const MORTALITY_DETAIL_FONT_PIXELS: int = 20
+const MORTALITY_CAPTION_COLOUR: Color = Color(0.95, 0.93, 0.90)
+const MORTALITY_DETAIL_COLOUR: Color = Color(0.86, 0.82, 0.78)
+
+## How far down the screen the caption sits, as a fraction of its height. Below the middle,
+## because the middle of the screen is where the player is looking at the thing that killed
+## them and a word over the top of it is a word in the way.
+const MORTALITY_CAPTION_DROP: float = 0.14
+
+## Clear air between the caption and the line under it, in pixels. See the note in
+## `_sync_mortality_overlay` about why a centred full-rect label moves by half its offset.
+const MORTALITY_LINE_GAP_PIXELS: int = 14
 
 
 ## Redraws everything from the Simulation's queries. Called once a frame; cheap
@@ -2872,9 +2943,18 @@ func _sync_hud(sim: Simulation) -> void:
 	if _hud == null:
 		_hud_layer = CanvasLayer.new()
 		_hud = Label.new()
+		# The overlay goes in *before* the HUD label so the tint sits behind the text rather
+		# than over it: a player who has just died still wants to read the Wave countdown.
+		_build_mortality_overlay()
+		_hud_layer.add_child(_mortality_tint)
 		_hud_layer.add_child(_hud)
-		_hud_layer.add_child(_crosshair())
+		_hud_layer.add_child(_mortality_caption)
+		_hud_layer.add_child(_mortality_detail)
+		_crosshair_mark = _crosshair()
+		_hud_layer.add_child(_crosshair_mark)
 		add_child(_hud_layer)
+
+	_sync_mortality_overlay(sim)
 
 	var lines: PackedStringArray = PackedStringArray()
 	# The Run-over condition first, and in capitals, because it is the only line on the
@@ -4099,6 +4179,14 @@ func _place_camera(sim: Simulation) -> void:
 		sim.query_player_view_bob_lateral_metres(VIEWED_PLAYER)
 	)
 	var dip: float = Fixed.to_float(sim.query_player_view_dip_metres(VIEWED_PLAYER))
+	# **The collapse (#54), and it is laid on here for the reason the dip is.** A player who
+	# has been killed or Downed goes over, and `query_player_camera_height_metres` deliberately
+	# does not know about it: a body going limp must not move where a round goes, which is the
+	# same test the bob and the lean are decided by. Subtracted, like the dip, because both are
+	# quoted as positive magnitudes.
+	var collapse: float = Fixed.to_float(
+		sim.query_player_view_collapse_metres(VIEWED_PLAYER)
+	)
 	# The lateral bob is in the player's own frame, so it goes along their right vector.
 	var right: Vector3 = Vector3(cos(yaw), 0.0, -sin(yaw))
 
@@ -4108,7 +4196,7 @@ func _place_camera(sim: Simulation) -> void:
 			Fixed.to_float(sim.query_player_camera_height_metres(VIEWED_PLAYER)),
 			Fixed.to_float(ground.z)
 		)
-		+ Vector3(0.0, bob_up - dip, 0.0)
+		+ Vector3(0.0, bob_up - dip - collapse, 0.0)
 		+ right * bob_side
 	)
 	# Turns, not radians: the Simulation holds the angle in turns because radians need
@@ -4119,8 +4207,12 @@ func _place_camera(sim: Simulation) -> void:
 			+ Fixed.to_float(sim.query_player_view_lean_pitch_turns(VIEWED_PLAYER))
 		) * TAU,
 		yaw,
-		# A bank to the player's right is a negative roll about Godot's forward axis.
-		-Fixed.to_float(sim.query_player_view_roll_turns(VIEWED_PLAYER)) * TAU
+		# A bank to the player's right is a negative roll about Godot's forward axis. The
+		# collapse's list uses the same sign convention as the lean's, so the two simply add.
+		-(
+			Fixed.to_float(sim.query_player_view_roll_turns(VIEWED_PLAYER))
+			+ Fixed.to_float(sim.query_player_view_collapse_roll_turns(VIEWED_PLAYER))
+		) * TAU
 	)
 	_camera.fov = Fixed.to_float(sim.query_player_field_of_view_degrees(VIEWED_PLAYER))
 
@@ -4248,6 +4340,140 @@ func camera_rotation() -> Vector3:
 	if _camera == null:
 		return Vector3.ZERO
 	return _camera.rotation
+
+
+# ── The death overlay ─────────────────────────────────────────────────────────
+
+## Builds the tint and the two captions, once. See the `#54` note beside `DEAD_TINT` for why
+## each of them is shaped the way it is.
+func _build_mortality_overlay() -> void:
+	_mortality_tint = ColorRect.new()
+	_mortality_tint.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_mortality_tint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_mortality_tint.color = DEAD_TINT
+	_mortality_tint.visible = false
+
+	_mortality_caption = _mortality_line(
+		MORTALITY_CAPTION_FONT_PIXELS, MORTALITY_CAPTION_COLOUR
+	)
+	_mortality_detail = _mortality_line(
+		MORTALITY_DETAIL_FONT_PIXELS, MORTALITY_DETAIL_COLOUR
+	)
+
+
+## One centred line of the overlay's type. Where it sits vertically is set every frame by
+## `_sync_mortality_overlay`, because it depends on the size of the viewport.
+func _mortality_line(size: int, colour: Color) -> Label:
+	var line: Label = Label.new()
+	line.set_anchors_preset(Control.PRESET_FULL_RECT)
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	line.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	line.add_theme_font_size_override("font_size", size)
+	line.add_theme_color_override("font_color", colour)
+	# A dark outline, because the caption is drawn over whatever killed the player and a pale
+	# word over a pale Machine is a word nobody reads.
+	line.add_theme_color_override("font_outline_color", Color(0.0, 0.0, 0.0, 0.85))
+	line.add_theme_constant_override("outline_size", maxi(size / 8, 2))
+	line.visible = false
+	return line
+
+
+## Shows the player what has happened to them, out of three queries and nothing remembered.
+##
+## **The blend does all the work.** `query_player_collapse_blend` is 0 on your feet, rises to
+## its resting value as a body goes over, and runs back to 0 as one gets up — so the tint
+## fades in with the fall and out with the rise, and the whole overlay disappears by itself
+## the moment a player is upright again. There is no state here and no tween: a frame that
+## stepped nothing draws the same thing twice, which is the rule the scanner sweep and the
+## view model's clip time already keep.
+func _sync_mortality_overlay(sim: Simulation) -> void:
+	var blend: float = Fixed.to_float(sim.query_player_collapse_blend(VIEWED_PLAYER))
+	var downed: bool = sim.query_player_is_downed(VIEWED_PLAYER)
+	var dead: bool = sim.query_player_is_dead(VIEWED_PLAYER)
+	var showing: bool = blend > 0.0
+
+	# **The crosshair goes with them, and a render is why.** It is an aiming reticle and the
+	# Build Gun aims down the middle of the view — but a player who has been killed aims at
+	# nothing, every intent they could send is refused by `_act_refusal`, and the first render
+	# of this gesture had a crisp white cross sitting in the middle of a body on the deck. It
+	# comes back on the tick they are upright, off the same number as everything else here.
+	if _crosshair_mark != null:
+		_crosshair_mark.visible = not showing
+
+	_mortality_tint.visible = showing
+	_mortality_caption.visible = showing
+	_mortality_detail.visible = showing
+	if not showing:
+		# Cleared rather than left stale, so `mortality_caption` never reports a word about a
+		# state the player is no longer in.
+		_mortality_caption.text = ""
+		_mortality_detail.text = ""
+		return
+
+	var tint: Color = DOWNED_TINT if downed else DEAD_TINT
+	_mortality_tint.color = Color(tint.r, tint.g, tint.b, tint.a * blend)
+
+	var caption: String = ""
+	var detail: String = ""
+	if downed:
+		caption = "DOWN"
+		detail = (
+			"bleeding out — %ds for a teammate to reach you"
+			% [
+				sim.query_player_downed_ticks_remaining(VIEWED_PLAYER)
+				/ Simulation.TICKS_PER_SECOND
+			]
+		)
+	elif dead:
+		caption = "DEAD"
+		detail = (
+			"back at the Nest in %ds — you lose nothing but the time"
+			% [
+				sim.query_player_respawn_ticks_remaining(VIEWED_PLAYER)
+				/ Simulation.TICKS_PER_SECOND
+			]
+		)
+	else:
+		# Alive, and still part way down: this is the rise. **The one acknowledgement that a
+		# respawn happened** — before #54 a player appeared on the Nest's crown mid-stride with
+		# nothing on either side of the cut.
+		caption = "BACK AT THE NEST"
+		detail = ""
+
+	_mortality_caption.text = caption
+	_mortality_detail.text = detail
+
+	# Both labels fill the screen and centre their one line in it, so **shifting `offset_top`
+	# by N moves the line by N/2** — the rect loses N off the top and the centre of what is
+	# left moves half of that. The first render of this overlay got that wrong and drew the
+	# countdown straight through the bottom of the word above it, which is #41's lesson in
+	# another costume: a mark whose position is arithmetic nobody looked at.
+	var drop: float = _mortality_tint.size.y * MORTALITY_CAPTION_DROP
+	var apart: float = float(MORTALITY_CAPTION_FONT_PIXELS + MORTALITY_LINE_GAP_PIXELS)
+	_mortality_caption.offset_top = drop
+	_mortality_detail.offset_top = drop + apart * 2.0
+
+
+## What the death overlay is saying, or `""` when it is not up. For the suite: the claim #54
+## is about is that a player can tell at a glance, and the glance is this word.
+func mortality_caption() -> String:
+	return "" if _mortality_caption == null else _mortality_caption.text
+
+
+## The line under it — the countdown and what it costs — or `""`.
+func mortality_detail() -> String:
+	return "" if _mortality_detail == null else _mortality_detail.text
+
+
+## How far the screen is tinted, in [0, 1], and whether the overlay is up at all.
+func mortality_tint_alpha() -> float:
+	return 0.0 if _mortality_tint == null or not _mortality_tint.visible \
+		else _mortality_tint.color.a
+
+
+func mortality_overlay_is_up() -> bool:
+	return _mortality_tint != null and _mortality_tint.visible
 
 
 ## A small cross at the centre of the screen.
