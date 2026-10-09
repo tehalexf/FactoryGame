@@ -568,11 +568,17 @@ func test_a_picker_cell_carries_the_icon_of_what_the_machine_makes() -> void:
 		view.machine_picker_icon_path(miner).contains("iron_ore"),
 		"a Miner digs ore, so ore is its glyph: %s" % view.machine_picker_icon_path(miner)
 	)
-	# #20 generated ten icons and the content has grown Items since — `iron_plate` is one
-	# with no picture. A Machine whose output has no icon reads by its name rather than by a
-	# broken one, which is the rule a Machine with no generated body already obeys.
+	# And since #59 the Smelter has one too, which is what makes the chain pictured end to
+	# end. `tests/cases/test_item_icons.gd` is the general claim — every Item the Recipes
+	# mention resolves an icon — and this is the one cell this test is already standing in
+	# front of. A Machine whose output has *no* icon still reads by its name rather than by
+	# a broken one, which is the rule a Machine with no generated body already obeys; that
+	# case is the Turret's, asserted below.
 	var smelter: int = BuildChain.cell_of(definitions, definitions.machine_index("smelter_mk1"))
-	assert_eq(view.machine_picker_icon_path(smelter), "", "no iron_plate icon exists yet")
+	assert_true(
+		view.machine_picker_icon_path(smelter).contains("iron_plate"),
+		"a Smelter makes plate: %s" % view.machine_picker_icon_path(smelter)
+	)
 	view.free()
 
 

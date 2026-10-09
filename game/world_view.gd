@@ -828,6 +828,12 @@ const GROUND_APRON_TILES: int = 96
 ## Machine's glyph is the Item it makes, which is what a player is actually hunting for when
 ## they go looking for a Smelter — and it means a new Machine gets a picture by having a
 ## Recipe rather than by somebody drawing one.
+##
+## **Committed, not quarantined.** `assets/generated/` is in the repository — these are
+## SDXL output from committed prompts under `tools/aigen/`, not a derivative of a purchased
+## pack — so a clone has every icon and an Item with no picture is a real gap rather than a
+## checkout that was never linked. #59 closed the last one (`iron_plate`) and
+## `tests/cases/test_item_icons.gd` is what stops another opening.
 const ICON_DIRECTORY: String = "res://assets/generated/icons"
 
 ## How far off the bottom of the screen the Machine picker sits, and how big its icons are.
@@ -3421,12 +3427,28 @@ func _input_icon_path_for(definitions: Definitions, machine: MachineDefinition) 
 	return _icon_of(definitions, recipe.input_item(0))
 
 
-func _icon_of(definitions: Definitions, item: int) -> String:
+## The icon of one Item, or "" where the generated set has no picture of it.
+##
+## **Public since #59, because it is the one authority on whether an Item has a picture and
+## a test had to be able to ask it.** `tests/cases/test_item_icons.gd` walks every Item the
+## Recipes intern through this very function, so the check and the hotbar cannot come to
+## disagree about what resolves — the arrangement `query_build_refusal` has with the
+## hologram. Static because it reads nothing but the definition set and the constant.
+##
+## `ResourceLoader.exists` rather than `FileAccess.file_exists` is deliberate and is what
+## makes the check stronger than a Python one could be: a committed `.png` with no committed
+## `.import` sidecar beside it is **on disk and invisible to the game**, which is exactly the
+## blank cell this is about.
+static func icon_path_for_item(definitions: Definitions, item: int) -> String:
 	var item_id: String = definitions.item_id(item)
 	if item_id.is_empty():
 		return ""
 	var path: String = "%s/%s.png" % [ICON_DIRECTORY, item_id]
 	return path if ResourceLoader.exists(path) else ""
+
+
+func _icon_of(definitions: Definitions, item: int) -> String:
+	return icon_path_for_item(definitions, item)
 
 
 ## What a Machine makes, in words, for the cell of one whose product is not an Item.
@@ -3477,11 +3499,11 @@ func _add_picker_cell(
 	pictures.alignment = BoxContainer.ALIGNMENT_CENTER
 	pictures.add_child(_picker_picture(input_icon_path))
 	# **The same arrow inside the cell as between the columns, and a render is why.** The
-	# Ammo Press makes Ammunition and the MG Turret eats it, so with `iron_plate` still
-	# having no generated icon the two cells came out carrying one identical glyph each and
-	# nothing said which side of the transformation it was on. Eats on the left, makes on
-	# the right, and the arrow is what makes the two slots mean different things when only
-	# one of them is filled.
+	# Ammo Press makes Ammunition and the MG Turret eats it, so when #53 rendered them the
+	# two cells carried one identical glyph each with nothing to say which side of the
+	# transformation it was on — `iron_plate` had no icon then, so the Press's other slot
+	# was empty. #59 filled it and the arrow is still what the cell needs: eats on the left,
+	# makes on the right, and two pictures side by side say even less than one without it.
 	var through: Label = Label.new()
 	through.text = PICKER_FEEDS_ARROW
 	through.vertical_alignment = VERTICAL_ALIGNMENT_CENTER

@@ -69,6 +69,25 @@ items:
     prompt: >-
       a lump of black anthracite coal, glossy angular fracture facets
 
+  # The one plate the shipped Recipes actually mention, and the Item every build cost in
+  # the game is denominated in: a Smelter's output, an Ammo Press's input, a plate a Belt
+  # tile and two a Wall. #53's hotbar draws what each Machine eats and what it makes, so
+  # with no picture here the Smelter's output slot and the Press's input slot — the two
+  # cells a player reads to learn the first production decision — were both blank (#59).
+  #
+  # **A stack, decided by looking rather than by reasoning.** Nine candidates were swept
+  # across three wordings and every single-plate one came back as a flat square seen face
+  # on — which is `steel_plate` below in a darker grey, and at 64px in a hotbar cell that
+  # is one icon drawn twice. A stack has thickness, a stepped outline and a three-quarter
+  # read, and it is the truer picture of the Item anyway: plate is bulk material, not one
+  # bolted part. `_contact_sheet.png` is where that is judged, because a set is judged as
+  # a set.
+  - id: iron_plate
+    seed: 20260212
+    prompt: >-
+      a stack of three cast iron plates, thick square slabs, rough sand-cast
+      surface, stacked flat
+
   - id: iron_ingot
     seed: 20260203
     prompt: >-
