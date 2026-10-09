@@ -66,7 +66,7 @@ Four things make "regenerate it" real rather than aspirational:
 - **The sampler is deterministic.** DPM-Solver++ (2M, Karras) with a CPU-side
   seeded generator. Ancestral samplers inject fresh noise per step and drift.
 
-Measured on this machine: `--verify` regenerates all 18 committed images
+Measured on this machine: `--verify` regenerates all 19 committed images
 **bit-identically** (mean absolute difference 0.000 levels). The threshold is
 2.0 levels rather than zero because fp16 sampling is not promised to be
 bit-stable across driver and library upgrades.
@@ -128,7 +128,32 @@ subject is an unusable icon. Both directions are pinned by tests.
 
 `assets/generated/icons/_contact_sheet.png` renders the set at 64px, because
 whether icons are distinguishable in an inventory grid is only answerable by
-looking at them all together, small.
+looking at them all together, small. It is rebuilt only when **more than one**
+icon is generated, so adding one means regenerating the whole recipe rather than
+reaching for `--only` — which is no loss, because the regeneration is the
+reproducibility claim being re-derived: the icons that did not change come back
+byte-identical and `git status` says so.
+
+### Every Item the game mentions needs one
+
+The set of Items in DEEP FOUNDRY is exactly what `content/recipes.csv` mentions —
+there is no Item table — so the content can grow an Item and leave the art behind.
+It did: `iron_plate` was interned long after #20 drew these ten, and the two hotbar
+cells that teach a player the Smelter feeds the Ammo Press were blank for four
+tickets with nothing reporting it.
+
+`tests/cases/test_item_icons.gd` is the gate, in the **Godot** suite rather than
+here, and the reason is worth knowing before anybody moves it: the Item set's one
+authority is `Definitions`, the resolution's one authority is the function the
+hotbar itself calls, and `ResourceLoader.exists` asks a strictly stronger question
+than a file check — a `.png` committed without its `.import` sidecar is on disk and
+invisible to the game. Adding an Item to a Recipe therefore means adding a row here
+and regenerating, or the engine suite goes red naming the Item.
+
+Judge the new one against `_contact_sheet.png`, not on its own. #59's first three
+wordings for `iron_plate` all produced a flat square seen face on, which is
+`steel_plate` in a darker grey; the shipped one is a *stack*, because a stepped
+outline is the only thing that separated the two at 64px.
 
 ## Models
 
@@ -199,4 +224,4 @@ RTX 5090, SDXL base at 1024x1024, fp16:
 | texture (seamless) | 40 | ~6.5 s | 12.4 GB |
 | icon | 30 | ~4.8 s | 11.3 GB |
 
-The full 18-image set regenerates in about two minutes including model load.
+The full 19-image set regenerates in about two minutes including model load.

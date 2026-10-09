@@ -2961,8 +2961,10 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   is #53 replacing the flat row #36 shipped. Each cell still carries the key, the cost,
   whether a Delivery has it locked, and #20's generated icons, which nothing had used before
   #36. A Machine whose Recipe produces no Item — a Turret, a generator, a Silo — reads by the
-  word for what it makes, as does one whose Item has no icon yet (`iron_plate` is one): a
-  missing picture is an ordinary state, the rule a Machine with no generated body obeys.
+  word for what it makes: a missing picture is an ordinary state, the rule a Machine with no
+  generated body obeys. **Every Item the shipped Recipes mention has a picture since #59**,
+  so that state is now reachable only by adding one — see "Every Item has a picture,
+  and the gap cannot reopen", below.
 - **The HUD is triaged.** It was fifty-three appended lines drawn over the Factory they
   describe. `hud_text()` is still the whole wall and the suite still asserts against it;
   what is *shown* is `hud_brief_text()` — the urgent banners, the objective, the Nest, the
@@ -3048,10 +3050,11 @@ Five things worth knowing rather than rediscovering:
   layout constraint rather than as a preference. The gap before that group is a plain
   separator, wider than an arrow: what separates the two is that there is no relationship.
 - **A cell says what it eats as well as what it makes**, with an arrow between the two slots
-  *inside* the cell. The arrow is not decoration either: `iron_plate` still has no generated
-  icon, so the Ammo Press (makes Ammunition) and the MG Turret (eats it) came out of a render
-  carrying one identical glyph each with nothing to say which side of the transformation it
-  was on.
+  *inside* the cell. The arrow is not decoration either: `iron_plate` had no generated icon
+  when #53 rendered this, so the Ammo Press (makes Ammunition) and the MG Turret (eats it)
+  came out carrying one identical glyph each with nothing to say which side of the
+  transformation it was on. #59 filled that slot and the arrow still earns its place — two
+  pictures side by side say even less about direction than one does.
 - **`Objective` and the hotbar cannot disagree, because there is one `_step` behind both.**
   `Objective.line` names the act and `Objective.pointed_at` names the cell, in the Build
   Gun's own selection space — a Machine's definition index, or `machine_count()` for the
@@ -3092,9 +3095,83 @@ first is fixed; #55 is the ticket, and the section below is it.**
   the chain" is a `game/` concept `sim/` must not learn. What was wrong was the conclusion
   that those two made it unfixable. See "Where a Run opens, and who is allowed to know",
   below.
-- **`iron_plate` has no generated icon**, so the Smelter's output slot and the Ammo Press's
-  input slot are both blank in a chain that is otherwise pictured end to end. #20 generated
-  ten icons and the content has grown Items since. That is an art ticket.
+- ~~**`iron_plate` has no generated icon.**~~ **Fixed by #59**, and the gap is a suite
+  failure now rather than a note. See "Every Item has a picture, and the gap cannot reopen",
+  below.
+
+### Every Item has a picture, and the gap cannot reopen
+
+#59, and it is the smallest ticket in this file with the longest tail, because what it
+actually fixes is a **class of silence**. The set of Items is exactly what
+`content/recipes.csv` mentions and there is no Item table — which is the right design and
+also means the content can grow an Item and leave the art behind with nothing anywhere
+saying so. `iron_plate` did, for four tickets of the hotbar being worked on: #20 generated
+ten icons against a speculative Item list, the shipped Recipes later interned a fourth Item
+that was not on it, and the consequence was that **the Smelter's output slot and the Ammo
+Press's input slot were both blank** — which are exactly the two cells a player reads to
+learn the first production decision in the game.
+
+**The icons are committed, and that is the fact to carry away.** `assets/generated/` is
+*tracked*, unlike the weapon viewmodels, the audio cues and the set-dressing props: these
+are SDXL output from prompts this project wrote, under CreativeML Open RAIL++-M, generated
+locally by `tools/aigen/` from committed recipes. So a clone has all nineteen images, a
+clone without the purchased packs sees **exactly what the author sees**, and an absent icon
+is never "the quarantine is not linked". That is also why they are **not** in
+`tools/assets/asset_staleness.py` and must not be: #57's rule is *where the output is
+committed, prove it; where it is gitignored, date it*, and the proof is already available
+and stronger — `generate.py --verify` regenerates from the committed settings and compares
+pixels, and all nineteen come back **bit-identical** (0.000 mean levels) on this machine.
+
+**The check is a Godot test rather than an asset-suite one, and the reason is not where the
+art lives.** `tests/cases/test_item_icons.gd` walks `Definitions.item_ids()` through
+`WorldView.icon_path_for_item` — the very function the cells call — and fails naming the
+Item. Three things decide the suite:
+
+- **The Item set has one authority.** A Python check would re-implement the interning
+  against `recipes.csv`, which is a second opinion about the one thing this project is most
+  careful to keep singular. Here it is `definitions.item_ids()`.
+- **So does the resolution.** The gate and the hotbar cannot come to disagree about what
+  resolves, which is the arrangement `query_build_refusal` has with the hologram.
+  `_icon_of` is now one line over the public function the test calls.
+- **`ResourceLoader.exists` asks a strictly stronger question than a file check**, and only
+  the engine can ask it. A committed `.png` whose `.import` sidecar was *not* committed is
+  present on disk and invisible to the game — a blank cell with the file sitting right
+  there, and precisely what a Python `os.path.exists` would wave through.
+
+**The icon itself is a stack, and that was decided by looking.** Nine candidates across
+three wordings were swept into gitignored scratch, and every single-plate wording came back
+as a flat square seen face on — which is `steel_plate`, already in the set, in a darker
+grey. At 64px that is one icon drawn twice. A stack has thickness, a stepped outline and a
+three-quarter read, and it is the truer picture of the Item anyway: plate is the bulk
+material every build cost in the game is denominated in, not one bolted part.
+`_contact_sheet.png` is where that judgement is made, because an icon set is judged as a
+set and never one at a time.
+
+**The pair is committed and it is the argument.**
+[`docs/images/hotbar_chain_before.png`](docs/images/hotbar_chain_before.png) against
+[`_after`](docs/images/hotbar_chain_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "opening bare"
+```
+
+In the before, the chain **visibly breaks between cells 2 and 3**: the Smelter eats ore and
+makes nothing, the Ammo Press eats nothing and makes Ammunition, and the one transformation
+the opening line is entirely about is the one with no picture on either side of it. In the
+after it reads ore → plate → ammunition → damage with every slot filled. `opening` is the
+preset because it is the only one that builds nothing, selects nothing and walks nowhere —
+#55 added it for exactly that, and `bare` is what keeps the purchased yard out of a picture
+bound for a public repository.
+
+**Regenerating the whole recipe is the right way to add one**, and it is its own proof: the
+ten existing `.png` files came back **byte-identical** — `git status` listed only the new
+icon, the rebuilt contact sheet and the manifest — so nothing was disturbed and the
+reproducibility claim in `tools/aigen/README.md` was re-derived rather than trusted. The
+contact sheet is only rebuilt when more than one icon is generated, which is the other
+reason not to use `--only`. Two provenance fields on the ten unchanged records did move,
+`seconds` and `recipe`; `Record.matches` compares **fingerprints** and is documented as
+immune to a path change, and every `image_sha256` is untouched, so nothing a pixel depends
+on differs.
 
 ### Where a Run opens, and who is allowed to know
 
