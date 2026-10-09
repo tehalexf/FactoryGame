@@ -23,8 +23,18 @@ class_name MapLayout
 extends RefCounted
 
 ## How many tiles on a side the Nest occupies. 4x4, which is the largest footprint
-## DESIGN.md allows and matches the `nest` row in `content/machine_bodies.csv` that
-## the mesh is generated from.
+## DESIGN.md allows.
+##
+## **The single authority on that footprint**, since #61. The mesh generator reads this
+## constant rather than restating it, and the `nest` row of
+## `content/machine_bodies.csv` leaves its footprint columns blank to defer — the
+## arrangement every Machine's row already has against its own row in
+## `content/machines.csv`. Before that the two numbers were a coincidence nothing
+## checked, which is the drift the footprint cross-check exists to catch everywhere
+## else: for a Machine it would be a roof a player falls through, and here it is the
+## 4x4 a player respawns on top of and every Belt in every scenario docks against.
+## Nothing in the Simulation knows or cares that the generator reads it; the
+## dependency runs one way.
 ##
 ## Here rather than in `content/machines.csv` because **the Nest is not a Machine**:
 ## DESIGN.md lists it alongside Belt and Wall, outside the eight Machines, and it

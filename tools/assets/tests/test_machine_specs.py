@@ -192,14 +192,21 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
     PORTS = ("machine_id,port_id,direction,edge,tile,height_mm\n"
              "miner_mk1,ore,output,south,1,900\n"
              "nest,delivery,input,south,1,900\n")
+    #: The geography half of the Simulation, also a literal. Written the way
+    #: `sim/map_layout.gd` writes it, so a test that wants the Nest's footprint
+    #: to disagree can say so by changing one number here.
+    MAP_LAYOUT = "const NEST_FOOTPRINT_TILES: int = 4\n"
 
     def simulation_says(self, rows: str) -> str:
         return self.HEADER + rows
 
-    def load(self, machines_rows: str, bodies: str | None = None):
-        return machine_specs.load(bodies_source=bodies or self.BODIES,
-                                  ports_source=self.PORTS,
-                                  machines_source=self.simulation_says(machines_rows))
+    def load(self, machines_rows: str, bodies: str | None = None,
+             map_layout: str | None = None):
+        return machine_specs.load(
+            bodies_source=bodies or self.BODIES,
+            ports_source=self.PORTS,
+            machines_source=self.simulation_says(machines_rows),
+            map_layout_source=self.MAP_LAYOUT if map_layout is None else map_layout)
 
     def test_the_simulations_footprint_wins_over_the_body_tables(self):
         """A disagreement is an error, not a silent override, so nobody gets to
@@ -217,9 +224,18 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
         machines = self.load("miner_mk1,Miner Mk1,miner,2,2,2.1,120,400,1,mine_iron_ore\n")
         miner = machine_specs.by_id(machines, "miner_mk1")
         self.assertTrue(miner.footprint_from_simulation)
+        self.assertEqual(miner.footprint_authority, "content/machines.csv")
         self.assertEqual((miner.footprint_x, miner.footprint_z), (2, 2))
         # And a body the Simulation says nothing about is not falsely marked.
-        self.assertFalse(machine_specs.by_id(machines, "nest").footprint_from_simulation)
+        # Not the Nest: since #61 `sim/map_layout.gd` declares that one, so the
+        # unchecked example has to be a body with no authority anywhere — which
+        # is what `press_mk1` is until its Recipe arrives.
+        bodies = self.BODIES + "press_mk1,press,2,3,2400\n"
+        loose = machine_specs.by_id(self.load(
+            "miner_mk1,Miner Mk1,miner,2,2,2.1,120,400,1,mine_iron_ore\n",
+            bodies=bodies), "press_mk1")
+        self.assertFalse(loose.footprint_from_simulation)
+        self.assertEqual(loose.footprint_authority, "content/machine_bodies.csv")
 
     def test_a_blank_footprint_defers_to_the_simulation(self):
         """The end state for every row: the body table stops restating the
@@ -240,11 +256,12 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
 
     def test_a_blank_footprint_with_nothing_to_defer_to_is_an_error(self):
         bodies = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
-                  "nest,nest,,,2800\n")
+                  "press_mk1,press,,,2400\n")
         with self.assertRaises(machine_specs.DeclarationError) as caught:
             machine_specs.load(bodies_source=bodies,
-                               machines_source=self.HEADER)
-        self.assertIn("nest", str(caught.exception))
+                               machines_source=self.HEADER,
+                               map_layout_source=self.MAP_LAYOUT)
+        self.assertIn("press_mk1", str(caught.exception))
         self.assertIn("machines.csv", str(caught.exception))
 
     def test_the_simulations_height_wins_over_the_body_tables(self):
@@ -304,6 +321,111 @@ class WhenTheSimulationAlsoDeclaresAFootprint(unittest.TestCase):
         self.assertIn("machines.csv", str(caught.exception))
 
 
+class TheNestsFootprint(unittest.TestCase):
+    """The one generated body whose footprint is geography rather than a Machine
+    row, and the one that had two authorities and no cross-check until #61.
+
+    The Nest has no row in `content/machines.csv` and never will — DESIGN.md
+    lists it alongside Belt and Wall, outside the eight Machines — so the rule
+    that checks a Machine's footprint could not reach it, and
+    `content/machine_bodies.csv` was a second opinion on the 4x4 a player
+    respawns on top of and every Belt in every scenario docks against.
+
+    Every case here supplies **both** sides as literals, so the two numbers can
+    be made to genuinely disagree. A cross-check whose only exercised case is one
+    where it is trivially true is the shape of a test that passed for several
+    tickets while the rule it claimed to cover was broken, and this project has
+    already paid for one of those.
+    """
+
+    BODIES_4X4 = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
+                  "nest,nest,4,4,4200\n")
+    BODIES_BLANK = ("machine_id,body,footprint_x,footprint_z,body_height_mm\n"
+                    "nest,nest,,,4200\n")
+    PORTS = ("machine_id,port_id,direction,edge,tile,height_mm\n"
+             "nest,delivery,input,south,1,900\n")
+    NO_MACHINES = ("id,display_name,role,footprint_x,footprint_z,height_metres,"
+                   "power_draw_kw,health,max_depth,recipe_id\n")
+
+    def load(self, bodies: str, map_layout: str):
+        return machine_specs.load(bodies_source=bodies, ports_source=self.PORTS,
+                                  machines_source=self.NO_MACHINES,
+                                  map_layout_source=map_layout)
+
+    def test_comes_from_the_map_layouts_constant_when_the_row_is_blank(self):
+        """The end state, and the one the shipped table is in: the body table
+        stops restating the footprint and there is one authority left."""
+        nest = machine_specs.by_id(
+            self.load(self.BODIES_BLANK, "const NEST_FOOTPRINT_TILES: int = 3\n"),
+            "nest")
+        self.assertEqual((nest.footprint_x, nest.footprint_z), (3, 3))
+        self.assertTrue(nest.footprint_from_simulation)
+        self.assertEqual(nest.footprint_authority, "sim/map_layout.gd")
+
+    def test_a_disagreement_is_an_error_naming_both_files(self):
+        """The acceptance criterion, and the reason the fixture is a literal: the
+        two numbers really disagree here, where on the shipped tree they agree by
+        construction. 3 tiles in the Simulation against 4 in the body table is a
+        mesh two metres wider than the thing a player collides with."""
+        with self.assertRaises(machine_specs.DeclarationError) as caught:
+            self.load(self.BODIES_4X4, "const NEST_FOOTPRINT_TILES: int = 3\n")
+        message = str(caught.exception)
+        self.assertIn("sim/map_layout.gd", message)
+        self.assertIn("machine_bodies.csv", message)
+        self.assertIn("nest", message)
+        self.assertIn("3x3", message)
+        self.assertIn("4x4", message)
+        # And it points at the authority it really has, not at the Machine table
+        # the Nest is deliberately absent from.
+        self.assertNotIn("machines.csv is the authority", message)
+
+    def test_an_agreement_is_marked_as_checked_rather_than_merely_passing(self):
+        """Agreeing is not the same as being checked, and the flag is how the
+        shipped-table test below can tell the difference."""
+        nest = machine_specs.by_id(
+            self.load(self.BODIES_4X4, "const NEST_FOOTPRINT_TILES: int = 4\n"),
+            "nest")
+        self.assertEqual((nest.footprint_x, nest.footprint_z), (4, 4))
+        self.assertTrue(nest.footprint_from_simulation)
+        self.assertEqual(nest.footprint_authority, "sim/map_layout.gd")
+
+    def test_a_constant_that_has_been_renamed_is_an_error_naming_the_file(self):
+        """Resolving a missing authority to a plausible default is exactly the
+        silence this closes, so it is refused instead — and the message says
+        where to go and what to rename."""
+        with self.assertRaises(machine_specs.DeclarationError) as caught:
+            self.load(self.BODIES_BLANK, "const NEST_SIZE_TILES: int = 4\n")
+        message = str(caught.exception)
+        self.assertIn("sim/map_layout.gd", message)
+        self.assertIn("NEST_FOOTPRINT_TILES", message)
+        self.assertIn("SQUARE_FOOTPRINT_CONSTANTS", message)
+
+    def test_two_authorities_for_one_body_is_an_error_naming_both(self):
+        """If somebody ever gives the Nest a row in `machines.csv`, that is the
+        defect this ticket closed arriving from the other direction: two files
+        declaring one footprint. One authority, so this is refused rather than
+        silently preferring whichever the merge happened to put second."""
+        with self.assertRaises(machine_specs.DeclarationError) as caught:
+            machine_specs.load(
+                bodies_source=self.BODIES_BLANK, ports_source=self.PORTS,
+                machines_source=self.NO_MACHINES
+                + "nest,Nest,crafter,4,4,4.2,0,8000,1,none\n",
+                map_layout_source="const NEST_FOOTPRINT_TILES: int = 4\n")
+        message = str(caught.exception)
+        self.assertIn("machines.csv", message)
+        self.assertIn("sim/map_layout.gd", message)
+        self.assertIn("nest", message)
+
+    def test_the_port_rules_are_checked_against_the_simulations_footprint(self):
+        """The footprint is not a label — it is what a port's tile index has to
+        fit inside. A Nest the Simulation says is 1x1 has no south tile 1, so a
+        port the 4x4 body table would have allowed is refused."""
+        with self.assertRaises(machine_specs.DeclarationError) as caught:
+            self.load(self.BODIES_BLANK, "const NEST_FOOTPRINT_TILES: int = 1\n")
+        self.assertIn("delivery", str(caught.exception))
+        self.assertIn("1 tile(s) long", str(caught.exception))
+
+
 class TheShippedTables(unittest.TestCase):
     def test_at_least_one_footprint_is_the_simulations_own(self):
         """The mechanism is live, not merely available. If this ever reads zero,
@@ -313,12 +435,32 @@ class TheShippedTables(unittest.TestCase):
         self.assertTrue(checked,
                         "no generated Machine's footprint comes from content/machines.csv")
 
+    def test_the_nests_footprint_is_the_simulations_own(self):
+        """Read live off both ends, because this is the pair #61 found drifting
+        apart unobserved. `sim/map_layout.gd` is the authority, the body table
+        defers to it, and the generator therefore builds the mesh at exactly the
+        size the Simulation obstructs, respawns a player on and docks Belts
+        against."""
+        nest = machine_specs.by_id(machine_specs.load(), "nest")
+        self.assertEqual(nest.footprint_authority, "sim/map_layout.gd")
+        self.assertTrue(nest.footprint_from_simulation)
+        declared = machine_specs.structure_footprints()["nest"]
+        self.assertEqual((nest.footprint_x, nest.footprint_z), declared)
+        # And the body table has stopped restating it, which is what makes the
+        # sentence above "one authority" rather than "two that agree today".
+        row = next(r for r in machine_specs.parse_table(
+            (REPO / "content" / "machine_bodies.csv").read_text(),
+            "content/machine_bodies.csv") if r["machine_id"] == "nest")
+        self.assertEqual((row["footprint_x"], row["footprint_z"]), ("", ""))
+
     def test_agree_with_the_simulations_machine_table_as_far_as_it_goes(self):
         """Loading the real files is the check. It tightens by itself as gameplay
         tickets add rows — which is the point: nobody has to remember to come
         back and connect the two."""
         declared = machine_specs.simulation_footprints()
         machines = machine_specs.load()
+        # `simulation_footprints` is the merged view of both authorities — every
+        # Machine's row plus the Nest's constant — so this covers the Nest too.
         checked = [m for m in machines if m.footprint_from_simulation]
         self.assertEqual({m.machine_id for m in checked},
                          {i for i in declared if i in {m.machine_id for m in machines}})

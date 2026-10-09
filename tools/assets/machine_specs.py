@@ -9,15 +9,24 @@ Three tables, each with one job, and one rule about which wins:
   height, full stop — the Simulation collides a player against that height, so a
   mesh that disagreed with it would be a roof you fall through.
 * `content/machine_bodies.csv` — which Machines have a generated mesh, and a
-  footprint and height for bodies `machines.csv` does not yet declare (the Nest
-  and a Belt never will: neither runs a Recipe). A footprint or a height given in
-  both files must agree exactly, or loading fails naming both files.
+  footprint and height for bodies the Simulation does not yet declare. A
+  footprint or a height given in two places must agree exactly, or loading fails
+  naming both files.
 * `content/machine_ports.csv` — the authority on port positions.
+
+And one file that is not a table: `sim/map_layout.gd`, the authority on the
+**Nest's** footprint. The Nest is not a Machine and never will be (DESIGN.md
+lists it alongside Belt and Wall), so it has no row in `machines.csv` to carry a
+footprint column, and its size lives where its position does — in the Map's
+geography, as `MapLayout.NEST_FOOTPRINT_TILES`. `structure_footprints` reads it;
+`footprint_authorities` is the merged view, and the one place that knows which
+file owns which footprint.
 
 That is the whole anti-drift mechanism. The Simulation reads `machines.csv` and
 `machine_ports.csv` through `sim/csv_table.gd`; this module is the *only* other
 reader of any of them, so a footprint or a port position cannot be true on the
-mesh and false in the Simulation without the asset suite saying so.
+mesh and false in the Simulation without the asset suite saying so. The
+dependency runs one way, always: `tools/` reads `sim/`, never the reverse.
 
 Standard library only, deliberately: it is read by Blender's bundled Python, by
 the test suite, and by the verification scripts, none of which share an
@@ -33,6 +42,7 @@ millimetres, because the grid is exact and floats are how exactness is lost.
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,6 +59,15 @@ PORTS_CSV = REPO / "content" / "machine_ports.csv"
 #: because it arrives with the gameplay tickets; when it is present it overrules
 #: this pipeline on every footprint it declares.
 MACHINES_CSV = REPO / "content" / "machines.csv"
+
+#: The Map's geography, and the authority on the footprint of the one generated
+#: body that is **not** a Machine and never will be. See `structure_footprints`.
+MAP_LAYOUT_GD = REPO / "sim" / "map_layout.gd"
+
+#: Body id to the `sim/map_layout.gd` constant that declares its footprint in
+#: tiles, for the bodies whose size is geography rather than a Machine row. The
+#: Nest is square, so one integer is the whole footprint.
+SQUARE_FOOTPRINT_CONSTANTS = {"nest": "NEST_FOOTPRINT_TILES"}
 
 DIRECTIONS = ("input", "output")
 
@@ -100,10 +119,14 @@ class Machine:
     footprint_x: int
     footprint_z: int
     body_height_mm: int
-    #: True when `content/machines.csv` declared this footprint, so the
-    #: Simulation and the mesh have been checked against each other rather than
-    #: merely being plausible.
+    #: True when the Simulation declared this footprint, so the Simulation and
+    #: the mesh have been checked against each other rather than merely being
+    #: plausible.
     footprint_from_simulation: bool = False
+    #: Which file that was — `content/machines.csv` for a Machine,
+    #: `sim/map_layout.gd` for the Nest — or `content/machine_bodies.csv` when
+    #: this table owns the number because nothing in the Simulation states it.
+    footprint_authority: str = "content/machine_bodies.csv"
     ports: tuple[Port, ...] = field(default_factory=tuple)
 
     def footprint_mm(self) -> tuple[int, int]:
@@ -246,17 +269,90 @@ def simulation_declarations(machines_source: str | None = None
     return declared
 
 
-def simulation_footprints(machines_source: str | None = None
+def structure_footprints(map_layout_source: str | None = None
+                         ) -> dict[str, tuple[int, int]]:
+    """What the Simulation declares about the footprint of a generated body that
+    is **not** a Machine, read out of `sim/map_layout.gd`.
+
+    There is exactly one of those: the **Nest**. It has no row in
+    `content/machines.csv` and never will — DESIGN.md lists it alongside Belt and
+    Wall, outside the eight Machines, and it runs no Recipe — so its size lives
+    where its position does, in the Map's geography, as
+    `MapLayout.NEST_FOOTPRINT_TILES`. That makes it the one footprint the rule in
+    `simulation_declarations` could not reach, which is how `machine_bodies.csv`
+    came to be a second authority on the 4x4 a player respawns on top of and
+    every Belt in every scenario docks against.
+
+    It is parsed rather than imported because nothing in this pipeline runs
+    GDScript — Blender's bundled Python reads this module — and it is read rather
+    than restated because a restatement is the defect. **The dependency runs one
+    way:** `tools/` reads `sim/`, and `sim/` has never heard of the asset
+    pipeline.
+
+    A constant that has been renamed or removed is an error naming the file,
+    because resolving it to a plausible default is exactly the silence this
+    exists to end.
+    """
+    path = "sim/map_layout.gd"
+    if map_layout_source is None:
+        if not MAP_LAYOUT_GD.exists():
+            return {}
+        map_layout_source = MAP_LAYOUT_GD.read_text()
+    declared: dict[str, tuple[int, int]] = {}
+    for body_id, constant in sorted(SQUARE_FOOTPRINT_CONSTANTS.items()):
+        match = re.search(
+            r"^const\s+" + re.escape(constant) + r"\s*:\s*int\s*=\s*(-?\d+)\s*$",
+            map_layout_source, re.MULTILINE)
+        if match is None:
+            raise DeclarationError(
+                f"{path}: no `const {constant}: int = <n>` to read {body_id}'s "
+                f"footprint from. It is the authority on that footprint; if it "
+                f"was renamed, rename it in "
+                f"machine_specs.SQUARE_FOOTPRINT_CONSTANTS too.")
+        tiles = int(match.group(1))
+        declared[body_id] = (tiles, tiles)
+    return declared
+
+
+def footprint_authorities(machines_source: str | None = None,
+                          map_layout_source: str | None = None
+                          ) -> dict[str, tuple[tuple[int, int], str]]:
+    """Every footprint the Simulation declares and the file that declares it.
+
+    Two files, because the Simulation holds the fact in two places for two good
+    reasons — a Machine's footprint is a row in its own table, the Nest's is
+    geography — and **one** reader of both, so a body cannot have two authorities
+    without this function saying which.
+    """
+    authorities: dict[str, tuple[tuple[int, int], str]] = {
+        machine_id: (box, "content/machines.csv")
+        for machine_id, (box, _height) in
+        simulation_declarations(machines_source).items()
+    }
+    for body_id, box in structure_footprints(map_layout_source).items():
+        if body_id in authorities:
+            raise DeclarationError(
+                f"content/machines.csv declares {body_id!r} and so does "
+                f"sim/map_layout.gd's "
+                f"{SQUARE_FOOTPRINT_CONSTANTS[body_id]}. A footprint has one "
+                f"authority: if {body_id} really is a Machine now, drop it from "
+                f"machine_specs.SQUARE_FOOTPRINT_CONSTANTS.")
+        authorities[body_id] = (box, "sim/map_layout.gd")
+    return authorities
+
+
+def simulation_footprints(machines_source: str | None = None,
+                          map_layout_source: str | None = None
                           ) -> dict[str, tuple[int, int]]:
     """Just the footprints, for the callers that only want those."""
-    return {machine_id: box
-            for machine_id, (box, _height) in
-            simulation_declarations(machines_source).items()}
+    return {body_id: box for body_id, (box, _path) in
+            footprint_authorities(machines_source, map_layout_source).items()}
 
 
 def load(bodies_source: str | None = None,
          ports_source: str | None = None,
-         machines_source: str | None = None) -> list[Machine]:
+         machines_source: str | None = None,
+         map_layout_source: str | None = None) -> list[Machine]:
     """Every generated Machine body with its ports, sorted by id.
 
     Sorted, not in file order: anything the Simulation reads has to load
@@ -274,6 +370,12 @@ def load(bodies_source: str | None = None,
     if ports_source is None:
         ports_source = PORTS_CSV.read_text()
     declared_by_simulation = simulation_declarations(machines_source)
+    # Footprints come from the merged view, because the Nest's authority is
+    # `sim/map_layout.gd` rather than a Machine row; heights still come from
+    # `machines.csv` alone, and the two the Simulation *tunes* — a Belt's deck
+    # and the Nest's crown — are cross-checked against `content/tuning.toml` in
+    # the asset suite instead, there being no column here for them to defer to.
+    footprints_by_simulation = footprint_authorities(machines_source, map_layout_source)
 
     bare: dict[str, Machine] = {}
     for row in parse_table(bodies_source, bodies_path):
@@ -287,8 +389,16 @@ def load(bodies_source: str | None = None,
                 f"{machine_id!r}")
 
         declaration = declared_by_simulation.get(machine_id)
-        from_simulation = None if declaration is None else declaration[0]
         height_from_simulation = None if declaration is None else declaration[1]
+        footprint_declaration = footprints_by_simulation.get(machine_id)
+        from_simulation = None if footprint_declaration is None \
+            else footprint_declaration[0]
+        # The file to name in a refusal, which is per body rather than per rule:
+        # a Machine's footprint is owned by `machines.csv` and the Nest's by
+        # `sim/map_layout.gd`, and a message that named the wrong one would send
+        # somebody to edit a file that is not the authority.
+        authority = machines_path if footprint_declaration is None \
+            else footprint_declaration[1]
         own = (row.get("footprint_x", ""), row.get("footprint_z", ""))
         if own == ("", ""):
             if from_simulation is None:
@@ -302,10 +412,10 @@ def load(bodies_source: str | None = None,
                          _require_int(row, "footprint_z", bodies_path))
             if from_simulation is not None and from_simulation != footprint:
                 raise DeclarationError(
-                    f"{machines_path} gives {machine_id} a footprint of "
+                    f"{authority} gives {machine_id} a footprint of "
                     f"{from_simulation[0]}x{from_simulation[1]} tiles but "
                     f"{bodies_path} line {row['__line__']} says "
-                    f"{footprint[0]}x{footprint[1]}. {machines_path} is the "
+                    f"{footprint[0]}x{footprint[1]}. {authority} is the "
                     f"authority: either correct this row or blank its footprint "
                     f"columns to defer to it.")
                 # Deferring is the better fix, and deletes the duplicate.
@@ -350,6 +460,8 @@ def load(bodies_source: str | None = None,
             footprint_z=footprint[1],
             body_height_mm=height_mm,
             footprint_from_simulation=from_simulation is not None,
+            footprint_authority=authority if from_simulation is not None
+            else "content/machine_bodies.csv",
         )
 
     ports: dict[str, list[Port]] = {machine_id: [] for machine_id in bare}
@@ -408,6 +520,7 @@ def load(bodies_source: str | None = None,
             footprint_z=machine.footprint_z,
             body_height_mm=machine.body_height_mm,
             footprint_from_simulation=machine.footprint_from_simulation,
+            footprint_authority=machine.footprint_authority,
             ports=tuple(sorted(ports[machine.machine_id], key=lambda p: p.port_id)),
         )
         for machine in sorted(bare.values(), key=lambda m: m.machine_id)
@@ -449,6 +562,7 @@ def resolved() -> dict:
                 "footprint_tiles": [m.footprint_x, m.footprint_z],
                 "footprint_mm": list(m.footprint_mm()),
                 "footprint_from_simulation": m.footprint_from_simulation,
+                "footprint_authority": m.footprint_authority,
                 "body_height_mm": m.body_height_mm,
                 "ports": [
                     {

@@ -1904,19 +1904,46 @@ anything moves — and every Enemy converges on the same destination.
   send a swarm drifting through solid Walls.
 - Measured: 0.10 ms a tick at 20 Enemies and 0.84 ms at 200, against a 16.67 ms frame.
 
-### Open: the Nest's footprint has two authorities
+### Both facts about the Nest's box have one authority each, and #61 closed the second
 
-`MapLayout.NEST_FOOTPRINT_TILES` and the `nest` row of `content/machine_bodies.csv`
-both say 4x4, and the asset suite's cross-check only covers rows that
-`content/machines.csv` declares — which the Nest never will, because it is not a
-Machine. The art pass should teach the mesh generator to read the footprint from the
-Simulation's constant, the way it reads a Machine's from `machines.csv`.
+`MapLayout.NEST_FOOTPRINT_TILES` is **the** authority on the Nest's footprint. The mesh
+generator reads that constant (`machine_specs.structure_footprints`) and the `nest` row of
+`content/machine_bodies.csv` leaves its footprint columns blank to defer, which is the
+arrangement every Machine's row already has against `content/machines.csv`. Until #61 both
+files said 4x4 and **nothing compared them**, because the footprint cross-check only covered
+rows `machines.csv` declares — which the Nest never will, because it is not a Machine. That
+is the one failure the footprint check exists for everywhere else: for a Machine a
+disagreement is a roof a player falls through, and here it is the 4x4 a player respawns on
+top of, that obstructs every Enemy route, and that every Belt in every scenario docks
+against.
 
-Its **height** went the other way and is worth copying: #30 needed it in the Simulation,
-so `nest.height_metres` is tuning the Simulation owns and the asset suite cross-checks the
-`nest` row's `body_height_mm` against it by name — the same treatment
-`belt.deck_height_metres` gets. Two facts about the Nest are now checked across the two
-tables and one is not.
+`machine_specs.footprint_authorities` is the merged view and the one place that knows which
+file owns which footprint, so a refusal names `sim/map_layout.gd` for the Nest and
+`content/machines.csv` for a Machine rather than sending somebody to edit a file that is not
+the authority. The constant is parsed with a regex rather than imported, because nothing in
+the asset pipeline runs GDScript — Blender's bundled Python reads that module — and **the
+dependency runs one way: `tools/` reads `sim/`, and `sim/` has never heard of the asset
+pipeline.** A renamed constant is an error naming the file, because resolving a missing
+authority to a plausible default is the silence this closed; so is the Nest ever acquiring a
+row in `machines.csv`, which is the same defect from the other direction.
+
+**Both arms were seen to fire, which is the whole value of a cross-check.** With the row
+restating 4x4 against a constant moved to 3, `machine_specs` refuses and names both files.
+With the row *blank* there is nothing to disagree with and the generator correctly builds a
+3x3 Nest — what catches that is
+`test_generated_machines.RegeneratingFromTheDeclaration.test_reproduces_the_committed_meshes_byte_for_byte`,
+which regenerated the mesh and found it no longer matched the committed bytes. So a
+deferring row is covered by the stronger of the two instruments rather than by neither. The
+fixtures supply **both** sides as literals and make the two numbers genuinely disagree,
+which is the lesson the mark-height test taught: a cross-check whose only exercised case is
+one where the rule is trivially true passes for tickets while the rule is broken.
+
+Its **height** went the other way and was the pattern copied: #30 needed it in the
+Simulation, so `nest.height_metres` is tuning the Simulation owns and the asset suite
+cross-checks the `nest` row's `body_height_mm` against it by name — the same treatment
+`belt.deck_height_metres` gets. A Belt's 1x1 is now the only footprint in
+`machine_bodies.csv` with no authority anywhere else, and deliberately so: one tile wide is
+what a Belt *is* (DESIGN.md), and the Simulation holds no constant to disagree with.
 
 ## Turrets, and the keystone loop
 
