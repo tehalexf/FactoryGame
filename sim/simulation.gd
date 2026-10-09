@@ -5100,13 +5100,30 @@ func _within_revive_reach(rescuer: int, target: int) -> bool:
 ## Walked in player index order and kept on a strict improvement, so a tie goes to the
 ## lowest player id on every client. A Downed player is **not** a target: they are already
 ## out of the fight, and finishing them would make the bleed-out window a fiction.
+##
+## **How high a player is standing counts, and #58 is where that stopped being an accident.**
+## Two separate tests rather than one three-dimensional distance, and the split is the design:
+## the horizontal is a *tuned* reach — how far an Enemy leans — where the vertical is
+## *anatomy*, how high the body goes, so a thing cannot reach the top of a Wall however close
+## to it it stands. A single radius would have conflated the two and made
+## `enemy.player_bite_reach_metres` silently also a climbing allowance, with the odd
+## consequence that getting nearer would buy an Enemy height.
 func _player_in_contact(enemy: int) -> int:
-	var reach: int = _enemy_player_reach(_enemy_kind[enemy])
+	var kind: int = _enemy_kind[enemy]
+	var reach: int = _enemy_player_reach(kind)
 	var within: int = reach * reach
+	var ceiling: int = _enemy_player_vertical_reach(kind)
 	var best: int = -1
 	var best_gap: int = 0
 	for player_id: int in range(query_player_count()):
 		if _player_life_state[player_id] != LIFE_ALIVE:
+			continue
+		# Out of reach *upward*. An Enemy walks on the ground — Machines and Walls obstruct
+		# it and it never stands on anything — so the gap is the player's own feet height,
+		# and there is no second position to subtract. Compared directly rather than squared
+		# because one axis needs no square root, which is the thing the squaring everywhere
+		# else in this file exists to avoid.
+		if _player_y[player_id] > ceiling:
 			continue
 		var gap_x: int = _player_x[player_id] - _enemy_x[enemy]
 		var gap_z: int = _player_z[player_id] - _enemy_z[enemy]
@@ -5133,6 +5150,47 @@ func _enemy_player_reach(kind: int) -> int:
 	if kind == EnemyKind.SIEGE_HULK:
 		return _definitions.enemy_player_bite_reach_metres + _enemy_hit_radius(kind)
 	return _definitions.enemy_player_bite_reach_metres
+
+
+## How high off the ground an Enemy of a kind can reach a player, in fixed-point metres. A
+## player whose feet are above this is out of reach of this kind, whatever the ground plane
+## says about the distance.
+##
+## **A thing reaches as high as it is tall**, and that is the whole rule. It is
+## `_enemy_hit_height` — the one authority on how big a kind is and the very number
+## `WorldView` scales the drawn body by — so the thing that can reach you is the thing you can
+## *see* reaching, there is no second opinion and no new tuning key. A kind is still four
+## tuning keys and a `match` arm, and `_enemy_damage` is still one number per kind whatever it
+## is biting; there is no table of multipliers here and there must never be one.
+##
+## **#58 is where this became a decision rather than an accident.** `_player_in_contact`
+## subtracted positions on two axes and had never heard of `_player_y`, so a 1.6 m Crawler on
+## the ground bit a player standing on a 2.2 m Boiler roof. That was the conservative default
+## from before #30 made a roof real: a player reaches
+## `jump_height_metres + step_up_height_metres`, so their own Factory is the staircase and
+## they *will* be up there.
+##
+## **What protects the keystone loop is that the Breaker is the tall one.** Measured against
+## `content/machines.csv`, a Crawler's 1.6 m reaches a Belt deck (0.9) and a Smelter (1.5) and
+## stops; a Breaker's 2.2 m covers the Miner (1.8), the Ammo Press, the Turret (2.0), the
+## Boiler and the Silo (2.2); a Siege Hulk's 3.2 m reaches every roof in the content. So Chaff
+## cannot reach a player on a production roof and **the thing that actually hunts them can** —
+## which is DESIGN.md's own split, Chaff is the sense of threat and the Breaker is the threat,
+## arriving as geometry instead of as a sentence. And a Breaker takes a Machine over a player
+## anyway (`_enemy_contact_target`'s first clause), so standing on a Machine a Breaker can
+## reach means watching it eat your floor: a roof is cover until the Machine under it is gone,
+## which is the opposite of a free safe spot.
+##
+## Two consequences recorded rather than hidden. A Repair Pylon and a Wall are 2.4 m, above a
+## Breaker and below a Hulk, so those two roofs are Chaff-proof and Breaker-proof — a Wall is
+## the one structure whose whole job is to stop something, and it is out of reach from the
+## ground on purpose. And nothing reaches the Nest's 4.2 m crown, which is where `_respawn`
+## puts a player: that is the one perch whose own destruction ends the Run, so a player
+## standing on it is losing slowly rather than safe, and a Siege Hulk's shell does not care how
+## high anybody is standing — `_a_shell_lands` is a blast radius and a roof has never been
+## cover from artillery.
+func _enemy_player_vertical_reach(kind: int) -> int:
+	return _enemy_hit_height(kind)
 
 
 # ── What a player is carrying ────────────────────────────────────────────
