@@ -532,12 +532,15 @@ func test_a_picker_cell_says_what_it_is_what_it_costs_and_whether_it_is_locked()
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	# A cell is a position in the chain since #53, not a Machine's index in a sorted table,
+	# so this is how a test names the one it means.
+	var definitions: Definitions = sim.query_definitions()
+	var miner: int = BuildChain.cell_of(definitions, definitions.machine_index("miner_mk1"))
 	assert_true(view.machine_picker_label(miner).contains("Miner Mk1"), view.machine_picker_label(miner))
 	assert_true(view.machine_picker_label(miner).contains("8"), "the plate it costs")
 	assert_false(view.machine_picker_is_locked(miner), "a Run opens able to build one")
 
-	var deep: int = sim.query_definitions().machine_index("miner_mk2")
+	var deep: int = BuildChain.cell_of(definitions, definitions.machine_index("miner_mk2"))
 	assert_true(view.machine_picker_is_locked(deep), "and unable to build this one")
 	view.free()
 
@@ -568,7 +571,8 @@ func test_a_picker_cell_carries_the_icon_of_what_the_machine_makes() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	var miner: int = sim.query_definitions().machine_index("miner_mk1")
+	var definitions: Definitions = sim.query_definitions()
+	var miner: int = BuildChain.cell_of(definitions, definitions.machine_index("miner_mk1"))
 	assert_true(
 		view.machine_picker_icon_path(miner).contains("iron_ore"),
 		"a Miner digs ore, so ore is its glyph: %s" % view.machine_picker_icon_path(miner)
@@ -576,7 +580,7 @@ func test_a_picker_cell_carries_the_icon_of_what_the_machine_makes() -> void:
 	# #20 generated ten icons and the content has grown Items since — `iron_plate` is one
 	# with no picture. A Machine whose output has no icon reads by its name rather than by a
 	# broken one, which is the rule a Machine with no generated body already obeys.
-	var smelter: int = sim.query_definitions().machine_index("smelter_mk1")
+	var smelter: int = BuildChain.cell_of(definitions, definitions.machine_index("smelter_mk1"))
 	assert_eq(view.machine_picker_icon_path(smelter), "", "no iron_plate icon exists yet")
 	view.free()
 
@@ -602,7 +606,7 @@ func test_a_number_key_puts_that_machine_on_the_build_gun() -> void:
 	sim.step(controller.actions_for_tick(sim, 0, pressing))
 	assert_eq(
 		sim.query_player_selected_machine_index(0),
-		3,
+		BuildChain.order(sim.query_definitions())[3],
 		"the fourth cell of the picker is what the fourth key reaches"
 	)
 
@@ -1054,3 +1058,109 @@ func test_a_map_with_no_workable_ore_says_nothing_it_cannot_back_up() -> void:
 	var line: String = Objective.line(sim, 0)
 	assert_true(line.contains("Miner"), line)
 	assert_false(line.contains(" m "), "there is no distance to quote: %s" % line)
+
+
+# ── The hotbar states the chain ───────────────────────────────────────────────
+# #53, from a playtest: "please simplify the hotbar right now so I am CRYSTAL clear about
+# what chain of buildings to build". The cells #36 built were right and their *order* was
+# sorted id order, which put the Ammo Press first and the Miner fourth — the chain backwards.
+# The order now comes out of `BuildChain`, which reads it off the Recipes.
+
+func test_the_hotbar_reads_left_to_right_as_the_chain_to_build() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var definitions: Definitions = sim.query_definitions()
+	# The top row is the line, in the order it is built, on the keys 1 to 4.
+	var line: PackedStringArray = PackedStringArray(
+		["miner_mk1", "smelter_mk1", "ammo_press_mk1", "mg_turret_mk1"]
+	)
+	for step: int in range(line.size()):
+		assert_eq(
+			view.machine_picker_machine(step),
+			definitions.machine_index(line[step]),
+			"cell %d is %s" % [step, line[step]]
+		)
+		assert_eq(view.machine_picker_row(step), 0, "and it is on the main line")
+		assert_eq(view.machine_picker_column(step), step, "one column per craft")
+		assert_true(
+			view.machine_picker_label(step).contains("[%d]" % (step + 1)),
+			"on key %d: %s" % [step + 1, view.machine_picker_label(step)]
+		)
+	view.free()
+
+
+func test_a_cell_says_what_the_machine_eats_as_well_as_what_it_makes() -> void:
+	# #36 put the output Item's icon on a cell, which is half the information: a player
+	# hunting for "the thing that turns ore into plate" needs the input too.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var definitions: Definitions = sim.query_definitions()
+
+	var smelter: int = BuildChain.cell_of(definitions, definitions.machine_index("smelter_mk1"))
+	assert_true(
+		view.machine_picker_input_icon_path(smelter).contains("iron_ore"),
+		"a Smelter eats ore: %s" % view.machine_picker_input_icon_path(smelter)
+	)
+
+	# A Miner's input is the ground, so there is nothing to draw on the left of it — the
+	# honest state, and the one a Machine with no generated body already reads in.
+	var miner: int = BuildChain.cell_of(definitions, definitions.machine_index("miner_mk1"))
+	assert_eq(view.machine_picker_input_icon_path(miner), "", "the ground is not an Item")
+	assert_true(view.machine_picker_icon_path(miner).contains("iron_ore"), "and it digs ore")
+
+	# And a Machine whose product is not an Item reads by what it makes in words, because
+	# there is no picture of damage. The case #36 already had to handle.
+	var turret: int = BuildChain.cell_of(definitions, definitions.machine_index("mg_turret_mk1"))
+	assert_eq(view.machine_picker_icon_path(turret), "", "no icon for damage")
+	assert_true(
+		view.machine_picker_label(turret).contains("damage"),
+		"so it says so: %s" % view.machine_picker_label(turret)
+	)
+	var boiler: int = BuildChain.cell_of(definitions, definitions.machine_index("steam_boiler_mk1"))
+	assert_true(
+		view.machine_picker_label(boiler).contains("power"),
+		"and a generator makes Power: %s" % view.machine_picker_label(boiler)
+	)
+	view.free()
+
+
+func test_the_hotbar_marks_the_cell_the_objective_line_is_talking_about() -> void:
+	# One fact drawn twice, from one authority. A hotbar that marked one Machine while the
+	# line named another would be worse than a hotbar that marked nothing.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var definitions: Definitions = sim.query_definitions()
+	var miner: int = BuildChain.cell_of(definitions, definitions.machine_index("miner_mk1"))
+	assert_true(view.machine_picker_is_next(miner), "the first thing to build is marked")
+	var turret: int = BuildChain.cell_of(definitions, definitions.machine_index("mg_turret_mk1"))
+	assert_false(view.machine_picker_is_next(turret), "and the last thing is not")
+	assert_eq(
+		view.machine_picker_machine(view.machine_picker_next_cell()),
+		Objective.pointed_at(sim, 0),
+		"the marked cell is the one the line is about"
+	)
+	view.free()
+
+
+func test_a_number_key_reaches_the_machine_whose_cell_carries_it() -> void:
+	# The keys follow the chain now, so `1` is the Miner rather than the Ammo Press. The
+	# controller and the hotbar read the same order, or a player presses 1 and gets the
+	# thing printed on cell 3.
+	var sim: Simulation = Simulation.new(1, 1)
+	var controller: PlayerController = PlayerController.new()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	sim.step([InputAction.set_build_mode(0, true)])
+	for cell: int in range(4):
+		var sample: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+		sample.machine_picked = cell
+		sim.step(controller.actions_for_tick(sim, 0, sample))
+		assert_eq(
+			sim.query_player_selected_machine_index(0),
+			view.machine_picker_machine(cell),
+			"key %s puts cell %d on the Build Gun" % [BuildChain.key_label(cell), cell]
+		)
+	view.free()

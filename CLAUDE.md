@@ -2694,14 +2694,12 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   `query_machine_is_starved` calls starved. There is no stored connection to go stale, so
   demolishing the Smelter a Belt fed marks it on the next frame with no bookkeeping anywhere.
   An arrow a tile says which way each Belt carries.
-- **The Machine picker is a row of cells**, one per Machine and one for the Belt tool, with
-  the key printed on it, what it costs, whether a Delivery still has it locked, and the icon
-  of **the Item the Machine makes** — which is what a player is hunting for when they go
-  looking for a Smelter, and which means a Machine added as a row gets a picture without
-  anybody drawing one. Those are #20's generated icons, which nothing had used. A Machine
-  whose Recipe produces no Item — a Turret, a generator, a Silo — reads by its name, as does
-  one whose Item has no icon yet (`iron_plate` is one): a missing picture is an ordinary
-  state, the rule a Machine with no generated body already obeys.
+- **The Machine picker is a grid of cells** — see "The hotbar states the chain" below, which
+  is #53 replacing the flat row #36 shipped. Each cell still carries the key, the cost,
+  whether a Delivery has it locked, and #20's generated icons, which nothing had used before
+  #36. A Machine whose Recipe produces no Item — a Turret, a generator, a Silo — reads by the
+  word for what it makes, as does one whose Item has no icon yet (`iron_plate` is one): a
+  missing picture is an ordinary state, the rule a Machine with no generated body obeys.
 - **The HUD is triaged.** It was fifty-three appended lines drawn over the Factory they
   describe. `hud_text()` is still the whole wall and the suite still asserts against it;
   what is *shown* is `hud_brief_text()` — the urgent banners, the objective, the Nest, the
@@ -2721,6 +2719,116 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   for good once a Delivery tier has landed. It names roles and states rather than Machine
   ids, because a line that named `smelter_mk1` would be a second content table written in
   GDScript. It lives in `game/` for the reason `BuildGun.refusal_text` does.
+
+### The hotbar states the chain
+
+#53, and the complaint was the standing direction in one sentence: *"please simplify the
+hotbar right now so I am CRYSTAL clear about what chain of buildings to build"*. #36's cells
+were right and their **order** was `Definitions`' sorted id order, which puts the Ammo Press
+first and the Miner fourth — a player reading left to right was shown the chain backwards.
+Nothing was wrong with any cell; what was missing was the order, and the order was nowhere
+to be read.
+
+**`game/build_chain.gd` is the whole of it, and nothing in it is typed.** It lives in `game/`
+for the reason `Objective` and `BuildGun.refusal_text` do: a Recipe's inputs are a fact and
+"this is what you build after that" is a sentence about them. The Simulation does not know
+the file exists, and asking any of it leaves the state hash where it was.
+
+The order is derived from the one place the chain actually exists — a Machine's Recipe names
+what it eats and what it makes, and `Definitions` interns both — out of three quantities:
+
+- **A stage**: how many crafts deep a Machine sits. No inputs is stage 0, because a Miner's
+  input is the ground; anything else is one past the deepest Item it eats. That is the
+  **column**, and it is the sense in which column N feeds column N+1 — every Machine in a
+  column eats something made in the one before it, *by construction*, which is what makes
+  the arrow between two columns a true statement rather than a decoration. An arrow per
+  *cell* would have claimed a Pylon feeds a Silo.
+- **A reach**: how far downstream of a Machine the chain runs. Ore reaches the Turret three
+  stages on; coal reaches the Boiler and stops. That sorts a column, and it is what puts the
+  **main line along the top row** with the branches under it — derived, rather than somebody
+  deciding which branch is the important one.
+- **Whether a Delivery tier gates it**, through `Definitions.locks_machine` — read as
+  *content* and not as Run state, deliberately. An order that moved when a Delivery landed
+  would renumber the keys under a player who had just learnt them. What *this* Run has
+  earned is still drawn, by the tint, every frame.
+
+The shipped content comes out as a 2x4 grid with the gated Miners in a column of their own:
+
+```
+[1] Miner Mk1 → [2] Smelter Mk1 → [3] Ammo Press Mk1 → [4] MG Turret Mk1   [9] Miner Mk2
+[5] Coal Miner  [6] Steam Boiler   [7] Repair Pylon     [8] Silo Mk1       [0] Miner Mk3
+```
+
+Five things worth knowing rather than rediscovering:
+
+- **Keys are row-major over a column-major grid**, which is the one arrangement that gets
+  both halves right. The grid has to be stages across so the chain reads left to right; the
+  keys have to run along that top row first, so the line a player builds is `1 2 3 4`.
+  Column-major keys would have handed the chain `1 5 7 9` and asked them to learn a lookup
+  table. `BuildChain.key_label` is the single authority and the objective line reads it too,
+  so the sentence and the cell print the same number.
+- **The controller reads the same order**, so a key press lands on the Machine printed on
+  the cell rather than on whatever sorts there by id. The number row is now the *only*
+  picker — the wheel was given the hologram to turn in the ticket merged just before this
+  one — which also un-did a workaround: `test_recorded_session` needed eight wheel steps to
+  reach a crafter under id order and now simply presses `2`, because the Smelter is the
+  second thing in the chain.
+- **Ten keys is the whole of it, and nothing reaches an eleventh Machine.** The wheel used
+  to; it does not any more. `Objective` says nothing about a key it cannot name rather than
+  naming one that does not exist, and that is the clause to revisit on the day the Machine
+  list outgrows the number row.
+- **What a Delivery gates is a second group, past the end of the chain, and a render is why.**
+  The deeper Miners are stage 0, which is where the chain says they go, and it made that
+  column four cells tall — a hotbar is as tall as its tallest column, so two Machines nobody
+  can build yet pushed the whole chain four rows up the screen and over the Factory it is
+  about. That is also #53's "separate the opening line from everything else", arriving as a
+  layout constraint rather than as a preference. The gap before that group is a plain
+  separator, wider than an arrow: what separates the two is that there is no relationship.
+- **A cell says what it eats as well as what it makes**, with an arrow between the two slots
+  *inside* the cell. The arrow is not decoration either: `iron_plate` still has no generated
+  icon, so the Ammo Press (makes Ammunition) and the MG Turret (eats it) came out of a render
+  carrying one identical glyph each with nothing to say which side of the transformation it
+  was on.
+- **`Objective` and the hotbar cannot disagree, because there is one `_step` behind both.**
+  `Objective.line` names the act and `Objective.pointed_at` names the cell, in the Build
+  Gun's own selection space — a Machine's definition index, or `machine_count()` for the
+  Belt, which is the convention `query_player_selected_machine_index` already uses. Which
+  Miner and which Smelter is `BuildChain.first_unlocked_of_role`'s answer off the chain
+  order, so nothing here names a row.
+
+**What the renders found, which is the part that could not have been tested.** Four defects,
+and the first two were in the tool:
+
+1. **The `placing` and `routing` shots had been rendering with the Build Gun holstered since
+   #42** — a Run opens holstered, the composer never drew it, so for several tickets the
+   pictures of *the act of building* showed a player who cannot build and **no hotbar at
+   all**. The committed `building_placing.png` was an older artifact the tool could no
+   longer reproduce. `compose_building_shot.gd` now draws the Build Gun for both.
+2. **The cells had no visible backing.** #36 drew the three states by modulating the default
+   `PanelContainer` theme, which is a near-transparent near-black: measured off the shot,
+   every cell was within a few counts of the ground behind it and the *lit* cell read as a
+   darker box than its neighbours. The one new state #53 adds was invisible outright. The
+   cells now own a `StyleBoxFlat` and the state is a **border colour**.
+3. **Half-size icon slots read as smudges.** Two 20-pixel glyphs under a three-line caption
+   are not two glyphs, and a cell is already as wide as "[6] Steam Boiler Mk1", so there was
+   never any width to save.
+4. **A pale green for "selected *and* next" was thrown away**, the way #52 threw away its
+   first colour pair. The one frame where that state is common is a Belt drag, which already
+   fills the screen with the green of a valid route — three greens in one shot. Selected
+   wins instead, which is the better rule anyway: the cyan's job is to get a player to pick
+   the cell, so a cell they have picked has had the advice.
+
+**Two findings recorded rather than patched**, both out of this ticket's scope:
+
+- **A Run opens with the Ammo Press on the Build Gun.** `_player_selected_machine` is an
+  *index* into the sorted Machine table and it starts at 0, which is `ammo_press_mk1` —
+  the third thing in the chain. Fixing it means changing which index a Run starts on, which
+  moves `Simulation.hash()`, and "the first cell of the chain" is a `game/` concept that
+  `sim/` must not learn. The hotbar covers it — the Miner's cell is marked and the objective
+  line names its key — but the Build Gun is still pointed at the wrong thing on tick 0.
+- **`iron_plate` has no generated icon**, so the Smelter's output slot and the Ammo Press's
+  input slot are both blank in a chain that is otherwise pictured end to end. #20 generated
+  ten icons and the content has grown Items since. That is an art ticket.
 
 ### Refusals are a query, not state
 

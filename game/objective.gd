@@ -36,32 +36,117 @@ extends RefCounted
 ## "press B" is not a thing to achieve and a player who holsters an hour in must not be
 ## handed a tutorial line for it.
 static func line(sim: Simulation, player_id: int) -> String:
+	match _step(sim, player_id):
+		Step.MINE:
+			return _with_the_build_gun(
+				sim,
+				player_id,
+				"Place a Miner %s%s, then left click" % [
+					_where_the_ore_is(sim, player_id), _the_key_for_this_step(sim, player_id)
+				]
+			)
+		Step.CRAFT:
+			return _with_the_build_gun(
+				sim,
+				player_id,
+				"Place a Smelter on clear ground nearby%s; it turns ore into ingots"
+					% _the_key_for_this_step(sim, player_id)
+			)
+		Step.BELT:
+			return _with_the_build_gun(
+				sim,
+				player_id,
+				"Press C for the Belt tool, then drag from the orange arrow to the blue one"
+			)
+		Step.UNSTARVE:
+			return "Something is starved — a Belt starts past an output arrow and ends at an input"
+		Step.DELIVER:
+			return "Carry ingots to the Nest and press F — delivering is how a Run gets better"
+	return ""
+
+
+## Which cell of the hotbar this step is about, in the Build Gun's own selection space: a
+## Machine's definition index, or `machine_count()` for the Belt tool, or -1 for a step that
+## is not about placing anything.
+##
+## **#53's "say what is next", and the only version worth having is one fact drawn twice.**
+## The line names the act and this names the cell, and they read the same `_step` — so a
+## hotbar that marked one Machine while the line named another is not a thing this file can
+## express. The selection space is the one `query_player_selected_machine_index` and the
+## picker's own highlight already live in, so the renderer needs no third convention.
+##
+## **Which Miner and which Smelter is a question for the content, not for this file.**
+## `BuildChain.first_unlocked_of_role` answers it off the chain order, so a Map whose Delivery
+## chain opens with a different Miner points at that one, and nothing here names a row.
+static func pointed_at(sim: Simulation, player_id: int) -> int:
+	match _step(sim, player_id):
+		Step.MINE:
+			return BuildChain.first_unlocked_of_role(sim, MachineDefinition.Role.MINER)
+		Step.CRAFT:
+			return BuildChain.first_unlocked_of_role(sim, MachineDefinition.Role.CRAFTER)
+		Step.BELT:
+			# The Belt is not a Machine, so it has no definition index — and the cell past
+			# the end of the Machine list is exactly how the picker already names it.
+			return sim.query_definitions().machine_count()
+	return -1
+
+
+## The steps, in the order they are walked.
+##
+## Spelled as an enum rather than left implicit in a chain of early returns, because #53 made
+## the step something **two** readings have to agree about. A step is a fact about the Run;
+## the sentence and the marked cell are both presentation of it.
+enum Step {
+	## Nothing is on ground it can work.
+	MINE,
+	## Nothing turns one good into another.
+	CRAFT,
+	## No Belt is both fed and landing somewhere.
+	BELT,
+	## Something is standing idle for want of a connection.
+	UNSTARVE,
+	## The line runs and has never been paid for.
+	DELIVER,
+	## The opening has taught itself, or the Run is over.
+	NOTHING,
+}
+
+
+## Which step the Run is on. Walked in order and the first unmet one wins, so the answer is
+## always about the nearest thing between the player and a working production line.
+static func _step(sim: Simulation, player_id: int) -> Step:
 	if sim == null or sim.query_run_is_over():
-		return ""
+		return Step.NOTHING
 	# Once a tier has been delivered the loop has closed at least once: the player has
 	# mined, crafted, moved goods and been paid for it, and has no further use for a
 	# hint line taking up the top of their screen.
 	if not sim.query_completed_deliveries().is_empty():
-		return ""
-
+		return Step.NOTHING
 	if not _something_is_mining(sim):
-		return _with_the_build_gun(
-			sim, player_id, "Place a Miner %s — wheel or 1-9 to pick, left click to place"
-				% _where_the_ore_is(sim, player_id)
-		)
+		return Step.MINE
 	if not _something_crafts(sim):
-		return _with_the_build_gun(
-			sim, player_id, "Place a Smelter on clear ground nearby — it turns ore into ingots"
-		)
+		return Step.CRAFT
 	if not _anything_is_belted(sim):
-		return _with_the_build_gun(
-			sim,
-			player_id,
-			"Press C for the Belt tool, then drag from the orange arrow to the blue one"
-		)
+		return Step.BELT
 	if _anything_is_starved(sim):
-		return "Something is starved — a Belt starts past an output arrow and ends at an input"
-	return "Carry ingots to the Nest and press F — delivering is how a Run gets better"
+		return Step.UNSTARVE
+	return Step.DELIVER
+
+
+## The key that reaches the cell this step is about, as a clause for the middle of a
+## sentence — " — key 2" — or "" for a cell no key reaches.
+##
+## **Derived from the chain and never typed**, which is the whole reason `BuildChain.key_label`
+## is not in the renderer: the line and the cell print the same number because they read the
+## same function, so a Machine added as a row moves both or neither.
+##
+## The empty case is not hypothetical furniture. The number row is ten keys and the wheel
+## stopped being a picker when it was given the hologram to turn, so an eleventh Machine has
+## no way to be reached at all — and a line naming a key that does not exist would be worse
+## than one that names none. The step still says what to place.
+static func _the_key_for_this_step(sim: Simulation, player_id: int) -> String:
+	var phrase: String = BuildChain.key_phrase(sim.query_definitions(), pointed_at(sim, player_id))
+	return "" if phrase.is_empty() else " — %s" % phrase
 
 
 ## A build step, with the key that puts the Build Gun in your hand on the front of it when

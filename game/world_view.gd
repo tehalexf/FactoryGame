@@ -557,6 +557,18 @@ var _picker_locked: PackedInt64Array = PackedInt64Array()
 var _picker_selected: int = -1
 var _picker_built_for: int = -1
 
+## The grid, parallel to `_picker_cells` and in the same key order `BuildChain.order` is in:
+## which Machine each cell is about, where it is drawn, and what is on the left of it.
+##
+## The Belt's cell carries `machine_count()` for its Machine, which is the convention
+## `query_player_selected_machine_index` and `Objective.pointed_at` already use for it.
+var _picker_machines: PackedInt64Array = PackedInt64Array()
+var _picker_columns: PackedInt64Array = PackedInt64Array()
+var _picker_rows: PackedInt64Array = PackedInt64Array()
+var _picker_input_icon_paths: PackedStringArray = PackedStringArray()
+var _picker_next: int = -1
+var _picker_arrows: Array[Label] = []
+
 ## The previewed Belt route: one flat slab a tile, in two buffers — the tiles that would be
 ## laid and the tiles that would be refused.
 ##
@@ -787,12 +799,53 @@ const ICON_DIRECTORY: String = "res://assets/generated/icons"
 const PICKER_MARGIN_PIXELS: float = 12.0
 const PICKER_ICON_PIXELS: float = 40.0
 
-## The picker's three states. The selected cell is lit, the rest are dim, and a cell the Run
-## has not unlocked is greyed as well — locked and unselected are different things and a
-## player must be able to see both at once.
-const PICKER_SELECTED_TINT: Color = Color(1.0, 0.86, 0.5, 1.0)
-const PICKER_RESTING_TINT: Color = Color(1.0, 1.0, 1.0, 0.55)
+## The picker's states, carried on a **border** and a backing of its own.
+##
+## **A render is why there is a stylebox here at all.** #36 drew the states by modulating the
+## default `PanelContainer` theme, which is a near-transparent near-black: measured off the
+## shot, every cell came out within a few counts of the ground behind it, the lit cell read
+## as a *darker* box than its neighbours, and the one new state #53 adds was invisible
+## outright. Three states that differ only in how dark a transparent box is are not three
+## states. So the cells get an opaque backing — dark enough that white text reads over it
+## wherever a player is standing — and the state is a border colour, which is unambiguous
+## and does not fight the caption.
+const PICKER_BACKING: Color = Color(0.07, 0.065, 0.06, 0.88)
+const PICKER_RESTING_EDGE: Color = Color(0.42, 0.40, 0.36, 0.9)
+const PICKER_SELECTED_EDGE: Color = Color(1.0, 0.78, 0.30, 1.0)
 const PICKER_LOCKED_TINT: Color = Color(0.5, 0.5, 0.55, 0.65)
+const PICKER_BORDER_PIXELS: int = 2
+
+## The cell the objective line is talking about — #53's "say what is next", drawn on the
+## hotbar as well as written at the top of the screen.
+##
+## **A fourth state, and it had to be a colour nothing else beside it owns.** Selected is
+## warm amber and resting is a dim warm grey, so the hint goes cold: a saturated cyan, at
+## full width around the cell, against a backing dark enough to carry it. The nearest other
+## thing in frame is the blue of an input port marker, which is in the world rather than on
+## the HUD and never touches this panel — checked in a render rather than assumed, which is
+## the lesson #52 paid for.
+const PICKER_NEXT_EDGE: Color = Color(0.35, 0.92, 1.0, 1.0)
+
+## **There is deliberately no fourth colour for "selected and next".** A pale green was
+## tried and thrown away on the evidence of a render: the one frame in which that state is
+## common is a Belt drag, and a Belt drag already fills the screen with the green of a valid
+## route — three greens in one shot, which is the pair #52 paid to learn. Selected wins
+## instead, and it is the better rule anyway: the cyan's whole job is to get a player to
+## pick the cell, so a cell they have picked has had the advice, and the objective line is
+## still on screen saying what to do with it. A hint that goes on shouting after it has been
+## taken is noise.
+
+## The arrow between two columns of the hotbar: this stage feeds that one. Drawn between
+## columns rather than between cells, because that is the true statement — every Machine in a
+## column eats something made in the column before it, by construction (`BuildChain`), and an
+## arrow per cell would claim a Pylon feeds a Silo.
+const PICKER_FEEDS_ARROW: String = "→"
+
+## How much room the arrow between two columns gets, and how much the gap before the group
+## the chain does not feed gets. The second is wider on purpose: an arrow is a relationship
+## and a gap is the absence of one, and they have to be told apart at a glance.
+const PICKER_ARROW_PIXELS: float = 20.0
+const PICKER_SEPARATOR_PIXELS: float = 34.0
 
 ## How many Machines in trouble the brief HUD will name before it counts them instead. Lower
 ## than the full list's: the brief is read at a glance mid-Wave.
@@ -3075,67 +3128,155 @@ func _sync_picker(sim: Simulation) -> void:
 		_build_picker_cells(sim, definitions)
 		_picker_built_for = sim.query_definition_generation()
 
-	# What is in hand, and what the Run has earned, every frame — both are state and neither
-	# is remembered here.
+	# What is in hand, what the Run has earned, and what it should do next — all three every
+	# frame, all three state, and none of them remembered here.
 	_picker_selected = (
 		definitions.machine_count() if sim.query_player_is_laying_belt(VIEWED_PLAYER)
 		else sim.query_player_selected_machine_index(VIEWED_PLAYER)
 	)
-	for index: int in range(_picker_cells.size()):
+	var next_machine: int = Objective.pointed_at(sim, VIEWED_PLAYER)
+	_picker_next = -1
+	for cell_index: int in range(_picker_cells.size()):
+		var machine_index: int = _picker_machines[cell_index]
 		var locked: bool = (
-			index < definitions.machine_count() and not sim.query_machine_is_unlocked(index)
+			machine_index < definitions.machine_count()
+			and not sim.query_machine_is_unlocked(machine_index)
 		)
-		_picker_locked[index] = 1 if locked else 0
-		var cell: PanelContainer = _picker_cells[index]
+		_picker_locked[cell_index] = 1 if locked else 0
+		if machine_index == next_machine:
+			_picker_next = cell_index
+		var cell: PanelContainer = _picker_cells[cell_index]
 		cell.modulate = PICKER_LOCKED_TINT if locked else Color.WHITE
-		cell.self_modulate = (
-			PICKER_SELECTED_TINT if index == _picker_selected else PICKER_RESTING_TINT
-		)
+		# Selected beats next, and the comment on `PICKER_NEXT_EDGE` says why a third
+		# colour for the two together was tried and thrown away.
+		var edge: Color = PICKER_RESTING_EDGE
+		if machine_index == _picker_selected:
+			edge = PICKER_SELECTED_EDGE
+		elif cell_index == _picker_next:
+			edge = PICKER_NEXT_EDGE
+		_paint_cell_edge(cell, edge)
 	_picker.visible = sim.query_player_is_in_build_mode(VIEWED_PLAYER)
 
 
-## Builds one cell per Machine, and the Belt tool's, from the definition set.
+## Builds the grid: a column per stage of the chain, an arrow between columns, and the Belt
+## tool on the end.
+##
+## **The order is `BuildChain`'s and nothing here has an opinion about it.** The cells are
+## created in key order so `_picker_cells[cell]` means what every accessor below says it
+## means, and each is then parented into the column the chain puts it in — so the array is
+## the reading order and the scene tree is the layout, from one derivation.
 func _build_picker_cells(sim: Simulation, definitions: Definitions) -> void:
-	for spare: PanelContainer in _picker_cells:
+	for spare: Node in _picker.get_children():
 		_picker.remove_child(spare)
 		spare.queue_free()
 	_picker_cells.clear()
+	_picker_arrows.clear()
 	_picker_labels = PackedStringArray()
 	_picker_icon_paths = PackedStringArray()
+	_picker_input_icon_paths = PackedStringArray()
 	_picker_locked = PackedInt64Array()
+	_picker_machines = PackedInt64Array()
+	_picker_columns = PackedInt64Array()
+	_picker_rows = PackedInt64Array()
 
-	for index: int in range(definitions.machine_count()):
-		var machine: MachineDefinition = definitions.machine_at(index)
+	var order: PackedInt64Array = BuildChain.order(definitions)
+	var columns: PackedInt64Array = BuildChain.column_of(definitions)
+	var rows: PackedInt64Array = BuildChain.row_of(definitions)
+	var groups: PackedInt64Array = BuildChain.group_of(definitions)
+
+	# One column of the grid per stage, with the arrow that says it feeds the next one.
+	# Built before the cells so a cell can be parented straight into its column.
+	#
+	# **An arrow goes between two columns of the chain and nowhere else.** What a Delivery
+	# gates sits in its own columns past the end of it, and a Miner Mk2 is not fed by a
+	# Silo — so the gap before that group is a plain separator, and the arrows stop where
+	# the statement they make stops being true.
+	var deepest: int = -1
+	for column: int in columns:
+		deepest = maxi(deepest, column)
+	var chain_columns: int = 0
+	for cell: int in range(order.size()):
+		if groups[cell] == BuildChain.GROUP_CHAIN:
+			chain_columns = maxi(chain_columns, columns[cell] + 1)
+	var stacks: Array[VBoxContainer] = []
+	for column: int in range(deepest + 1):
+		if column > 0:
+			_picker.add_child(
+				_feeds_arrow() if column < chain_columns else _picker_separator()
+			)
+		var stack: VBoxContainer = VBoxContainer.new()
+		stack.add_theme_constant_override("separation", 4)
+		stack.alignment = BoxContainer.ALIGNMENT_BEGIN
+		_picker.add_child(stack)
+		stacks.append(stack)
+
+	for cell: int in range(order.size()):
+		var machine: MachineDefinition = definitions.machine_at(order[cell])
 		_add_picker_cell(
-			_picker_key_label(index),
+			stacks[columns[cell]],
+			BuildChain.key_label(cell),
 			machine.display_name,
 			_cost_text(machine),
-			_icon_path_for(definitions, machine)
+			_input_icon_path_for(definitions, machine),
+			_icon_path_for(definitions, machine),
+			_what_it_makes(definitions, machine)
 		)
+		_picker_machines.append(order[cell])
+		_picker_columns.append(columns[cell])
+		_picker_rows.append(rows[cell])
+
 	# The Belt, last and apart, because it is not a Machine: no row in
 	# `content/machines.csv`, no Recipe, and its own key. It does have a price since #47, and
 	# the cell quotes it **per tile** rather than for a route, because a cell is about the tool
 	# and the route line above is about the drag.
+	#
+	# It gets its own column rather than joining the last stage: a Belt is what *connects* two
+	# stages rather than being one, so standing it under the Turret would be the one false
+	# statement in a grid whose whole job is which thing feeds which.
+	var apart: VBoxContainer = VBoxContainer.new()
+	apart.add_theme_constant_override("separation", 4)
+	apart.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_picker.add_child(_picker_separator())
+	_picker.add_child(apart)
 	_add_picker_cell(
+		apart,
 		"C",
 		"Belt",
 		"%s / tile" % _bill_text(
 			definitions.structure_cost_items(Definitions.STRUCTURE_BELT),
 			definitions.structure_cost_counts(Definitions.STRUCTURE_BELT)
 		),
-		""
+		"",
+		"",
+		"joins them up"
 	)
+	_picker_machines.append(definitions.machine_count())
+	_picker_columns.append(deepest + 1)
+	_picker_rows.append(0)
 
 
-## Which key reaches a cell. Ten of them — `1` to `9` and `0` — which is the whole of the
-## shipped Machine list and as many as a hand reaches without looking. Past that a player
-## scrolls, which still works and always did.
-func _picker_key_label(index: int) -> String:
-	if index < 9:
-		return str(index + 1)
-	if index == 9:
-		return "0"
-	return "·"
+## The arrow between two columns of the chain: this stage feeds the next one.
+##
+## Pinned to the **top** of the row rather than centred in it, because the row it is a
+## statement about is the main line and the main line is row 0. Centred, it floats between
+## the two rows and reads as pointing at neither.
+func _feeds_arrow() -> Control:
+	var arrow: Label = Label.new()
+	arrow.text = PICKER_FEEDS_ARROW
+	arrow.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	arrow.custom_minimum_size = Vector2(PICKER_ARROW_PIXELS, PICKER_ICON_PIXELS)
+	arrow.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	arrow.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_picker_arrows.append(arrow)
+	return arrow
+
+
+## The gap before a group the chain does not feed. Blank, and wider than an arrow: what
+## separates the Factory from what a Delivery gates is that there is no relationship at all.
+func _picker_separator() -> Control:
+	var gap: Control = Control.new()
+	gap.custom_minimum_size = Vector2(PICKER_SEPARATOR_PIXELS, 0.0)
+	return gap
 
 
 ## What a Machine costs, in the `item:count` form its row is written in. "free" where the
@@ -3159,46 +3300,190 @@ func _icon_path_for(definitions: Definitions, machine: MachineDefinition) -> Str
 	var recipe: RecipeDefinition = definitions.recipe(machine.recipe_id)
 	if recipe == null or recipe.output_count() == 0:
 		return ""
-	var item_id: String = definitions.item_id(recipe.output_item(0))
+	return _icon_of(definitions, recipe.output_item(0))
+
+
+## The icon of the first Item a Machine's Recipe consumes, or "" for one that consumes none.
+##
+## **#53: a cell says what the Machine eats as well as what it makes.** #36 drew the output
+## alone, which is half the information — a player hunting for "the thing that turns ore into
+## plate" is looking for the ore. A Miner has nothing here because its input is the ground,
+## which is not an Item and never will be, and that reads as the honest absence a Machine with
+## no generated body already reads as.
+func _input_icon_path_for(definitions: Definitions, machine: MachineDefinition) -> String:
+	var recipe: RecipeDefinition = definitions.recipe(machine.recipe_id)
+	if recipe == null or recipe.input_count() == 0:
+		return ""
+	return _icon_of(definitions, recipe.input_item(0))
+
+
+func _icon_of(definitions: Definitions, item: int) -> String:
+	var item_id: String = definitions.item_id(item)
 	if item_id.is_empty():
 		return ""
 	var path: String = "%s/%s.png" % [ICON_DIRECTORY, item_id]
 	return path if ResourceLoader.exists(path) else ""
 
 
-func _add_picker_cell(key: String, name: String, cost: String, icon_path: String) -> void:
+## What a Machine makes, in words, for the cell of one whose product is not an Item.
+##
+## A Turret, a generator and a Silo all answer `produces_no_items()`, and there is no picture
+## of damage — so the cell says the word instead. **It names the Role rather than the row**,
+## which is the rule `Objective` keeps: the Role is a column in `content/machines.csv` and a
+## word for it is a sentence about a fact, where naming `mg_turret_mk1` would be a second
+## content table written in GDScript.
+##
+## A Machine that does make an Item says the Item, which is what the icon beside it already
+## shows — so a missing picture degrades to a name rather than to nothing.
+func _what_it_makes(definitions: Definitions, machine: MachineDefinition) -> String:
+	var recipe: RecipeDefinition = definitions.recipe(machine.recipe_id)
+	if recipe != null and recipe.output_count() > 0:
+		return definitions.item_id(recipe.output_item(0)).replace("_", " ")
+	if machine.is_generator():
+		return "power"
+	if machine.is_silo():
+		return "charges"
+	if machine.is_turret():
+		return "repair" if machine.heals() else "damage"
+	return ""
+
+
+## One cell: the key that reaches it, what it is, what it eats, what it makes, and what it
+## costs. Parented into the column of the grid the chain puts it in.
+func _add_picker_cell(
+	stack: VBoxContainer,
+	key: String,
+	name: String,
+	cost: String,
+	input_icon_path: String,
+	icon_path: String,
+	makes: String
+) -> void:
 	var cell: PanelContainer = PanelContainer.new()
 	var column: VBoxContainer = VBoxContainer.new()
 	column.add_theme_constant_override("separation", 0)
 	cell.add_child(column)
 
-	# The icon slot is there whether or not there is an icon to put in it. A render showed
-	# why: without it the cells with a picture are taller than the cells without, and a row
-	# of hotbar cells whose captions sit at six different heights reads as broken rather
-	# than as sparse.
+	# The icon row: what it eats on the left, what it makes on the right. The slots are
+	# there whether or not there is a picture to put in them — a render showed why in #36:
+	# without them the cells with a picture are taller than the cells without, and a row of
+	# hotbar cells whose captions sit at six different heights reads as broken.
+	var pictures: HBoxContainer = HBoxContainer.new()
+	pictures.add_theme_constant_override("separation", 0)
+	pictures.alignment = BoxContainer.ALIGNMENT_CENTER
+	pictures.add_child(_picker_picture(input_icon_path))
+	# **The same arrow inside the cell as between the columns, and a render is why.** The
+	# Ammo Press makes Ammunition and the MG Turret eats it, so with `iron_plate` still
+	# having no generated icon the two cells came out carrying one identical glyph each and
+	# nothing said which side of the transformation it was on. Eats on the left, makes on
+	# the right, and the arrow is what makes the two slots mean different things when only
+	# one of them is filled.
+	var through: Label = Label.new()
+	through.text = PICKER_FEEDS_ARROW
+	through.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	through.custom_minimum_size = Vector2(PICKER_ARROW_PIXELS, 0.0)
+	through.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pictures.add_child(through)
+	pictures.add_child(_picker_picture(icon_path))
+	column.add_child(pictures)
+
+	var caption: Label = Label.new()
+	caption.text = "[%s] %s\n%s\n%s" % [key, name, makes, cost]
+	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	column.add_child(caption)
+
+	_paint_cell_edge(cell, PICKER_RESTING_EDGE)
+	stack.add_child(cell)
+	_picker_cells.append(cell)
+	_picker_labels.append(caption.text)
+	_picker_icon_paths.append(icon_path)
+	_picker_input_icon_paths.append(input_icon_path)
+	_picker_locked.append(0)
+
+
+## Repaints one cell's border, reusing the box it already owns rather than building a new
+## one every frame for ten cells.
+func _paint_cell_edge(cell: PanelContainer, edge: Color) -> void:
+	var box: StyleBoxFlat = cell.get_theme_stylebox("panel") as StyleBoxFlat
+	if box == null or not box.has_meta(&"picker_cell"):
+		box = StyleBoxFlat.new()
+		box.set_meta(&"picker_cell", true)
+		box.bg_color = PICKER_BACKING
+		box.set_border_width_all(PICKER_BORDER_PIXELS)
+		box.set_corner_radius_all(3)
+		box.set_content_margin_all(6.0)
+		cell.add_theme_stylebox_override("panel", box)
+	box.border_color = edge
+
+
+## One icon slot. Full size: a render of the half-size version showed two 20-pixel glyphs
+## reading as smudges under a caption three lines long, and a cell is already as wide as
+## "[6] Steam Boiler Mk1" — so there was never any width to save.
+func _picker_picture(icon_path: String) -> TextureRect:
 	var picture: TextureRect = TextureRect.new()
 	if not icon_path.is_empty():
 		picture.texture = load(icon_path)
 	picture.custom_minimum_size = Vector2(PICKER_ICON_PIXELS, PICKER_ICON_PIXELS)
 	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	column.add_child(picture)
-
-	var caption: Label = Label.new()
-	caption.text = "[%s] %s\n%s" % [key, name, cost]
-	caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	column.add_child(caption)
-
-	_picker.add_child(cell)
-	_picker_cells.append(cell)
-	_picker_labels.append(caption.text)
-	_picker_icon_paths.append(icon_path)
-	_picker_locked.append(0)
+	return picture
 
 
 ## How many cells the picker has: one per Machine, plus the Belt tool. For the smoke test.
 func machine_picker_cell_count() -> int:
 	return _picker_cells.size()
+
+
+## Which Machine a cell is about, by definition index — or `machine_count()` for the Belt's
+## cell, which is the convention the Build Gun's own selection already uses. For the smoke
+## test, and the inverse of `BuildChain.cell_of`.
+##
+## **Cells are numbered in chain order since #53**, not in the Machine table's id order, so
+## this is how a test asks about a particular Machine's cell without restating the order.
+func machine_picker_machine(cell: int) -> int:
+	if cell < 0 or cell >= _picker_machines.size():
+		return -1
+	return _picker_machines[cell]
+
+
+## Which column of the grid a cell is drawn in: how many crafts deep the chain it is on runs.
+## For the smoke test.
+func machine_picker_column(cell: int) -> int:
+	if cell < 0 or cell >= _picker_columns.size():
+		return -1
+	return _picker_columns[cell]
+
+
+## Which row within its column a cell is drawn on. Row 0 is the main line. For the smoke test.
+func machine_picker_row(cell: int) -> int:
+	if cell < 0 or cell >= _picker_rows.size():
+		return -1
+	return _picker_rows[cell]
+
+
+## Whether a cell is the one the objective line is talking about. For the smoke test.
+func machine_picker_is_next(cell: int) -> bool:
+	return cell >= 0 and cell == _picker_next
+
+
+## Which cell the objective line is talking about, or -1 for a step that is not about placing
+## anything. For the smoke test.
+func machine_picker_next_cell() -> int:
+	return _picker_next
+
+
+## How many "feeds" arrows stand between the columns: one per gap, so one fewer than the
+## number of stages the chain has. For the smoke test.
+func machine_picker_arrow_count() -> int:
+	return _picker_arrows.size()
+
+
+## The icon of what a cell's Machine eats, or "" where its input is the ground. For the
+## smoke test.
+func machine_picker_input_icon_path(cell: int) -> String:
+	if cell < 0 or cell >= _picker_input_icon_paths.size():
+		return ""
+	return _picker_input_icon_paths[cell]
 
 
 ## What a cell says: its key, its name and what it costs. For the smoke test.
