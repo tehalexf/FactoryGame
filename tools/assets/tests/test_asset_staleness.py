@@ -55,6 +55,18 @@ class Fixture:
         self._git("config", "user.name", "Fixture")
         self._git("add", "-A")
         self._git("commit", "-q", "-m", "the recipes")
+        # `copytree` preserves mtimes, so every recipe arrived carrying the date
+        # the *source* checkout was made — and a clean tracked file's age is
+        # `min(mtime, commit date)`, so in a worktree more than an hour old the
+        # recipes read as older than the output this fixture backdates and the
+        # check correctly reports nothing. Measured: green in a checkout minutes
+        # old, red in the main one (7 h) and in every agent worktree. Restamping
+        # them to the commit makes `committed_at` the only clock in the fixture,
+        # which is what the comment below has always claimed it was.
+        committed = float(self._git("log", "-1", "--format=%ct").strip())
+        for path in sorted((self.root / "tools").rglob("*")):
+            if path.is_file():
+                os.utime(path, (committed, committed))
         #: What git says the recipes' content dates from. Every mtime this
         #: fixture sets is relative to it, so the test never has to care what
         #: the wall clock said.

@@ -139,6 +139,31 @@ class Report extends RefCounted:
 	var charges_fired: int = 0
 	var charges_wasted: int = 0
 
+	## Which Stratagems were actually called in, in the order they fired, and which ones the
+	## Run had unlocked by the end.
+	##
+	## **#60 needed both and a count could not carry either.** `stratagems_fired` says one was
+	## called and says nothing about *which*, and a scenario that asks for an Artillery Barrage
+	## and settles for a Supply Drop because the Delivery chain never reached `t03_deep_survey`
+	## reports exactly the same integer either way. The unlock set is what says whether the
+	## Barrage was ever on the table at all, which is a claim about the chain rather than about
+	## the Silo.
+	var stratagems_called: PackedStringArray = PackedStringArray()
+	var stratagems_unlocked: PackedStringArray = PackedStringArray()
+
+	## The Walls, measured: how many were ever stood up, how many were still standing, and the
+	## hit points they absorbed between them.
+	##
+	## **The damage is the figure the Wall exists to be judged on**, and it is the one a count
+	## cannot carry. `wall.health` is priced against `enemy.breaker_damage`, so what a Wall is
+	## worth is what it soaked — and a Wall that was never bitten reports zero here however many
+	## tiles of it a player paid for, which is a finding rather than a gap. Totalled as
+	## `built * max_health` less what the survivors are still holding, because a Wall that was
+	## chewed all the way through absorbed every one of its hit points on the way.
+	var walls_built: int = 0
+	var walls_standing: int = 0
+	var wall_hit_points_absorbed: int = 0
+
 	var player_deaths: int = 0
 
 	## The Simulation's state hash at the end of the Run.
@@ -256,6 +281,14 @@ class Report extends RefCounted:
 			)
 		if breach_count > 1:
 			clauses.append("dug too deep — %d Breaches were open" % breach_count)
+		# A third standing condition, said only by a Run that built Walls, because the figure a
+		# Wall is judged on is what it soaked and it reads as nothing anywhere else. Zero is a
+		# finding rather than a blank: it says the Wave routed round rather than chewing.
+		if walls_built > 0:
+			clauses.append(
+				"%d Walls built, %d standing, absorbing %d hit points"
+				% [walls_built, walls_standing, wall_hit_points_absorbed]
+			)
 		return "; ".join(clauses)
 
 	func _lost_summary() -> String:
@@ -279,13 +312,16 @@ class Report extends RefCounted:
 	## hash cannot answer that question: it differs by seed from tick 0 regardless.
 	func figures() -> String:
 		return (
-			"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d [%s]"
+			"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d [%s] [%s] [%s]"
 			% [
 				end_tick, wave_number, most_heat_at_once, nest_health, machines_built,
 				machines_standing, turrets_built, shots_fired, dry_turret_ticks,
 				most_ammunition_at_once, breach_count, hives_standing,
 				most_charges_banked, stratagems_fired, charges_wasted,
+				walls_built, walls_standing, wall_hit_points_absorbed,
 				", ".join(machines_lost),
+				", ".join(stratagems_called),
+				", ".join(stratagems_unlocked),
 			]
 		)
 
@@ -335,6 +371,17 @@ class Report extends RefCounted:
 		lines.append(
 			"   %d Charges, %d Charges lost to an interrupted Painting"
 			% [charges_fired, charges_wasted]
+		)
+		lines.append(
+			"   Stratagems called: %s; unlocked by the end: %s"
+			% [
+				", ".join(stratagems_called) if stratagems_called.size() > 0 else "none",
+				", ".join(stratagems_unlocked) if stratagems_unlocked.size() > 0 else "none",
+			]
+		)
+		lines.append(
+			"   %d Walls built, %d standing, %d hit points absorbed between them"
+			% [walls_built, walls_standing, wall_hit_points_absorbed]
 		)
 		lines.append(
 			"   Deliveries finished: %s; Breaker arrived %s, Siege Hulk arrived %s"
@@ -411,6 +458,16 @@ static func play(
 
 	var was_alive: bool = true
 
+	# The Walls, tracked by tile rather than by index, because `_remove_wall` closes the gap
+	# exactly as `_remove_machine` does — so an index says nothing about which Wall it was.
+	# Skipped entirely while no Wall has ever stood, which is every scenario but two.
+	var wall_health_by_tile: Dictionary = {}
+
+	# Which Stratagem is in the channel, remembered from the tick before it lands: the Painting
+	# is cleared on the tick it completes, so the id has to be caught on the way past.
+	var painting_stratagem: String = ""
+	var stratagems_fired_so_far: int = 0
+
 	for tick: int in range(tick_cap):
 		sim.step(scenario.actions_at(tick))
 
@@ -479,6 +536,29 @@ static func play(
 			elif kind == EnemyKind.SIEGE_HULK:
 				report.a_siege_hulk_arrived = true
 
+		if sim.query_wall_count() > 0 or not wall_health_by_tile.is_empty():
+			var standing: Dictionary = {}
+			for index: int in range(sim.query_wall_count()):
+				standing[sim.query_wall_tile(index)] = sim.query_wall_health(index)
+			for tile: Vector3i in wall_health_by_tile:
+				var was: int = wall_health_by_tile[tile]
+				# A Wall that is gone was chewed all the way through, so it absorbed whatever
+				# it was still holding. Nothing in these scenarios demolishes one.
+				var now: int = standing[tile] if standing.has(tile) else 0
+				report.wall_hit_points_absorbed += maxi(was - now, 0)
+			for tile: Vector3i in standing:
+				if not wall_health_by_tile.has(tile):
+					report.walls_built += 1
+			wall_health_by_tile = standing
+
+		var fired: int = sim.query_player_stratagems_fired(0)
+		while stratagems_fired_so_far < fired:
+			report.stratagems_called.append(painting_stratagem)
+			stratagems_fired_so_far += 1
+		var in_the_channel: String = sim.query_player_paint_stratagem(0)
+		if in_the_channel != "":
+			painting_stratagem = in_the_channel
+
 		var alive: bool = sim.query_player_is_alive(0)
 		if was_alive and not alive:
 			report.player_deaths += 1
@@ -515,6 +595,8 @@ static func play(
 	report.stratagems_fired = sim.query_player_stratagems_fired(0)
 	report.charges_fired = sim.query_player_charges_fired(0)
 	report.charges_wasted = sim.query_player_charges_wasted(0)
+	report.stratagems_unlocked = sim.query_unlocked_stratagems()
+	report.walls_standing = sim.query_wall_count()
 	report.state_hash = sim.hash()
 	for index: int in range(sim.query_enemy_count()):
 		var kind: int = sim.query_enemy_kind(index)
