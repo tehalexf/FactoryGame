@@ -43,6 +43,11 @@ class PreparingTheStagingTree(unittest.TestCase):
         self._write(self.repo / "content/.gdignore", "")
         self._write(self.repo / "content/machines.csv", "id,role\nminer_mk1,miner\n")
         self._write(self.repo / "content/tuning.toml", "[heat]\n")
+        # The committed Build Gun viewmodel (#64). Unlike every weapon frame it is
+        # in the repository rather than in the quarantine, and unlike a Machine's
+        # `.glb` it is read with `GLTFDocument.append_from_file` rather than
+        # `load`ed — so it has to ship as raw bytes at its own path.
+        self._write(self.repo / "assets/gear/build_gun.glb", "glTF")
         self._write(self.repo / ".git/HEAD", "ref: refs/heads/main\n")
         self._write(self.repo / ".godot/uid_cache.bin", "cache")
         self._write(self.repo / "build/windows/old.exe", "stale")
@@ -91,9 +96,23 @@ class PreparingTheStagingTree(unittest.TestCase):
         self.assertIn("content/tuning.toml", staged.kept)
         self.assertTrue((self.stage / "content/machines.csv.import").is_file())
 
+    def test_the_committed_build_gun_ships_as_bytes_rather_than_as_a_scene(self) -> None:
+        # #64's release-only silence, and the reason it is worth a test of its own:
+        # a committed `.glb` is imported as a `PackedScene` by default, so the raw
+        # file never reaches the PCK and `WeaponViewmodel._load` finds nothing —
+        # which draws correctly in the editor and in all three suites and falls
+        # back to placeholder boxes **only in the shipped build**.
+        staged = self._prepare()
+        self.assertIn("assets/gear/build_gun.glb", staged.kept)
+        self.assertTrue((self.stage / "assets/gear/build_gun.glb").is_file())
+        self.assertEqual(
+            (self.stage / "assets/gear/build_gun.glb.import").read_text(),
+            stage.KEEP_SIDECAR,
+            "the Build Gun would be converted rather than shipped as it is")
+
     def test_every_staged_asset_is_marked_keep_so_it_ships_unconverted(self) -> None:
         staged = self._prepare()
-        self.assertEqual(len(staged.kept), 6)
+        self.assertEqual(len(staged.kept), 7)
         for relative in staged.kept:
             sidecar = self.stage / (relative + ".import")
             with self.subTest(relative):
