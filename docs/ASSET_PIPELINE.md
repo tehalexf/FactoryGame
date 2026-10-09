@@ -874,6 +874,75 @@ And **a still image cannot tell you whether a walk cycle reads as a walk.** Ever
 is silhouette, scale, grade and pose — enough to catch a character that is the wrong size,
 the wrong colour or inside out, and not enough to catch one that merely moves badly.
 
+## 12. Staleness: is the output older than the recipe?
+
+`tools/assets/asset_staleness.py`, and the hole it closes was measured rather than
+imagined. The three classes above — viewmodels, cues, props — are written into
+**gitignored** directories, because a derivative of a purchased pack is as
+non-redistributable as the pack. So no commit, no diff and no test in any of the
+three suites has ever related a generated file to the script that generated it.
+`convert_weapons.sh` was corrected and merged and the shipped `.glb` stayed
+**eleven hours older than the script**, with every suite green, and the fix was
+reported as landed while the thing in the user's hands had not changed. It was
+found by reading a timestamp by hand on the third report of the same defect.
+
+```bash
+python3 tools/assets/asset_staleness.py           # is anything in my tree stale?
+python3 tools/assets/asset_staleness.py --quiet   # exit code only
+```
+
+**Absence is not staleness, and that rule was not weakened.** The converters print
+a note and exit 0 with no packs, the game draws stand-ins, and a clone without the
+packs stays green — so a file that is *not there* is reported by nothing here. The
+only detectable case is a generated file that **exists** and is **older than its
+own recipe**, which is exactly the case that bit.
+
+**A warning in the suite and a refusal at the gate.** `tools/assets/run_tests.sh`
+runs it and prints the report; `tools/release/preflight.py` makes it a hard stop
+beside its missing-asset audit. The difference is which question is being asked: a
+suite answers "is this code correct", which is a property of the tree and the same
+for everybody who checks it out, where a release is exactly where *this machine's*
+build products become the thing in somebody's hands. Making the check a property
+of the **tools** rather than of CI is `wav_to_cue.FFMPEG_MINIMUM_MAJOR`'s
+precedent, and here it is doubly necessary: CI is the one machine that can never
+see these files at all.
+
+**A file's age is when its content last changed, not its mtime**, and that is the
+one subtle part. A tracked file's mtime is when it was *checked out*: every
+tracked file in a fresh clone — and in every one of this project's agent worktrees
+— carries the same timestamp minutes old, while the generated output it is
+compared against was produced hours earlier in another checkout and reached here
+through the symlinks `link_licensed.sh` makes. Measured in a real worktree, a
+plain mtime comparison called the entire pipeline stale with nothing edited. So an
+untracked file is as old as its mtime, a *modified* tracked file is as old as its
+mtime — which is what catches somebody mid-change, before any commit exists — and
+a clean tracked file is no newer than the commit that last carried it. The same
+rule on both sides, so a checkout can neither invent staleness nor hide it.
+
+**The Machine meshes are deliberately not covered, and that was measured too.**
+They look like the fourth member of the family, and they are the one case where
+staleness can be **proved** rather than guessed at, because both ends are
+committed and the generator is deterministic:
+`test_generated_machines.RegeneratingFromTheDeclaration.test_reproduces_the_committed_meshes_byte_for_byte`
+regenerates every mesh and compares the bytes. Including them anyway was tried and
+was worse than useless — five of the eleven committed meshes carry an older commit
+date than `machine_specs.py`, and regenerating `press_mk1` produced a file
+*byte-identical* to the committed one, so the group reported five false positives
+on a clean tree. A check that is red when nothing is wrong is a check somebody
+switches off, and it would have taken the three real groups down with it. **Where
+the output is committed, prove it; where it is gitignored, date it.**
+
+**Timestamps are evidence, not proof**, which is why this reports rather than
+refuses outside the release gate: a recipe committed a minute after the converter
+was last run against its final content reads as stale and is not. Re-running a
+converter is cheap and idempotent, and the failure this exists to prevent —
+silence — is the expensive one.
+
+Its own tests are `tools/assets/tests/test_asset_staleness.py`, and they prove the
+check fires by **backdating a file** in a throwaway git repository rather than by
+trusting it. They never skip: a staleness check nobody has watched fail is
+indistinguishable from one that has quietly become a no-op.
+
 ## 10. Adding an asset
 
 1. Check the licence. CC0 / permissive / self-authored → `assets/`. Anything

@@ -107,7 +107,15 @@ So the build stops in four places, and each says what to do:
 1. **preflight** — compares the quarantine against what the three converters say
    they produce, file by file, and names the converter to run. One missing cue is
    as fatal as an empty directory, because a converter that ran before a cue was
-   added to the recipe is exactly the case nobody notices.
+   added to the recipe is exactly the case nobody notices. Since #57 it also
+   refuses a generated asset that is **older than the recipe that produces it**,
+   which is the same failure one step further on: a missing cue ships a build that
+   sounds worse than the game, where a cue cut before its recipe was last
+   corrected ships a build that sounds like the game *used to*. Those files are
+   gitignored, so nothing else in the project can see one — measured, after a
+   corrected `convert_weapons.sh` was merged while the shipped `.glb` stayed
+   eleven hours older than it. See
+   [ASSET_PIPELINE.md](ASSET_PIPELINE.md) §12.
 2. **staging** — assembles the tree Godot can actually see (below). An absent
    quarantine is an error, never an empty build.
 3. **`verify_pck.py`** — reads the shipped binary's own pack index and compares it
