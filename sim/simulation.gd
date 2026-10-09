@@ -8319,6 +8319,117 @@ func query_player_view_lean_pitch_turns(player_id: int) -> int:
 	)
 
 
+## How far a player's view has fallen because they were killed or Downed, in fixed-point
+## metres. A positive magnitude: the renderer subtracts it, exactly as it subtracts the
+## landing dip.
+##
+## **A renderer-only projection rather than part of `query_player_camera_height_metres`,
+## and that is #54's one real decision.** The precedent cuts both ways and the rule it is
+## decided by is the quantity rather than the circumstance: the jump is *in* the aim because
+## how high a player is standing is a fact a round has to honour, and the bob, the dip and
+## the lean are out of it because a footfall must not move where a round goes. A body going
+## limp is the second kind.
+##
+## The circumstantial argument — a dead player aims at nothing, so folding the collapse into
+## the aim would be harmless today — is true and is the wrong test. It is true only because
+## `_act_refusal` currently refuses every intent of a player who is not on their feet, which
+## is a gate that could be narrowed: a **Downed** player in co-op is alive, revivable, still
+## a target, and the one plausible future in which they are given something to do is one in
+## which a collapse folded into the aim would quietly be pointing their rounds at the dirt.
+## A projection cannot develop that bug. See `query_player_view_bob_vertical_metres` for the
+## five this joins.
+func query_player_view_collapse_metres(player_id: int) -> int:
+	return Fixed.mul(_collapse_drop_metres(), query_player_collapse_blend(player_id))
+
+
+## How far a player's view has banked over as it fell, in fixed-point turns. Positive banks
+## to their right, which is the sign `query_player_view_roll_turns` uses.
+##
+## One direction for everybody rather than a side chosen per player: there is nothing in the
+## Simulation that says which way a body happens to topple, and inventing one would mean
+## either an RNG draw — which would cost the Run a draw it cannot afford to spend on
+## presentation — or a new piece of hashed state for a fact nobody can act on.
+func query_player_view_collapse_roll_turns(player_id: int) -> int:
+	return Fixed.mul(
+		_degrees_to_turns(_definitions.player_collapse_roll_degrees),
+		query_player_collapse_blend(player_id)
+	)
+
+
+## How far through the collapse a player is, in [0, Fixed.ONE]: 0 standing, Fixed.ONE in the
+## posture a dead player ends up in, and the smaller resting value in between for a Downed
+## one. Eased with `Fixed.smoothstep_fixed`, so a body settles rather than snapping flat.
+##
+## **The same number runs backwards when a player gets up**, which is the whole of #54's
+## acknowledgement that a respawn happened: `_respawn` and a revive both set
+## `_player_life_since_tick`, so a player who is `LIFE_ALIVE` and has been for less than the
+## gesture's length is one rising off the deck. It adds no state and no tuning key, and it
+## cannot lengthen the wait, because the player is alive and in control throughout it.
+##
+## Two details in that, both deliberate. A Run **opens on your feet** rather than getting up
+## off the floor, and the fact that says so is `_player_life_since_tick` being 0 at
+## construction — a player cannot have got up on tick 0 because nothing had happened to them
+## yet. And a *revived* player rises from the dead posture rather than from the Downed one
+## they were actually in, because telling those apart would mean remembering a state that has
+## ended; it is half a metre over half a second on a gesture nobody measures, and the
+## alternative is hashed state for a cosmetic difference.
+##
+## **The blend is the shape and the two queries above are its sizes**, which is the
+## arrangement `query_player_sprint_blend` already has beside the field of view and the bob:
+## the renderer reads whichever unit it needs and the tuned magnitudes stay in the Simulation
+## where they are hot-reloadable.
+func query_player_collapse_blend(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	var resting: int = _collapse_resting_blend(player_id)
+	var span: int = _seconds_in_ticks(_definitions.player_collapse_seconds)
+	var rising: bool = _player_life_state[player_id] == LIFE_ALIVE
+	# A player who has always been alive is standing, not getting up. Nothing has happened to
+	# them, so there is nothing to play backwards.
+	if rising and _player_life_since_tick[player_id] <= 0:
+		return 0
+	if span <= 0:
+		# A hard cut: 0 seconds means a body is simply down, and up again on the tick it
+		# revives.
+		return 0 if rising else resting
+	var since: int = _tick - _player_life_since_tick[player_id]
+	if since >= span:
+		return 0 if rising else resting
+	var eased: int = Fixed.smoothstep_fixed(
+		Fixed.div(Fixed.from_int(since), Fixed.from_int(span))
+	)
+	return (Fixed.ONE - eased) if rising else Fixed.mul(resting, eased)
+
+
+## How far the view has fallen once a collapse has finished, in fixed-point metres. The
+## gesture's full size, and the divisor a Downed player's shallower fall is stated as a
+## fraction of. Clamped to the eye height, because a view cannot fall through the floor it
+## is standing on.
+func _collapse_drop_metres() -> int:
+	return clampi(_definitions.player_death_view_drop, 0, _definitions.player_eye_height)
+
+
+## What a player's current life state settles the blend at, in [0, Fixed.ONE].
+##
+## Dead is the whole gesture by definition; Downed is however far its own posture is down the
+## same fall, so **the roll comes out proportionally smaller for free** and a Downed player is
+## distinguishable from a dead one by the view alone rather than only by a HUD line. That
+## also makes `player.death_view_drop_metres` the one switch for the whole gesture: a drop
+## of nothing is a fall of nothing to be a fraction of.
+func _collapse_resting_blend(player_id: int) -> int:
+	var full: int = _collapse_drop_metres()
+	if full <= 0:
+		return 0
+	match _player_life_state[player_id]:
+		LIFE_DEAD:
+			return Fixed.ONE
+		LIFE_DOWNED:
+			return Fixed.clamp_fixed(
+				Fixed.div(_definitions.player_downed_view_drop, full), 0, Fixed.ONE
+			)
+	return 0
+
+
 ## The camera's field of view in fixed-point degrees: the tuned figure, widened by the
 ## whole of `player.sprint_field_of_view_add_degrees` as the sprint gait comes in.
 func query_player_field_of_view_degrees(player_id: int) -> int:
