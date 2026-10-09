@@ -29,24 +29,8 @@ func _hold(sim: Simulation, ticks: int, actions: Array) -> void:
 ## *key* does what it says — "0 turns the bob off" is a claim about the key and not about a
 ## set of numbers invented here.
 func _sim_with(key: String, value: String) -> Simulation:
-	var tuning: String = FileAccess.get_file_as_string("res://content/tuning.toml")
-	var replaced: PackedStringArray = PackedStringArray()
-	var found: bool = false
-	for line: String in tuning.split("\n"):
-		if line.begins_with("%s = " % key):
-			replaced.append("%s = %s" % [key, value])
-			found = true
-		else:
-			replaced.append(line)
-	assert_true(found, "content/tuning.toml should carry a key called %s" % key)
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.get_file_as_string("res://content/machines.csv"),
-		FileAccess.get_file_as_string("res://content/recipes.csv"),
-		"\n".join(replaced),
-		FileAccess.get_file_as_string("res://content/waves.csv"),
-		FileAccess.get_file_as_string("res://content/deliveries.csv"),
-		FileAccess.get_file_as_string("res://content/gear.csv"),
-		FileAccess.get_file_as_string("res://content/stratagems.csv")
+	var definitions: Definitions = (
+		ContentFixture.for_case(self).tune_key(key, value).definitions()
 	)
 	assert_true(definitions.errors.is_empty(), definitions.describe_errors())
 	return Simulation.new(0, 1, definitions)

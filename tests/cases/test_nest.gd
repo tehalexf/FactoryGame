@@ -32,47 +32,35 @@ chaff_crawlers,crawler,0,2,0,2
 ## broke rather than a fixture. Pass "1" for a stream of Waves and the shipped "150" for
 ## exactly one.
 func _quick_content(nest_health: int = 40, interval: String = "1") -> Definitions:
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		(
-			_read("res://content/tuning.toml")
-			. replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-			. replace(
-				"wave_interval_baseline_seconds = 150",
-				"wave_interval_baseline_seconds = %s" % interval
-			)
-			. replace(
-				"first_wave_interval_seconds = 90",
-				"first_wave_interval_seconds = %s" % interval
-			)
-			. replace(
-				"wave_interval_minimum_seconds = 40",
-				"wave_interval_minimum_seconds = %s" % interval
-			)
-			. replace("spawn_interval_seconds = 0.5", "spawn_interval_seconds = 0.2")
-			. replace("health = 6000", "health = %d" % nest_health)
-			. replace(SHIPPED_STOCK, STOCKED)
-		),
-		TWO_CRAWLERS,
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = TWO_CRAWLERS
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return (
+		fixture
+		. tune(
+			[
+				["telegraph_seconds = 12", "telegraph_seconds = 0.5"],
+				[
+					"wave_interval_baseline_seconds = 150",
+					"wave_interval_baseline_seconds = %s" % interval
+				],
+				[
+					"first_wave_interval_seconds = 90",
+					"first_wave_interval_seconds = %s" % interval
+				],
+				[
+					"wave_interval_minimum_seconds = 40",
+					"wave_interval_minimum_seconds = %s" % interval
+				],
+				["spawn_interval_seconds = 0.5", "spawn_interval_seconds = 0.2"],
+				["health = 6000", "health = %d" % nest_health],
+			]
+		)
+		. stock(STOCKED_BILL)
+		. definitions()
 	)
-
-
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
 
 
 func _quick_sim(nest_health: int = 40) -> Simulation:
@@ -294,8 +282,7 @@ func test_a_run_that_has_ended_stays_ended_and_stops_escalating() -> void:
 # these fixtures replace them with a tier that locks nothing and a stock that pays for
 # anything. `test_delivery.gd` is where the real chain is asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+const STOCKED_BILL: String = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier

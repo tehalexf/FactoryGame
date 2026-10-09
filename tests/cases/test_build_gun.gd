@@ -39,12 +39,16 @@ chaff_crawlers,crawler,0,6,150,40
 
 ## The opening Machine is `press_mk1`, which sorts **last** of this file's three — so
 ## `test_a_run_opens_with_the_machine_content_names` fails if anything goes back to taking
-## the first row by id, which is the rule #55 removed.
-const OPENS_WITH: Array = [['starting_machine = "miner_mk1"', 'starting_machine = "press_mk1"']]
+## the first row by id, which is the rule #55 removed. Named by key through
+## `ContentFixture.starting_machine` rather than by a copy of the shipped id, so this says
+## nothing about what the shipped game opens on.
+const OPENS_WITH: String = "press_mk1"
 
 
 func _content() -> Definitions:
-	var fixture: ContentFixture = ContentFixture.for_case(self).tune(OPENS_WITH).stock(STOCK)
+	var fixture: ContentFixture = (
+		ContentFixture.for_case(self).starting_machine(OPENS_WITH).stock(STOCK)
+	)
 	fixture.machines = MACHINES
 	fixture.recipes = RECIPES
 	fixture.waves = WAVES

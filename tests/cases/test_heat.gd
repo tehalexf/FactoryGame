@@ -19,13 +19,6 @@ func _heat_layout() -> MapLayout:
 	return layout
 
 
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
-
-
 ## A Map with the same ore and one Breach nineteen tiles from the Nest, for the half of
 ## this file that is about the schedule rather than about Heat itself.
 func _threat_layout() -> MapLayout:
@@ -39,26 +32,13 @@ func _threat_layout() -> MapLayout:
 ## substitutions. Every number not named is the real file's, so a test that cares about
 ## one key is still reading the balance the game ships.
 func _content(overrides: Array = [], waves: String = "") -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	for pair: PackedStringArray in overrides:
-		assert_true(tuning.contains(pair[0]), "the tuning override %s must match" % pair[0])
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning.replace(SHIPPED_STOCK, STOCKED),
-		_read("res://content/waves.csv") if waves.is_empty() else waves,
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	if not waves.is_empty():
+		fixture.waves = waves
+	return fixture.tune(overrides).stock(STOCKED_BILL).definitions()
 
 
 func _sim(overrides: Array = []) -> Simulation:
@@ -1032,8 +1012,7 @@ func test_rebalancing_the_wave_table_mid_run_changes_the_next_wave() -> void:
 # these fixtures replace them with a tier that locks nothing and a stock that pays for
 # anything. `test_delivery.gd` is where the real chain is asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+const STOCKED_BILL: String = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier

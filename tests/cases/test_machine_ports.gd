@@ -41,7 +41,7 @@ func test_the_shipped_table_declares_the_smelters_faces_tile_by_tile() -> void:
 	# #47 made the declaration the rule — a port is one tile wide, so a Machine with one
 	# declared output could not serve two Belts, and #46 made serving two Belts a feature.
 	var ports: MachinePorts = MachinePorts.parse(
-		FileAccess.get_file_as_string("res://content/machine_ports.csv"),
+		ContentFixture.shipped(Definitions.PORTS_FILE),
 		"content/machine_ports.csv"
 	)
 	assert_false(ports.has_errors(), ports.describe_errors())
@@ -95,7 +95,7 @@ func test_ports_declared_for_a_machine_nobody_defined_are_simply_never_asked_for
 	# of which is a Machine. Refusing those rows would mean refusing the whole file, which
 	# is why nothing in the game could read it before.
 	var ports: MachinePorts = MachinePorts.parse(
-		FileAccess.get_file_as_string("res://content/machine_ports.csv"),
+		ContentFixture.shipped(Definitions.PORTS_FILE),
 		"content/machine_ports.csv"
 	)
 	assert_false(ports.has_errors())
@@ -182,7 +182,7 @@ func test_every_declared_port_of_every_shipped_machine_sits_on_its_own_footprint
 	# rotations. This is what would have caught the rotation convention being the other way
 	# round, on the two Machines that are not square.
 	var ports: MachinePorts = MachinePorts.parse(
-		FileAccess.get_file_as_string("res://content/machine_ports.csv"),
+		ContentFixture.shipped(Definitions.PORTS_FILE),
 		"content/machine_ports.csv"
 	)
 	var definitions: Definitions = Definitions.load_from_directory("res://content")

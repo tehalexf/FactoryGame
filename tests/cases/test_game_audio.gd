@@ -62,8 +62,7 @@ const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,u
 t01_open,Open Licence,1,iron_plate:4,,mg_drum_magazine,
 """
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "iron_plate:400;ammunition:400"'
+const STOCKED_BILL: String = "iron_plate:400;ammunition:400"
 
 ## The dial's reach, stretched so a player standing on the tile they will paint can
 ## also work the Silo beside them. `test_silo.gd` owns the shipped four metres.
@@ -89,44 +88,32 @@ const QUICK_TELEGRAPH: String = "telegraph_seconds = 3"
 ## The plate seam, because it is this table's stand-in for the Miner and so the nearest
 ## thing to what the shipped file means. Nothing here asserts on the selection; what it has
 ## to be is *present*.
-const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
-const AUDIO_STARTING_MACHINE: String = 'starting_machine = "plate_seam_mk1"'
+const AUDIO_STARTING_MACHINE: String = "plate_seam_mk1"
 
 const GROUND: int = WorldGrid.GROUND_LAYER
 const SILO_TILE: Vector3i = Vector3i(4, GROUND, 4)
 const BOILER_TILE: Vector3i = Vector3i(-8, GROUND, 8)
 
 
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
-
-
 func _content(overrides: Array = []) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
-	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
-	tuning = tuning.replace(SHIPPED_DELIVERY_REACH, REACHABLE_DELIVERY_REACH)
-	tuning = tuning.replace(SHIPPED_TELEGRAPH, QUICK_TELEGRAPH)
-	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, AUDIO_STARTING_MACHINE)
-	for pair: PackedStringArray in overrides:
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		AUDIO_MACHINES,
-		AUDIO_RECIPES,
-		tuning,
-		ONE_CRAWLER,
-		DELIVERIES,
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = AUDIO_MACHINES
+	fixture.recipes = AUDIO_RECIPES
+	fixture.waves = ONE_CRAWLER
+	fixture.deliveries = DELIVERIES
+	return (
+		fixture
+		. tune(
+			[
+				[SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH],
+				[SHIPPED_DELIVERY_REACH, REACHABLE_DELIVERY_REACH],
+				[SHIPPED_TELEGRAPH, QUICK_TELEGRAPH],
+			]
+		)
+		. stock(STOCKED_BILL)
+		. starting_machine(AUDIO_STARTING_MACHINE)
+		. tune(overrides)
+		. definitions()
 	)
 
 

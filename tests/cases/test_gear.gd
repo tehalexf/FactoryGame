@@ -80,14 +80,21 @@ const SHIPPED_DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_ma
 t01_munitions,Munitions Licence,1,iron_plate:1,,mg_drum_magazine,
 """
 
-## The shipped stock line, and the one this file uses instead.
+## The bill this file fights on, and it is **this file's own** rather than a copy of the
+## shipped one with rounds added. Ammunition is in it because the shipped bill is
+## deliberately still plate alone — a Run is meant to get its rounds out of an Ammo Press
+## and the Nest's store (see `content/tuning.toml`). A test about what a weapon *does*
+## should not also have to build a Factory first, so the fixture hands the player rounds
+## and the shipped game does not.
 ##
-## Ammunition is in it because the shipped bill is deliberately still plate alone — a Run is
-## meant to get its rounds out of an Ammo Press and the Nest's store (see
-## `content/tuning.toml`). A test about what a weapon *does* should not also have to build a
-## Factory first, so the fixture hands the player rounds and the shipped game does not.
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const ARMED_STOCK: String = 'starting_stock = "ammunition:400;iron_plate:110"'
+## The plate is here only to pay for the one-plate Delivery tier above and is deliberately
+## **not** tracking `player.starting_stock`: a test that wants the shipped bill asks for it
+## by passing an empty bill, which leaves `ContentFixture` reading `content/tuning.toml`.
+const ARMED_BILL: String = "ammunition:400;iron_plate:110"
+
+## Passed as the bill to mean "the bill the game actually ships", which is plate and no
+## rounds at all.
+const SHIPPED_BILL: String = ""
 
 ## The Gear this file fights with. Its own table rather than the shipped one, for the reason
 ## `test_turrets` brings its own Machines: the numbers are chosen so the arithmetic in the
@@ -119,13 +126,6 @@ artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
 """
 
 
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
-
-
 ## The shipped Machines, Recipes and tuning, with the Telegraph shortened so a called Wave
 ## arrives in half a second, the player armed, and the Crawler frozen. Every other number is
 ## the real file's, which is what keeps the arithmetic below readable against
@@ -134,34 +134,23 @@ func _content(
 	waves: String = ONE_CRAWLER,
 	overrides: Array = [],
 	gear: String = GEAR,
-	deliveries: String = DELIVERIES
+	deliveries: String = DELIVERIES,
+	bill: String = ARMED_BILL
 ) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	var substitutions: Array = [
-		["telegraph_seconds = 12", "telegraph_seconds = 0.5"],
-		["crawler_speed_metres_per_second = 3", "crawler_speed_metres_per_second = 0.03"],
-		[SHIPPED_STOCK, ARMED_STOCK],
-	]
-	substitutions.append_array(overrides)
-	for pair: Array in substitutions:
-		assert_true(tuning.contains(pair[0]), "the tuning override %s must match" % pair[0])
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning,
-		waves,
-		deliveries,
-		gear,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = waves
+	fixture.deliveries = deliveries
+	fixture.gear = gear
+	fixture.stratagems = STRATAGEMS
+	fixture.tune(
+		[
+			["telegraph_seconds = 12", "telegraph_seconds = 0.5"],
+			["crawler_speed_metres_per_second = 3", "crawler_speed_metres_per_second = 0.03"],
+		]
 	)
+	if not bill.is_empty():
+		fixture.stock(bill)
+	return fixture.tune(overrides).definitions()
 
 
 ## A Map whose Nest is far to the south-west by default, so the ground around the player is
@@ -384,7 +373,10 @@ func test_the_drum_autocannon_devours_ammunition_where_the_bolt_rifle_sips() -> 
 func test_firing_with_no_ammunition_does_nothing_at_all_and_says_why() -> void:
 	# The first-person half of "a Turret with no Ammunition does not fire". Defence costs
 	# continuous production in a player's hands exactly as it does in a Turret's.
-	var sim: Simulation = _sim(ONE_CRAWLER, [[ARMED_STOCK, 'starting_stock = "iron_plate:110"']])
+	var sim: Simulation = Simulation.new(
+		11, 1, _content(ONE_CRAWLER, [], GEAR, DELIVERIES, SHIPPED_BILL), _layout()
+	)
+	sim.step([InputAction.call_wave_early(0)])
 	_equip(sim, "drum_autocannon")
 	_wait_for_a_crawler(sim)
 	_aim_at_the_diagonal(sim)
@@ -1054,7 +1046,7 @@ func test_a_player_can_take_the_ammunition_the_factory_made_and_fire_it() -> voi
 	layout.sort_breaches()
 	layout.sort_nodes()
 	# The shipped bill, not the fixture's: the whole point is that nothing was handed over.
-	var content: Definitions = _content(ONE_CRAWLER, [[ARMED_STOCK, SHIPPED_STOCK]])
+	var content: Definitions = _content(ONE_CRAWLER, [], GEAR, DELIVERIES, SHIPPED_BILL)
 	assert_false(content.has_errors(), content.describe_errors())
 	var sim: Simulation = Simulation.new(11, 1, content, layout)
 
@@ -1075,7 +1067,7 @@ func test_a_player_can_take_the_ammunition_the_factory_made_and_fire_it() -> voi
 	)
 
 	# A Miner on the ore, a Smelter behind it, an Ammo Press behind that, and a Belt out of
-	# the Press into the Nest. Thirty-four plates of the eighty a Run opens with.
+	# the Press into the Nest. Thirty-four plates of the 110 a Run opens with.
 	_build(sim, "miner_mk1", Vector3i(-6, ground, 10))
 	_build(sim, "smelter_mk1", Vector3i(1, ground, 10))
 	_build(sim, "ammo_press_mk1", Vector3i(1, ground, 5))
@@ -1192,7 +1184,7 @@ func _fixture_content() -> Definitions:
 	return _content(
 		MANY_CRAWLERS,
 		[["crawler_speed_metres_per_second = 0.03", "crawler_speed_metres_per_second = 3"]],
-		_read("res://content/gear.csv"),
+		ContentFixture.shipped(Definitions.GEAR_FILE),
 		SHIPPED_DELIVERIES
 	)
 
@@ -1289,7 +1281,7 @@ func _mortality_content() -> Definitions:
 			["respawn_delay_seconds = 8", "respawn_delay_seconds = 2"],
 			["downed_bleed_out_seconds = 20", "downed_bleed_out_seconds = 3"],
 		],
-		_read("res://content/gear.csv"),
+		ContentFixture.shipped(Definitions.GEAR_FILE),
 		SHIPPED_DELIVERIES
 	)
 

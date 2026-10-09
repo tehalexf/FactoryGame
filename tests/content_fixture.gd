@@ -39,6 +39,13 @@ const CONTENT_DIR: String = "res://content"
 ## as a full copy, one line long.
 const STARTING_STOCK_KEY: String = "starting_stock"
 
+## The one key `starting_machine` rewrites, matched by name for the reason above. #55 added
+## it, and four files that bring their own `machines.csv` immediately grew a hand-copy of its
+## shipped value beside their `SHIPPED_STOCK` one — because a key naming a **row** is an
+## error for any fixture whose table has no such row, and a replaced table is a door
+## `tune` cannot cover.
+const STARTING_MACHINE_KEY: String = "starting_machine"
+
 ## Every source `Definitions.parse` takes, each defaulting to the shipped file. Assign one
 ## to replace that table wholesale; leave it alone to get the content the game ships.
 var machines: String = ""
@@ -123,17 +130,49 @@ func tune(overrides: Array) -> ContentFixture:
 ## key already takes. Matched by key name, so it survives a change to the shipped bill —
 ## which is the whole difference between this and a substitution naming the shipped value.
 func stock(bill: String) -> ContentFixture:
-	var replacement: String = '%s = "%s"' % [STARTING_STOCK_KEY, bill]
+	return _rewrite_quoted_key(STARTING_STOCK_KEY, bill)
+
+
+## Replaces `player.starting_machine` with `machine_id`. Matched by key name, like `stock`,
+## and for a sharper reason: a fixture that brings its own `machines.csv` *must* name a row
+## it actually has, or the whole definition set is an error and carries no definitions at
+## all. The value it is replacing is therefore never the interesting half, and naming it by
+## hand is how four files came to hold a copy of `miner_mk1`.
+func starting_machine(machine_id: String) -> ContentFixture:
+	return _rewrite_quoted_key(STARTING_MACHINE_KEY, machine_id)
+
+
+## Rewrites one tuning key to `value`, by key name, leaving the quoting to the caller — so
+## `tune_key("bob_amplitude_metres", "0")` writes a number and `stock` writes a string. Two
+## files carried a private copy of exactly this loop, each with its own `assert_true(found)`;
+## this is that loop with the fixture's own complaint instead.
+##
+## Use it over `tune` wherever the *key* is what a test is asserting about rather than the
+## value it is replacing — "0 turns the bob off" is a claim about the key, and a pair naming
+## the shipped amplitude would make it a claim about one number as well.
+func tune_key(key: String, value: String) -> ContentFixture:
+	return _rewrite_key(key, "%s = %s" % [key, value])
+
+
+## Rewrites the whole line of a `key = "value"` tuning entry, by key. Absence is a failure
+## naming the key, for `tune`'s reason: a rewrite that matched nothing changes nothing and
+## says nothing.
+func _rewrite_quoted_key(key: String, value: String) -> ContentFixture:
+	return _rewrite_key(key, '%s = "%s"' % [key, value])
+
+
+## The line rewrite both of those share. Absence is a failure naming the key.
+func _rewrite_key(key: String, replacement: String) -> ContentFixture:
 	var lines: PackedStringArray = tuning.split("\n")
 	var found: bool = false
 	for index: int in range(lines.size()):
-		if lines[index].begins_with("%s = " % STARTING_STOCK_KEY):
+		if lines[index].begins_with("%s = " % key):
 			lines[index] = replacement
 			found = true
 	if not found:
 		unmatched.append(replacement)
 		if _case != null:
-			_case.fail("content/tuning.toml declares no %s to replace" % STARTING_STOCK_KEY)
+			_case.fail("content/tuning.toml declares no %s to replace" % key)
 		return self
 	tuning = "\n".join(lines)
 	return self

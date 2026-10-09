@@ -30,37 +30,21 @@ chaff_crawlers,crawler,0,1,0,1
 """
 
 
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
-
-
 ## The shipped content with the Telegraph shortened to half a second, so a called Wave
 ## arrives in thirty ticks rather than twelve seconds. Every other number is the real
 ## file's, which is what makes the arithmetic below readable against `content/tuning.toml`.
 func _content(waves: String = ONE_BREAKER, overrides: Array = []) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-	for pair: PackedStringArray in overrides:
-		assert_true(tuning.contains(pair[0]), "the tuning override %s must match" % pair[0])
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning.replace(SHIPPED_STOCK, STOCKED),
-		waves,
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = waves
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 0.5"]])
+		. tune(overrides)
+		. stock(STOCKED_BILL)
+		. definitions()
 	)
 
 
@@ -554,23 +538,19 @@ mend_machinery,Mend Machinery,iron_plate:1,,1
 
 
 func _mend_content(waves: String = ONE_CRAWLER) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-	return Definitions.parse(
-		MEND_MACHINES,
-		MEND_RECIPES,
-		(
-			tuning
-			. replace(SHIPPED_STOCK, STOCKED)
-			. replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
-		),
-		waves,
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv", "deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = MEND_MACHINES
+	fixture.recipes = MEND_RECIPES
+	fixture.waves = waves
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 0.5"]])
+		. stock(STOCKED_BILL)
+		. starting_machine(OWN_STARTING_MACHINE)
+		. definitions()
 	)
 
 
@@ -906,14 +886,12 @@ func test_a_damaged_factory_round_trips_through_a_save() -> void:
 # nothing here is refused as `CONTENT_IS_LOCKED`. `test_delivery.gd` is where the real chain
 # and the real bill are asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "iron_plate:200"'
+const STOCKED_BILL: String = "iron_plate:200"
 ## This file brings its own Machine table, so the opening selection has to name a row in
 ## *that* table (#55). `player.starting_machine` names a row in `machines.csv` and a set
 ## naming one it has not got carries no definitions at all — the rule working rather than
 ## failing. Nothing here asserts on the selection; what it has to be is present.
-const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
-const OWN_STARTING_MACHINE: String = 'starting_machine = "plate_seam_mk1"'
+const OWN_STARTING_MACHINE: String = "plate_seam_mk1"
 
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One

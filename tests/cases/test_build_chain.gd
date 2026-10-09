@@ -139,37 +139,22 @@ func test_a_machine_added_as_a_row_lands_where_the_chain_says() -> void:
 
 ## The shipped content with two rows and two Recipes added, and nothing else changed.
 func _content_plus_a_girder_line() -> Definitions:
-	var machines: String = _read("res://content/machines.csv").strip_edges() + "\n" + (
+	var machines: String = (
+		ContentFixture.shipped(Definitions.MACHINES_FILE).strip_edges() + "\n"
+	) + (
 		"girder_mill_mk1,Girder Mill Mk1,crafter,2,2,2,100,0,400,0,0,0,0,0,roll_girder,iron_plate:10\n"
 		+ "girder_welder_mk1,Girder Welder Mk1,crafter,2,2,2,100,0,400,0,0,0,0,0,weld_frame,iron_plate:10\n"
 	)
-	var recipes: String = _read("res://content/recipes.csv").strip_edges() + "\n" + (
+	var recipes: String = (
+		ContentFixture.shipped(Definitions.RECIPES_FILE).strip_edges() + "\n"
+	) + (
 		"roll_girder,Roll Girder,iron_plate:2,girder:1,4\n"
 		+ "weld_frame,Weld Frame,girder:2,frame:1,4\n"
 	)
-	return Definitions.parse(
-		machines,
-		recipes,
-		_read("res://content/tuning.toml"),
-		_read("res://content/waves.csv"),
-		_read("res://content/deliveries.csv"),
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
-
-
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = machines
+	fixture.recipes = recipes
+	return fixture.definitions()
 
 
 # ── The hotbar and the objective line, from one authority ─────────────────────

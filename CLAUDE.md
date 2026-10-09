@@ -1067,22 +1067,73 @@ available cheaply is `ContentFixture.shipped(Definitions.MACHINES_FILE)` for a t
 the real table, which is what replaced ten private copies of a `_read` helper. The row-editing
 version is a ticket of its own, and the day to write it is the day a column is added.
 
-**Open, and the obvious follow-on:** the ten files that already substituted against the shipped
-file still carry their own `_read` and their own `SHIPPED_STOCK` literal. They survive a new
-*key* already, which is why they are outside this ticket — but a changed *value* silently
-un-overrides them, which is the failure `stock()` exists to remove. Moving them onto
-`ContentFixture` is mechanical.
+### Nothing in `tests/` reads a content file by hand any more
 
-**#55 made that more urgent and found the gap beside it.** Four of those ten now carry a
-`SHIPPED_STARTING_MACHINE` literal next to their `SHIPPED_STOCK` one, so there are two
-hand-copies of a shipped value per file rather than one. And the gap is this: **a file that
-replaces the Machine *table* is not protected by `ContentFixture` at all**, because what it
-substitutes is a source and not a tuning value — so `player.starting_machine` naming a row
-none of its rows answer to makes the whole set an error. That is the loader being right, and
-it is also the thing to check before adding any future tuning key that names a **row** rather
-than a number: scan every self-supplied table in `tests/`, not the files that happen to spell
-`machines = `. See "Where a Run opens, and who is allowed to know" for what that cost and how
-the four were found.
+**#63 finished the migration #51 opened, and the list was longer than the ticket's.** #63 was
+written against "the ten files that still carry a private `_read`"; what a grep for
+`FileAccess` rather than for `_read` actually found was **nineteen**, and that difference is
+the finding. Eleven carried a private `func _read`; two more carried the same reader under
+another name (`test_declared_ports._tuning`, `test_structure_costs._own_tuning`); and **six
+read `content/` inline at the call site**, which no search for a helper name would ever have
+turned up — `test_world_view` seven times in one file. Four of the nineteen also carried a
+`SHIPPED_STARTING_MACHINE` literal beside their `SHIPPED_STOCK` one, which #55 had just
+added. **This is #55's own lesson about grep arriving a second time**: searching for the
+shape of the workaround finds the files that chose that workaround, not the files with the
+problem.
+
+Grep `res://content` under `tests/` now and there are **no** hits outside `ContentFixture`.
+Grep `FileAccess` and the only hits are the fixture itself, the two purity lints that walk
+`sim/`, `test_definition_watcher` writing its own temporary files, three `file_exists` checks
+about audio, and the one deliberate exception below.
+
+- **`ContentFixture.starting_machine(id)` is `stock(bill)`'s twin**, and it exists for a
+  sharper reason than tidiness. `player.starting_machine` names a **row**, so a fixture that
+  brings its own `machines.csv` has to point it at a row it actually has or the whole set is
+  an error carrying no definitions at all — which is why four files grew the literal in the
+  first place. Both go through `_rewrite_quoted_key`, which replaces the whole line **by key
+  name** and fails naming the key if there is no such line.
+  `test_content_fixture.test_the_starting_machine_is_replaced_without_naming_the_shipped_row`
+  and the error case beside it are its contract.
+- **`tune_key(key, value)` is the third rewrite and it replaced two verbatim copies of
+  itself.** `test_movement_weight._sim_with` and `test_godot_layer_smoke._sim_with_tuning`
+  were the same twelve-line by-key line rewrite, each with its own `assert_true(found)`. Use
+  it over `tune` wherever the **key** is what a test asserts about rather than the value it
+  is replacing: "0 turns the bob off" is a claim about the key, and a pair naming the shipped
+  amplitude would make it a claim about one number as well. `stock`, `starting_machine` and
+  `tune_key` all go through one `_rewrite_key`.
+- **`test_content_fixture._read` is the one private reader that stays**, and it says so in a
+  comment: that file is the fixture's contract, so the reader it compares against has to be
+  an independent one. Asking the thing under test to read the file it is being checked
+  against would assert nothing.
+- **A fixture per file, not a call per site.** Five sites in `test_silo`, four in
+  `test_turrets` and seven in `test_world_view` each spelled out the same four or five
+  decisions; each file now has one `_own_machines` / `_ammo_fixture` / `_fixture` helper that
+  carries them, and a site that differs assigns the one field it differs in. That is what
+  makes "this site brings its own Machines" and "this site gets the override" one decision
+  rather than two, which is the arrangement #55 asked for by name.
+- **What `tune` cannot protect is still unprotected, and #63 found a live one.**
+  `ContentFixture` guards substitutions against the *tuning* source; a `String.replace` into
+  a **table** a fixture brought itself is still silent. `test_silo._fragile_content` carried
+  `SILO_MACHINES.replace("silo,4,4,0,0,900", "silo,4,4,0,0,120")` and the Silo row has
+  spelled a `height_metres` column since #30, so the text was `silo,4,4,2.2,0,0,900`, the
+  substitution matched nothing, and that fixture's Silo has stood on its full 900 hit points
+  ever since — inside its own 6000-tick bound, so no assertion could see it. The dead
+  substitution is **gone rather than corrected**, because correcting it changes how long the
+  fixture takes to reach the thing it asserts. The general lesson is #51's pointed one step
+  further: **a helper that makes tuning loud makes the tables the quiet place.** The
+  row-editing fixture #51 deferred is where that gets fixed.
+- **Three frozen things were found and none of them was a tuning value**, which is the other
+  half of the answer to "what does the duplication hide". #51 found six frozen *numbers*
+  because the copies held numbers; these nineteen substituted against the shipped file, so
+  what froze instead was **prose**. `test_gear` said its acceptance test builds a line "out
+  of the eighty plates a Run opens with" — the bill has been 110 since #47. `test_turrets`
+  picks the second its Breaker fixture pulls the lever against "the shipped cold interval is
+  150 s" — #35 split `heat.first_wave_interval_seconds` off at 90. Both are corrected or
+  flagged in place; neither moved a number, and the fixture that reads 150 is still green,
+  because what it needed was *enough* time rather than that time. The lesson is that a
+  substitution against the shipped file protects the **value** and not the **sentence next to
+  it**, so a file that was migrated out of #51's cascade can still be lying about the balance
+  it runs on.
 
 `Definitions.load_from_directory` reads all eight files and `Definitions.parse` takes all
 eight sources, in that order. A missing one is an error naming the path, never an empty
