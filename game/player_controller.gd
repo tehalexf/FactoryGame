@@ -52,6 +52,17 @@ const KEY_JUMP: Key = KEY_SPACE
 ## (GLOSSARY.md, DESIGN.md).
 const KEY_BUILD_MODE: Key = KEY_B
 
+## Escape, which **holsters the Build Gun before it gives the pointer back**. A playtest
+## asked for it — "can pressing esc while in build mode exit build mode?" — and it is the
+## reading every game trains a player into: escape backs out of the thing you are doing,
+## and only once there is nothing to back out of does it leave the game.
+##
+## `Main._input` owns the pointer half and consults the mode, so one press leaves build
+## mode and a second gives the mouse back. Unlike that half, this one **is** a player
+## action and crosses as an Input Action, because what a player is holding is Simulation
+## state and a replay has to reproduce it.
+const KEY_EXIT_BUILD: Key = KEY_ESCAPE
+
 ## Putting the Belt tool on the Build Gun, and taking it back off. **Moved off `B`**, which
 ## is now the holster, and it belongs here anyway: Belt routing is a build act and lives in
 ## build mode, which is where this key is read.
@@ -281,6 +292,11 @@ class DeviceSample extends RefCounted:
 	var primary_released: bool = false
 	## One press is one swap of what is in the player's hands.
 	var build_mode_clicked: bool = false
+
+	## Whether Escape was pressed this tick. Holsters the Build Gun if it is out and does
+	## nothing otherwise — it never *draws* one, because escape backing into a tool would
+	## be the opposite of what the key means.
+	var exit_build_pressed: bool = false
 	var demolish_clicked: bool = false
 	## One press is one swap of the tool on the Build Gun, Machine for Belt or back.
 	var belt_clicked: bool = false
@@ -326,6 +342,7 @@ var _unsent_machine_steps: int = 0
 var _place_clicked: bool = false
 var _place_released: bool = false
 var _build_mode_clicked: bool = false
+var _exit_build_pressed: bool = false
 var _sprint_clicked: bool = false
 var _demolish_clicked: bool = false
 var _belt_clicked: bool = false
@@ -407,6 +424,8 @@ func note_event(event: InputEvent) -> void:
 				_wall_clicked = true
 			elif key.keycode == KEY_BUILD_MODE:
 				_build_mode_clicked = true
+			elif key.keycode == KEY_EXIT_BUILD:
+				_exit_build_pressed = true
 			elif key.keycode == KEY_SPRINT:
 				_sprint_clicked = true
 			elif key.keycode == KEY_SILO_SHELL:
@@ -459,6 +478,7 @@ func sample_devices() -> DeviceSample:
 	sample.place_clicked = _place_clicked
 	sample.primary_released = _place_released
 	sample.build_mode_clicked = _build_mode_clicked
+	sample.exit_build_pressed = _exit_build_pressed
 	sample.sprint_clicked = _sprint_clicked
 	sample.demolish_clicked = _demolish_clicked
 	sample.belt_clicked = _belt_clicked
@@ -479,6 +499,7 @@ func sample_devices() -> DeviceSample:
 	_place_clicked = false
 	_place_released = false
 	_build_mode_clicked = false
+	_exit_build_pressed = false
 	_sprint_clicked = false
 	_demolish_clicked = false
 	_belt_clicked = false
@@ -519,6 +540,12 @@ func actions_for_tick(sim: Simulation, player_id: int, sample: DeviceSample) -> 
 	if sample.build_mode_clicked:
 		in_build_mode = not in_build_mode
 		actions.append(InputAction.set_build_mode(player_id, in_build_mode))
+	# Escape holsters and never draws, so it is one-way and sends nothing when the weapon
+	# is already out — asking for the mode you are in is a no-op whose hash does not move,
+	# but an intent nobody needed is still an intent in a recorded script.
+	elif sample.exit_build_pressed and in_build_mode:
+		in_build_mode = false
+		actions.append(InputAction.set_build_mode(player_id, false))
 
 	# **Whether the Build Gun is in hand, asked once, through the rule the renderer
 	# also asks.** #35's playtest found the hologram drawn and green over a click that

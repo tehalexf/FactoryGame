@@ -725,6 +725,28 @@ func test_the_wheel_reads_by_hand_so_scrolling_with_a_rifle_out_turns_nothing() 
 	assert_eq(_count_of(in_combat, InputAction.Kind.SELECT_MACHINE), 0, "nothing is chosen")
 
 
+func test_escape_holsters_the_build_gun_and_never_draws_it() -> void:
+	# A playtest asked for it: "can pressing esc while in build mode exit build mode?".
+	# Escape is one-way — it backs out of the thing you are doing, so it holsters and never
+	# draws. `Main._input` owns the pointer half and reads the same mode, so one press
+	# leaves build mode and a second gives the mouse back.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var controller: PlayerController = PlayerController.new()
+	var escaping: PlayerController.DeviceSample = PlayerController.DeviceSample.new()
+	escaping.exit_build_pressed = true
+
+	var leaving: Array = controller.actions_for_tick(sim, 0, escaping)
+	assert_eq(_count_of(leaving, InputAction.Kind.SET_BUILD_MODE), 1, "it holsters")
+	sim.step(leaving)
+	assert_false(sim.query_player_is_in_build_mode(0), "and the Build Gun is away")
+
+	# Pressed again with the weapon already out it sends nothing at all, rather than an
+	# intent nobody needed sitting in a recorded script.
+	var again: Array = controller.actions_for_tick(sim, 0, escaping)
+	assert_eq(_count_of(again, InputAction.Kind.SET_BUILD_MODE), 0, "and never draws one")
+
+
 func _count_of(actions: Array, kind: int) -> int:
 	var found: int = 0
 	for action: InputAction in actions:

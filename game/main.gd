@@ -108,10 +108,19 @@ func _input(event: InputEvent) -> void:
 	# Escape gives the pointer back, because a captured mouse with no way out is a bad
 	# way to meet a game. Not a player action and not an Input Action: it is a window
 	# management concern and the Simulation has no opinion about it.
+	#
+	# **But it holsters the Build Gun first.** A playtest asked for escape to leave build
+	# mode, and that is the reading every game trains a player into: back out of the thing
+	# you are doing, and only once there is nothing to back out of, leave the game. So the
+	# pointer is released only when the Build Gun is already away — one press out of build
+	# mode, a second out of the window. The holster half is a player action and travels as
+	# an Input Action from `PlayerController`; this half reads the same mode so the two
+	# cannot both fire on one press.
 	if event is InputEventKey and (event as InputEventKey).pressed:
 		var key: InputEventKey = event
 		if key.keycode == KEY_ESCAPE:
-			Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+			if not _simulation.query_player_is_in_build_mode(0):
+				Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
 		# Saving and resuming sit here with Escape rather than in `PlayerController`,
 		# because neither is an Input Action. Saving is a pure read of the Simulation and
 		# leaves its hash alone; loading *replaces* the Simulation, which is something no
