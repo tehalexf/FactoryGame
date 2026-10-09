@@ -72,14 +72,49 @@ pack_drops=(
   --drop-object Character001
 )
 
-# The Weapon pack references textures it does not ship — the FBX carries the
-# authoring machine's paths and the zip's own files are named differently — so
-# every surface arrives white. These are `tools/assets/dieselpunk_palette.json`
-# values, the same ones the generated Machines wear, so the thing in the player's
-# hands belongs to the same world as the thing they built it with.
-sleeve=(--material-colour "Military_arms_mat=40442F,0,0.58")   # OliveDrab
+# ── The surfaces, which is #65 ───────────────────────────────────────────────
+#
+# This recipe used to repaint every material a flat palette colour, on the note
+# that "the Weapon pack references textures it does not ship". That is half right
+# and the wrong half mattered: **the pack ships a complete PBR set for both
+# rifles** — albedo, normal, roughness, metallic and occlusion, for the L96's
+# body, its scope and its lens, and for the AKM — and two separate things kept it
+# off the model. The basenames in the FBX are not the basenames in the zip
+# (`T_S96_ALB.tga.png` against the shipped `L96_ALB.png`, which no normalisation
+# rule bridges — it is a vendor typo), and these were authored as 3ds Max
+# ShaderFX materials, which Blender's importer drops on the way in with
+# `material link b'3dsMax|HwShaderParams|TEX_color_map' ignored` — so the
+# materials arrive as bare Principled BSDFs with **nothing connected** and
+# recovering the files alone would have changed nothing.
+#
+# So the maps are bound to channels **by path**, here, where the rest of the
+# recipe is. There is no name to guess at and a file that is not there is an
+# error naming the material, the channel and the path. See
+# `tools/assets/viewmodel_surface.py` for the full measurement.
+#
+# **The arms are the one thing that genuinely has nothing to recover.** All three
+# arm meshes reference `fpArms_Military_D.tga`, `fpArms_AO.tga` and
+# `fpArms_NRM.tga` from a `FPS Generic Arms/` folder that is in **neither pack** —
+# checked by name across the whole quarantine, which holds not one `fpArms_*`
+# file and not one `.tga` at all. (The pack does ship `FPS Arms/Textures/`, but
+# those belong to a separate 346-vertex asset with its own unwrap; putting its map
+# on the 1422-vertex sleeve would be reading a texture through unrelated UVs.) So
+# the sleeve wears the palette's own `OliveDrab` map — literally the surface the
+# Machines wear — over world-scale box-projected UVs.
+#
+# **The metres-per-tile is restated for this viewing distance and only that.**
+# The palette's `texture_scale_m` is how many metres one tile covers *on a
+# Machine*, which is an object read from metres away; a sleeve is a third of a
+# metre long and 40 cm from the eye, so `OliveDrab`'s own 2.4 m would show a
+# seventh of one tile and the wear on it would be far too coarse to read as
+# fabric. The colour, the metallic, the roughness and which map it is all stay
+# the palette's.
+sleeve=(--material-surface "Military_arms_mat=OliveDrab,0.25")
 
 if [ -d "$weapon_pack" ]; then
+  # Three materials, three map sets. `Lense_mt` is given no metallic map because
+  # the pack ships none for it, which is glass being a dielectric rather than the
+  # pack being incomplete, and no normal for the same reason.
   convert \
     --input "$weapon_pack/L96_animation.fbx" \
     --output "$out_dir/bolt_rifle.glb" \
@@ -87,11 +122,16 @@ if [ -d "$weapon_pack" ]; then
     --rotate=0,0,180 \
     --parent L96_mesh=Main_Bone \
     "${sleeve[@]}" \
-    --material-colour "Body_mt=555557,1,0.18" \
-    --material-colour "Scope_mt=424447,1,0.62" \
-    --material-colour "Lense_mt=C4C4BF,0,0.12" \
+    --material-map "Body_mt=albedo:L96_ALB.png,normal:L96_NRM.png,roughness:L96_Roughness.png,metallic:L96_Metallic.png,ao:L96_AO.png" \
+    --material-map "Scope_mt=albedo:Scope_ALB.png,normal:Scope_NRM.png,roughness:Scope_Roughness.png,metallic:Scope_Metallic.png,ao:Scope_AO.png" \
+    --material-map "Lense_mt=albedo:Lens_ALB.png,roughness:Lens_Roughness.png" \
     --texture-dir "$weapon_pack/L96_textures"
 
+  # `normal_dx` rather than `normal`, because the pack says which convention its
+  # map is in and it says DirectX — whose green channel is inverted against the
+  # one glTF reads. Left alone it lights every slope on the receiver from the
+  # opposite side, which reads as the sun being in the wrong place rather than as
+  # a texture being upside down.
   convert \
     --input "$weapon_pack/Akm_animation.fbx" \
     --output "$out_dir/drum_autocannon.glb" \
@@ -99,7 +139,7 @@ if [ -d "$weapon_pack" ]; then
     --rotate=0,0,180 \
     --parent AK_mesh=ak_main_bn \
     "${sleeve[@]}" \
-    --material-colour "AK_mat=424447,1,0.55" \
+    --material-map "AK_mat=albedo:Base_Color.png,normal_dx:Normal.png,roughness:Roughness.png,metallic:Metallic.png,ao:AO.png" \
     --texture-dir "$weapon_pack/Akm_textures"
 else
   echo "note: $weapon_pack is absent; the two ranged weapons keep their placeholders." >&2
@@ -147,6 +187,22 @@ fi
 #
 # The rig still needs the half turn the Weapon pack does: it reaches along -Y,
 # which the conversion would otherwise put behind the camera.
+#
+# **Every one of its six materials is a palette surface, because this pack ships
+# no maps at all** — and that is the asset being what it is rather than an
+# omission: a low-poly kit whose Unity materials are flat colours. Its UVs say so
+# too, the knife's having 8280x between its tightest and loosest triangle's
+# metres-per-UV-unit, which is why they are replaced by a world-scale box
+# projection rather than textured through.
+#
+# The entries are not a re-art-direction: each is the palette material the flat
+# colour this recipe used to paint was already approximating, and two of them
+# match on every number. `Blade` was `696A6C` at metallic 1 and roughness 0.45,
+# which is `WeldedSteel` exactly; `Guard` was `424447` at metallic 1 and 0.62,
+# which is `CastIron` exactly. `Gloves`, `Fingers` and `Handle` were all `211F1E`
+# at roughness 0.8-0.9, which is `BeltRubber`. And `Skin` was painted `40442F` —
+# OliveDrab — by whoever wrote this first, because that mesh is being used as a
+# sleeve rather than as a bare forearm; keeping it a sleeve is deliberate.
 if [ -d "$rgsdev" ]; then
   convert \
     --input "$rgsdev/Arms_Combat_Knife.fbx" \
@@ -154,12 +210,12 @@ if [ -d "$rgsdev" ]; then
     --scale 1.0 \
     --rotate=0,0,180 \
     --offset=0.0,0.30,-0.24 \
-    --material-colour "Skin=40442F,0,0.58" \
-    --material-colour "Gloves=211F1E,0,0.8" \
-    --material-colour "Fingers=211F1E,0,0.8" \
-    --material-colour "Blade=696A6C,1,0.45" \
-    --material-colour "Guard=424447,1,0.62" \
-    --material-colour "Handle=211F1E,0,0.9"
+    --material-surface "Skin=OliveDrab,0.25" \
+    --material-surface "Gloves=BeltRubber,0.12" \
+    --material-surface "Fingers=BeltRubber,0.12" \
+    --material-surface "Blade=WeldedSteel,0.5" \
+    --material-surface "Guard=CastIron,0.5" \
+    --material-surface "Handle=BeltRubber,0.12"
 else
   echo "note: $rgsdev is absent; the Pneumatic Wrench keeps its placeholder." >&2
 fi

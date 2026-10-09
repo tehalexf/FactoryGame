@@ -210,6 +210,235 @@ class RepaintsAPackThatShipsNoTextures(unittest.TestCase):
         self.assertIn("NoSuchMaterial", result.stdout)
 
 
+class BindsThePackSOwnMapsToTheChannelsTheyBelongTo(unittest.TestCase):
+    """#65. The `Weapon pack` ships a full PBR set for both rifles and two things
+    kept it off the model: the FBX references the authoring machine's basenames
+    rather than the zip's, and the materials arrived as bare Principled BSDFs
+    with **nothing connected** because Blender's importer drops a 3ds Max
+    ShaderFX graph (`material link ... TEX_color_map ignored`, once per map). So
+    recovering the files would not have been enough on its own, and the recipe
+    binds a file to a channel explicitly rather than matching a name."""
+
+    def textures(self, *extra: str) -> dict:
+        return gltf_info.material_textures(raw(convert_to(*extra)))
+
+    def bind(self, *channels: str) -> str:
+        return "Material=" + ",".join(channels)
+
+    def test_an_albedo_map_arrives_as_the_base_colour_texture(self):
+        bound = self.textures("--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+                              "--material-map", self.bind("albedo:surface_albedo.png"))
+        self.assertIn("albedo", bound["Material"], bound)
+
+    def test_roughness_and_metallic_become_the_one_texture_gltf_has_for_both(self):
+        # glTF carries no roughness texture and no metallic texture: it carries
+        # `metallicRoughnessTexture`, green for roughness and blue for metallic.
+        # Two files in, one slot out.
+        bound = self.textures(
+            "--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+            "--material-map", self.bind("roughness:surface_roughness.png",
+                                        "metallic:surface_metallic.png"))
+        self.assertIn("metallic_roughness", bound["Material"], bound)
+
+    def test_a_normal_map_arrives_as_the_normal_texture(self):
+        bound = self.textures("--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+                              "--material-map", self.bind("normal:surface_normal.png"))
+        self.assertIn("normal", bound["Material"], bound)
+
+    def test_a_whole_set_binds_every_slot_a_viewmodel_uses(self):
+        bound = self.textures(
+            "--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+            "--material-map", self.bind("albedo:surface_albedo.png",
+                                        "normal:surface_normal.png",
+                                        "roughness:surface_roughness.png",
+                                        "metallic:surface_metallic.png",
+                                        "ao:surface_occlusion.png"))
+        self.assertEqual(set(bound["Material"]),
+                         {"albedo", "normal", "metallic_roughness"},
+                         "occlusion is folded into the albedo, not carried")
+
+    def test_a_map_that_is_not_there_is_fatal_and_names_what_it_wanted(self):
+        # The whole point of the flag. A flat repaint hid an absent texture for
+        # five tickets; #57 and #59's rule is that the gap is loud.
+        result = self.attempt("--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+                              "--material-map", self.bind("albedo:not_shipped.png"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        output = result.stdout + result.stderr
+        self.assertIn("not_shipped.png", output)
+        self.assertIn("Material", output)
+        self.assertIn("albedo", output)
+
+    def test_a_material_the_model_does_not_have_is_fatal_for_a_map(self):
+        # Deliberately unlike `--material-colour`, which only reports. A colour
+        # for a material that is not there leaves a surface it was never going to
+        # improve; a *map* names a file the recipe went and found, so a name that
+        # binds to nothing means the recipe and the pack have come apart.
+        result = self.attempt("--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+                              "--material-map", "NoSuchMaterial=albedo:surface_albedo.png")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("NoSuchMaterial", result.stdout + result.stderr)
+
+    def test_a_channel_that_is_not_a_channel_is_fatal_and_lists_the_ones_that_are(self):
+        result = self.attempt("--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+                              "--material-map", self.bind("shininess:surface_albedo.png"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        output = result.stdout + result.stderr
+        self.assertIn("shininess", output)
+        self.assertIn("albedo", output)
+
+    def test_a_map_and_a_flat_colour_on_one_material_is_refused(self):
+        # Two authorities on one surface, which is the disagreement this project
+        # spends `query_build_refusal` to avoid everywhere else. The texture wins
+        # in Blender and the factor is what a glTF reader sees, so the two can
+        # disagree silently — and a recipe that says both has not decided.
+        result = self.attempt("--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+                              "--material-map", self.bind("albedo:surface_albedo.png"),
+                              "--material-colour", "Material=40442F,0,0.58")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Material", result.stdout + result.stderr)
+
+    @staticmethod
+    def attempt(*extra: str) -> subprocess.CompletedProcess:
+        out = _fixture_dir / f"viewmodel-{next(_counter)}.glb"
+        command = [BLENDER, "--background", "--factory-startup", "--python", str(CONVERTER),
+                   "--", "--input", str(_fixture_dir / "viewmodel.fbx"),
+                   "--output", str(out), "--drop-take", "default", "--drop-take", "rest",
+                   *extra]
+        return subprocess.run(command, capture_output=True, text=True)
+
+
+class DressesWhatHasNoMapsInThePaletteEveryMachineWears(unittest.TestCase):
+    """The arms sleeve references `fpArms_*` textures that are **in neither
+    pack**, and the RgsDev rig ships no maps at all. Those wear the palette's own
+    generated maps — literally the surfaces the Machines wear — which is the
+    sentence the flat repaint was reaching for, made literal."""
+
+    def test_a_dressed_material_carries_the_palettes_map(self):
+        bound = gltf_info.material_textures(
+            raw(convert_to("--material-surface", "Material=OliveDrab")))
+        self.assertIn("albedo", bound["Material"], bound)
+
+    def test_it_takes_the_palettes_own_metallic_and_roughness(self):
+        import viewmodel_surface
+        surface = viewmodel_surface.palette_surface("WeldedSteel")
+        document = raw(convert_to("--material-surface", "Material=WeldedSteel"))
+        pbr = next(m for m in document["materials"]
+                   if m.get("name") == "Material")["pbrMetallicRoughness"]
+        self.assertAlmostEqual(pbr.get("metallicFactor", 1.0), surface["metallic"], places=3)
+        self.assertAlmostEqual(pbr.get("roughnessFactor", 1.0), surface["roughness"], places=3)
+
+    def test_the_uvs_it_projects_are_in_metres(self):
+        """World scale, one UV unit to the metre — `box_project_uvs`' convention
+        and the reason `texture_scale_m` is the only thing that sets density.
+
+        The fixture's body is a 0.3 m cube, so every face projects to a 0.3-unit
+        square and the whole UV range spans 0.3. Without this the knife's own
+        unwrap would decide the density, and that unwrap has 8280x between its
+        tightest and loosest triangle because it was never meant to carry a map.
+        """
+        out = convert_to("--material-surface", "Material=OliveDrab")
+        spans = self.uv_spans(out, "WeaponBody")
+        self.assertTrue(spans, "no UVs found on the dressed mesh")
+        for axis, span in enumerate(spans):
+            self.assertAlmostEqual(span, 0.3, places=3,
+                                   msg=f"UV axis {axis} spans {span}, not the body's 0.3 m")
+
+    def test_the_tint_is_in_the_texels_and_the_factor_is_left_white(self):
+        """Which is the opposite of the Machines, and was measured rather than
+        chosen. A Machine's tint is Godot's `albedo_color` beside the shared
+        texture, so the obvious move here was a multiply node and a
+        `baseColorFactor` — and **Blender's glTF exporter writes [1,1,1,1] for a
+        linked Base Color whatever node stands in front of it**, so the tint
+        would simply have been dropped. Tried, measured, and that is why
+        `tint_albedo` exists.
+
+        A white factor is therefore load-bearing rather than incidental: it says
+        the texels already carry the tint, and it fails if somebody puts the
+        multiply node back believing the exporter will fold it."""
+        document = raw(convert_to("--material-surface", "Material=OliveDrab"))
+        pbr = next(m for m in document["materials"]
+                   if m.get("name") == "Material")["pbrMetallicRoughness"]
+        for channel in pbr.get("baseColorFactor", [1.0, 1.0, 1.0, 1.0])[:3]:
+            self.assertAlmostEqual(channel, 1.0, places=4,
+                                   msg="a factor here would be a second tint")
+
+    def test_a_surface_may_be_tiled_tighter_than_the_palette_tiles_a_machine(self):
+        """The palette's own comment says `texture_scale_m` is how many metres one
+        tile covers **on a Machine** — an object read from metres away. A viewmodel
+        is 40 cm from the eye and a sleeve is half a metre long, so at `OliveDrab`'s
+        2.4 m a forearm shows a fifth of one tile and the wear on it is five times
+        too coarse to read as fabric. The palette still owns the colour, the
+        metallic, the roughness and which map; the recipe may say how big it is
+        here, because "here" is a different viewing distance.
+
+        Read off the exported `KHR_texture_transform`, which is where a per-material
+        density has to live: the RgsDev meshes carry three materials on one UV
+        layer, so a scale baked into the UVs could not differ between them.
+        """
+        loose = self.uv_scale(convert_to("--material-surface", "Material=OliveDrab"))
+        tight = self.uv_scale(convert_to("--material-surface", "Material=OliveDrab,0.3"))
+        self.assertAlmostEqual(loose, 1.0 / 2.4, places=4,
+                               msg="without a scale it is the palette's own 2.4 m")
+        self.assertAlmostEqual(tight, 1.0 / 0.3, places=4,
+                               msg="0.3 m a tile is eight times the density")
+
+    def test_a_scale_that_is_not_a_length_is_fatal_and_names_it(self):
+        result = BindsThePackSOwnMapsToTheChannelsTheyBelongTo.attempt(
+            "--material-surface", "Material=OliveDrab,huge")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("huge", result.stdout + result.stderr)
+
+    def test_a_scale_of_zero_is_fatal_rather_than_a_division(self):
+        result = BindsThePackSOwnMapsToTheChannelsTheyBelongTo.attempt(
+            "--material-surface", "Material=OliveDrab,0")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    @staticmethod
+    def uv_scale(path) -> float:
+        document = raw(path)
+        material = next(m for m in document["materials"] if m.get("name") == "Material")
+        texture = material["pbrMetallicRoughness"]["baseColorTexture"]
+        transform = texture.get("extensions", {}).get("KHR_texture_transform", {})
+        return transform.get("scale", [1.0, 1.0])[0]
+
+    def test_an_entry_the_palette_does_not_declare_is_fatal_and_names_it(self):
+        result = BindsThePackSOwnMapsToTheChannelsTheyBelongTo.attempt(
+            "--material-surface", "Material=GunmetalBlue")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("GunmetalBlue", result.stdout + result.stderr)
+
+    def test_a_surface_and_a_map_on_one_material_is_refused(self):
+        result = BindsThePackSOwnMapsToTheChannelsTheyBelongTo.attempt(
+            "--texture-dir", str(_fixture_dir / "viewmodel_textures"),
+            "--material-surface", "Material=OliveDrab",
+            "--material-map", "Material=albedo:surface_albedo.png")
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Material", result.stdout + result.stderr)
+
+    @staticmethod
+    def uv_spans(path, mesh_name: str) -> list[float]:
+        """The extent of a node's mesh's first UV set, read off the buffer.
+
+        Off the vertex data rather than off the accessor's `min`/`max`, because
+        glTF only requires those on `POSITION` — Blender writes none for a
+        `TEXCOORD`, so the declaration cannot answer this and the buffer can.
+        """
+        document = raw(path)
+        node = next(n for n in document["nodes"] if n.get("name") == mesh_name)
+        wanted = node["mesh"]
+        lows, highs = [float("inf")] * 2, [float("-inf")] * 2
+        for primitive in gltf_info.mesh_primitives(path):
+            if primitive["mesh_index"] != wanted:
+                continue
+            for uv in primitive["uvs"]:
+                for axis in range(2):
+                    lows[axis] = min(lows[axis], uv[axis])
+                    highs[axis] = max(highs[axis], uv[axis])
+        if lows[0] == float("inf"):
+            return []
+        return [highs[axis] - lows[axis] for axis in range(2)]
+
+
 class TheRecipeIsTheRecord(unittest.TestCase):
     """`convert_weapons.sh` is the only record of which pack became which weapon.
 
@@ -283,6 +512,35 @@ class TheRecipeIsTheRecord(unittest.TestCase):
                 "are posed around the camera rather than out where they can be seen"
                 % (",".join(offset), forward)
             )
+
+    def test_nothing_it_converts_is_left_on_a_flat_colour(self):
+        """#65's acceptance criterion, as the absence of a flag.
+
+        `--material-colour` is still the right fallback for a future pack that
+        ships neither a map nor a palette entry worth wearing, so it stays — but
+        **no material in this recipe uses it any more**: the two rifles and their
+        scope and lens wear the pack's own PBR maps, and the arms and the whole
+        RgsDev rig wear the palette's generated surfaces. A flat colour creeping
+        back in is this ticket being undone, so it is checked rather than trusted.
+        """
+        lines = [line for line in self.recipe.splitlines()
+                 if not line.lstrip().startswith("#")]
+        self.assertNotIn("--material-colour", "\n".join(lines),
+                         "a viewmodel surface is back on a flat palette colour")
+        self.assertIn("--material-map", "\n".join(lines))
+        self.assertIn("--material-surface", "\n".join(lines))
+
+    def test_every_surface_it_dresses_names_a_palette_entry_that_wears_a_texture(self):
+        # A typo here is caught at conversion time by `palette_surface`, but only
+        # on a machine that has the packs — and that is every machine except the
+        # one running CI. The recipe is committed, so this is checkable anywhere.
+        import viewmodel_surface
+        textured = set(viewmodel_surface.textured_surface_names())
+        named = re.findall(r'--material-surface "[^="]+=([A-Za-z]+)', self.recipe)
+        self.assertTrue(named, "the recipe dresses no palette surfaces")
+        for entry in named:
+            self.assertIn(entry, textured,
+                          f"{entry} is not a palette entry that wears a texture")
 
     def test_it_is_a_no_op_rather_than_an_error_without_the_packs(self):
         # Most clones do not have them, and `tools/assets/run_tests.sh` must not

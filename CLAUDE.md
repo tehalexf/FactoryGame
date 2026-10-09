@@ -4111,9 +4111,138 @@ are low-poly and pass close to the view, so the strike is most of a forearm cros
 frame. That it is *in* the frame is measured; that it is *good* is for a human with a
 mouse.
 
-What is still placeholder-grade is the *surface*: the packs reference textures they do not
-ship, so the arms and the weapons are repainted from `dieselpunk_palette.json` rather than
-textured. Recovering the real maps is a nicer-looking ticket of its own.
+**The surface is no longer placeholder-grade, and the sentence that used to stand here was
+half wrong.** It said the packs reference textures they do not ship, so everything is
+repainted from `dieselpunk_palette.json` rather than textured. The `Weapon pack` ships a
+complete PBR set for both rifles; it was never bound. That is #65 — see "The surfaces are
+the packs' own where the packs have them", below.
+
+### The surfaces are the packs' own where the packs have them
+
+#65, and the finding is that the sentence this file carried for five tickets was **half
+wrong in the half that mattered**. "The packs reference textures they do not ship" — so
+every material was repainted a flat palette colour, on the most-looked-at surface in the
+game. The `Weapon pack` ships a **complete PBR set for both rifles**: albedo, normal,
+roughness, metallic and occlusion, for the L96's body, its scope and its lens, and for the
+AKM. Two separate things kept it off the model and either alone would have been enough:
+
+- **The names do not match.** The FBX carries the authoring machine's paths and their
+  basenames are not the zip's — `T_S96_ALB.tga.png` against the shipped `L96_ALB.png`,
+  `04_-_Default_Mixed_AO.tga.png` against `AO.png`. `--texture-dir` matches by basename, so
+  it recovered nothing, and **no normalisation rule bridges S96 to L96**: it is a vendor
+  typo.
+- **And nothing was ever wired.** These are 3ds Max ShaderFX materials, and Blender's
+  importer says so on the way in — `material link b'3dsMax|HwShaderParams|TEX_color_map'
+  ignored`, once per map per material. What it builds is a bare Principled BSDF with
+  **nothing connected to Base Color** and the images left floating as unreferenced
+  datablocks. So finding every file would still have rendered every surface grey.
+
+So `--material-map NAME=CHANNEL:FILE` binds a file to a channel **by path**, in the recipe,
+where the rest of the mapping already lives. There is no name to guess at, and **a file
+that is not there is fatal, naming the material, the channel and the path** — #57 and #59's
+rule, and the thing a flat repaint hid for five tickets. Deliberately harsher than
+`--material-colour`, which only reports a material it cannot find: a colour for a missing
+material leaves a surface it was never going to improve, where a map names a file somebody
+went and found, so a name that binds to nothing means the recipe and the pack have come
+apart.
+
+**What genuinely has nothing to recover is the arms, and that was checked rather than
+assumed.** All three arm meshes reference `fpArms_Military_D.tga`, `fpArms_AO.tga` and
+`fpArms_NRM.tga` from a `FPS Generic Arms/` folder that is **in neither pack** — there is
+not one `fpArms_*` file and not one `.tga` anywhere in the quarantine. (The pack does ship
+`FPS Arms/Textures/`, but those belong to a separate 346-vertex asset with its own unwrap;
+putting its map on the 1422-vertex sleeve would be reading a texture through unrelated
+UVs.) The RgsDev rig ships no maps at all, which is a low-poly Unity kit being what it is —
+and its UVs say so, the knife's having **8280x** between its tightest and loosest
+triangle's metres-per-UV-unit.
+
+Those wear the palette's **own generated maps**, through `--material-surface
+NAME=ENTRY[,METRES_PER_TILE]` — literally the surfaces the Machines wear, which is the
+sentence the flat repaint was reaching for made literal, and which costs no new art because
+`assets/generated/` is committed (#59). The UVs are `machine_parts.box_project_uvs`', #64's
+answer for the Build Gun: box-projected at world scale, one UV unit to the metre. It
+**replaces** the degenerate unwrap rather than unpicking it, and **adds a UV layer without
+moving one vertex**, which is the line this project draws about an artist's mesh.
+
+The entries are not a re-art-direction: each is the palette material the flat colour was
+already approximating, and two match on every number — `Blade` was `696A6C` at metallic 1
+and roughness 0.45, which is `WeldedSteel` exactly, and `Guard` was `424447` at metallic 1
+and 0.62, which is `CastIron` exactly.
+
+#### Four things measurement caught that looking would not have
+
+Every one of these shipped in a render before it was found, and each was found by reading a
+number out of the `.glb` rather than by reading the picture.
+
+1. **`image.pixels` hands back the file's own values, not linear ones.** Reading
+   `olive_drab_paint.png` with its colour space set to `sRGB` and again set to `Non-Color`
+   gives *byte-identical* arrays, both at a mean of 0.4868 — which is 124/255, the file's own
+   bytes. Blender applies the transfer function when the **shader samples**, not when Python
+   reads. So the first pass multiplied an encoded value by a linear tint and the shader's
+   decode squared it: the map embedded at a mean of **57 sRGB where the palette asks for 86**.
+   Anything that multiplies a *colour* map linearises first; a `Non-Color` mask must not be
+   touched.
+2. **`texture_tint` is the wrong number for a thing in the hand, and `base_color` is the
+   right one.** The tint brings the generated set back to interwar values for a Machine read
+   from metres away through SSAO and fog. Dressed at it, the Pneumatic Wrench's gloves
+   measured **129 against a ground of 81** — half again as bright as the world behind them,
+   where the flat colour they replaced measured 86. That is #42's Wall, #52's ore and #64's
+   brightened tool, **a fourth time**. #64 settled which number reads in the hand, so a map is
+   now scaled so its **mean linear value is the palette's `base_color`**: the texture carries
+   the variation, `base_color` carries the level, and the gloves came back to 97.
+3. **The relief knob is the slope in degrees, not a multiplier.** The generated set is
+   albedo-only, so the normal is *derived* — #42's answer on the ground, with the height field
+   already in hand. A multiplier means something different on every map: across the palette's
+   own four, the same number gives `riveted_steel_plate` **five times** the slope it gives
+   `olive_drab_paint`. The first value tried produced **0.66 degrees** on the arms, which is
+   exactly the invisible one-degree tilt #42 got from its own physically reasoned guess. The
+   knob is now a mean slope, solved for by bisection, so one number suits every surface. And
+   it has an **independent calibration**: the pack's own hand-authored `L96_NRM` and
+   `Scope_NRM` measure 12.5 and 11.8 degrees, so the shipped 9 sits just under what a real map
+   for this asset carries.
+4. **Derive the relief before levelling, not after.** Levelling scales the map down towards a
+   dark `base_color` and takes its gradients with it — measured, 40% of the slope on
+   `olive_drab_paint`. Both numbers were invisible, which is how the ordering went unnoticed
+   until the slope was measured in degrees instead of eyeballed.
+
+Two more decisions worth knowing. **The AKM's normal map is DirectX** and says so in its own
+file name, so the recipe asks for `normal_dx` and the green channel is inverted — left
+alone it lights every slope from the opposite side, which reads as the sun being in the
+wrong place rather than as a texture being upside down. And **a palette surface is capped at
+512 where a recovered map is capped at 1024**, which is a density measurement rather than a
+preference: a palette map *tiles*, so at the 0.12 m a glove is given a 1024 map is 8,500
+texels to the metre against the ~1,500 the screen resolves, where a recovered map is one
+atlas over a whole 0.9 m rifle and 1024 is already *under* what the screen resolves. That
+saving is most of the file — the Pneumatic Wrench went from 11.7 MB to 4.2 MB.
+
+**No picture of any of this may be committed**, and that is the whole of why this section
+has no `docs/images/` pair while #64's has one. Every surface #65 changed belongs to a
+purchased pack, so a render of it is as non-redistributable as the FBX it came from —
+`compose_tool_shot.gd`'s `compare` preset and `compose_swing_shot.gd`'s strip both carry
+that rule already. #64 could commit its pair because the Build Gun is this project's own
+work. The judgement was made by looking locally, and the measurements above are what can be
+written down.
+
+**The Build Gun is deliberately untouched**, and the reason is the licence rather than the
+look: `assets/gear/build_gun.glb` is **committed**, so embedding eight 1024-square maps in
+it is the 130 MB trade `machine_materials.py` refuses by name. It keeps the palette flat for
+#64's reasons. These three are gitignored derivatives of a purchased pack, so embedding
+costs a clone nothing.
+
+**What is still wrong, and it is pre-existing rather than new.** The arm sleeve renders as a
+bright yellow band — measured at (140, 118, 50) against a ground of (81, 67, 54) — and that
+is **specular on a flat low-poly facet**, not albedo: `OliveDrab` is 0.052 linear and no
+albedo that dark can produce it. The flat version measured (149, 127, 58) at the same
+roughness, so #65 made it slightly *darker* and did not cause it. Fixing it is a decision
+about roughness or `KHR_materials_specular` for viewmodels, or about the arms' geometry, and
+it wants its own ticket.
+
+**And what no render here can settle** is whether the recovered maps make the rifle read as
+*this game's* rifle. They are a clean modern pack's own textures, which is the quarrel
+`prop_grade.py` picked with the heyheythere atlas and solved by remapping it onto the
+palette's ramps. The rifles were left ungraded deliberately — a weapon is one object held at
+arm's length rather than two hundred props filling a yard, and the measured albedo is
+already dark — but it is the obvious next question and it is a human's.
 
 ### The Build Gun is the one thing in a player's hands this project made
 

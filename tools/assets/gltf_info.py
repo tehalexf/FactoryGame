@@ -83,12 +83,13 @@ def _read_vectors(doc: dict, binary: bytes, index: int, components: int) -> list
 def mesh_primitives(path: str | Path) -> list[dict]:
     """Every triangle-list primitive as plain lists: positions, UVs, indices.
 
-    One dict per primitive with `mesh` (the mesh's name), `positions`, `uvs`
-    (empty when the primitive carries none) and `indices`.
+    One dict per primitive with `mesh` (the mesh's name), `mesh_index` (its
+    position in the document's mesh array, which is what a node points at),
+    `positions`, `uvs` (empty when the primitive carries none) and `indices`.
     """
     doc, binary = read_glb(path)
     out: list[dict] = []
-    for mesh in doc.get("meshes", []):
+    for mesh_index, mesh in enumerate(doc.get("meshes", [])):
         for prim in mesh.get("primitives", []):
             attributes = prim.get("attributes", {})
             if prim.get("mode", 4) != 4 or "POSITION" not in attributes:
@@ -105,8 +106,8 @@ def mesh_primitives(path: str | Path) -> list[dict]:
                     f"<{accessor['count']}{code}", binary, start))
             else:
                 indices = list(range(len(positions)))
-            out.append({"mesh": mesh.get("name", ""), "positions": positions,
-                        "uvs": uvs, "indices": indices})
+            out.append({"mesh": mesh.get("name", ""), "mesh_index": mesh_index,
+                        "positions": positions, "uvs": uvs, "indices": indices})
     return out
 
 
@@ -171,6 +172,57 @@ def image_count(doc: dict) -> int:
 
 def material_names(doc: dict) -> list[str]:
     return [m.get("name", "") for m in doc.get("materials", [])]
+
+
+#: glTF's texture slots, by the name this reader reports them under. There is no
+#: separate metallic or roughness slot: glTF carries both in one texture, green
+#: for roughness and blue for metallic.
+TEXTURE_SLOTS = (
+    ("albedo", ("pbrMetallicRoughness", "baseColorTexture")),
+    ("metallic_roughness", ("pbrMetallicRoughness", "metallicRoughnessTexture")),
+    ("normal", ("normalTexture",)),
+    ("occlusion", ("occlusionTexture",)),
+    ("emissive", ("emissiveTexture",)),
+)
+
+
+def material_textures(doc: dict) -> dict[str, dict[str, str]]:
+    """Which image each material has bound to each glTF texture slot.
+
+    `{material name: {slot: image name}}`, with a slot absent when nothing is
+    bound to it — so a material with no entry at all is one that renders as its
+    factors alone, which is what every viewmodel surface did before #65.
+
+    Reported by **image name** rather than index because that is what a test can
+    state an expectation about: an index is a position in an array whose order is
+    the exporter's business.
+    """
+    textures = doc.get("textures", [])
+    images = doc.get("images", [])
+
+    def image_of(reference) -> str | None:
+        if not isinstance(reference, dict):
+            return None
+        index = reference.get("index")
+        if index is None or index >= len(textures):
+            return None
+        source = textures[index].get("source")
+        if source is None or source >= len(images):
+            return None
+        return images[source].get("name") or f"image{source}"
+
+    found: dict[str, dict[str, str]] = {}
+    for material in doc.get("materials", []):
+        bound: dict[str, str] = {}
+        for slot, path in TEXTURE_SLOTS:
+            node = material
+            for key in path:
+                node = node.get(key, {}) if isinstance(node, dict) else {}
+            name = image_of(node)
+            if name is not None:
+                bound[slot] = name
+        found[material.get("name", "")] = bound
+    return found
 
 
 def uv_layer_count(doc: dict) -> int:
