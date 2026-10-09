@@ -12,6 +12,7 @@ tools/assets/link_licensed.sh --check  # what purchased packs can this checkout 
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
 python3 tools/assets/asset_staleness.py  # is any generated asset older than its recipe?
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
+tools/assets/generate_build_gun.sh # regenerate the Build Gun viewmodel. Committed, unlike the weapons
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
@@ -20,6 +21,9 @@ SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png r
                                  # the same, through the player's own camera (placing|routing|running)
 SHOT_SCRIPT=tools/visual/compose_swing_shot.gd tools/visual/shot.sh out.png
                                  # a strip, one frame per tick, of the weapon in frame mid-swing
+SHOT_SCRIPT=tools/visual/compose_tool_shot.gd tools/visual/shot.sh out.png "tool bare"
+                                 # what is in the player's hands (tool|draw|compare; + bare).
+                                 # `compare` may NOT be committed: it renders the purchased arms
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
@@ -329,6 +333,14 @@ assets/   committed CC0 and self-authored assets. intake/ holds the source FBX.
 tools/    developer scripts. tools/assets/ is the asset pipeline; tools/balance/ measures a Run.
 docs/     design, ADRs, asset licensing.
 ```
+
+The Build Gun's viewmodel is scripted output too, and it is the only thing a
+player *holds* that this repository may carry: `tools/assets/build_gun_recipe.py`
+declares the geometry and the takes and `generate_build_gun.sh` produces
+`assets/gear/build_gun.glb`. Every weapon frame is converted out of a purchased
+pack instead and is gitignored — see "The Build Gun is the one thing in a
+player's hands this project made" and
+[docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 7a.
 
 Machine meshes are scripted output, not modelled files: `content/` declares the
 footprints and ports, `tools/assets/machine_recipes.py` declares the geometry,
@@ -4022,14 +4034,14 @@ than trusting it. The conversion, and the four things about those FBX that bite,
   `query_player_holster_blend` and `query_player_held_is_build_gun` stay in the Simulation —
   `test_movement_weight.gd` pins them, and they are the authoritative answer for anything
   that is not this renderer — but nothing in `game/` reads them any more.
-- **A Build Gun model arrives the same way an arm does.** It is named `build_gun` in the
-  gear directory, so the day somebody models one it loads, resolves its clips and draws
-  without `world_view.gd` changing. Until then it is the same two placeholder boxes every
-  unconverted weapon gets, sized stubby by a reach of zero — which is a real loss against
-  what #29 shipped: its placeholder Build Gun had a flared nozzle and an emissive rail in
-  the hologram's own colour, so the silhouette read as a tool rather than a gun at a glance,
-  and that distinction is the point of a holster. **Modelling a Build Gun is the ticket that
-  gets it back**, and it is art rather than code.
+- **A Build Gun model arrives the same way an arm does, and since #64 there is one.** The
+  seam was always waiting — `build_gun` is an id like any other, so a model under that name
+  loads, resolves its clips and draws with **no change to `world_view.gd`** — and what went
+  through it is the subject of "The Build Gun is the one thing in a player's hands this
+  project made", below. #28 had left the tool as the same two placeholder boxes every
+  unconverted weapon gets, sized stubby by a reach of zero, which cost #29's silhouette: a
+  flared nozzle and an emissive rail that read as a *tool* rather than a gun at a glance,
+  and that distinction is the point of a holster.
 
 ### Framing is measured against the frustum, never argued about
 
@@ -4102,6 +4114,123 @@ mouse.
 What is still placeholder-grade is the *surface*: the packs reference textures they do not
 ship, so the arms and the weapons are repainted from `dieselpunk_palette.json` rather than
 textured. Recovering the real maps is a nicer-looking ticket of its own.
+
+### The Build Gun is the one thing in a player's hands this project made
+
+#64, and the fact to carry away is the licence rather than the art: **it is committed.**
+Every weapon frame is converted out of a purchased pack, so its `.glb` is a derivative of
+something non-redistributable and lives in a gitignored directory most clones do not have.
+The Build Gun is assembled by `tools/assets/build_gun_recipe.py` out of `machine_parts` and
+`dieselpunk_palette.json` — the same kit and the same numbers every Machine mesh is
+generated from — so it is this project's own work, `assets/gear/build_gun.glb` is in git,
+and **a clone with no packs at all now holds the real tool.** That is the one thing in this
+whole area that does not degrade.
+
+`WeaponViewmodel` gained a second search directory and nothing else. `BODY_DIRECTORIES` is
+the committed one then the quarantine, and the order is a decision: the committed side is
+the one with a proof behind it (`test_build_gun.py` regenerates the model and compares the
+bytes), and the louder failure by far is somebody regenerating the committed tool, rendering
+it and seeing no change.
+
+**Being committed moves it to the other half of #57's rule** — *where the output is
+committed, prove it; where it is gitignored, date it* — so it is deliberately **absent from
+`asset_staleness.py`**, exactly as the Machine meshes and `assets/generated/` are, and the
+byte-for-byte regeneration is the stronger instrument in its place.
+
+**The framing is refused rather than argued about, and in three directions.** The rule above
+cost three bug reports and one fix that made things worse, and a *generated* viewmodel can do
+better than a render because the geometry is in hand: `generate_build_gun.py` projects every
+vertex into `player.field_of_view_degrees`' own half-angles and **declines to write a model
+that fails**. The single obvious check says the wrong thing, which the first run proved by
+refusing a perfectly good model — the stowed pose is *supposed* to be out of frame, so the
+rule had to say what it meant:
+
+- **nothing behind the eye, in any pose** — the one defect that has actually shipped here
+  (`convert_weapons.sh`'s `--offset=0.0,0.0,-0.10`);
+- **the business end inside the frame at rest** — not the whole tool, because a viewmodel's
+  grip runs off the bottom edge in every first-person game ever shipped;
+- **the business end *outside* it when stowed**, or a `Draw` reads as the tool sliding about
+  rather than coming up into frame. That one fired for real: pushing the tool further from
+  the eye made the old stow drop subtend a smaller angle, and the generator caught it on the
+  next run.
+
+#### Four defects, every one of them found by looking
+
+The pair is [`docs/images/build_gun_before.png`](docs/images/build_gun_before.png) and
+[`_after`](docs/images/build_gun_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_tool_shot.gd tools/visual/shot.sh out.png "tool bare"
+```
+
+The before is the ticket's own complaint in one frame: a flat grey rectangle in the
+bottom-right corner, behind the hotbar, very nearly the same colour and size as the HUD
+panels it is sitting among.
+
+1. **The model loaded, both takes resolved, `has_model` was true, and there was nothing in
+   the player's hands.** The tool was frozen at its stowed pose, half a metre below the
+   frame, and the cause is symmetrical in a way worth knowing: **both ends of the pipeline
+   delete an animation track whose value never changes.** Blender's exporter drops it
+   (`export_optimize_animation_keep_anim_object`) and Godot's `generate_scene` drops it
+   again (`remove_immutable_tracks`, default **on**). The Build Gun's `Idle` is one key at
+   rest on purpose, so it is exactly that track — and `WeaponViewmodel._play` falls a role
+   with no clip back to the idle and, failing that, *returns without seeking*, leaving the
+   model wherever the last clip left it. With `player.holster_seconds` at 0.06 the opening
+   `Draw` is over in three ticks, so what it was left at was `Draw` time zero. **Every
+   purchased weapon ships a breathing idle, which is why nothing had ever met this.** The
+   related trap is the rest pose: NLA strips hold their first frame over every frame outside
+   their range, so the exporter writes a blend of the takes' opening keys as the node's own
+   transform unless `extrapolation` is `NOTHING`.
+2. **The hotbar is the one thing guaranteed to share the frame with a Build Gun**, because a
+   Build Gun is only ever in hand in build mode and build mode is when the Machine picker is
+   drawn. The first framing put the tool 25 cm from the eye, down and right — straight into
+   the corner the hotbar occupies, with a quarter of the frame of tool behind two rows of
+   cells. #48's lesson in a new place, *a mark that is behind something looks exactly like a
+   mark that was never drawn*, and **the frustum check could not have caught it, because the
+   hotbar is not geometry.**
+3. **A silhouette cue that works on a Machine can be the worst possible cue in a hand.** The
+   "carries material" cue began as a drum lying athwart the body, which is unmistakable on a
+   Machine at thirty metres and hopeless at arm's length: a viewmodel is seen from *behind*,
+   so anything across the tool at the near end is the biggest object in frame. Over the
+   middle it stood in front of the flared emitter; moved to the breech it filled a third of
+   the screen on its own and read as a **drum magazine**, which is precisely what this
+   silhouette exists not to be. It is a canister down the left flank now, which is where
+   every shipped viewmodel puts its detail and for this reason.
+4. **A brightened palette, and it is #42's Wall mistake made a third time.** Defect 1's
+   symptom — a tool-shaped nothing — read as "the palette is too dark to use flat", and the
+   palette's own comment supplies the argument (*"Where a material has a texture, THE TEXTURE
+   CARRIES THE COLOUR"*). Brightened towards each entry's `texture_tint`, the tool measured
+   **(212, 187, 146) against a ground of (24, 22, 18)**. The palette was never the problem;
+   the model was out of frame for reason 1. **Measure a colour against what will be beside
+   it, and fix the bug you have rather than the one the symptom suggests.** The Wall settles
+   it by precedent: it is drawn with the palette's own `WeldedSteel` flat and reads correctly.
+
+#### What the comparison settles, and what it does not
+
+`compose_tool_shot.gd`'s **`compare`** preset puts the Build Gun and every weapon frame
+through the same camera in turn, and it is the one render that answers the acceptance
+criterion — *and the one that may not be committed*, because with the packs linked its weapon
+panels are renders of the purchased arms. `compose_swing_shot.gd` has the same rule and
+`compose_death_shot.gd`'s `plain` preset is the other half of it.
+
+Read as a set, the answer is not close: every weapon is a long dark rifle running diagonally
+across the frame out of a pair of arms, and the Build Gun is short, blocky, pale-ended and
+compact, sitting above the hotbar rather than across the view. **Nobody would confuse them at
+a glance**, which is the whole of what a holster is for.
+
+**Two things recorded rather than fixed**, both real and both out of scope:
+
+- **The tool has no hands.** Every weapon's model brings the arms with it; a self-authored
+  one cannot borrow them, because those arms are the purchased asset. So the Build Gun floats
+  where a weapon is held. Modelling a pair of arms is a ticket of its own and it is the
+  single biggest remaining difference between the tool and the weapons.
+- **At arm's length the parts read as a jumble before they read as a tool.** The three cues
+  are individually right and the whole is busy; the honest statement is that the *silhouette*
+  is distinct and the *detail* is not yet legible. That is a judgement a human with a mouse
+  should make before anybody spends more renders on it.
+
+**What no render can settle** is whether a player who presses `B` now feels they pressed it.
+That is the question the whole ticket is about and the one thing none of this measures.
 
 ### Where the balance stands
 
