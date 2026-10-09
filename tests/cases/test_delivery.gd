@@ -303,9 +303,13 @@ func test_a_locked_machine_may_still_be_put_on_the_build_gun() -> void:
 
 
 func test_a_run_opens_with_an_unlocked_machine_on_the_build_gun() -> void:
-	# `press_mk1` sorts after `miner_mk1` and before `miner_mk2`, and two of those three are
-	# locked, so a Build Gun that simply took the first row would open holding something the
-	# Simulation refuses to place.
+	# Two of this fixture's three Machines are locked, so a Build Gun that opened on the
+	# wrong one would be holding something the Simulation refuses to place. Since #55 the
+	# guarantee is the **loader's** rather than a scan's: `player.starting_machine` names an
+	# id, and `Definitions` refuses a set in which a Delivery tier locks it — see
+	# `test_content_definitions.test_a_starting_machine_a_delivery_locks_is_refused`. This
+	# is the same claim from the other end, which is the half a refusal test cannot make:
+	# what the gun actually holds on tick 0 is buildable.
 	var sim: Simulation = _sim()
 	assert_eq(sim.query_player_selected_machine(0), "miner_mk1")
 	assert_eq(

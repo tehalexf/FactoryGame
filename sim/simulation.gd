@@ -1534,9 +1534,10 @@ func _init(
 	_player_survey_ticks.fill(0)
 	_player_build_rotation.resize(players)
 	_player_build_rotation.fill(0)
-	# The first *unlocked* Machine by id, so a fresh Run has something buildable on the
-	# Build Gun rather than something it would refuse. Empty when the definitions failed to
-	# load, which is the one case where there is genuinely nothing to hold.
+	# What `player.starting_machine` names — the first Machine of the production chain,
+	# stated in content because the chain order is derived in `game/build_chain.gd` and is
+	# none of the Simulation's business (#55). The loader has already refused a set naming
+	# no row or a locked one, so this is a real, buildable Machine.
 	_player_selected_machine.resize(players)
 	_player_selected_machine.fill(_opening_machine())
 
@@ -1567,8 +1568,9 @@ func _init(
 	_player_revive_target.resize(players)
 	_player_revive_target.fill(-1)
 	# The dial opens on the first *unlocked* Stratagem and one Charge, so a Run has something
-	# loadable on it rather than something a Silo would refuse — the arrangement the Build
-	# Gun's opening Machine has, and for the same reason.
+	# loadable on it rather than something a Silo would refuse. The Build Gun's opening
+	# Machine was the same arrangement until #55 moved it into content; a Stratagem has no
+	# equivalent of a chain order to disagree with, so the scan stays the right answer here.
 	_player_dial_stratagem.resize(players)
 	_player_dial_stratagem.fill(_opening_stratagem())
 	_player_dial_charges.resize(players)
@@ -5573,8 +5575,13 @@ func _stratagem_is_unlocked(stratagem_id: String) -> bool:
 	return not _definitions.locks_stratagem(stratagem_id)
 
 
-## The Stratagem a fresh Run opens with on the dial: the first unlocked one by id, for the
-## reason the Build Gun opens holding the first unlocked Machine.
+## The Stratagem a fresh Run opens with on the dial: the first unlocked one by id, so a Run
+## has something loadable on it rather than something a Silo would refuse.
+##
+## The Build Gun's opening Machine was this same scan until #55 named it in content, and the
+## difference is that a Machine had a *second* order to disagree with — the production chain
+## the hotbar reads in. A Stratagem has no such order, so id order is not standing in for
+## anything here and there is nothing for content to settle.
 func _opening_stratagem() -> String:
 	for stratagem_id: String in _definitions.stratagem_ids():
 		if _stratagem_is_unlocked(stratagem_id):
@@ -6564,15 +6571,28 @@ func _machine_is_unlocked(machine_id: String) -> bool:
 	return not _definitions.locks_machine(machine_id)
 
 
-## The Machine a fresh Run opens with on the Build Gun: the first unlocked one by id.
+## The Machine a fresh Run opens with on the Build Gun: the one `player.starting_machine`
+## names.
 ##
-## The first *unlocked* one, because a Build Gun that opens holding something the
-## Simulation would refuse to place teaches a player that the game is broken.
+## **It used to be the first unlocked Machine by id, and that was three Machines past
+## where the hotbar says to start.** The index space is the sorted content, so the first
+## row is whatever sorts first — `ammo_press_mk1` on the shipped table — while the order a
+## player reads the hotbar in is the *production chain*, derived in `game/build_chain.gd`
+## out of what each Recipe eats and makes. Those are two different orders and only one of
+## them is a `sim/` concept, so the Simulation is **told** where a Run starts rather than
+## working it out: #55.
+##
+## No fallback and no scan, because the guarantee moved rather than being dropped.
+## `Definitions._check_starting_machine` refuses a set whose key names no row or names one
+## a Delivery tier locks, and a set with any error carries no definitions at all — so by
+## the time this runs the id is a real, unlocked Machine. A fallback here would be a second
+## opinion about which Machine that is, in the one place a disagreement is invisible.
+##
+## Read once, at construction, which is why a hot-reload that edits the key does not move
+## what is already in a player's hands — the rule `player.starting_stock` obeys for the
+## same reason: raising it mid-Run is not a way to conjure materials.
 func _opening_machine() -> String:
-	for machine_id: String in _definitions.machine_ids():
-		if _machine_is_unlocked(machine_id):
-			return machine_id
-	return ""
+	return _definitions.player_starting_machine
 
 
 ## Puts one Enemy of the given kind on the Map at the centre of a tile.

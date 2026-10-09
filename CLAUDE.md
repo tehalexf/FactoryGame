@@ -1004,6 +1004,17 @@ file still carry their own `_read` and their own `SHIPPED_STOCK` literal. They s
 un-overrides them, which is the failure `stock()` exists to remove. Moving them onto
 `ContentFixture` is mechanical.
 
+**#55 made that more urgent and found the gap beside it.** Four of those ten now carry a
+`SHIPPED_STARTING_MACHINE` literal next to their `SHIPPED_STOCK` one, so there are two
+hand-copies of a shipped value per file rather than one. And the gap is this: **a file that
+replaces the Machine *table* is not protected by `ContentFixture` at all**, because what it
+substitutes is a source and not a tuning value — so `player.starting_machine` naming a row
+none of its rows answer to makes the whole set an error. That is the loader being right, and
+it is also the thing to check before adding any future tuning key that names a **row** rather
+than a number: scan every self-supplied table in `tests/`, not the files that happen to spell
+`machines = `. See "Where a Run opens, and who is allowed to know" for what that cost and how
+the four were found.
+
 `Definitions.load_from_directory` reads all eight files and `Definitions.parse` takes all
 eight sources, in that order. A missing one is an error naming the path, never an empty
 table — and `game/definition_watcher.gd` digests all eight plus the ports, so editing any of
@@ -2820,17 +2831,129 @@ and the first two were in the tool:
    wins instead, which is the better rule anyway: the cyan's job is to get a player to pick
    the cell, so a cell they have picked has had the advice.
 
-**Two findings recorded rather than patched**, both out of this ticket's scope:
+**Two findings recorded rather than patched**, both out of this ticket's scope. **The
+first is fixed; #55 is the ticket, and the section below is it.**
 
-- **A Run opens with the Ammo Press on the Build Gun.** `_player_selected_machine` is an
-  *index* into the sorted Machine table and it starts at 0, which is `ammo_press_mk1` —
-  the third thing in the chain. Fixing it means changing which index a Run starts on, which
-  moves `Simulation.hash()`, and "the first cell of the chain" is a `game/` concept that
-  `sim/` must not learn. The hotbar covers it — the Miner's cell is marked and the objective
-  line names its key — but the Build Gun is still pointed at the wrong thing on tick 0.
+- ~~**A Run opens with the Ammo Press on the Build Gun.**~~ **Fixed by #55.**
+  `_player_selected_machine` holds an id but it was *filled* from a scan of the sorted
+  table, so a Run opened on `ammo_press_mk1` — the third thing in the chain — while the
+  hotbar marked the Miner's cell and the objective line named its key. #53 left it for two
+  reasons and both were right: fixing it moves `Simulation.hash()`, and "the first cell of
+  the chain" is a `game/` concept `sim/` must not learn. What was wrong was the conclusion
+  that those two made it unfixable. See "Where a Run opens, and who is allowed to know",
+  below.
 - **`iron_plate` has no generated icon**, so the Smelter's output slot and the Ammo Press's
   input slot are both blank in a chain that is otherwise pictured end to end. #20 generated
   ten icons and the content has grown Items since. That is an art ticket.
+
+### Where a Run opens, and who is allowed to know
+
+#55. The Build Gun now opens pointed at the first Machine of the chain, and the way it gets
+there is the point: **content is told where a Run starts, and nothing in `sim/` learns what a
+chain is.**
+
+`player.starting_machine` names a Machine **id**, and the precedent it copies in every
+respect is `player.starting_weapon` — a tuning key naming a row, resolved by `Definitions`,
+checked against the table it names *and* against the Delivery table, which is the
+cross-table question that makes tuning the last thing read. An id rather than an index for
+the reason the Build Gun has always *held* an id: a hot-reload that resorts the table must
+not change what a Run opens pointed at.
+
+Six things worth knowing rather than rediscovering:
+
+- **`Simulation._opening_machine()` is a one-line read with no fallback, and the absence is
+  deliberate.** It used to scan for the first unlocked Machine by id, and that scan was
+  carrying a real guarantee — a Build Gun holding something the Simulation would refuse to
+  place teaches a player the game is broken. The guarantee **moved** rather than being
+  dropped: `_check_starting_machine` refuses a set naming no row or naming one a Delivery
+  tier locks, and a set with any error carries no definitions at all. A fallback left in
+  would be a second opinion about which Machine a Run opens on, in the one place a
+  disagreement is invisible.
+- **The two orders are put side by side in exactly one test, because that is the only place
+  they can be.** `test_building_view.test_a_run_opens_pointed_at_the_first_cell_of_the_chain`
+  asserts the hologram, the lit cell and the objective line all name the same Machine on tick
+  0. The Simulation has no opinion about cell 0 and must not grow one, so nothing on the
+  `sim/` side of the boundary could have asserted this.
+- **It cost a cascade anyway, and the shape of it is the lesson.** A required tuning key that
+  names a *row* is not the same risk as one that names a number: a file supplying its own
+  `machines.csv` has no `miner_mk1`, so the set is an error and carries no definitions at
+  all — the 156-failure shape #51 exists to prevent, arriving through a door `ContentFixture`
+  does not cover, because these files replace the **table** rather than the tuning. Fifteen
+  test files declare their own Machine table and **four of them name no shipped id**:
+  `test_game_audio` (9 red), `test_machine_mortality` (3), `test_silo` (26) and `test_turrets`
+  (8) — forty-six failures between them. Each now substitutes `starting_machine` beside the
+  `starting_stock` it was already substituting, naming a row it does have.
+
+  **What found them was grep, and grep found the wrong answer first.** Searching for
+  `machines = ` found six files and all six were fine, which read as "no cascade" — and was
+  simply the wrong query: four more files pass their table positionally to
+  `Definitions.parse` and never write that assignment. Scanning for the *header string*
+  inside every triple-quoted block in `tests/` is what actually enumerated them. **A key
+  naming a row wants that scan, not a search for a variable name.**
+
+  **Two files in the four also parse the shipped table elsewhere, and those sites must keep
+  the shipped value** — `test_silo._fixture_content` and `test_turrets._content` /
+  `_cannon_content`. The override is threaded next to the `AMMO_STOCK` / `STOCKED`
+  substitution each site already does, which is what makes "this site brings its own
+  Machines" and "this site gets the override" one decision rather than two.
+
+- **`test_build_gun.gd` changed on purpose rather than under duress.** It names `press_mk1`,
+  which sorts **last** of its three Machines, so its assertion fails if anything ever goes
+  back to taking the first row by id. A fixture that happened to agree with both rules would
+  have asserted nothing.
+
+- **Eight tests went red for a reason that was not the key at all, and it is worth knowing
+  about.** `test_godot_layer_smoke` (seven) and `test_belt_routing` (one) click and expect a
+  Machine; they were relying on the opening selection being something placeable **anywhere**.
+  A Run now opens on the Miner, and a Miner aimed at bare rock sends **no intent at all**,
+  because the Build Gun snaps to a Node or points nowhere (#42). Every one of those tests is
+  about the click rather than about the Miner, so each now names `ammo_press_mk1` — which is
+  exactly what a Run opened on before #55, so they do what they always did and now say so.
+  **The dependency was invisible until the default moved**, which is the argument for naming
+  a fixture's premise even when the default happens to supply it.
+- **No replay fixture needed re-recording.** The opening hash moves — the selection differs
+  and the definition digest has a key more — but a `ReplayRecording` made without a
+  `Definitions` re-reads `content/`, so record and replay move together and every fixture
+  asserts `is_identical` rather than a literal hash. What *could* have moved is a fixture
+  that built by clicking without selecting first; there is none, because
+  `test_recorded_session` presses `2` for the Smelter (#53) and every other build fixture
+  passes a definition index.
+
+**The render is `opening`, a fourth preset on `compose_building_shot.gd`, and it exists
+because none of the three could see the question.** `placing` puts a Smelter on the gun by
+hand, which is precisely the act that makes the opening selection invisible — the same reason
+#49 needed `triage` when `pair` and `distance` both framed past its subject. So `opening`
+builds nothing, walks nowhere and selects nothing, refusing to improve the vantage the way
+`compose_spawn_shot.gd` does, with one exception: a single `B`, which is the keypress the
+objective line is itself telling the player to make and without which there is no Build Gun in
+frame to be pointed at anything.
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "opening bare"
+```
+
+**And the picture is the argument, as it was for #48 and #52.**
+[`docs/images/opening_selection_before.png`](docs/images/opening_selection_before.png)
+against [`_after`](docs/images/opening_selection_after.png). The before is a worse statement
+of the bug than the issue was: the objective line says *"Place a Miner on the iron ore 12 m
+behind you — key 1"*, the HUD says `build gun: ammo_press_mk1`, **two cells are lit in two
+different colours** — cyan on the Miner for "next", amber on the Ammo Press for "selected" —
+and the thing in front of the player is a **green, placeable Ammo Press**. Green means click
+and it goes down, so the one element on screen that reads as an instruction was inviting a
+new player to spend 14 of their 110 plate on the third Machine in the chain as the first act
+of the Run. After: one cell lit, `build gun: miner_mk1`, and a Miner's derrick where the
+hologram was.
+
+The after shot's hologram is **red**, and that is #42 working rather than a defect left
+behind: a Miner snaps to a Node or refuses, the player spawns facing away from the ore, and
+the HUD says `no ore in range — a Miner has to stand on a Node` under a line that says the
+ore is 12 m behind them. Turning to face it would have been exactly the improved vantage this
+preset refuses — and the red version is the more useful picture, because it shows the
+selection, the snap and the objective line all agreeing about the same Machine at once.
+
+`bare` is new on this composer and the second reason for it is the licence: the yard is drawn
+out of the **purchased** packs when they are linked, so a shot bound for `docs/images/` in a
+public repository has to be able to leave them out.
 
 ### Refusals are a query, not state
 

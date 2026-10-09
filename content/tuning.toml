@@ -312,6 +312,22 @@ revive_reach_metres = 3
 # The wrench, because it is also the repair tool — a Run opens able to mend what it built.
 starting_weapon = "pneumatic_wrench"
 
+# The Machine a Run opens with on the Build Gun, by id. Must name a row in machines.csv
+# that no Delivery tier locks.
+#
+# A key here rather than a constant in sim/, for the reason `starting_weapon` is one, and
+# an **id** rather than an index for the reason the Build Gun holds one: a hot-reload that
+# resorts the table must not change what a Run opens pointed at.
+#
+# **The Miner, because it is the first thing in the chain**, and this key is how that fact
+# reaches the Simulation without the Simulation learning what a chain is. The order the
+# hotbar reads in is derived in game/build_chain.gd from what each Recipe eats and makes —
+# a Miner's input is the ground, so it is stage 0 — and the Simulation has no business
+# knowing any of it. What it can be told is where a Run starts. Until #55 the opening
+# selection was index 0 of the sorted table, which is `ammo_press_mk1`: the hotbar said
+# build a Miner, the objective line said press 1, and the hologram was an Ammo Press.
+starting_machine = "miner_mk1"
+
 [gear]
 
 # First-person combat: the numbers that are not per-weapon. The per-weapon ones are

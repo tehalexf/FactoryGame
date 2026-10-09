@@ -452,7 +452,22 @@ func test_the_right_button_flips_the_corner_instead_of_turning_a_hologram() -> v
 
 
 func test_a_click_with_the_machine_tool_out_still_places_a_machine() -> void:
+	# **The Ammo Press rather than whatever a Run opens on, and #55 is why it had to be
+	# said.**
+	# This test is about the *tool*: with the Machine tool out a click builds and does not
+	# start a Belt drag. Since #55 a Run opens on the Miner, and a Miner aimed at bare rock
+	# legitimately sends **no intent at all** — the Build Gun decides where it is pointing
+	# and an aim with nowhere to put a Miner points nowhere (#42). That is a different rule
+	# with its own tests, and it was silently standing in for this one's subject the moment
+	# the opening selection changed under it. Naming a crafter makes the test about the tool
+	# again, which is what it always claimed to be about — and the Press is what a Run
+	# opened on before #55, so the test does exactly what it did.
 	var sim: Simulation = _building()
+	sim.step([
+		InputAction.select_machine(
+			0, sim.query_definitions().machine_index("ammo_press_mk1")
+		)
+	])
 	var controller: PlayerController = PlayerController.new()
 	var clicking: PlayerController.DeviceSample = _sample()
 	clicking.place_clicked = true

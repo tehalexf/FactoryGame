@@ -163,6 +163,7 @@ const TUNING_PLAYER_RESPAWN_SECONDS: String = "player.respawn_delay_seconds"
 const TUNING_PLAYER_REVIVE_SECONDS: String = "player.revive_seconds"
 const TUNING_PLAYER_REVIVE_REACH: String = "player.revive_reach_metres"
 const TUNING_PLAYER_STARTING_WEAPON: String = "player.starting_weapon"
+const TUNING_PLAYER_STARTING_MACHINE: String = "player.starting_machine"
 
 # Standing on the Factory (#30). A player is a box on the grid, not a point, and what
 # they can walk up rather than having to jump is the one number that decides whether a
@@ -450,6 +451,22 @@ var player_revive_reach_metres: int = 0
 ## weapon a Run starts with is a balance decision, and a fourth weapon becoming the
 ## opening one must be an edit to a file.
 var player_starting_weapon: String = ""
+
+## The Machine a Run opens with on the Build Gun, by id. Must name a row in
+## `content/machines.csv` that no Delivery tier locks.
+##
+## **An id rather than an index, and content rather than `sim/`.** The index space is a
+## function of the content — the Machines are sorted by id — so index 0 is whatever sorts
+## first, which until #55 was `ammo_press_mk1`: three Machines past where the hotbar says
+## to start. The order a player reads the hotbar in is derived in `game/build_chain.gd`
+## from what each Recipe eats and makes, and the Simulation must not learn what a chain
+## is. So what content states is the *id* a Run opens pointed at, and the two agree
+## because the file says so rather than because `sim/` worked it out.
+##
+## Checked against the Machine table **and** the Delivery table, exactly as
+## `starting_weapon` is: a Build Gun that opens holding something the Simulation would
+## refuse to place teaches a player that the game is broken.
+var player_starting_machine: String = ""
 
 ## How far from the line of a shot an Enemy may stand and still be hit, in fixed-point
 ## metres, and how tall its hit volume is.
@@ -1416,6 +1433,7 @@ func digest() -> int:
 	hasher.feed_int(player_revive_seconds)
 	hasher.feed_int(player_revive_reach_metres)
 	hasher.feed_text(player_starting_weapon)
+	hasher.feed_text(player_starting_machine)
 	hasher.feed_int(gear_enemy_hit_radius_metres)
 	hasher.feed_int(gear_enemy_hit_height_metres)
 	hasher.feed_int(gear_view_kick_degrees_per_shot)
@@ -2727,6 +2745,9 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	player_revive_seconds = tuning.require_fixed(TUNING_PLAYER_REVIVE_SECONDS)
 	player_revive_reach_metres = tuning.require_fixed(TUNING_PLAYER_REVIVE_REACH)
 	player_starting_weapon = tuning.require_string(TUNING_PLAYER_STARTING_WEAPON).strip_edges()
+	player_starting_machine = tuning.require_string(
+		TUNING_PLAYER_STARTING_MACHINE
+	).strip_edges()
 	gear_enemy_hit_radius_metres = tuning.require_fixed(TUNING_GEAR_ENEMY_HIT_RADIUS)
 	gear_enemy_hit_height_metres = tuning.require_fixed(TUNING_GEAR_ENEMY_HIT_HEIGHT)
 	gear_view_kick_degrees_per_shot = tuning.require_fixed(TUNING_GEAR_VIEW_KICK_DEGREES)
@@ -3218,6 +3239,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				"an Enemy that cannot reach a player is an Enemy a player cannot lose to"
 			)
 		_check_starting_weapon(tuning)
+		_check_starting_machine(tuning)
 
 	# Checked after every read, so this names exactly the keys nothing asked for.
 	for key: String in tuning.unread_keys():
@@ -3349,6 +3371,47 @@ func _check_starting_weapon(tuning: TomlDocument) -> void:
 				'"%s" is unlocked by a Delivery tier, so a Run cannot open holding it —'
 				+ " the Gear a Run opens with is exactly the Gear no tier names"
 			) % player_starting_weapon
+		)
+
+
+## Checks `player.starting_machine` against the Machine table and the Delivery table.
+##
+## The same two mistakes `_check_starting_weapon` names, in the shape this table makes
+## them: an id no row answers to, and an id a Delivery tier locks. The second is the one
+## worth a sentence of its own, because the row exists and the file looks right — a Run
+## that opened pointed at `miner_mk3` would put a hologram in front of a player that the
+## Simulation refuses to place, with the reason being something they cannot do anything
+## about for the next twenty minutes.
+##
+## This is the cross-table question that makes tuning the **last** thing read: it needs
+## `machines.csv` and `deliveries.csv` both already loaded, exactly as the starting weapon
+## needs the Gear table and the Delivery table together.
+func _check_starting_machine(tuning: TomlDocument) -> void:
+	if player_starting_machine.is_empty():
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_MACHINE,
+			(
+				"a Run has to open pointed at something — name the first Machine of the"
+				+ " production chain, as a row in machines.csv"
+			)
+		)
+		return
+	if machine(player_starting_machine) == null:
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_MACHINE,
+			'"%s" is not a row in machines.csv' % player_starting_machine
+		)
+		return
+	if locks_machine(player_starting_machine):
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_MACHINE,
+			(
+				'"%s" is unlocked by a Delivery tier, so a Run cannot open pointed at it —'
+				+ " the Machines a Run opens with are exactly the ones no tier names"
+			) % player_starting_machine
 		)
 
 
@@ -3517,6 +3580,7 @@ func _discard_content() -> void:
 	player_revive_seconds = 0
 	player_revive_reach_metres = 0
 	player_starting_weapon = ""
+	player_starting_machine = ""
 	gear_enemy_hit_radius_metres = 0
 	gear_enemy_hit_height_metres = 0
 	gear_view_kick_degrees_per_shot = 0

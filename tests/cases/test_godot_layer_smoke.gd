@@ -89,15 +89,29 @@ func _sample() -> PlayerController.DeviceSample:
 	return PlayerController.DeviceSample.new()
 
 
-## A Run with the Build Gun already drawn.
+## A Run with the Build Gun already drawn and a crafter on it.
 ##
 ## A Run opens with the weapon out since #42, so a test about what a *click* does with the
 ## Build Gun has to put it in the player's hand first. In its own tick, so that the one
 ## test which is about the swap routing the tick it lands on — the holster test below — is
 ## the only one making that claim.
+##
+## **And the Ammo Press, which is what #55 made explicit rather than changed.** A Run used
+## to open on the first Machine by id, which on the shipped table is `ammo_press_mk1` — so
+## every test below that clicks and expects a Machine was quietly relying on the opening
+## selection, and on its being something placeable anywhere. A Run now opens on the Miner,
+## and a Miner aimed at bare rock sends **no intent at all**, because the Build Gun snaps
+## to a Node or points nowhere (#42). Seven tests here went red on that, every one of them
+## about the click rather than about the Miner. Naming the Press keeps each of them doing
+## exactly what it did before and says out loud what it needs.
 func _building() -> Simulation:
 	var sim: Simulation = Simulation.new(1, 1)
 	sim.step([InputAction.set_build_mode(0, true)])
+	sim.step([
+		InputAction.select_machine(
+			0, sim.query_definitions().machine_index("ammo_press_mk1")
+		)
+	])
 	return sim
 
 
@@ -450,7 +464,11 @@ func _kinds(actions: Array) -> Array:
 
 
 func test_a_left_click_places_in_build_mode() -> void:
-	var sim: Simulation = Simulation.new(1, 1)
+	# `_building()` rather than a bare Run: it draws the Build Gun, because a Run opens with
+	# the weapon out (#42), **and** puts a Machine on it that can stand anywhere, because a
+	# Run opens on the Miner since #55 and a Miner aimed at bare rock sends no intent at all.
+	# Both of those are the fixture; what this test is about is the click.
+	var sim: Simulation = _building()
 	var controller: PlayerController = PlayerController.new()
 	var sample: PlayerController.DeviceSample = _sample()
 	# Both readings of the one button, which is what a real click produces: the polling
@@ -459,9 +477,6 @@ func test_a_left_click_places_in_build_mode() -> void:
 	sample.place_clicked = true
 	sample.fire_held = true
 
-	# A Run opens with the weapon out since #42, so the Build Gun has to be drawn before a
-	# click can place. Drawn in its own tick, so what this test is about is the click.
-	sim.step([InputAction.set_build_mode(0, true)])
 	assert_true(sim.query_player_is_in_build_mode(0), "the Build Gun is out")
 	var kinds: Array = _kinds(controller.actions_for_tick(sim, 0, sample))
 	assert_true(kinds.has(InputAction.Kind.BUILD_MACHINE), "the click placed")
