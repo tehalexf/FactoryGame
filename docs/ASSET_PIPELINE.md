@@ -241,7 +241,8 @@ apart silently, so there is exactly one declaration of each fact:
 | Fact | Authority | Read by |
 |---|---|---|
 | Machine footprint, in tiles | `content/machines.csv` | the Simulation, and the generator |
-| Footprint of a body the Simulation does not declare yet (Nest, Belt, Machines awaiting a Recipe) | `content/machine_bodies.csv` | the generator |
+| **The Nest's footprint, in tiles** | **`sim/map_layout.gd`** (`MapLayout.NEST_FOOTPRINT_TILES`) | the Simulation, and the generator |
+| Footprint of a body the Simulation does not declare yet (Belt, Machines awaiting a Recipe) | `content/machine_bodies.csv` | the generator |
 | Input and output port positions | `content/machine_ports.csv` | the Simulation, and the generator |
 | Housing height, in metres | `content/machines.csv` | the Simulation, and the generator |
 | Housing height of a body the Simulation does not declare yet (Nest, Belt, Machines awaiting a Recipe) | `content/machine_bodies.csv` | the generator |
@@ -269,15 +270,45 @@ the asset suite is green either way, and the right fix is a look at the export f
 at the table — the declaration is the size it needs to be. Worth a ticket if the meshes keep
 growing.
 
-`machines.csv` wins. Where it names a Machine, its footprint and its
-`height_metres` are used and `machine_bodies.csv`'s columns are only a
+**The Simulation wins.** Where it declares a footprint or a `height_metres`, that is
+the number the generator builds at and `machine_bodies.csv`'s columns are only a
 cross-check — a disagreement is a load error naming both files, never a silent
 override. Blank the footprint and height columns in `machine_bodies.csv` to
 defer to it outright, which is the end state for every row: as gameplay tickets
 add Machines with real Recipes, the duplicate disappears and the cross-check
 tightens by itself. The six Machines `machines.csv` declares have already got
-there, and the Nest, a Belt and the three bodies still awaiting a Recipe are
-what is left.
+there, and since #61 so has the Nest; a Belt and the three bodies still awaiting
+a Recipe are what is left.
+
+**The Nest's footprint is the one the Simulation does not hold in `machines.csv`, and
+#61 is where it got an authority.** The Nest is not a Machine and never will be —
+DESIGN.md lists it alongside Belt and Wall, outside the eight — so it has no row there
+to carry a footprint column, and its size lives where its position does, in
+`sim/map_layout.gd` as `MapLayout.NEST_FOOTPRINT_TILES`. Both files said 4x4 and
+**nothing compared them**, because the footprint check only ever covered rows
+`machines.csv` declares. `machine_specs.structure_footprints` now reads that constant —
+parsed with a regex, because nothing in this pipeline runs GDScript and Blender's
+bundled Python reads the module — and `machine_specs.footprint_authorities` is the
+merged view, the one place that knows which file owns which footprint. So the error
+message names `sim/map_layout.gd` for the Nest and `content/machines.csv` for a
+Machine, rather than sending somebody to edit a file that is not the authority. The
+dependency runs one way, as always: `tools/` reads `sim/`, and `sim/` has never heard
+of the asset pipeline.
+
+Three things about it worth knowing rather than rediscovering:
+
+* **A renamed constant is an error naming the file**, not a plausible default. Resolving
+  a missing authority quietly is exactly the silence this closed, and the message says to
+  rename it in `machine_specs.SQUARE_FOOTPRINT_CONSTANTS` too.
+* **The Nest acquiring a row in `machines.csv` is also an error**, which is the same
+  defect arriving from the other direction: two files declaring one footprint.
+* **Both arms of the mechanism have been seen to fire**, which is the point of a
+  cross-check. With the row restating 4x4 and the constant moved to 3, `machine_specs`
+  refuses and names both files. With the row *blank* and the constant moved to 3 there is
+  nothing to disagree with — the generator correctly builds a 3x3 Nest — and what catches
+  it is `test_generated_machines.RegeneratingFromTheDeclaration`, which regenerated the
+  mesh and found it no longer matched the committed bytes. A deferring row is covered by
+  the stronger of the two instruments, not by neither.
 
 **The housing height stopped being art direction when #30 made the Factory
 solid.** The Simulation collides a player against `height_metres` and stands

@@ -197,10 +197,9 @@ def main() -> int:
         destination = output_dir / f"{machine.machine_id}.glb"
         export(destination)
         width, depth = machine.footprint_mm()
-        authority = "machines.csv" if machine.footprint_from_simulation \
-            else "machine_bodies.csv"
         print(f"  {machine.machine_id:<18} {machine.footprint_x}x{machine.footprint_z} "
-              f"tiles ({width/1000:g} m x {depth/1000:g} m) per {authority}, "
+              f"tiles ({width/1000:g} m x {depth/1000:g} m) per "
+              f"{machine.footprint_authority}, "
               f"{len(machine.ports)} port(s) -> {destination}")
     print(f"generated {len(machines)} Machine mesh(es) into {output_dir}")
     return 0
