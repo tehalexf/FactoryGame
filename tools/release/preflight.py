@@ -35,6 +35,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import manifest  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "assets"))
+import asset_staleness  # noqa: E402
+
 #: Where Godot keeps export templates on Linux, one directory per engine version.
 TEMPLATES_ROOT = Path.home() / ".local/share/godot/export_templates"
 
@@ -118,7 +121,21 @@ def _toolchain(godot_version: str, templates_root: Path, repo_root: Path) -> lis
 
 
 def _assets(repo_root: Path, licensed_root: Path) -> list[str]:
-    """The ticket's whole point: a missing converter output is a hard stop."""
+    """The ticket's whole point: a missing converter output is a hard stop.
+
+    And since #57 so is a **stale** one, which is the same failure one step
+    further on. A missing cue ships a build that sounds worse than the game; a
+    cue cut before its recipe was last corrected ships a build that sounds like
+    the game used to, which is harder to notice and was measured costing two
+    wrong fixes in one session. Both complaints name the converter to run,
+    because that is the only useful thing to say about either.
+    """
+    return _assets_missing(repo_root, licensed_root) + _assets_stale(
+        repo_root, licensed_root
+    )
+
+
+def _assets_missing(repo_root: Path, licensed_root: Path) -> list[str]:
     faults = manifest.audit(repo_root, licensed_root)
     if not faults:
         return []
@@ -129,6 +146,35 @@ def _assets(repo_root: Path, licensed_root: Path) -> list[str]:
         f" reports nothing. Quarantine: {licensed_root}"
     )
     return [header] + [fault.report() for fault in faults]
+
+
+def _assets_stale(repo_root: Path, licensed_root: Path) -> list[str]:
+    """A generated asset older than the recipe that produces it.
+
+    A hard stop here and a warning in `tools/assets/run_tests.sh`, and the
+    difference is which question is being asked: a suite asks whether the code is
+    correct, which is a property of the tree and the same for everybody, where a
+    release turns *this machine's* build products into the thing in somebody's
+    hands. Staleness is a fact about those products, so this is the gate that has
+    to care about it.
+
+    Silent on a clone with no packs, because absence is not staleness — which is
+    also why this can never be the only thing complaining: `_assets_missing` is
+    what notices an output that is not there at all.
+    """
+    stale = asset_staleness.audit(repo_root, licensed_root)
+    if not stale:
+        return []
+    header = (
+        "A generated asset is older than the script that produces it, so this"
+        " build would ship\n    the output of a recipe that has since been"
+        " corrected. These files are gitignored,\n    so no commit, no diff and"
+        " no suite can see one — which is how a corrected\n   "
+        " convert_weapons.sh was once merged while the shipped .glb stayed eleven"
+        " hours\n    older than it. Re-run the converter named; it is cheap and"
+        " idempotent."
+    )
+    return [header] + [entry.report() for entry in stale]
 
 
 def _publishing(

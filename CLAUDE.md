@@ -10,6 +10,7 @@ Design lives in [docs/DESIGN.md](docs/DESIGN.md), vocabulary in
 tools/assets/link_licensed.sh    # point this checkout's assets_licensed/ at the one with the packs
 tools/assets/link_licensed.sh --check  # what purchased packs can this checkout actually see?
 tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion, Godot import
+python3 tools/assets/asset_staleness.py  # is any generated asset older than its recipe?
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
@@ -694,6 +695,72 @@ The converters themselves are honest about absence — `convert_audio.sh`,
 bundle, and the game runs without any of it. That is the point of the design and it is
 also what makes the blind spot so quiet: **nothing fails when you cannot see the
 packs**. It just stops being the game the player played.
+
+### And nothing noticed when the output was older than the recipe
+
+#57, and the hole is the same one from the other end. Those generated files are
+**gitignored**, so no commit, no diff and no test in any of the three suites has ever
+related one to the script that produced it. Measured: `convert_weapons.sh` was corrected
+and merged and the shipped `.glb` stayed **eleven hours older than the script** — three
+suites green, because none of them can see a gitignored file — and the fix was reported
+to the user as landed while the thing in their hands had not changed. It was found by
+reading a timestamp by hand, on the third report of the same defect.
+
+`tools/assets/asset_staleness.py` is the check. `tools/assets/run_tests.sh` runs it and
+prints the report; `tools/release/preflight.py` makes it a **hard stop** beside its
+missing-asset audit. The split is which question is being asked: a suite answers "is this
+code correct", which is a property of the tree and the same for everybody who checks it
+out, where a release is where *this machine's* build products become the thing in
+somebody's hands — and that is the failure the ticket was opened about. Making it a
+property of the **tools** rather than of CI is `wav_to_cue.FFMPEG_MINIMUM_MAJOR`'s
+precedent, and here it is doubly necessary: **CI is the one machine that can never see
+these files at all.**
+
+Four things worth knowing rather than rediscovering:
+
+- **Absence is not staleness, and that rule was not weakened by one word.** A file that
+  is not there is reported by nothing. The only detectable case is a generated file that
+  **exists** and is **older than its own recipe**, which is exactly the case that bit, and
+  a clone with no packs gets the three groups' full file lists with every entry absent —
+  so it is silent by construction rather than by a flag. A zero-byte file counts as absent,
+  because `manifest.audit` already calls it missing and two complaints about one file would
+  be one too many.
+- **A file's age is when its content last changed, and a tracked file's mtime is a
+  *checkout* date.** Every tracked file in a fresh clone — and in every agent worktree here
+  — is minutes old, while the generated output it is compared against was produced hours
+  earlier in the main checkout and reached the worktree through `link_licensed.sh`'s
+  symlinks. Measured: a plain mtime comparison calls the entire pipeline stale with nothing
+  edited, and a check that cries wolf in the normal case is a check somebody switches off.
+  So an untracked file is as old as its mtime, a **modified** tracked file is as old as its
+  mtime — which is what catches somebody mid-change before any commit exists — and a clean
+  tracked file is `min(mtime, commit date)`. One rule on both sides, so a checkout can
+  neither invent staleness nor hide it. With no git at all the answer falls back to mtimes
+  and **says so**, which is the treatment `wav_to_cue` gives an ffmpeg with no release
+  number.
+- **The Machine meshes are deliberately not a fourth group, and that was measured.** They
+  are the one case where staleness can be **proved** instead of guessed at, because both
+  ends are committed and the generator is deterministic —
+  `test_generated_machines.RegeneratingFromTheDeclaration.test_reproduces_the_committed_meshes_byte_for_byte`
+  regenerates every mesh and compares the bytes. Including them anyway was tried and was
+  worse than useless: five of the eleven committed meshes carry an older commit date than
+  `machine_specs.py`, and regenerating `press_mk1` produced a file **byte-identical** to the
+  committed one, so the group reported five false positives on a clean tree and would have
+  taken the three real groups down with it. **Where the output is committed, prove it; where
+  it is gitignored, date it.**
+- **It proves it fires by backdating a file.** `tools/assets/tests/test_asset_staleness.py`
+  builds throwaway git repositories — `test_licence_guard.py`'s shape — with the real
+  recipes committed into them, and backdates a generated file rather than trusting whatever
+  is on the developer's disk. It **never skips**, because a licensed-asset skip is a failure
+  in `.github/ci/expected_skips.txt`'s own terms and a staleness check nobody has watched
+  fail is indistinguishable from one that has quietly become a no-op. Checked by neutering
+  the comparison: six of its fourteen tests go red.
+
+**The first run of it found a live one.** `tools/assets/convert_audio.sh` was last changed
+by the merge `2de7904` ("Merge #35 into #42"), which altered the recipe against *both*
+parents, and all 55 cues in the main checkout were cut before it. So the hero audio on this
+machine is the output of a recipe that has since changed — reported rather than re-cut,
+because re-cutting writes into the quarantine every agent on this machine shares. The fix is
+`bash tools/assets/convert_audio.sh`.
 
 ## Sound
 
