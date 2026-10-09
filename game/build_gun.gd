@@ -360,5 +360,16 @@ static func refusal_text(refusal: int) -> String:
 			# gun is away — a promise you cannot see needs no caption. It is here so the
 			# reason is never a silence, which is what this function exists to prevent.
 			return "the Build Gun is holstered — [B] to draw it"
+		Simulation.Refusal.NO_PORT_ON_THAT_FACE:
+			# Two ways out, and both are named, because that is the whole difference
+			# between this reason and the one below it (#56). A player who aimed at a
+			# blank wall by accident wants the second half of the sentence; one who meant
+			# that wall wants the first.
+			return "no port on that wall — turn the Machine, or dock on another face"
+		Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY:
+			# One way out, so only one is offered. A face that has a port on it is a face
+			# the player aimed at on purpose, and "aim somewhere else" would be the wrong
+			# advice — what is wrong is which way the Machine is standing.
+			return "that port runs the other way — turn the Machine"
 		_:
 			return "cannot build there"

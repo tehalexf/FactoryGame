@@ -681,6 +681,24 @@ const STARVED_COLOUR: Color = Color(1.0, 0.78, 0.22, 0.8)
 const DANGLING_MARK_HEIGHT_METRES: float = 1.1
 const STARVED_MARK_LIFT_METRES: float = 1.2
 
+## How high a dangling post stands when the end it marks is **against a Machine's wall**, in
+## metres — the branch post's clearance, for the branch post's reason.
+##
+## **#48 ruled this case out in writing and #56's first render found it.** The note on
+## `BRANCH_MARK_HEIGHT_METRES` ends "nothing else in this file collides with [the port
+## arrows], because a dangling end has no Machine behind it and therefore no arrow", and that
+## sentence was true of every dangling end anybody had rendered. It is exactly false of the
+## end this ticket is about: a Belt refused at a declared port is standing **on a dock tile**,
+## which is where #36 draws a 3.2 m warm-orange arrow, and its 1.1 m post is a small red cube
+## half inside the 0.9 m conveyor deck and lost among them. Rendered at four metres it is
+## findable and at the distance a player reads a Factory from it is not there at all.
+##
+## So the one mark that matters most in the case the HUD is now explaining gets the height
+## #48 already measured for exactly this collision. An end on open ground keeps the hip-height
+## post, because there is nothing there for it to collide with and a post standing three
+## metres over bare ground is #41's ownerless mark.
+const DANGLING_AT_A_WALL_HEIGHT_METRES: float = 2.25
+
 ## The split marks' colours.
 ##
 ## A **cool process teal** for a split that is flowing, because it is not a complaint — it is
@@ -736,8 +754,14 @@ const SPLIT_MARK_SIZE_METRES: float = 1.3
 ## mark: **a branch's entry tile is a dock tile, which is exactly where #36 draws a port
 ## arrow**. Those are 3.2 m across, warm orange, and lie flat at deck height — so a small red
 ## post standing among them is red on orange at the one place they are guaranteed to coincide.
-## Nothing else in this file collides with them, because a dangling end has no Machine behind
-## it and therefore no arrow.
+##
+## **This note used to end "nothing else in this file collides with them, because a dangling
+## end has no Machine behind it and therefore no arrow", and #56's first render falsified
+## it.** An end that *is* against a Machine's wall — refused by a declared port
+## rather than pointed at open ground — stands on a dock tile like any branch, and its
+## hip-height post was half inside the conveyor and lost among the arrows. See
+## `DANGLING_AT_A_WALL_HEIGHT_METRES`, which is this number reused for the collision it was
+## measured against.
 ##
 ## So it stands **clear above the arrows** and is drawn as a pillar rather than a cube, which
 ## is what makes a row of them read as markers rather than as more freight on the line.
@@ -3616,6 +3640,37 @@ func _trouble_lines(sim: Simulation) -> PackedStringArray:
 	if banking > 0:
 		sentence += " — %d split%s banking the surplus" % [banking, "" if banking == 1 else "s"]
 	lines.append(sentence)
+	lines.append_array(_dock_advice_lines(sim))
+	return lines
+
+
+## What would make a Belt that is up against a Machine actually connect, one line per distinct
+## reason.
+##
+## **The count stays on the line above and the advice is its own**, which is #36's division of
+## labour kept: the red post says *where*, the count says *how many*, and this says *what to
+## do*. A dangling end with open ground beyond it needs no sentence — it needs a longer Belt,
+## and the post already says so. The ones worth a line are the ends standing against a
+## Machine's wall that the Machine will not take goods through, because those are the ones a
+## player reads as a bug (#56): the line is the right length and pointed the right way, and
+## nothing on screen said the Machine is facing the wrong direction.
+##
+## Distinct reasons rather than one line per Belt, because the mistake is almost always made
+## at both ends of the same line at once — a Smelter stood square in an east-to-west line
+## connects neither of its Belts — and two identical sentences would be the wall this HUD is
+## trying to stop being.
+func _dock_advice_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
+	var seen: PackedInt64Array = PackedInt64Array()
+	for index: int in range(sim.query_belt_count()):
+		for refusal: int in [
+			sim.query_belt_start_dock_refusal(index),
+			sim.query_belt_end_dock_refusal(index),
+		]:
+			if refusal == Simulation.Refusal.NONE or seen.has(refusal):
+				continue
+			seen.append(refusal)
+			lines.append("belt will not dock: %s" % BuildGun.refusal_text(refusal))
 	return lines
 
 
@@ -4467,6 +4522,24 @@ func _belt_route_lines(sim: Simulation, aimed: Vector3i) -> PackedStringArray:
 			verdict,
 		]
 	)
+	# And why its ends would not dock, which is advice rather than a verdict: the route lays
+	# either way (see `query_belt_route_end_dock_refusal`), so this is a second line and not
+	# part of the one above. #56 — the docking rule has been enforced since #47 and the arrows
+	# drawn since #36, and the thing never said was what to do about a line that will not
+	# connect.
+	var advice: PackedStringArray = PackedStringArray()
+	var at_start: int = sim.query_belt_route_start_dock_refusal(
+		VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
+	)
+	if at_start != Simulation.Refusal.NONE:
+		advice.append("nothing will feed it — %s" % BuildGun.refusal_text(at_start))
+	var at_end: int = sim.query_belt_route_end_dock_refusal(
+		VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
+	)
+	if at_end != Simulation.Refusal.NONE:
+		advice.append("it will not hand over — %s" % BuildGun.refusal_text(at_end))
+	for sentence: String in advice:
+		lines.append("  %s" % sentence)
 	return lines
 
 
@@ -5037,12 +5110,26 @@ func _sync_connection_marks(sim: Simulation) -> void:
 		var direction: int = sim.query_belt_direction(index)
 		var yaw: float = _yaw_for_direction(direction)
 		var length: int = sim.query_belt_length_tiles(index)
+		# The height is the one decision here and it is per end: a post at a Machine's wall is
+		# standing on a dock tile among 3.2 m port arrows and has to clear them, where one on
+		# open ground has nothing to clear and belongs at hip height. Which it is comes off
+		# the dock refusal — the same projection the HUD's sentence does — so the mark that
+		# says *where* and the line that says *what to do* cannot end up about different ends.
 		if not sim.query_belt_start_is_fed(index):
-			_mark_at(sim, dangling, sim.query_belt_tile(index, 0), DANGLING_MARK_HEIGHT_METRES, yaw)
+			_mark_at(
+				sim,
+				dangling,
+				sim.query_belt_tile(index, 0),
+				_dangling_mark_height(sim.query_belt_start_dock_refusal(index)),
+				yaw
+			)
 		if not sim.query_belt_end_is_connected(index):
 			_mark_at(
-				sim, dangling, sim.query_belt_tile(index, length - 1),
-				DANGLING_MARK_HEIGHT_METRES, yaw
+				sim,
+				dangling,
+				sim.query_belt_tile(index, length - 1),
+				_dangling_mark_height(sim.query_belt_end_dock_refusal(index)),
+				yaw
 			)
 		for tile: int in range(length):
 			_mark_at(
@@ -5331,6 +5418,22 @@ func _marker_posts(tile_size: float, colour: Color) -> MultiMeshInstance3D:
 func dangling_marker_count() -> int:
 	@warning_ignore("integer_division")
 	return _dangling_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## How high a dangling post stands, given why its end was refused: clear of the port arrows
+## when a Machine's wall is what refused it, hip height when nothing is there.
+func _dangling_mark_height(dock_refusal: int) -> float:
+	if dock_refusal == Simulation.Refusal.NONE:
+		return DANGLING_MARK_HEIGHT_METRES
+	return DANGLING_AT_A_WALL_HEIGHT_METRES
+
+
+## Where a dangling post was drawn, in metres. For the smoke test and for
+## `tools/visual/compose_dock_shot.gd`, which has to be able to say whether a post that is not
+## in the picture was hidden behind something or was never drawn — #48's third render spent
+## three attempts on exactly that question.
+func dangling_marker_position(marker: int) -> Vector3:
+	return _instance_position(_dangling_transforms, marker)
 
 
 ## How many Machines are marked as starved. For the smoke test.

@@ -326,6 +326,26 @@ enum Refusal {
 	## `BuildGun.refusal_text` translates, and a second enum for one value would be two
 	## vocabularies for one HUD line. See "Build mode is a hand, not a gate" in CLAUDE.md.
 	BUILD_GUN_IS_HOLSTERED = 38,
+	## A Belt's end is against a Machine's wall and that tile of the wall declares no port at
+	## all — `content/machine_ports.csv` says goods do not cross there, so nothing is handed
+	## over however long the line runs. Answerable two ways: turn the Machine until a port
+	## faces this Belt, or dock against a face that already has one.
+	##
+	## #56. The rule has been the Simulation's since #47 and the arrows have been on screen
+	## since #36, but the *consequence* was not: a red post stood at the dangling end and
+	## nothing said what would clear it. A player who has not noticed the arrows reads that as
+	## a bug, which is worse than teaching them nothing.
+	NO_PORT_ON_THAT_FACE = 39,
+	## A Belt's end is against a declared port and that port carries goods the **other** way:
+	## a run leaving a Machine's input face, or a run arriving at its output face. Answerable
+	## only by turning the Machine, which is why it is a reason of its own rather than one
+	## sentence covering both — a face with a port on it is already the face a player aimed at
+	## deliberately, so "aim somewhere else" is the wrong advice.
+	##
+	## This is the exact mistake #47 recorded: a Smelter stood square takes ore on its north
+	## and west and gives plate back on its south and east, so a line running east to west
+	## connects neither of its Belts. `test_nest_store`'s own Factory needed that fix.
+	PORT_RUNS_THE_OTHER_WAY = 40,
 }
 
 # Note what is *not* a constant here any more: how fast a player walks. That lives
@@ -2526,29 +2546,99 @@ func _machine_a_belt_feeds(index: int) -> int:
 
 ## Whether a Machine declares a port of this flow on this tile of its wall, facing this way.
 ##
+## **One line over `_dock_refusal`, because what reports the reason and what does the refusing
+## have to be the same function** (#56). Four inline checks on one side and none on the other
+## is the shape `query_build_refusal` exists to prevent, and #35 is what it cost last time: a
+## green hologram over a click that did nothing.
+func _belt_docks_against(machine: int, flow: int, tile: Vector3i, facing: int) -> bool:
+	return _dock_refusal(machine, flow, tile, facing) == Refusal.NONE
+
+
+## Why a Belt would not dock against this face of this Machine, or `Refusal.NONE`.
+##
 ## **A Machine the table says nothing about takes a Belt anywhere on its footprint edge**,
 ## which is what the Simulation did everywhere before #47 and is the only honest answer: a
 ## declaration that does not exist cannot be enforced. That is the seam every test that brings
 ## its own Machines and no ports table works through, and `Definitions` is what stops the
 ## shipped content reaching it — a Machine that needs a Belt and declares no port is refused by
 ## name.
-func _belt_docks_against(machine: int, flow: int, tile: Vector3i, facing: int) -> bool:
+##
+## The two reasons past that are the distinction #56 exists for, and the order matters:
+## `has_port_at` is asked **first** and is the only authority on whether a Belt docks, so the
+## classification below only ever runs on a face that has already been refused. A face with no
+## port on it at all can be answered by turning the Machine *or* by docking somewhere else; a
+## face whose port runs the other way can only be answered by turning it.
+##
+## The extra walk of the Machine's ports is paid only on failure, which is why the hot path is
+## untouched: `_load_the_ports` and `_hand_off` ask about a Belt that docks, and that answer
+## still comes out of one `has_port_at`.
+func _dock_refusal(machine: int, flow: int, tile: Vector3i, facing: int) -> int:
 	var definition: MachineDefinition = _definitions.machine(_machine_id[machine])
 	if definition == null:
-		return true
+		return Refusal.NONE
 	var ports: MachinePorts = _definitions.machine_ports()
 	if not ports.declares(definition.id):
-		return true
-	return ports.has_port_at(
+		return Refusal.NONE
+	var origin: Vector3i = query_machine_tile(machine)
+	var rotation: int = _machine_rotation[machine]
+	if ports.has_port_at(
 		definition.id,
 		flow,
 		tile,
 		facing,
-		query_machine_tile(machine),
+		origin,
 		definition.footprint_x,
 		definition.footprint_z,
-		_machine_rotation[machine]
+		rotation
+	):
+		return Refusal.NONE
+	if ports.declares_a_port_at(
+		definition.id,
+		tile,
+		facing,
+		origin,
+		definition.footprint_x,
+		definition.footprint_z,
+		rotation
+	):
+		return Refusal.PORT_RUNS_THE_OTHER_WAY
+	return Refusal.NO_PORT_ON_THAT_FACE
+
+
+## Why a Belt run that exits `exit_tile` heading `direction` would not hand its goods on, or
+## `Refusal.NONE`.
+##
+## **`Refusal.NONE` for an end with no Machine beyond it at all**, which is deliberate rather
+## than a gap: that end is dangling for a reason that has nothing to do with ports, it already
+## wears a red post, and a port sentence about open ground would be advice nobody can act on.
+## This answers only the question #56 asked — *the Machine is right there and it still will not
+## take it, why?*
+##
+## It takes a tile and a direction rather than a Belt index so that the one function answers
+## for a Belt that is standing and for a route that has not been laid. Those must not be two
+## rules: a drag whose preview said nothing and whose Belt then dangled would be exactly the
+## disagreement every refusal in this project is arranged to prevent.
+func _dock_refusal_ahead(exit_tile: Vector3i, direction: int) -> int:
+	var beyond: Vector3i = exit_tile + WorldGrid.direction_step(direction)
+	var machine: int = query_machine_at_tile(beyond)
+	if machine == -1:
+		return Refusal.NONE
+	# An input's goods travel **against** the way its port faces, so the direction asked for is
+	# the Belt's own turned about.
+	return _dock_refusal(
+		machine, MachinePorts.INTO, beyond, WorldGrid.wrap_rotation(direction + 2)
 	)
+
+
+## The same question at a run's entry: why the Machine behind it does not load it.
+func _dock_refusal_behind(entry_tile: Vector3i, direction: int) -> int:
+	var behind: Vector3i = entry_tile - WorldGrid.direction_step(direction)
+	var machine: int = query_machine_at_tile(behind)
+	if machine == -1:
+		return Refusal.NONE
+	# An output's goods travel **along** the way its port faces, so a Belt running out of one
+	# runs the same way the port points.
+	return _dock_refusal(machine, MachinePorts.OUT_OF, behind, direction)
 
 
 ## Takes one Item from the output buffer of the Machine behind a Belt's entry, if there is room
@@ -10562,6 +10652,40 @@ func query_belt_route_refusal(
 	return _belt_route_refusal(player_id, from_tile, to_tile, corner_axis)
 
 
+## Why the Machine the route in flight would end against will not take its goods, or
+## `Refusal.NONE`. The same two reasons `query_belt_end_dock_refusal` reports about a Belt that
+## is standing, asked about a route nobody has committed to.
+##
+## **Deliberately not folded into `query_belt_route_refusal`, and that is the one real decision
+## here.** That function says whether a route *lays*, and a route whose far end will not dock
+## lays perfectly well — a player routes a line in stages, past where the Machine is going to
+## stand, every day. Refusing it would gate laying a Belt on the order a player happens to do
+## things in, which is the opposite of what this ticket is for. So this is **advice before the
+## release and never a veto**: the drag commits, and the HUD has already said what would make
+## it connect.
+func query_belt_route_end_dock_refusal(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> int:
+	var runs: Array = _belt_route_runs(player_id, from_tile, to_tile, corner_axis)
+	if runs.is_empty():
+		return Refusal.NONE
+	var last: BeltRoute.Run = runs[runs.size() - 1]
+	return _dock_refusal_ahead(last.to, last.direction)
+
+
+## Why the Machine behind the route in flight would not load it, or `Refusal.NONE`. The entry
+## end, which is the half a new player gets wrong first — the line is the right length, pointed
+## the right way, and starts against a wall the Machine does not give goods through.
+func query_belt_route_start_dock_refusal(
+	player_id: int, from_tile: Vector3i, to_tile: Vector3i, corner_axis: int
+) -> int:
+	var runs: Array = _belt_route_runs(player_id, from_tile, to_tile, corner_axis)
+	if runs.is_empty():
+		return Refusal.NONE
+	var first: BeltRoute.Run = runs[0]
+	return _dock_refusal_behind(first.from, first.direction)
+
+
 ## How many tiles of Belt a dragged route would stand up. The number a player is deciding on,
 ## and the multiplier the bill below is the per-tile price times.
 func query_belt_route_tiles(
@@ -10659,6 +10783,31 @@ func query_belt_start_is_fed(index: int) -> bool:
 		return true
 	var upstream: int = _belt_at_tile_feeding(_belt_entry_tile(index))
 	return upstream != -1
+
+
+## Why the Machine at a Belt's far end will not take its goods, or `Refusal.NONE`.
+##
+## **The reason behind the red post**, and the half #47 shipped without. The docking rule has
+## been the Simulation's since then and the arrows have been drawn since #36, so a player is
+## shown the rule — what they were never told is what to *do* about a line that will not
+## connect, and the answer is almost always to turn the Machine. See the two reasons in
+## `Refusal` for which is which and why they are two.
+##
+## A projection the Simulation never reads back, so asking leaves `hash()` exactly where it
+## was — and it is the very function `_hand_off` refuses through, because
+## `query_belt_end_is_connected` and this one both go through `_dock_refusal`.
+func query_belt_end_dock_refusal(index: int) -> int:
+	if not _is_belt(index):
+		return Refusal.NONE
+	return _dock_refusal_ahead(_belt_exit_tile(index), _belt_direction[index])
+
+
+## Why the Machine behind a Belt's entry will not load it, or `Refusal.NONE`. The same question
+## at the other end, through the same function.
+func query_belt_start_dock_refusal(index: int) -> int:
+	if not _is_belt(index):
+		return Refusal.NONE
+	return _dock_refusal_behind(_belt_entry_tile(index), _belt_direction[index])
 
 
 ## How many Belts run out of a Machine's declared output ports: the size of the branch its

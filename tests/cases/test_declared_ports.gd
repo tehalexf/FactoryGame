@@ -181,6 +181,234 @@ func test_turning_a_machine_moves_the_tile_its_belt_must_dock_at() -> void:
 	assert_eq(sim.query_belt_item_count(1), 0, "and the tile it used to be at loads nothing")
 
 
+# ── Why a Belt will not dock, which is #56 ────────────────────────────────────
+# The rule above has been the Simulation's since #47 and the arrows have been drawn since #36,
+# so a player is both governed by it and shown it. What was missing was the **consequence**: a
+# red post stood at the dangling end and nothing said what would clear it, and a player who
+# has not noticed the arrows reads that as a bug. #47's own notes recorded the evidence that a
+# person will — `test_nest_store`'s Factory needed exactly that fix.
+#
+# Two reasons, because there are two fixes. A wall with no port on it can be answered by
+# turning the Machine *or* by docking against a face that has one; a wall whose port runs the
+# other way can only be answered by turning it, so "aim somewhere else" would be wrong advice
+# about the one face the player chose on purpose.
+#
+# The Smelter of this fixture declares one tile of its northern face as an input and one tile
+# of its southern face as an output, and nothing else — so one Machine shows both answers and
+# the legal dock beside them.
+
+func test_a_belt_against_a_wall_with_no_port_is_told_there_is_no_port() -> void:
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+	# (0, 3) is on the Smelter's northern wall and is not the declared port — tile 0 of a face
+	# whose tile 1 is where ore arrives. The Machine is right there and the line is pointed
+	# straight at it.
+	sim.step([InputAction.build_belt(0, Vector3i(0, GROUND, 0), Vector3i(0, GROUND, 3))])
+
+	assert_eq(sim.query_belt_count(), 1, "the route laid — this is advice, never a veto")
+	assert_false(sim.query_belt_end_is_connected(0), "and the end leads nowhere, as before #56")
+	assert_eq(
+		sim.query_belt_end_dock_refusal(0),
+		Simulation.Refusal.NO_PORT_ON_THAT_FACE,
+		"what is new is the reason: that tile of the wall declares no port at all"
+	)
+	# What the sentence says is `game/`'s business and is asserted in `test_world_view.gd`,
+	# because a `Refusal` is a fact and a sentence about it is presentation.
+
+
+func test_a_belt_arriving_at_an_output_port_is_told_it_runs_the_other_way() -> void:
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+	# North out of (1, 9) onto (1, 7), which is the dock tile of the Smelter's one **output**
+	# port. A port is there; goods leave through it rather than arriving.
+	sim.step([InputAction.build_belt(0, Vector3i(1, GROUND, 9), Vector3i(1, GROUND, 7))])
+
+	assert_eq(
+		sim.query_belt_end_dock_refusal(0),
+		Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY,
+		"the wall is a port, and this run is pointed up it"
+	)
+
+
+func test_a_belt_leaving_an_input_port_is_told_the_same_thing_at_its_entry() -> void:
+	# The mirror of it, and the mistake a new player makes first: the line is the right length
+	# and pointed the right way, and the wall behind its entry takes goods rather than giving
+	# them. Nothing will ever load it.
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+	sim.step([InputAction.build_belt(0, Vector3i(1, GROUND, 3), Vector3i(1, GROUND, 2))])
+
+	assert_false(sim.query_belt_start_is_fed(0), "nothing feeds its entry")
+	assert_eq(
+		sim.query_belt_start_dock_refusal(0), Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY
+	)
+
+
+func test_a_belt_that_docks_legally_reports_no_reason_at_all() -> void:
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+	sim.step([InputAction.build_belt(0, Vector3i(1, GROUND, 2), Vector3i(1, GROUND, 3))])
+
+	assert_true(sim.query_belt_end_is_connected(0), "the far end really connects")
+	assert_eq(
+		sim.query_belt_end_dock_refusal(0),
+		Simulation.Refusal.NONE,
+		"so there is nothing to say about it"
+	)
+
+
+func test_a_belt_end_on_open_ground_is_not_given_a_port_reason() -> void:
+	# A dangling end with nothing beyond it is dangling for a reason that has nothing to do
+	# with ports: it wants a longer Belt, and the red post already says so. A port sentence
+	# there would be advice nobody can act on, which is #41's lesson in words.
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_belt(0, Vector3i(8, GROUND, 8), Vector3i(11, GROUND, 8))])
+
+	assert_false(sim.query_belt_end_is_connected(0), "it leads nowhere")
+	assert_eq(
+		sim.query_belt_end_dock_refusal(0),
+		Simulation.Refusal.NONE,
+		"and no Machine is involved, so no port is the reason"
+	)
+	assert_eq(sim.query_belt_start_dock_refusal(0), Simulation.Refusal.NONE)
+
+
+func test_turning_the_machine_is_what_clears_the_reason() -> void:
+	# The claim both sentences make, asserted rather than written down. Turned half round, the
+	# Smelter's declared input faces south — so the line that could not dock docks, and the
+	# `PORT_RUNS_THE_OTHER_WAY` case above becomes the legal one.
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4), 2)])
+	sim.step([InputAction.build_belt(0, Vector3i(1, GROUND, 9), Vector3i(1, GROUND, 7))])
+
+	assert_eq(
+		sim.query_belt_end_dock_refusal(0),
+		Simulation.Refusal.NONE,
+		"the output wall is the input wall now"
+	)
+	assert_true(sim.query_belt_end_is_connected(0), "so the end connects")
+
+
+func test_a_machine_the_table_says_nothing_about_gives_no_reason_either() -> void:
+	# The loose rule's half of this. A declaration that does not exist cannot be enforced, so a
+	# Belt against such a Machine docks anywhere on its edge — and a refusal sentence about a
+	# rule that is not in force would be a sentence about nothing.
+	var sim: Simulation = _sim(_content(""))
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+	sim.step([InputAction.build_belt(0, Vector3i(0, GROUND, 0), Vector3i(0, GROUND, 3))])
+
+	assert_true(sim.query_belt_end_is_connected(0), "the blank wall takes it, as it always did")
+	assert_eq(sim.query_belt_end_dock_refusal(0), Simulation.Refusal.NONE)
+
+
+# ── The reason is on screen before the drag is released ───────────────────────
+
+func test_the_reason_is_on_screen_before_the_route_is_laid() -> void:
+	# The whole point of a projection: the drag has not been released, no Belt exists, and the
+	# HUD can already say what would make this line connect. Both ends go through the same
+	# `_dock_refusal` the laid Belt does, so a preview that said nothing and a Belt that then
+	# dangled cannot happen.
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+
+	assert_eq(
+		sim.query_belt_route_end_dock_refusal(
+			0, Vector3i(0, GROUND, 0), Vector3i(0, GROUND, 3), 0
+		),
+		Simulation.Refusal.NO_PORT_ON_THAT_FACE,
+		"the route in flight is already refused, for the right reason"
+	)
+	assert_eq(
+		sim.query_belt_route_start_dock_refusal(
+			0, Vector3i(1, GROUND, 3), Vector3i(1, GROUND, 2), 0
+		),
+		Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY,
+		"and so is one that nothing would ever feed"
+	)
+	assert_eq(sim.query_belt_count(), 0, "while nothing was laid")
+
+
+func test_a_route_whose_end_will_not_dock_is_still_a_route_that_lays() -> void:
+	# Deliberately **not** folded into `query_belt_route_refusal`, and this is the decision
+	# worth pinning. A player routes a line in stages, past where the Machine is going to
+	# stand; refusing the drag would gate laying a Belt on the order they happen to do things
+	# in, which is the opposite of what this is for. Advice before the release, never a veto.
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+
+	assert_eq(
+		sim.query_belt_route_refusal(0, Vector3i(0, GROUND, 0), Vector3i(0, GROUND, 3), 0),
+		Simulation.Refusal.NONE,
+		"the route is clear ground and the wallet covers it"
+	)
+	sim.step([InputAction.build_belt(0, Vector3i(0, GROUND, 0), Vector3i(0, GROUND, 3))])
+	assert_eq(sim.query_belt_count(), 1, "so it lays, advice and all")
+
+
+func test_asking_why_a_belt_will_not_dock_leaves_the_run_exactly_where_it_was() -> void:
+	var sim: Simulation = _sim(_content())
+	sim.step([InputAction.build_machine(0, 1, Vector3i(0, GROUND, 4))])
+	sim.step([InputAction.build_belt(0, Vector3i(0, GROUND, 0), Vector3i(0, GROUND, 3))])
+	var before: int = sim.hash()
+
+	for index: int in range(sim.query_belt_count()):
+		sim.query_belt_start_dock_refusal(index)
+		sim.query_belt_end_dock_refusal(index)
+	sim.query_belt_route_end_dock_refusal(0, Vector3i(0, GROUND, 0), Vector3i(0, GROUND, 3), 0)
+	sim.query_belt_route_start_dock_refusal(0, Vector3i(1, GROUND, 3), Vector3i(1, GROUND, 2), 0)
+
+	assert_eq(sim.hash(), before, "a projection reads state and writes none of it")
+
+
+func test_an_unknown_belt_has_no_reason_rather_than_an_invented_one() -> void:
+	var sim: Simulation = _sim(_content())
+	assert_eq(sim.query_belt_start_dock_refusal(0), Simulation.Refusal.NONE)
+	assert_eq(sim.query_belt_end_dock_refusal(7), Simulation.Refusal.NONE)
+
+
+# ── The mistake the issue is about, on the shipped content ────────────────────
+
+func test_the_shipped_smelter_stood_square_in_an_east_to_west_line_connects_neither_belt(
+) -> void:
+	# #47's own words, as a test. A Smelter takes ore on its **north** and **west** faces and
+	# gives plate back on its **south** and **east**, so a line running east to west with the
+	# Smelter square has its ore arriving at an output wall and its plate leaving an input one.
+	# Both ends are refused and both are refused for the reason only rotation fixes — which is
+	# precisely what somebody who had read the ports table still got wrong.
+	var layout: MapLayout = MapLayout.empty()
+	var sim: Simulation = Simulation.new(56, 1, null, layout)
+	var smelter: int = sim.query_definitions().machine_index("smelter_mk1")
+	# 3x3 from (4, 0), so it covers x 4..6 and z 0..2: its eastern dock tiles are x = 7 and its
+	# western ones x = 3.
+	sim.step([InputAction.build_machine(0, smelter, Vector3i(4, GROUND, 0))])
+	sim.step([
+		InputAction.build_belt(0, Vector3i(10, GROUND, 1), Vector3i(7, GROUND, 1)),
+		InputAction.build_belt(0, Vector3i(3, GROUND, 1), Vector3i(0, GROUND, 1)),
+	])
+	assert_eq(sim.query_belt_count(), 2, "ore in from the east, plate on to the west")
+
+	assert_eq(
+		sim.query_belt_end_dock_refusal(0),
+		Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY,
+		"the ore line arrives at a wall plate comes out of"
+	)
+	assert_eq(
+		sim.query_belt_start_dock_refusal(1),
+		Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY,
+		"and the plate line leaves a wall ore goes in by"
+	)
+	# And the fix the sentence names, applied: half a turn puts the input face east and the
+	# output face west, and the same two Belts work.
+	var turned: Simulation = Simulation.new(56, 1, null, MapLayout.empty())
+	turned.step([InputAction.build_machine(0, smelter, Vector3i(4, GROUND, 0), 2)])
+	turned.step([
+		InputAction.build_belt(0, Vector3i(10, GROUND, 1), Vector3i(7, GROUND, 1)),
+		InputAction.build_belt(0, Vector3i(3, GROUND, 1), Vector3i(0, GROUND, 1)),
+	])
+	assert_eq(turned.query_belt_end_dock_refusal(0), Simulation.Refusal.NONE)
+	assert_eq(turned.query_belt_start_dock_refusal(1), Simulation.Refusal.NONE)
+
+
 # ── A set with no declaration is the loose rule, and that is the seam ─────────
 
 func test_a_machine_no_table_mentions_still_takes_a_belt_anywhere_on_its_edge() -> void:

@@ -27,6 +27,8 @@ SHOT_SCRIPT=tools/visual/compose_branch_shot.gd tools/visual/shot.sh out.png bar
                                  # a line that branches, one side blocked (+ bare)
 SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare
                                  # the marks a starved Machine wears, over bodies of three heights (+ bare)
+SHOT_SCRIPT=tools/visual/compose_dock_shot.gd tools/visual/shot.sh out.png bare
+                                 # two Belts that will not dock, for the two different reasons (+ bare)
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -1286,9 +1288,134 @@ arrays, never as an object per Item.
     so a Belt into the Nest docks anywhere on its 4x4 wall, as every Delivery line in every
     scenario already does. Its row in the ports table is there because the mesh generator needs
     it.
+  - **A Belt that will not dock says what would make it dock, and that is #56.** The rule was
+    enforced and the arrows were drawn, and the **consequence** was not said: a red post stood
+    at the dangling end and nothing named the fix. A player who has not noticed the arrows
+    reads that as a bug, which is worse than teaching them nothing — and #47 recorded the
+    evidence that a person will, because `test_nest_store`'s own Factory needed exactly that
+    fix from somebody who *had* read the table. See "Why a Belt will not dock" below.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
+
+### Why a Belt will not dock, and the two answers
+
+#56, and it is the half #47 shipped without. #19 declared every port, #36 drew an arrow on
+each one, #47 made the declaration **the rule** — and the thing a player is told when the rule
+bites was still a red post with no caption. A Smelter stood square takes ore on its north and
+west and gives plate back on its south and east, so a line running east to west connects
+**neither** of its Belts, and the fix is to rotate the Machine. Nothing anywhere said so.
+
+The evidence that a person hits this was already in the repository and #47 wrote it down:
+`test_nest_store`'s own Factory needed exactly that rotation, which means somebody who had
+read the ports table still got it wrong. A player who has not noticed the arrows reads a
+refusal as a bug, and the standing direction is that setting up a basic production line is
+paramount.
+
+**Two reasons, because there are two fixes**, and that distinction is the whole of the design
+here rather than a nicety:
+
+- **`NO_PORT_ON_THAT_FACE`** — that tile of that wall declares no port at all. Answerable by
+  turning the Machine **or** by docking against a face that already has one, and the sentence
+  names both: *"no port on that wall — turn the Machine, or dock on another face"*.
+- **`PORT_RUNS_THE_OTHER_WAY`** — the wall *is* a port and it carries goods the other way. Only
+  rotation helps, so only rotation is offered: *"that port runs the other way — turn the
+  Machine"*. A face with a port on it is a face the player aimed at on purpose, so "aim
+  somewhere else" would be advice about the one thing they got right.
+
+**The rule has one home and it is the function that does the refusing.** `_dock_refusal` is
+`_belt_docks_against`'s body — the old predicate is now one line over it, `return
+_dock_refusal(...) == Refusal.NONE` — so what reports the reason and what refuses the hand-off
+are literally the same code. That is the bargain `query_build_refusal` exists for and #35 is
+what the other arrangement costs: four inline checks on one side and none on the other put a
+green hologram over a click that did nothing. `_dock_refusal_ahead` and `_dock_refusal_behind`
+take a **tile and a direction** rather than a Belt index, which is what lets the laid Belt and
+the route in flight share one answer; a preview that said nothing and a Belt that then dangled
+would be the same disagreement wearing a different hat.
+
+Four projections, and the Simulation reads none of them back —
+`test_asking_why_a_belt_will_not_dock_leaves_the_run_exactly_where_it_was`:
+`query_belt_{start,end}_dock_refusal` about a Belt that is standing, and
+`query_belt_route_{start,end}_dock_refusal` about a route nobody has committed to. **The
+wording lives in `game/`**, in `BuildGun.refusal_text`, because a `Refusal` is a fact and a
+sentence about it is presentation.
+
+Three decisions worth knowing rather than rediscovering:
+
+- **It is advice before the release and never a veto.** The route dock refusal is deliberately
+  *not* folded into `query_belt_route_refusal`, which is the function that decides whether a
+  route lays. A route whose far end will not dock lays perfectly well, and a player routes a
+  line in stages past where the Machine is going to stand every day — refusing the drag would
+  gate laying a Belt on the order they happen to do things in, which is the opposite of what
+  this is for. `test_a_route_whose_end_will_not_dock_is_still_a_route_that_lays` pins it.
+- **An end on open ground gets no port sentence.** `_dock_refusal_ahead` answers `NONE` when
+  there is no Machine beyond the end at all, which is not a gap: that end is dangling because
+  it wants a longer Belt, the red post already says so, and a port sentence there would be
+  advice nobody can act on — #41's ownerless mark in words rather than in geometry.
+- **One sentence per reason, not one per Belt.** The mistake is almost always made at both
+  ends of one line at once, so the HUD collects distinct reasons. The count stays on the
+  dangling-ends clause where #36 put it: the mark says *where*, the count says *how many*, and
+  this says *what to do*.
+
+`MachinePorts.declares_a_port_at` is the only new question the table had to answer, and it is
+deliberately **not** an authority on docking and deliberately does not return the flow.
+`has_port_at` remains the one function that says whether a Belt may dock and is asked first;
+this only classifies a failure that has already happened. Returning the flow instead would be
+a second opinion about which way goods cross a wall — and a face could in principle declare
+both flows, where "is it a port" has one answer and "which way does it run" would have two.
+The extra walk of the ports is therefore paid only on failure, so the hottest loop in the
+project is untouched.
+
+**Nothing behind the façade changed its behaviour**, which is why no new determinism fixture
+was written: `test_declared_ports.gd` already replays a Factory with one Belt docked and one
+refused, and that fixture is what covers the code this moved.
+
+**What a face with no port at all means on the shipped content, which was a finding.** Counted
+across `content/machine_ports.csv` against each Machine's footprint, **eight of the ten
+Machines declare every tile of every face** — so `NO_PORT_ON_THAT_FACE` is reachable from
+`content/` through exactly two of them: the **Steam Boiler**, whose southern face (3 tiles) and
+whose eastern tile 0 declare nothing, and the **Silo**, whose southern and eastern faces (4
+tiles each) declare nothing. Both are Machines in the opening and mid-game lines, so the reason
+is not hypothetical — but it is worth knowing that the commoner mistake by far is
+`PORT_RUNS_THE_OTHER_WAY`, because a fully-declared Machine has no blank wall to aim at.
+
+#### What the renders found, and the one that changed the code
+
+The pair is [`docs/images/dock_before.png`](docs/images/dock_before.png) and
+[`_after`](docs/images/dock_after.png) — a Smelter with a line arriving at the wall plate
+comes *out* of, and a Steam Boiler with a line arriving at the wall that declares nothing —
+rebuilt with
+`SHOT_SCRIPT=tools/visual/compose_dock_shot.gd tools/visual/shot.sh out.png bare`.
+
+**The first render found a defect no test could have, and it is #48's second finding arriving
+in the one place #48 wrote off.** `BRANCH_MARK_HEIGHT_METRES`' note ends: a branch post had to
+stand clear of the port arrows because a branch's entry tile *is* a dock tile, and "nothing
+else in this file collides with them, because a dangling end has no Machine behind it and
+therefore no arrow." **The end this ticket is about is the counter-example** — a Belt refused
+by a declared port is standing on a dock tile by definition — and the render showed exactly
+what the note predicts for anything that does: a 0.44 m red cube at 1.1 m, half inside a 0.9 m
+conveyor deck, among 3.2 m warm-orange arrows. At four metres it is findable; at the distance
+a player reads a Factory from, the counter said four posts and the picture had none.
+
+So `DANGLING_AT_A_WALL_HEIGHT_METRES` is #48's own 2.25 m reused for the collision it was
+measured against, and **which height a post gets comes off the dock refusal** — the same
+projection the sentence does, so the mark that says *where* and the line that says *what to
+do* cannot end up about different ends. An end on open ground keeps the hip-height post,
+because there is nothing there to clear and a post three metres over bare ground is #41's
+ownerless mark. `test_a_post_at_a_machines_wall_stands_clear_of_the_port_arrows_under_it` is
+the assertion, and #48's note has been corrected rather than left standing.
+
+Two more things the pictures settle:
+
+- **The before image is the argument.** The same Factory, the same two refused lines, and the
+  HUD says only `4 belt ends lead nowhere`. The posts sit flat on the decks, where they are
+  the same size and very nearly the same colour as the ore Items riding past them — so the
+  one mark a player had was not merely unhelpful, it was ambiguous with freight.
+- **The vantage is a finding of the same shape as #48's fourth.** The camera is framed on the
+  two refused ends **read back out of the Simulation** rather than on the tiles the composer
+  asked for, after a first attempt placed from the latter put both marks off the edge of a
+  picture whose counter said four. A composer that frames from what it meant to build is a
+  composer that cannot catch a mark in the wrong place.
 
 ### Laying one: press, drag, release
 
@@ -4611,9 +4738,13 @@ Honest residue, so the next ticket does not have to rediscover it:
   `player.starting_stock`, in that order.
 - **Whether the declared port reads as a rule or as a mystery.** The arrows have been on screen
   since #36 and now mean something, so a Belt that will not connect is a Belt whose Machine is
-  facing the wrong way — and the fix is to rotate it, which is a thing the HUD never says. A
-  player who does not notice the arrows will read a refusal as a bug. `test_nest_store` needed
-  exactly that fix to its own Factory, which is weak evidence that a person will too.
+  facing the wrong way. **#56 made the HUD say so** — in two different sentences, because a
+  wall with no port on it and a wall whose port runs the other way have different fixes — and
+  raised the red post at such an end clear of the arrows it was lost in. What is still
+  unmeasured is whether that is *enough*: the sentence names rotation, and nothing has watched
+  a person read it and reach for right mouse. `test_nest_store` needed exactly that fix to its
+  own Factory, which is weak evidence that a person will hit it; there is no evidence either
+  way yet that a person told about it gets out.
 - **Hand repair under fire.** No scenario picks up a wrench to save a Machine, because chasing a
   Breaker open-loop is not possible. `wrench.repair_points_per_second` against
   `enemy.breaker_damage` is still an arithmetic claim.
