@@ -26,6 +26,7 @@
 ## | `Definitions` | did `content/` load at all | no Machines; the game cannot start |
 ## | `SoundBank.is_hero` | how many cues play their hero take | every cue falls back to Kenney |
 ## | `WeaponViewmodel.has_model` | how many viewmodels loaded | boxes in the player's hands |
+## | the same, on `build_gun` | did the **committed** tool draw as itself | boxes where #64's tool should be |
 ## | `SetDressing.uses_purchased_props` | are the purchased props drawn | a yard of stand-in boxes |
 ## | `SetDressing.uses_purchased_atlas` | did the shared atlas resolve | purchased props, untextured |
 ##
@@ -54,6 +55,7 @@ func _initialize() -> void:
 	_check_content(findings, faults)
 	_check_audio(findings, faults)
 	_check_viewmodels(findings, faults)
+	_check_the_build_gun(findings, faults)
 	_check_set_dressing(findings, faults)
 
 	findings["faults"] = faults
@@ -115,6 +117,52 @@ func _check_audio(findings: Dictionary, faults: Array[String]) -> void:
 		)
 	if silent.size() > 0:
 		faults.append("cues that resolve to nothing at all: %s" % ", ".join(silent))
+
+
+## Does the Build Gun draw as itself, asked the way the game asks it.
+##
+## **A separate check from the weapon frames, because the licence is different and so
+## is what absence means.** Every weapon is converted out of a purchased pack, so a
+## build with none of them is a build somebody forgot to run a converter for — which
+## is a fault about *this machine*. The Build Gun is this project's own work and is
+## committed (#64), so it is in every clone and in every build by construction, and
+## the only way it can be missing from a PCK is that something in the export path
+## converted it instead of shipping it. That is a fault about the **build**, and it
+## is invisible everywhere else: the model loads in the editor and in all three
+## suites off the working copy, and falls back to two placeholder boxes only in the
+## thing in somebody's hands. `stage.RAW_TREES` is what prevents it; this is what
+## notices if that ever stops being true.
+func _check_the_build_gun(findings: Dictionary, faults: Array[String]) -> void:
+	var viewmodel: WeaponViewmodel = WeaponViewmodel.new()
+	root.add_child(viewmodel)
+	var facts: WeaponAnimator.Facts = WeaponAnimator.Facts.new()
+	facts.weapon = WorldView.BUILD_GUN_HELD_ID
+	facts.alive = true
+	facts.is_melee = true
+	facts.interval_ticks = 1
+	viewmodel.show_held(facts)
+	var drawn: bool = viewmodel.has_model()
+	# The two takes a holster is made of, read back off the model on screen rather
+	# than off the file, so this reports what `WeaponAnimator` will actually get.
+	var draw_take: String = viewmodel.clip_name(WeaponAnimator.DRAW)
+	var holster_take: String = viewmodel.clip_name(WeaponAnimator.HOLSTER)
+	viewmodel.queue_free()
+	root.remove_child(viewmodel)
+
+	findings["build_gun_drawn"] = drawn
+	findings["build_gun_takes"] = [draw_take, holster_take]
+	if not drawn:
+		faults.append(
+			("the Build Gun drew placeholder boxes rather than its own model. It is"
+				+ " committed, so this is the export converting %s%s.glb instead of"
+				+ " shipping it — see stage.RAW_TREES.")
+			% [WeaponViewmodel.TOOL_BODY_DIRECTORY, WorldView.BUILD_GUN_HELD_ID]
+		)
+	elif draw_take.is_empty() or holster_take.is_empty():
+		faults.append(
+			"the Build Gun model carries no draw or putaway take, so a swap snaps"
+			+ " rather than swinging. Run: bash tools/assets/generate_build_gun.sh"
+		)
 
 
 ## How many weapon frames have a model, asked the way the game asks it.

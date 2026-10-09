@@ -86,7 +86,20 @@ BUNDLED = ("gear", "audio", "props")
 #: the PCK at all. So the exported build had no Machines, no Recipes and no tuning,
 #: and `Definitions.load_from_directory` had nothing to load. A `keep` sidecar says
 #: what the `.gdignore` was there to say, without hiding the file from the exporter.
-RAW_TREES = ("content",)
+#:
+#: `assets/gear/` is #64's and is the same failure one asset along. It holds the
+#: **committed** Build Gun viewmodel — the one held object this project authored
+#: itself, so the one whose GLB is in git rather than in the quarantine — and
+#: `WeaponViewmodel._load` reads it with `GLTFDocument.append_from_file` at a
+#: `res://` path, exactly as it reads a converted weapon. Godot would otherwise
+#: import a committed `.glb` as a `PackedScene` and the raw bytes would never
+#: reach the PCK, so the model would draw in the editor and in every test and fall
+#: back to placeholder boxes **only in the shipped build** — the release-only
+#: silence this whole module exists to close. A Machine's `.glb` is not here
+#: because `WorldView` resolves those through the importer, which is the other
+#: half of the same rule: what is read with `FileAccess` ships raw, and what is
+#: `load`ed does not.
+RAW_TREES = ("content", "assets/gear")
 
 
 class NothingToStage(Exception):

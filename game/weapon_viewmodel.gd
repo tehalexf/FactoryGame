@@ -29,11 +29,29 @@
 class_name WeaponViewmodel
 extends Node3D
 
+## Where a **self-authored** held object's model lives: `<id>.glb`, committed, in
+## the shipping tree, present in every clone. The Build Gun is the only one, and
+## `tools/assets/generate_build_gun.sh` is what writes it — out of the same parts
+## kit and the same palette the Machines are generated from, which is why it can
+## be committed at all: nothing in it derives from a purchased pack.
+const TOOL_BODY_DIRECTORY: String = "res://assets/gear/"
+
 ## Where a converted first-person weapon model lives: `<weapon id>.glb`. Outside
 ## the shipping tree, gitignored, and usually not there — which is an ordinary
 ## state and not a warning, exactly as a Machine with no `.glb` is.
 ## `tools/assets/convert_weapons.sh` is what writes it.
 const WEAPON_BODY_DIRECTORY: String = "res://assets_licensed/generated/gear/"
+
+## Where `_load` looks, in order, and the order is a decision rather than a list.
+##
+## **The committed directory is asked first, because it is the one with a proof
+## behind it.** #57's rule is that where output is committed you prove it and
+## where it is gitignored you date it, and the Build Gun's mesh is regenerated
+## and compared byte for byte by the asset suite. A `build_gun.glb` appearing in
+## the quarantine would be a second answer to what the tool looks like with no
+## proof under it, and the louder failure by far is a developer who regenerates
+## the committed model, renders it, and sees no change.
+const BODY_DIRECTORIES: Array = [TOOL_BODY_DIRECTORY, WEAPON_BODY_DIRECTORY]
 
 ## How far down, right and forward of the camera the **placeholder** sits, in
 ## metres. A converted model needs none of this: it is baked into the camera space
@@ -253,15 +271,33 @@ func _show(weapon_id: String) -> void:
 ## that way: nothing non-redistributable may be committed, and nothing may be
 ## *required* either.
 func _load(weapon_id: String) -> void:
-	var path: String = "%s%s.glb" % [WEAPON_BODY_DIRECTORY, weapon_id]
-	if not FileAccess.file_exists(path):
+	var path: String = ""
+	for directory: String in BODY_DIRECTORIES:
+		var candidate: String = "%s%s.glb" % [directory, weapon_id]
+		if FileAccess.file_exists(candidate):
+			path = candidate
+			break
+	if path.is_empty():
 		return
 	var document: GLTFDocument = GLTFDocument.new()
 	var state: GLTFState = GLTFState.new()
 	if document.append_from_file(path, state) != OK:
 		push_warning("weapon viewmodel %s did not parse as glTF" % path)
 		return
-	var loaded: Node = document.generate_scene(state)
+	# `remove_immutable_tracks` is **off**, and the default being on is a trap with a
+	# measured bite (#64). Godot drops an animation track whose value never changes,
+	# which leaves an animation that is nothing but such tracks existing and empty —
+	# and `_play` below then "plays" it and moves nothing, so the model stays frozen
+	# in whatever pose the *previous* clip left it in. The Build Gun's `Idle` is one
+	# key at rest on purpose, so it is exactly that animation: the tool loaded, both
+	# swap takes resolved, `has_model` was true, and the thing on screen sat half a
+	# metre under the bottom of the frame at `Draw`'s stowed opening key. Every
+	# purchased weapon ships a breathing idle, which is why nothing had ever met it.
+	#
+	# Blender optimises the same track away on the way *out* for the same reason, so
+	# this is one half of a pair — `generate_build_gun.py` passes
+	# `export_optimize_animation_keep_anim_object` for the other.
+	var loaded: Node = document.generate_scene(state, 30.0, false, false)
 	if loaded == null or not loaded is Node3D:
 		push_warning("weapon viewmodel %s carried no 3D scene" % path)
 		return
