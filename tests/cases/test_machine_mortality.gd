@@ -557,7 +557,15 @@ func _mend_content(waves: String = ONE_CRAWLER) -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml")
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
 	return Definitions.parse(
-		MEND_MACHINES, MEND_RECIPES, tuning.replace(SHIPPED_STOCK, STOCKED), waves, DELIVERIES,
+		MEND_MACHINES,
+		MEND_RECIPES,
+		(
+			tuning
+			. replace(SHIPPED_STOCK, STOCKED)
+			. replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
+		),
+		waves,
+		DELIVERIES,
 		GEAR,
 		STRATAGEMS,
 		"machines.csv", "recipes.csv", "tuning.toml", "waves.csv", "deliveries.csv",
@@ -900,6 +908,13 @@ func test_a_damaged_factory_round_trips_through_a_save() -> void:
 
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "iron_plate:200"'
+## This file brings its own Machine table, so the opening selection has to name a row in
+## *that* table (#55). `player.starting_machine` names a row in `machines.csv` and a set
+## naming one it has not got carries no definitions at all — the rule working rather than
+## failing. Nothing here asserts on the selection; what it has to be is present.
+const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
+const OWN_STARTING_MACHINE: String = 'starting_machine = "plate_seam_mk1"'
+
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier

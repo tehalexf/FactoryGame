@@ -1395,4 +1395,50 @@ func test_a_post_at_a_machines_wall_stands_clear_of_the_port_arrows_under_it() -
 			+ WorldView.PORT_MARKER_HEIGHT_METRES,
 		"and clear of the port arrows lying at deck height: %f" % at_a_wall
 	)
+func test_a_run_opens_pointed_at_the_first_cell_of_the_chain() -> void:
+	# #55, and the acceptance criterion for it: on tick 0 the hologram, the lit cell and the
+	# objective line all name the same Machine. #53 got the hotbar into chain order and left
+	# the Build Gun on index 0 of the *sorted* table, which is `ammo_press_mk1` — so a Run
+	# opened with the hotbar saying build a Miner, the line saying press 1, and an Ammo Press
+	# hologram in front of the player.
+	#
+	# **Nothing in `sim/` learnt what a chain is.** The agreement is `player.starting_machine`
+	# naming an id and `BuildChain` deriving the order off the Recipes; this test is the only
+	# place the two are put side by side, because it is the only place they *can* be — the
+	# Simulation has no opinion about cell 0 and must not grow one.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var definitions: Definitions = sim.query_definitions()
+
+	# `machine_picker_selected` is a *Machine index* — the Build Gun's own selection space —
+	# where `machine_picker_next_cell` is a *cell*. Asymmetric, and the asymmetry is the
+	# whole subject: the two spaces are exactly what #53 left disagreeing, so the assertion
+	# has to cross between them rather than compare two numbers that look alike.
+	assert_eq(
+		BuildChain.cell_of(definitions, view.machine_picker_selected()),
+		0,
+		"the Build Gun is on the first cell of the chain, not the first row by id"
+	)
+	assert_eq(
+		view.machine_picker_next_cell(),
+		0,
+		"which is also the cell the objective line is about"
+	)
+	assert_eq(
+		sim.query_player_selected_machine_index(0),
+		view.machine_picker_machine(0),
+		"and the hologram is that cell's Machine"
+	)
+	assert_eq(
+		definitions.machine_at(view.machine_picker_machine(0)).role,
+		MachineDefinition.Role.MINER,
+		"a Run starts by digging, which is what the line says to do"
+	)
+	assert_true(
+		Objective.line(sim, 0).contains(BuildChain.key_label(0)),
+		"the line names the key the cell carries: %s" % Objective.line(sim, 0)
+	)
+	assert_true(view.hologram_is_visible(), "and it is in front of the player")
 	view.free()

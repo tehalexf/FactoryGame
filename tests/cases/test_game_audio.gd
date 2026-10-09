@@ -80,6 +80,18 @@ const REACHABLE_DELIVERY_REACH: String = "delivery_reach_metres = 60"
 const SHIPPED_TELEGRAPH: String = "telegraph_seconds = 12"
 const QUICK_TELEGRAPH: String = "telegraph_seconds = 3"
 
+## This file brings its own Machine table — none of its five rows is a shipped id — so the
+## opening selection has to be one of *these* (#55). `player.starting_machine` names a row
+## in `machines.csv` and a set that names a row it has not got is an error carrying no
+## definitions at all, which is the rule working rather than failing: a Build Gun pointed
+## at a Machine the content does not define is not a thing to let through quietly.
+##
+## The plate seam, because it is this table's stand-in for the Miner and so the nearest
+## thing to what the shipped file means. Nothing here asserts on the selection; what it has
+## to be is *present*.
+const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
+const AUDIO_STARTING_MACHINE: String = 'starting_machine = "plate_seam_mk1"'
+
 const GROUND: int = WorldGrid.GROUND_LAYER
 const SILO_TILE: Vector3i = Vector3i(4, GROUND, 4)
 const BOILER_TILE: Vector3i = Vector3i(-8, GROUND, 8)
@@ -97,6 +109,7 @@ func _content(overrides: Array = []) -> Definitions:
 	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
 	tuning = tuning.replace(SHIPPED_DELIVERY_REACH, REACHABLE_DELIVERY_REACH)
 	tuning = tuning.replace(SHIPPED_TELEGRAPH, QUICK_TELEGRAPH)
+	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, AUDIO_STARTING_MACHINE)
 	for pair: PackedStringArray in overrides:
 		tuning = tuning.replace(pair[0], pair[1])
 	return Definitions.parse(

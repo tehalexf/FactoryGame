@@ -37,8 +37,14 @@ chaff_crawlers,crawler,0,6,150,40
 """
 
 
+## The opening Machine is `press_mk1`, which sorts **last** of this file's three — so
+## `test_a_run_opens_with_the_machine_content_names` fails if anything goes back to taking
+## the first row by id, which is the rule #55 removed.
+const OPENS_WITH: Array = [['starting_machine = "miner_mk1"', 'starting_machine = "press_mk1"']]
+
+
 func _content() -> Definitions:
-	var fixture: ContentFixture = ContentFixture.for_case(self).stock(STOCK)
+	var fixture: ContentFixture = ContentFixture.for_case(self).tune(OPENS_WITH).stock(STOCK)
 	fixture.machines = MACHINES
 	fixture.recipes = RECIPES
 	fixture.waves = WAVES
@@ -88,12 +94,15 @@ func test_the_content_these_tests_bring_loads_cleanly() -> void:
 # reasons: the controller is forbidden to hold anything authoritative, and in co-op
 # what another player is about to place is worth drawing.
 
-func test_a_run_opens_with_the_first_machine_on_the_build_gun() -> void:
+func test_a_run_opens_with_the_machine_content_names() -> void:
+	# `player.starting_machine`, not the first row by id (#55). The two are different here
+	# on purpose: `press_mk1` sorts after both `free_mk1` and `miner_mk1`, so this fails if
+	# the opening selection ever goes back to being index 0 of the sorted table.
 	var sim: Simulation = _sim()
 	assert_eq(
 		sim.query_player_selected_machine(0),
-		"free_mk1",
-		"the first Machine by id, so a fresh Run has something to place"
+		"press_mk1",
+		"what the content names, so a fresh Run opens pointed where the content says"
 	)
 
 
@@ -128,7 +137,7 @@ func test_selecting_a_machine_that_does_not_exist_is_refused() -> void:
 func test_each_player_carries_their_own_build_gun() -> void:
 	var sim: Simulation = _sim(2)
 	sim.step([InputAction.select_machine(1, _index(sim, "miner_mk1"))])
-	assert_eq(sim.query_player_selected_machine(0), "free_mk1")
+	assert_eq(sim.query_player_selected_machine(0), "press_mk1", "untouched, still the opening one")
 	assert_eq(sim.query_player_selected_machine(1), "miner_mk1")
 
 

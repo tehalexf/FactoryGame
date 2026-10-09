@@ -163,6 +163,7 @@ const TUNING_PLAYER_RESPAWN_SECONDS: String = "player.respawn_delay_seconds"
 const TUNING_PLAYER_REVIVE_SECONDS: String = "player.revive_seconds"
 const TUNING_PLAYER_REVIVE_REACH: String = "player.revive_reach_metres"
 const TUNING_PLAYER_STARTING_WEAPON: String = "player.starting_weapon"
+const TUNING_PLAYER_STARTING_MACHINE: String = "player.starting_machine"
 
 # Standing on the Factory (#30). A player is a box on the grid, not a point, and what
 # they can walk up rather than having to jump is the one number that decides whether a
@@ -204,6 +205,10 @@ const TUNING_PLAYER_LEAN_ROLL_DEGREES: String = (
 const TUNING_PLAYER_LEAN_PITCH_DEGREES: String = (
 	"player.lean_pitch_degrees_per_metre_per_second"
 )
+const TUNING_PLAYER_COLLAPSE_SECONDS: String = "player.collapse_seconds"
+const TUNING_PLAYER_DEATH_VIEW_DROP: String = "player.death_view_drop_metres"
+const TUNING_PLAYER_DOWNED_VIEW_DROP: String = "player.downed_view_drop_metres"
+const TUNING_PLAYER_COLLAPSE_ROLL_DEGREES: String = "player.collapse_roll_degrees"
 const TUNING_PLAYER_FIELD_OF_VIEW: String = "player.field_of_view_degrees"
 const TUNING_PLAYER_SPRINT_FIELD_OF_VIEW_ADD: String = (
 	"player.sprint_field_of_view_add_degrees"
@@ -372,6 +377,25 @@ var player_land_dip_reference_speed: int = 0
 var player_lean_roll_degrees: int = 0
 var player_lean_pitch_degrees: int = 0
 
+## The collapse (#54): how long a body takes to go over or to get back up, in fixed-point
+## seconds; how far the eye falls when dead and when Downed, in fixed-point metres; and how
+## far the view banks over as it falls, in fixed-point degrees.
+##
+## **Both falls are magnitudes rather than absolute eye heights**, which is what makes 0 mean
+## off here as it does for `player_view_bob_vertical`, `player_land_dip_metres` and
+## `player_lean_roll_degrees`. Written as heights first, 0 meant the *largest* possible fall —
+## the opposite of its meaning for every other camera key in the same section.
+##
+## **`death_view_drop_metres = 0` is therefore the master switch**, because the drop is the
+## gesture and the roll is a fraction of it: a fall of nothing is nothing to be a fraction
+## of, so a player who dies neither falls nor rolls. That matters — this is the largest
+## camera movement in the game and somebody prone to motion sickness is entitled to turn it
+## off, which is the rule every other camera key in this section already obeys.
+var player_collapse_seconds: int = 0
+var player_death_view_drop: int = 0
+var player_downed_view_drop: int = 0
+var player_collapse_roll_degrees: int = 0
+
 ## The camera's field of view in fixed-point degrees, and how many degrees a full sprint
 ## adds to it. The second half of sprint reading as a gait.
 var player_field_of_view_degrees: int = 0
@@ -450,6 +474,22 @@ var player_revive_reach_metres: int = 0
 ## weapon a Run starts with is a balance decision, and a fourth weapon becoming the
 ## opening one must be an edit to a file.
 var player_starting_weapon: String = ""
+
+## The Machine a Run opens with on the Build Gun, by id. Must name a row in
+## `content/machines.csv` that no Delivery tier locks.
+##
+## **An id rather than an index, and content rather than `sim/`.** The index space is a
+## function of the content — the Machines are sorted by id — so index 0 is whatever sorts
+## first, which until #55 was `ammo_press_mk1`: three Machines past where the hotbar says
+## to start. The order a player reads the hotbar in is derived in `game/build_chain.gd`
+## from what each Recipe eats and makes, and the Simulation must not learn what a chain
+## is. So what content states is the *id* a Run opens pointed at, and the two agree
+## because the file says so rather than because `sim/` worked it out.
+##
+## Checked against the Machine table **and** the Delivery table, exactly as
+## `starting_weapon` is: a Build Gun that opens holding something the Simulation would
+## refuse to place teaches a player that the game is broken.
+var player_starting_machine: String = ""
 
 ## How far from the line of a shot an Enemy may stand and still be hit, in fixed-point
 ## metres, and how tall its hit volume is.
@@ -1337,6 +1377,10 @@ func digest() -> int:
 	hasher.feed_int(player_land_dip_metres)
 	hasher.feed_int(player_land_dip_seconds)
 	hasher.feed_int(player_land_dip_reference_speed)
+	hasher.feed_int(player_collapse_seconds)
+	hasher.feed_int(player_death_view_drop)
+	hasher.feed_int(player_downed_view_drop)
+	hasher.feed_int(player_collapse_roll_degrees)
 	hasher.feed_int(player_lean_roll_degrees)
 	hasher.feed_int(player_lean_pitch_degrees)
 	hasher.feed_int(player_field_of_view_degrees)
@@ -1416,6 +1460,7 @@ func digest() -> int:
 	hasher.feed_int(player_revive_seconds)
 	hasher.feed_int(player_revive_reach_metres)
 	hasher.feed_text(player_starting_weapon)
+	hasher.feed_text(player_starting_machine)
 	hasher.feed_int(gear_enemy_hit_radius_metres)
 	hasher.feed_int(gear_enemy_hit_height_metres)
 	hasher.feed_int(gear_view_kick_degrees_per_shot)
@@ -2639,6 +2684,12 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	player_land_dip_reference_speed = tuning.require_fixed(
 		TUNING_PLAYER_LAND_DIP_REFERENCE_SPEED
 	)
+	player_collapse_seconds = tuning.require_fixed(TUNING_PLAYER_COLLAPSE_SECONDS)
+	player_death_view_drop = tuning.require_fixed(TUNING_PLAYER_DEATH_VIEW_DROP)
+	player_downed_view_drop = tuning.require_fixed(TUNING_PLAYER_DOWNED_VIEW_DROP)
+	player_collapse_roll_degrees = tuning.require_fixed(
+		TUNING_PLAYER_COLLAPSE_ROLL_DEGREES
+	)
 	player_lean_roll_degrees = tuning.require_fixed(TUNING_PLAYER_LEAN_ROLL_DEGREES)
 	player_lean_pitch_degrees = tuning.require_fixed(TUNING_PLAYER_LEAN_PITCH_DEGREES)
 	player_field_of_view_degrees = tuning.require_fixed(TUNING_PLAYER_FIELD_OF_VIEW)
@@ -2727,6 +2778,9 @@ func _read_tuning(tuning: TomlDocument) -> void:
 	player_revive_seconds = tuning.require_fixed(TUNING_PLAYER_REVIVE_SECONDS)
 	player_revive_reach_metres = tuning.require_fixed(TUNING_PLAYER_REVIVE_REACH)
 	player_starting_weapon = tuning.require_string(TUNING_PLAYER_STARTING_WEAPON).strip_edges()
+	player_starting_machine = tuning.require_string(
+		TUNING_PLAYER_STARTING_MACHINE
+	).strip_edges()
 	gear_enemy_hit_radius_metres = tuning.require_fixed(TUNING_GEAR_ENEMY_HIT_RADIUS)
 	gear_enemy_hit_height_metres = tuning.require_fixed(TUNING_GEAR_ENEMY_HIT_HEIGHT)
 	gear_view_kick_degrees_per_shot = tuning.require_fixed(TUNING_GEAR_VIEW_KICK_DEGREES)
@@ -2830,6 +2884,45 @@ func _read_tuning(tuning: TomlDocument) -> void:
 			)
 		if player_eye_height <= 0:
 			_report_tuning(tuning, TUNING_PLAYER_EYE_HEIGHT, "a player has to see from somewhere")
+		# The collapse, checked after the eye height because both postures are bounded by it:
+		# a view that *rose* when its owner was killed is not a collapse, and a posture below
+		# the ground is a camera under the floor.
+		if player_collapse_seconds < 0:
+			_report_tuning(
+				tuning, TUNING_PLAYER_COLLAPSE_SECONDS, "cannot be negative; 0 is a hard cut"
+			)
+		if player_death_view_drop < 0 or player_death_view_drop > player_eye_height:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_DEATH_VIEW_DROP,
+				"a view falls somewhere between not at all and the whole of eye height;"
+				+ " 0 turns the collapse off"
+			)
+		if player_downed_view_drop < 0 or player_downed_view_drop > player_eye_height:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_DOWNED_VIEW_DROP,
+				"a view falls somewhere between not at all and the whole of eye height"
+			)
+		# Only while there is a fall to order. `death_view_drop_metres = 0` is the one switch
+		# that turns the whole gesture off, and a Downed drop left at its tuned value while the
+		# gesture is off is harmless — `_collapse_resting_blend` states it as a fraction of a
+		# fall of nothing and gets nothing. Refusing it here would make the off switch two keys,
+		# which is the defect this ordering check was first written beside.
+		if player_death_view_drop > 0 and player_downed_view_drop > player_death_view_drop:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_DOWNED_VIEW_DROP,
+				"a Downed player is propped up on an elbow and a dead one is not, so they"
+				+ " cannot have fallen further than the dead — the two postures are what"
+				+ " tells a player waiting for a teammate from one waiting for a clock"
+			)
+		if player_collapse_roll_degrees < 0:
+			_report_tuning(
+				tuning,
+				TUNING_PLAYER_COLLAPSE_ROLL_DEGREES,
+				"a body goes over to one side; 0 is off"
+			)
 		if player_collision_radius <= 0:
 			_report_tuning(
 				tuning,
@@ -3218,6 +3311,7 @@ func _read_tuning(tuning: TomlDocument) -> void:
 				"an Enemy that cannot reach a player is an Enemy a player cannot lose to"
 			)
 		_check_starting_weapon(tuning)
+		_check_starting_machine(tuning)
 
 	# Checked after every read, so this names exactly the keys nothing asked for.
 	for key: String in tuning.unread_keys():
@@ -3352,6 +3446,47 @@ func _check_starting_weapon(tuning: TomlDocument) -> void:
 		)
 
 
+## Checks `player.starting_machine` against the Machine table and the Delivery table.
+##
+## The same two mistakes `_check_starting_weapon` names, in the shape this table makes
+## them: an id no row answers to, and an id a Delivery tier locks. The second is the one
+## worth a sentence of its own, because the row exists and the file looks right — a Run
+## that opened pointed at `miner_mk3` would put a hologram in front of a player that the
+## Simulation refuses to place, with the reason being something they cannot do anything
+## about for the next twenty minutes.
+##
+## This is the cross-table question that makes tuning the **last** thing read: it needs
+## `machines.csv` and `deliveries.csv` both already loaded, exactly as the starting weapon
+## needs the Gear table and the Delivery table together.
+func _check_starting_machine(tuning: TomlDocument) -> void:
+	if player_starting_machine.is_empty():
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_MACHINE,
+			(
+				"a Run has to open pointed at something — name the first Machine of the"
+				+ " production chain, as a row in machines.csv"
+			)
+		)
+		return
+	if machine(player_starting_machine) == null:
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_MACHINE,
+			'"%s" is not a row in machines.csv' % player_starting_machine
+		)
+		return
+	if locks_machine(player_starting_machine):
+		_report_tuning(
+			tuning,
+			TUNING_PLAYER_STARTING_MACHINE,
+			(
+				'"%s" is unlocked by a Delivery tier, so a Run cannot open pointed at it —'
+				+ " the Machines a Run opens with are exactly the ones no tier names"
+			) % player_starting_machine
+		)
+
+
 func _report_tuning(tuning: TomlDocument, key: String, detail: String) -> void:
 	errors.append("%s:%d: %s: %s" % [tuning.source_path, tuning.line_of(key), key, detail])
 
@@ -3442,6 +3577,10 @@ func _discard_content() -> void:
 	player_land_dip_metres = 0
 	player_land_dip_seconds = 0
 	player_land_dip_reference_speed = 0
+	player_collapse_seconds = 0
+	player_death_view_drop = 0
+	player_downed_view_drop = 0
+	player_collapse_roll_degrees = 0
 	player_lean_roll_degrees = 0
 	player_lean_pitch_degrees = 0
 	player_field_of_view_degrees = 0
@@ -3517,6 +3656,7 @@ func _discard_content() -> void:
 	player_revive_seconds = 0
 	player_revive_reach_metres = 0
 	player_starting_weapon = ""
+	player_starting_machine = ""
 	gear_enemy_hit_radius_metres = 0
 	gear_enemy_hit_height_metres = 0
 	gear_view_kick_degrees_per_shot = 0

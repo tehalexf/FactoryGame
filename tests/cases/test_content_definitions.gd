@@ -1115,6 +1115,62 @@ func test_a_starting_weapon_a_delivery_locks_is_refused() -> void:
 		definitions.describe_errors()
 	)
 
+
+func test_a_starting_machine_that_names_no_row_is_refused_by_name() -> void:
+	# `player.starting_machine` is how the Build Gun comes to be pointed at the first
+	# Machine of the production chain without the Simulation learning what a chain is
+	# (#55). It names an id, so the one mistake available is naming one nothing answers to.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		_tuned([['starting_machine = "miner_mk1"', 'starting_machine = "nonesuch"']])
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("is not a row in machines.csv"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_starting_machine_a_delivery_locks_is_refused() -> void:
+	# The cross-table check, and the reason tuning is read last: this needs the Machine
+	# table and the Delivery table both loaded. A Run that opened pointed at a locked
+	# Machine would put a hologram in front of a player that the Simulation refuses to
+	# place, for a reason they can do nothing about for the next twenty minutes.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		GOOD_TUNING,
+		WAVES,
+		DELIVERY_HEADER + "t01_a,A,1,iron_plate:1,miner_mk1,,\n"
+	)
+	assert_true(definitions.has_errors())
+	# Named, because "unlocked by a Delivery tier" is also what the starting *weapon* check
+	# says — an assertion on the sentence alone would pass on the wrong key's error.
+	assert_true(
+		definitions.describe_errors().contains("player.starting_machine"),
+		definitions.describe_errors()
+	)
+	assert_true(
+		definitions.describe_errors().contains("unlocked by a Delivery tier"),
+		definitions.describe_errors()
+	)
+
+
+func test_a_starting_machine_left_blank_is_refused() -> void:
+	# No defaults anywhere: a blank key does not quietly become the first row by id, which
+	# is the behaviour #55 removed.
+	var definitions: Definitions = _parse(
+		GOOD_MACHINES,
+		GOOD_RECIPES,
+		_tuned([['starting_machine = "miner_mk1"', 'starting_machine = ""']])
+	)
+	assert_true(definitions.has_errors())
+	assert_true(
+		definitions.describe_errors().contains("a Run has to open pointed at something"),
+		definitions.describe_errors()
+	)
+
 # ── The Stratagem table ───────────────────────────────────────────────────────
 # A Stratagem is a player-called intervention drawn from a stockpile of Charges
 # (GLOSSARY.md), and adding one is a row. What is checked here is the *schema*, because the

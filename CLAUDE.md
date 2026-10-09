@@ -1006,6 +1006,17 @@ file still carry their own `_read` and their own `SHIPPED_STOCK` literal. They s
 un-overrides them, which is the failure `stock()` exists to remove. Moving them onto
 `ContentFixture` is mechanical.
 
+**#55 made that more urgent and found the gap beside it.** Four of those ten now carry a
+`SHIPPED_STARTING_MACHINE` literal next to their `SHIPPED_STOCK` one, so there are two
+hand-copies of a shipped value per file rather than one. And the gap is this: **a file that
+replaces the Machine *table* is not protected by `ContentFixture` at all**, because what it
+substitutes is a source and not a tuning value — so `player.starting_machine` naming a row
+none of its rows answer to makes the whole set an error. That is the loader being right, and
+it is also the thing to check before adding any future tuning key that names a **row** rather
+than a number: scan every self-supplied table in `tests/`, not the files that happen to spell
+`machines = `. See "Where a Run opens, and who is allowed to know" for what that cost and how
+the four were found.
+
 `Definitions.load_from_directory` reads all eight files and `Definitions.parse` takes all
 eight sources, in that order. A missing one is an error naming the path, never an empty
 table — and `game/definition_watcher.gd` digests all eight plus the ports, so editing any of
@@ -2947,17 +2958,129 @@ and the first two were in the tool:
    wins instead, which is the better rule anyway: the cyan's job is to get a player to pick
    the cell, so a cell they have picked has had the advice.
 
-**Two findings recorded rather than patched**, both out of this ticket's scope:
+**Two findings recorded rather than patched**, both out of this ticket's scope. **The
+first is fixed; #55 is the ticket, and the section below is it.**
 
-- **A Run opens with the Ammo Press on the Build Gun.** `_player_selected_machine` is an
-  *index* into the sorted Machine table and it starts at 0, which is `ammo_press_mk1` —
-  the third thing in the chain. Fixing it means changing which index a Run starts on, which
-  moves `Simulation.hash()`, and "the first cell of the chain" is a `game/` concept that
-  `sim/` must not learn. The hotbar covers it — the Miner's cell is marked and the objective
-  line names its key — but the Build Gun is still pointed at the wrong thing on tick 0.
+- ~~**A Run opens with the Ammo Press on the Build Gun.**~~ **Fixed by #55.**
+  `_player_selected_machine` holds an id but it was *filled* from a scan of the sorted
+  table, so a Run opened on `ammo_press_mk1` — the third thing in the chain — while the
+  hotbar marked the Miner's cell and the objective line named its key. #53 left it for two
+  reasons and both were right: fixing it moves `Simulation.hash()`, and "the first cell of
+  the chain" is a `game/` concept `sim/` must not learn. What was wrong was the conclusion
+  that those two made it unfixable. See "Where a Run opens, and who is allowed to know",
+  below.
 - **`iron_plate` has no generated icon**, so the Smelter's output slot and the Ammo Press's
   input slot are both blank in a chain that is otherwise pictured end to end. #20 generated
   ten icons and the content has grown Items since. That is an art ticket.
+
+### Where a Run opens, and who is allowed to know
+
+#55. The Build Gun now opens pointed at the first Machine of the chain, and the way it gets
+there is the point: **content is told where a Run starts, and nothing in `sim/` learns what a
+chain is.**
+
+`player.starting_machine` names a Machine **id**, and the precedent it copies in every
+respect is `player.starting_weapon` — a tuning key naming a row, resolved by `Definitions`,
+checked against the table it names *and* against the Delivery table, which is the
+cross-table question that makes tuning the last thing read. An id rather than an index for
+the reason the Build Gun has always *held* an id: a hot-reload that resorts the table must
+not change what a Run opens pointed at.
+
+Six things worth knowing rather than rediscovering:
+
+- **`Simulation._opening_machine()` is a one-line read with no fallback, and the absence is
+  deliberate.** It used to scan for the first unlocked Machine by id, and that scan was
+  carrying a real guarantee — a Build Gun holding something the Simulation would refuse to
+  place teaches a player the game is broken. The guarantee **moved** rather than being
+  dropped: `_check_starting_machine` refuses a set naming no row or naming one a Delivery
+  tier locks, and a set with any error carries no definitions at all. A fallback left in
+  would be a second opinion about which Machine a Run opens on, in the one place a
+  disagreement is invisible.
+- **The two orders are put side by side in exactly one test, because that is the only place
+  they can be.** `test_building_view.test_a_run_opens_pointed_at_the_first_cell_of_the_chain`
+  asserts the hologram, the lit cell and the objective line all name the same Machine on tick
+  0. The Simulation has no opinion about cell 0 and must not grow one, so nothing on the
+  `sim/` side of the boundary could have asserted this.
+- **It cost a cascade anyway, and the shape of it is the lesson.** A required tuning key that
+  names a *row* is not the same risk as one that names a number: a file supplying its own
+  `machines.csv` has no `miner_mk1`, so the set is an error and carries no definitions at
+  all — the 156-failure shape #51 exists to prevent, arriving through a door `ContentFixture`
+  does not cover, because these files replace the **table** rather than the tuning. Fifteen
+  test files declare their own Machine table and **four of them name no shipped id**:
+  `test_game_audio` (9 red), `test_machine_mortality` (3), `test_silo` (26) and `test_turrets`
+  (8) — forty-six failures between them. Each now substitutes `starting_machine` beside the
+  `starting_stock` it was already substituting, naming a row it does have.
+
+  **What found them was grep, and grep found the wrong answer first.** Searching for
+  `machines = ` found six files and all six were fine, which read as "no cascade" — and was
+  simply the wrong query: four more files pass their table positionally to
+  `Definitions.parse` and never write that assignment. Scanning for the *header string*
+  inside every triple-quoted block in `tests/` is what actually enumerated them. **A key
+  naming a row wants that scan, not a search for a variable name.**
+
+  **Two files in the four also parse the shipped table elsewhere, and those sites must keep
+  the shipped value** — `test_silo._fixture_content` and `test_turrets._content` /
+  `_cannon_content`. The override is threaded next to the `AMMO_STOCK` / `STOCKED`
+  substitution each site already does, which is what makes "this site brings its own
+  Machines" and "this site gets the override" one decision rather than two.
+
+- **`test_build_gun.gd` changed on purpose rather than under duress.** It names `press_mk1`,
+  which sorts **last** of its three Machines, so its assertion fails if anything ever goes
+  back to taking the first row by id. A fixture that happened to agree with both rules would
+  have asserted nothing.
+
+- **Eight tests went red for a reason that was not the key at all, and it is worth knowing
+  about.** `test_godot_layer_smoke` (seven) and `test_belt_routing` (one) click and expect a
+  Machine; they were relying on the opening selection being something placeable **anywhere**.
+  A Run now opens on the Miner, and a Miner aimed at bare rock sends **no intent at all**,
+  because the Build Gun snaps to a Node or points nowhere (#42). Every one of those tests is
+  about the click rather than about the Miner, so each now names `ammo_press_mk1` — which is
+  exactly what a Run opened on before #55, so they do what they always did and now say so.
+  **The dependency was invisible until the default moved**, which is the argument for naming
+  a fixture's premise even when the default happens to supply it.
+- **No replay fixture needed re-recording.** The opening hash moves — the selection differs
+  and the definition digest has a key more — but a `ReplayRecording` made without a
+  `Definitions` re-reads `content/`, so record and replay move together and every fixture
+  asserts `is_identical` rather than a literal hash. What *could* have moved is a fixture
+  that built by clicking without selecting first; there is none, because
+  `test_recorded_session` presses `2` for the Smelter (#53) and every other build fixture
+  passes a definition index.
+
+**The render is `opening`, a fourth preset on `compose_building_shot.gd`, and it exists
+because none of the three could see the question.** `placing` puts a Smelter on the gun by
+hand, which is precisely the act that makes the opening selection invisible — the same reason
+#49 needed `triage` when `pair` and `distance` both framed past its subject. So `opening`
+builds nothing, walks nowhere and selects nothing, refusing to improve the vantage the way
+`compose_spawn_shot.gd` does, with one exception: a single `B`, which is the keypress the
+objective line is itself telling the player to make and without which there is no Build Gun in
+frame to be pointed at anything.
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "opening bare"
+```
+
+**And the picture is the argument, as it was for #48 and #52.**
+[`docs/images/opening_selection_before.png`](docs/images/opening_selection_before.png)
+against [`_after`](docs/images/opening_selection_after.png). The before is a worse statement
+of the bug than the issue was: the objective line says *"Place a Miner on the iron ore 12 m
+behind you — key 1"*, the HUD says `build gun: ammo_press_mk1`, **two cells are lit in two
+different colours** — cyan on the Miner for "next", amber on the Ammo Press for "selected" —
+and the thing in front of the player is a **green, placeable Ammo Press**. Green means click
+and it goes down, so the one element on screen that reads as an instruction was inviting a
+new player to spend 14 of their 110 plate on the third Machine in the chain as the first act
+of the Run. After: one cell lit, `build gun: miner_mk1`, and a Miner's derrick where the
+hologram was.
+
+The after shot's hologram is **red**, and that is #42 working rather than a defect left
+behind: a Miner snaps to a Node or refuses, the player spawns facing away from the ore, and
+the HUD says `no ore in range — a Miner has to stand on a Node` under a line that says the
+ore is 12 m behind them. Turning to face it would have been exactly the improved vantage this
+preset refuses — and the red version is the more useful picture, because it shows the
+selection, the snap and the objective line all agreeing about the same Machine at once.
+
+`bare` is new on this composer and the second reason for it is the licence: the yard is drawn
+out of the **purchased** packs when they are linked, so a shot bound for `docs/images/` in a
+public repository has to be able to leave them out.
 
 ### Refusals are a query, not state
 
@@ -3352,6 +3475,140 @@ Run you are standing in.
   function that does the refusing and the HUD gets the real reason. Nothing anywhere asks
   whether acting is *currently permitted* — it asks whether this player is on their feet,
   which is a fact about them in the same way their wallet is. Building is still never gated.
+
+### Dying, where a player can see it happen
+
+#54, and the player's own words: *"when the player dies its not fleshed out"*. What dying
+looked like before it, measured by rendering one and looking at the picture
+([`docs/images/death_before.png`](docs/images/death_before.png)): **you stood bolt upright at
+full eye height, the view did not change by one pixel, and the frame was indistinguishable
+from being alive.**
+
+**The ticket's own description was one step too generous, and the render is what caught it.**
+It said a line appears in the HUD — `DEAD — back at the Nest in 4s`, which at the shipped
+eight-second respawn reads 7s — and that line is real, but it is in `_gear_lines`, which only
+`hud_text()` carries. The *brief* HUD a player is
+actually reading is `_brief_lines`, and it has never mentioned death at all. So a solo death
+was presented by **nothing visible whatsoever** except the weapon leaving frame, unless the
+player happened to be holding `H`. The before image shows a dead player at the moment the
+gesture now has them flat on the deck, and the only way to tell is to read the countdown that
+is not there.
+
+**It is presentation and nothing else, and the constraint is the ticket's.** Death costs tempo
+and never progress or resources (GLOSSARY.md, DESIGN.md); `_respawn` touches position, health
+and the clock, and `test_a_death_leaves_the_stock_the_components_and_the_delivery_counter_alone`
+is that sentence as a test. The whole gesture happens *inside* `player.respawn_delay_seconds`
+and it could not do otherwise —
+`test_the_collapse_cannot_lengthen_the_wait_however_long_it_is_tuned` tunes the fall to a
+hundred seconds against an eight-second respawn and asserts the clock does not care, because
+`_lives` reads `_respawn_ticks` and has never heard of the collapse.
+
+**Four tuning keys and not one byte of state.** The collapse is a function of
+`_player_life_state` and `_player_life_since_tick`, both of which were hashed and saved before
+this ticket, so it needed nothing of its own —
+`test_the_collapse_is_not_state_and_nothing_in_the_simulation_reads_it` asserts that
+mechanically, off `RunSave.state_property_names`, rather than in a sentence.
+
+- **`query_player_collapse_blend` is the shape and the other two are its sizes**, which is the
+  arrangement `query_player_sprint_blend` already has beside the field of view and the bob. 0
+  standing, rising eased to a resting value as a body goes over, and **the same number run
+  backwards when one gets up** — a player who is `LIFE_ALIVE` and has been for less than the
+  gesture's length is one rising off the deck. That is the whole of #54's acknowledgement that
+  a respawn happened, and it costs no state and no key. A Run **opens on its feet** because
+  `_player_life_since_tick` is 0 at construction: nothing had happened to anybody on tick 0.
+- **`query_player_view_collapse_metres` and `query_player_view_collapse_roll_turns` are
+  renderer-only projections, and that is the ticket's one real decision.** The precedent cuts
+  both ways and the rule it is settled by is the **quantity rather than the circumstance**: the
+  jump is *in* `query_player_camera_height_metres` because how high a player is standing is a
+  fact a round must honour, and the bob, the dip and the lean are out of it because a footfall
+  must not move where a round goes. A body going limp is the second kind. The circumstantial
+  argument — a dead player aims at nothing, so folding it into the aim would be harmless today
+  — is true and is the wrong test: it is true only because `_act_refusal` currently refuses
+  every intent of a player who is not on their feet, and the one plausible future in which a
+  **Downed** player in co-op is given something to do is one in which a collapse inside the aim
+  would quietly be pointing their rounds at the dirt. A projection cannot develop that bug.
+- **Both falls are magnitudes rather than eye heights, so 0 means off** — the rule every other
+  camera key in `[player]` obeys. They were written as absolute heights first and that was wrong
+  twice over: 0 then meant the *largest* possible fall, and there was no single key to switch
+  the gesture off with, because `death_view_height_metres = eye_height` was refused by the
+  loader's own ordering check. **`death_view_drop_metres = 0` is now the one switch**, drop and
+  bank together, because the bank is a fraction of the fall and a fall of nothing is nothing to
+  be a fraction of. This is the largest camera movement in the game and somebody prone to motion
+  sickness is entitled to turn it off.
+- **The loader's ordering check is exempt while the gesture is off**, which is the lesson that
+  cost a round of rework: a Downed player cannot have fallen further than a dead one, and that
+  is worth refusing by name — but applying it at a death drop of zero is what made the off
+  switch two keys. An invariant that fires on the value that means "switched off" is an
+  invariant that has forgotten what it is about.
+- **A Downed player and a dead one are told apart by posture before they are told apart by
+  words.** `downed_view_drop_metres` is 0.9 against the dead 1.42, stated as a fraction of the
+  same fall, so the bank comes out proportionally smaller **for free** rather than out of a
+  second key somebody has to keep in step. A Downed player who bleeds out goes the rest of the
+  way down with no case written for it, because `_lives` restamps `_player_life_since_tick` and
+  the blend is a function of the state and the tick it began.
+
+**The overlay is the glance, and the HUD stays the post-mortem.** `WorldView` builds a tint and
+two lines of large type once, then shows, hides and recolours them — the rule every other thing
+in that file obeys, asserted by alternating a living and a dead Simulation through one view and
+counting nodes. There is no state and no tween: everything is a function of the same blend, so
+a frame that stepped nothing draws the same thing twice and the overlay puts itself away the
+moment a player is upright. Two tints rather than one strength: **Downed is light and warm**
+because the only useful thing a bleeding player can do is watch for a teammate coming, and
+**dead is darker and neutral** because there is nothing to do but wait.
+
+**The crosshair goes with them, and only a render found it.** It is an aiming reticle, every
+intent a dead player could send is refused, and the first render of this gesture had a crisp
+white cross sitting in the middle of a body on the deck. It comes back on the tick they are
+upright, off the same blend.
+
+**A solo death makes a noise now, which it never did.** `PLAYER_DOWN` fired on
+`query_player_is_downed`, which is **never true on a solo Run** (GLOSSARY.md) — so the branch
+fired on no solo death ever and #54's own description credits the game with a thud it had never
+once made. The cue now fires on leaving your feet, `query_player_is_alive`'s edge, which also
+says the right thing about a player who goes Downed and *then* bleeds out: they have fallen
+once, so they thud once. No new cue was added and no gain moved — the player has rejected four
+separate attempts at sound in this project for being too loud, and an un-auditionable new sting
+on the most startling moment in a Run is the wrong risk.
+
+**`tools/visual/compose_death_shot.gd` is the instrument, and the before is honest rather than
+reconstructed.** It is a strip, one frame per sample through the fall, through the player's own
+camera — the camera cannot be *placed* here, because where the Simulation put it is the whole
+subject. Its `before` preset sets `death_view_drop_metres = 0` and gets exactly what shipped,
+because the overlay is driven by the very same blend the view is: one key turns off the fall,
+the bank and the tint together. Measured off the strip, the fall is 0.08 m at three ticks,
+0.90 m at fifteen and 1.42 m with 20 degrees of bank at twenty-seven, where it settles.
+
+```
+SHOT_SCRIPT=tools/visual/compose_death_shot.gd tools/visual/shot.sh out.png "dead plain"
+```
+
+`dead`, `before` and `downed` are the presets; `bare` hides the yard and **`plain` hides the
+first-person arms, which is a licensing requirement rather than a composition choice** — a
+render of the purchased RgsDev viewmodels is as non-redistributable as the FBX they came from,
+which is why `compose_swing_shot.gd` may never commit its own strip. The committed trio is
+[`death_before.png`](docs/images/death_before.png),
+[`death_after.png`](docs/images/death_after.png) and
+[`death_downed.png`](docs/images/death_downed.png), all at the settled frame.
+
+**Two things recorded rather than patched**, both out of this ticket's scope and both found by
+looking at the picture:
+
+- **The brief HUD talks to a corpse.** `Objective.line` is still telling a dead player to press
+  B and place a Miner, and `_build_gun_lines` still offers `[B] to draw it`. Neither is wrong
+  about the game; both are advice during the one moment a player can act on none of it. The fix
+  is a clause in `Objective` and one in `_build_gun_lines`, and it is a HUD ticket.
+- **What killed you is still not a question any query can answer.** `_damage_player` takes a
+  count of points and nothing about where they came from, and recording it means new hashed,
+  saved, replayed state. It is probably worth it — being killed by something you never saw reads
+  as unfairness, and this project goes to real lengths elsewhere to make causes legible — but it
+  is a change to the Simulation rather than to its presentation, and #54 was explicit that it
+  should be argued in its own ticket rather than slipped into this one.
+
+**What no test and no render can settle** is whether half a second is the right length for the
+fall, whether 20 degrees of bank is a list or a lurch, and whether the tint is reassuring or
+claustrophobic. `player.collapse_seconds`, `player.collapse_roll_degrees` and the two drops are
+all hot-reloadable for that reason. The one question that matters most is the one only a human
+can answer: **does it read as dying, or as a camera doing something?**
 
 ### Where the controls went, and the one that had to move
 

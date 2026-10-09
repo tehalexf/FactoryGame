@@ -31,6 +31,15 @@ t01_open,Open Licence,1,iron_plate:1,,mg_drum_magazine,
 ## actually afford is `test_nest_store.gd`'s subject.
 const STOCKED: String = 'starting_stock = "iron_plate:400;ammunition:400"'
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
+## This file brings its own Machine table, so the opening selection has to name a row in
+## *that* table (#55). `player.starting_machine` names a row in `machines.csv` and a set
+## naming one it has not got carries no definitions at all — the rule working rather than
+## failing. Nothing here asserts on the selection; what it has to be is present.
+##
+## Not applied to `_fixture_content`, which parses the **shipped** table and so wants the
+## shipped value: naming a seam there would be the same error pointing the other way.
+const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
+const OWN_STARTING_MACHINE: String = 'starting_machine = "plate_seam_mk1"'
 
 
 func _read(path: String) -> String:
@@ -190,6 +199,7 @@ func _silo_content(
 ) -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
 	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
+	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
 	for pair: PackedStringArray in overrides:
 		tuning = tuning.replace(pair[0], pair[1])
 
@@ -388,6 +398,7 @@ func test_a_full_silo_is_idle_and_off_the_power_grid() -> void:
 func _powered_content() -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
 	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
+	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
 	tuning = tuning.replace("baseline_supply_kw = 300", "baseline_supply_kw = 2000")
 	return Definitions.parse(
 		SILO_MACHINES.replace(
@@ -647,7 +658,8 @@ func test_a_stratagem_no_delivery_has_unlocked_cannot_be_loaded_and_the_refusal_
 		SILO_RECIPES,
 		_read("res://content/tuning.toml")
 			.replace(SHIPPED_STOCK, STOCKED)
-			.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH),
+			.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
+			.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE),
 		ONE_CRAWLER,
 		LOCKING_DELIVERIES,
 		_read("res://content/gear.csv"),
@@ -1135,6 +1147,7 @@ func test_a_destroyed_silo_loses_its_stockpile_and_its_load() -> void:
 func _fragile_content() -> Definitions:
 	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
 	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
+	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
 	tuning = tuning.replace(SHIPPED_TELEGRAPH, QUICK_TELEGRAPH)
 	return Definitions.parse(
 		SILO_MACHINES.replace("silo,4,4,0,0,900", "silo,4,4,0,0,120"),

@@ -93,6 +93,7 @@ func _ammo_content(overrides: Array = [], waves: String = ONE_CRAWLER) -> Defini
 	var tuning: String = _read("res://content/tuning.toml")
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
 	tuning = tuning.replace(SHIPPED_STOCK, AMMO_STOCK)
+	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, AMMO_STARTING_MACHINE)
 	for pair: PackedStringArray in overrides:
 		tuning = tuning.replace(pair[0], pair[1])
 	return Definitions.parse(
@@ -347,6 +348,7 @@ func test_a_turret_with_nothing_in_reach_is_not_on_the_power_grid() -> void:
 			_read("res://content/tuning.toml")
 			. replace("telegraph_seconds = 12", "telegraph_seconds = 10")
 			. replace(SHIPPED_STOCK, AMMO_STOCK)
+			. replace(SHIPPED_STARTING_MACHINE, AMMO_STARTING_MACHINE)
 		),
 		ONE_CRAWLER,
 		AMMO_DELIVERIES,
@@ -594,6 +596,7 @@ func test_a_cannon_turret_fires_further_and_harder_with_no_code_that_knows_about
 	var tuning: String = _read("res://content/tuning.toml")
 	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
 	tuning = tuning.replace(SHIPPED_STOCK, AMMO_STOCK)
+	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, AMMO_STARTING_MACHINE)
 	var content: Definitions = Definitions.parse(
 		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,2,0,0,500,0,14,80,0,0,fire_cannon,\n",
 		AMMO_RECIPES + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n",
@@ -796,6 +799,15 @@ func test_a_run_with_a_turret_mid_fight_saves_and_resumes_identically() -> void:
 
 const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+
+## The Ammunition fixture brings its own Machine table, so the opening selection has to name
+## a row in *that* table (#55). `player.starting_machine` names a row in `machines.csv` and a
+## set naming one it has not got carries no definitions at all — the rule working rather than
+## failing. It rides alongside `AMMO_STOCK` because the three places that substitute one are
+## exactly the three that use `AMMO_MACHINES`; `_content` and `_cannon_content` parse the
+## shipped table and keep the shipped value.
+const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
+const AMMO_STARTING_MACHINE: String = 'starting_machine = "ammo_source_mk1"'
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier

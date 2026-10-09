@@ -165,6 +165,38 @@ land_dip_metres = 0.035
 land_dip_seconds = 0.22
 land_dip_reference_speed_metres_per_second = 7
 
+# The collapse: what dying looks like from inside (#54).
+#
+# `collapse_seconds` is how long the body takes to go over, and the same gesture played
+# backwards is how long getting up at the Nest takes. The two drops are how far the eye
+# falls: a dead player's head goes to the deck, a Downed one is propped on an elbow, and
+# the gap between those two numbers is most of what tells a player waiting for a teammate
+# from a player waiting for a clock. `collapse_roll_degrees` is how far the view banks over
+# as it falls, scaled by how far it fell — so a Downed player lists less, out of one key
+# rather than two that could come to disagree.
+#
+# **Both drops are magnitudes, like every other camera number in this section**, which is
+# what makes 0 mean off here as it does for the bob, the dip and the lean. They were written
+# as absolute eye *heights* first and that was wrong twice: 0 then meant the largest possible
+# fall, the exact opposite of its meaning three keys up, and there was no single key to
+# switch the gesture off with.
+#
+# **`death_view_drop_metres = 0` turns the whole gesture off**, drop and roll together, and
+# that is deliberate: this is the largest camera movement in the game, and somebody prone to
+# motion sickness is entitled to switch it off the way they can switch off the bob. The
+# Downed drop goes with it, because a fall of nothing is nothing to be a fraction of.
+#
+# None of this lengthens the wait, which is `respawn_delay_seconds` and nothing else:
+# **death costs tempo and never progress or resources** (GLOSSARY.md). 0.45 s of falling
+# happens inside the eight, and it could not do otherwise — `_lives` reads the respawn and
+# has never heard of the collapse. 1.42 m off a 1.7 m eye height is a head on the floor,
+# 0.9 m is propped up on an elbow, and 20 degrees is a clear list without being a barrel
+# roll.
+collapse_seconds = 0.45
+death_view_drop_metres = 1.42
+downed_view_drop_metres = 0.9
+collapse_roll_degrees = 20
+
 # Lean under acceleration: degrees of camera roll per metre per second of sideways
 # travel, and degrees of pitch per metre per second of forward travel.
 #
@@ -311,6 +343,22 @@ revive_reach_metres = 3
 # naming a piece of Gear inside the Simulation is the thing this project does not do.
 # The wrench, because it is also the repair tool — a Run opens able to mend what it built.
 starting_weapon = "pneumatic_wrench"
+
+# The Machine a Run opens with on the Build Gun, by id. Must name a row in machines.csv
+# that no Delivery tier locks.
+#
+# A key here rather than a constant in sim/, for the reason `starting_weapon` is one, and
+# an **id** rather than an index for the reason the Build Gun holds one: a hot-reload that
+# resorts the table must not change what a Run opens pointed at.
+#
+# **The Miner, because it is the first thing in the chain**, and this key is how that fact
+# reaches the Simulation without the Simulation learning what a chain is. The order the
+# hotbar reads in is derived in game/build_chain.gd from what each Recipe eats and makes —
+# a Miner's input is the ground, so it is stage 0 — and the Simulation has no business
+# knowing any of it. What it can be told is where a Run starts. Until #55 the opening
+# selection was index 0 of the sorted table, which is `ammo_press_mk1`: the hotbar said
+# build a Miner, the objective line said press 1, and the hologram was an Ammo Press.
+starting_machine = "miner_mk1"
 
 [gear]
 
