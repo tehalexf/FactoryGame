@@ -13,10 +13,15 @@
 ## read.
 ##
 ## Measured on 2026-10-09, seeds 7/11/29, `tools/balance/measure.sh`, with everything up to and
-## including #59 in. Every scenario but `rifle_picket` ends on the same tick on all three seeds,
-## and it is the only row that fires a ranged weapon. The nine rows of record reproduced #47's
-## and #49's figures exactly, which is the second time this table has been independently
-## re-derived. See "The table, measured 2026-10-09" and "What #60 measured" in CLAUDE.md.
+## including #62 in. **All fifteen rows of record reproduced #60's figures exactly** — every
+## clock, Wave, peak Heat and list of Machines lost — which is the fourth time this table has
+## been independently re-derived rather than carried forward. See "The table, measured
+## 2026-10-09", "What #60 measured" and "What #62 measured" in CLAUDE.md.
+##
+## Two rows now spread across seeds rather than one, and both are rows that fire a ranged
+## weapon: `rifle_picket` by 39 seconds and `armed_player` by one. `armed_second_press` fires one
+## too and is bit-identical on all three, because 133 shots are too few to change which Wave
+## lands last — so firing a weapon is necessary for a spread and not sufficient.
 ##
 ##     bare                3m22s   undefended — #35's shorter first Wave, a minute off
 ##     opening_line        3m12s   undefended, and sooner than bare
@@ -33,6 +38,8 @@
 ##     branched_artillery 13m57s   the Silo fires, and branching is dearer than a second Smelter
 ##     deep_silo          12m59s   Depth 2 and a Silo; the Barrage was never unlocked
 ##     coal_haul          15m41s   *longer* than deep_digger, browned out for 47% of itself
+##     armed_player       24m14s   a player armed off the store, dry 9% — one Press serves both
+##     armed_second_press 14m43s   dry 83% on 240 unspent rounds — the worst build measured
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -575,3 +582,198 @@ func test_the_probe_reports_what_ran_out_rather_than_only_that_something_did() -
 	assert_true(report.samples.size() > 10, "and a sample a minute throughout")
 	assert_true(report.most_ammunition_at_once > 0, "the Ammunition stockpile it built")
 	assert_true(report.describe().contains("cause:"), "with the verdict spelled out")
+
+
+# ── #62: whether a player can arm themselves out of their own Factory ────────
+
+func test_a_melee_run_is_never_dry_because_a_wrench_spends_nothing() -> void:
+	# **The figure #62 needed and the reason it has to be conditional.** The probe's existing
+	# dryness verdict is about the *Factory* — `query_item_total` walks Machines and Belts and
+	# has never heard of the Nest's store or of a player's pockets — so it says nothing at all
+	# about whether the person holding the gun had anything to fire. #62's question is the
+	# other one, and it is a different fact: a Run can hold 400 rounds at the counter while the
+	# player stands next to it empty.
+	#
+	# So the player's dryness is measured only over the ticks a **ranged** weapon was in hand.
+	# A Pneumatic Wrench spends nothing (`gear.csv` leaves its `ammunition_item` empty), so a
+	# player holding one is not dry, they are not in the market — and a figure that counted
+	# those ticks would report every row in this table as 100% dry, including the twelve that
+	# never equip a rifle at all. `bare` is the cheapest proof of that: three minutes, a
+	# wrench, no Factory and nothing to withdraw.
+	var report: BalanceProbe.Report = _play("bare")
+	assert_eq(report.player_armed_ticks, 0, "a wrench is never in the market for a round")
+	assert_eq(report.player_dry_ticks, 0, "so no tick of it counts as dry")
+	assert_eq(report.player_dry_percent(), 0, "and the share is zero rather than undefined")
+	assert_eq(report.player_shots_fired, 0, "and nothing ranged was ever fired")
+
+
+func test_a_player_can_arm_himself_out_of_the_nests_store_across_a_whole_run() -> void:
+	# **#62's first acceptance criterion, and it is a claim about the instrument before it is a
+	# claim about the balance.** `player.starting_stock` is plate alone, deliberately — putting
+	# rounds in the opening bill would conjure exactly the thing the Factory is supposed to make
+	# — so a Run opens with a rifle that is a stick, and the only way it ever fires is the Nest's
+	# store. `test_gear` proves that path works once. What had never been measured is whether it
+	# *keeps up*, over a Run, against the Turret drinking from the same Press.
+	#
+	# This row is the measurement. It is deliberately not `rifle_picket`: that one leans on the
+	# trigger for thirty seconds of every minute whether or not a Wave is on the Map, which is a
+	# measurement of its own impatience, and its end-to-end margin has moved five times across
+	# five tickets without anything about Ammunition changing. This one withdraws once a cycle
+	# and spends a burst, and what is asserted is the chain rather than the clock.
+	var report: BalanceProbe.Report = _play("armed_player")
+	assert_true(report.nest_fell, "the Run ends: %s" % report.cause())
+	assert_true(
+		report.rounds_that_reached_the_player > 0,
+		"rounds really did come out of the store and into his pockets"
+	)
+	assert_true(report.player_shots_fired > 0, "and he really did fire them")
+	assert_true(
+		report.player_armed_ticks > report.end_tick / 2,
+		"with a gun in hand for most of the Run, not a moment of it"
+	)
+	# The figure the ticket asks for, reported rather than asserted at a value: what it *is* is
+	# a measurement and belongs in CLAUDE.md, and a test that pinned it would turn every
+	# legitimate tuning change into a red suite.
+	assert_true(
+		report.cause().contains("dry for"),
+		"and the printed row says how long he spent with nothing to fire: %s" % report.cause()
+	)
+
+
+## How dry a player has to be before the magazine, rather than their aim, is what is wrong.
+##
+## A quarter of the ticks they were holding the gun. Measured, burst discipline comes out at 9%
+## — the gaps between a withdrawal landing and the next burst — and leaning on the trigger comes
+## out at 74%, so the band sits well clear of both and a change that moved either across it is a
+## change to the Ammunition economy rather than phase noise.
+const DRY_ENOUGH_TO_BE_THE_PROBLEM_PERCENT: int = 25
+
+
+func test_one_ammo_press_serves_a_turret_and_a_player_only_at_burst_discipline() -> void:
+	# **#62's second acceptance criterion, and the answer is "yes, at a discipline".**
+	#
+	# The two armed rows receive **the same income** and differ enormously in whether they can
+	# fight out of it, which is the whole finding. The Nest's line is a 50/50 branch off the one
+	# Ammo Press (#46), so it delivers about nineteen rounds a minute whatever the player does —
+	# measured, 452 rounds over 1434 s of gun-in-hand for the burst rifleman and 520 over 1618 s
+	# for the picket, which is 18.9 and 19.3 a minute. **The faucet sets a player's income and
+	# their trigger discipline sets their dryness**, and those are different facts.
+	#
+	# So a Bolt Rifle leaning on the trigger demands 75 rounds a minute, gets 19, and is dry for
+	# **74%** of the Run; one spending eight seconds in forty demands about 15, gets the same 19,
+	# and is dry for **9%**. One Press really does arm a Turret and a player — and only because
+	# the player is firing at a Wave rather than at the horizon.
+	#
+	# **This also corrects what `rifle_picket`'s own note claims.** That row says it spends
+	# rounds at 75 a minute against a Press that makes 37; it cannot, and never did. It spends
+	# 19 and holds an empty gun for three-quarters of the Run, so its 30-second bursts are mostly
+	# dry trigger pulls. That is the mechanical reason its end-to-end margin has moved five times
+	# across five tickets without anything about Ammunition changing: the demand the row was
+	# built to measure never happened.
+	var burst: BalanceProbe.Report = _play("armed_player")
+	var picket: BalanceProbe.Report = _play("rifle_picket")
+	if not assert_true(burst.nest_fell and picket.nest_fell, "both Runs end"):
+		return
+	assert_true(
+		burst.player_dry_percent() < DRY_ENOUGH_TO_BE_THE_PROBLEM_PERCENT,
+		(
+			"a player who fires at Waves is armed when one arrives: dry %d%% of %ds"
+			% [burst.player_dry_percent(), burst.player_armed_seconds()]
+		)
+	)
+	assert_true(
+		picket.player_dry_percent() >= DRY_ENOUGH_TO_BE_THE_PROBLEM_PERCENT,
+		(
+			"and one who leans on the trigger is holding an empty gun: dry %d%% of %ds"
+			% [picket.player_dry_percent(), picket.player_armed_seconds()]
+		)
+	)
+	# The income is the same to within a fifth, which is what makes the dryness a fact about the
+	# discipline rather than about the Factory. Compared as rounds per minute of gun-in-hand,
+	# because the two Runs are not the same length.
+	var burst_rate: int = burst.rounds_that_reached_the_player * 60 / maxi(
+		burst.player_armed_seconds(), 1
+	)
+	var picket_rate: int = picket.rounds_that_reached_the_player * 60 / maxi(
+		picket.player_armed_seconds(), 1
+	)
+	assert_true(
+		absi(burst_rate - picket_rate) * 5 <= maxi(burst_rate, picket_rate),
+		(
+			"one Press's Nest line pays both of them about the same: %d against %d rounds a minute"
+			% [burst_rate, picket_rate]
+		)
+	)
+	# And what it costs the Turret is real rather than rhetorical: the player's share comes out
+	# of the same branch, so the gun that holds the lane spends longer empty and fires less.
+	var competent: BalanceProbe.Report = _play("competent")
+	assert_true(
+		burst.dry_turret_ticks > competent.dry_turret_ticks,
+		(
+			"the Turret pays for the magazine: %d Turret-ticks empty against %d"
+			% [burst.dry_turret_ticks, competent.dry_turret_ticks]
+		)
+	)
+	assert_true(
+		burst.end_tick < competent.end_tick,
+		"and the Run is shorter for it: %s against %s" % [burst.clock(), competent.clock()]
+	)
+
+
+func test_a_second_ammo_press_off_one_smelter_starves_the_lane_turret_and_the_player_at_once() -> void:
+	# **#60's finding 1, sharpened into something worse than neutral.** #60 measured a second
+	# Ammo Press and a second Turret as a *mistake* — 16% shorter than `competent`, ending with
+	# 416 rounds nobody could spend — because a Turret's output is bounded by how long an Enemy
+	# spends inside its 16 m rather than by its feed. What that left open is the player's side: a
+	# player is not range-bound, so rounds a Turret cannot spend are rounds a player could.
+	#
+	# Measured, they are not, and the reason is upstream of both guns. The second Press is fed by
+	# a second Belt off the **one Smelter**, which since #46 is a 50/50 share — so it halves the
+	# first Press, and the first Press is the only one whose rounds reach *either* the lane
+	# Turret or the Nest's counter. So one build halves the feed of the gun holding the lane and
+	# halves the player's income at the same time, and banks the surplus behind a second gun that
+	# the Breaker tier never even arrives to give targets to.
+	#
+	# The figures: **14m43s against `armed_player`'s 24m14s** — 39% shorter, and the shortest
+	# defended Run in the table — with the player **dry for 83%** of the time, 137 rounds
+	# reaching him against 452, and the Factory finishing on **240 rounds** with all eight
+	# Machines standing and nothing lost. A Factory in perfect health that cannot shoot.
+	#
+	# Asserted as bands: the pair is not longer, the player is starved rather than supplied, and
+	# the rounds pile up instead. A later change that made a second Press genuinely arm a player
+	# would fail here, which is the point of writing it down.
+	var one: BalanceProbe.Report = _play("armed_player")
+	var two: BalanceProbe.Report = _play("armed_second_press")
+	if not assert_true(one.nest_fell and two.nest_fell, "both Runs end"):
+		return
+	assert_eq(two.turrets_built, 2, "a second Turret stood")
+	assert_true(
+		two.machines_built >= one.machines_built + 2,
+		"and a second Ammo Press with it: %d Machines against %d"
+		% [two.machines_built, one.machines_built]
+	)
+	assert_true(
+		two.player_dry_percent() > one.player_dry_percent() * 2,
+		(
+			"the player is far worse armed for it: dry %d%% against %d%%"
+			% [two.player_dry_percent(), one.player_dry_percent()]
+		)
+	)
+	assert_true(
+		two.rounds_that_reached_the_player < one.rounds_that_reached_the_player,
+		(
+			"because fewer rounds ever reach the counter: %d against %d"
+			% [two.rounds_that_reached_the_player, one.rounds_that_reached_the_player]
+		)
+	)
+	assert_true(
+		two.ammunition_in_the_factory > one.ammunition_in_the_factory,
+		(
+			"while the Factory finishes holding more of them: %d against %d"
+			% [two.ammunition_in_the_factory, one.ammunition_in_the_factory]
+		)
+	)
+	assert_true(
+		two.end_tick < one.end_tick,
+		"and the Run is shorter: %s against %s" % [two.clock(), one.clock()]
+	)

@@ -2217,8 +2217,9 @@ The Ammunition arithmetic is unchanged and is still worth knowing, because it is
 two of them, while one Ammo Press makes two rounds every three seconds — 37 a minute, so about
 19 Crawlers a minute of killing. The Wave interval floors at 40 seconds, which is 1.5 Waves a
 minute, so **one Ammo Press sustains about twelve Crawlers a Wave and no more**. What changed is
-the *other* side of the ledger: with the production line surviving, the stockpile peaks at 454
-rounds around minute twenty-four and is still 96 deep when the Nest falls. **One Turret cannot
+the *other* side of the ledger: with the production line surviving, the stockpile peaks at 446
+rounds around minute twenty-three and is still 96 deep when the Nest falls. (This read 454 at
+minute twenty-four until #62 re-measured it; the 96 is exact.) **One Turret cannot
 spend what one Press makes**, which is a different and better problem to have than the old one,
 and it is why the second Turret in `fortified` is now a wash rather than a two-minute gain.
 
@@ -2239,6 +2240,17 @@ the defence" is still DESIGN.md's thesis and still how a Turret is fed at all; w
 that *more* production converts into more killing on the shipped reach and rate of fire. See
 finding 1 under "What #60 measured".
 
+**#62 took that one step further and found a subtraction rather than a wash.** The open half of
+#60's finding was the player's side — a player is not range-bound, so rounds a Turret cannot
+spend ought to be rounds a player could. `armed_second_press` puts a rifleman on exactly
+`second_press`'s Factory and is **14m43s, the shortest defended Run in the table, with the
+player dry for 83% of it and 240 rounds stranded in a Factory that lost nothing at all.** The
+second Press is fed by a 50/50 branch off the **one Smelter**, so it halves the first Press —
+and the first Press is the only one whose rounds reach either the lane Turret or the Nest's
+counter. One build therefore halves the gun holding the lane *and* the player's income, and
+banks the surplus behind a second gun whose targets never arrive. **The second production line a
+shooter needs starts at the ore, not at the Press.** See finding 3 under "What #62 measured".
+
 The plate is buyable either way: the call-early lever pays `wave.call_early_bounty_per_item` of
 each starting Item, and the Nest's store hands back whatever a Belt banked. `test_nest_store.gd`
 proves that end to end; see the Nest's store, below.
@@ -2247,8 +2259,8 @@ Two things a later ticket should know:
 
 - **A Machine's output buffer is uncapped**, so a Belt that fills up banks the surplus in the
   Ammo Press indefinitely. The stockpile a player builds between Waves is real and unbounded,
-  and it is what carries the middle of the Run — it peaks at 454 rounds around minute
-  twenty-four and is still 96 deep when the Nest falls.
+  and it is what carries the middle of the Run — it peaks at 446 rounds around minute
+  twenty-three and is still 96 deep when the Nest falls.
 - **A Turret on the Nest's lane now defends the Factory, and #34 is the whole of why.** A
   Breaker used to steer by the *Factory* flowfield from the moment it emerged, so it never
   walked into the reach of a Turret placed to cover the Nest — the `competent` Factory lost all
@@ -3500,12 +3512,18 @@ call-early bounty — so nothing the Factory produced could reach the Build Gun 
 not fund a *second* Ammo Press out of its own output, which is exactly what the balance note
 above says you need. See the Nest's store, below.
 
-**Open: the store is not yet what arms a player.** #15 made firing spend **Ammunition** out
-of these same pockets, and `player.starting_stock` is deliberately still plate alone — so a
-Run opens able to build its line and swing a wrench and unable to fire a shot. The faucet
-exists now; what has not been done is the pass that checks a Run can actually keep a magazine
-full out of it, which is a balance question and wants somebody playing it. See the Gear
-section.
+**The store is what arms a player, and #62 measured whether it keeps up.** #15 made firing
+spend **Ammunition** out of these same pockets, and `player.starting_stock` is deliberately
+still plate alone — so a Run opens able to build its line and swing a wrench and unable to fire
+a shot. That is the keystone loop stated correctly rather than a gap, and it stays.
+
+What #62 added is the measurement that had been open since: **the Nest's line pays a player
+about nineteen rounds a minute, which is half of one Ammo Press, and that is enough to fight a
+Wave out of and nowhere near enough to lean on a trigger with.** `armed_player` is dry for 9%
+of the Run against `rifle_picket`'s 74% on the *same* income, so what a player can do with the
+faucet is set by their trigger discipline and not by the store — whose cap of 200 was never
+approached, peaking at 24. What it costs is 4m34s of Run and the lane Turret spending twice as
+long empty. See "What #62 measured" under the joint balance pass, and the Gear section.
 
 ### What a Belt and a Wall cost
 
@@ -4384,16 +4402,30 @@ Smelter and an Ammo Press out of the opening eighty plates, runs a Belt into the
 for the counter to bank a round, withdraws it (#27) and kills a Crawler with it. That is the
 pillar's whole sentence as one test.
 
-**#26 measured the cost of shooting, and it is real.** `rifle_picket` is the `competent`
-Factory with a second Belt banking Ammunition at the Nest and a player standing there with a
-Bolt Rifle, drawing a magazine a minute and spending half of each minute on the trigger. It
-**costs the Run 28 seconds** — 26m32s against 27m00s. The rifle spends rounds at 75 a
-minute where the Ammo Press makes 37, so a player who
-leans on the trigger is bidding against his own Turret for the same Press, exactly as the
-Turrets section's arithmetic says he must. The honest reading stands: **a player who wants to
-shoot needs a second production line**, and that is now a measured sentence rather than a
-guess. `test_balance.test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press` is
-what keeps it true.
+**#26 measured the cost of shooting, and #62 measured what a player actually gets.**
+`rifle_picket` is the `competent` Factory with a second Belt banking Ammunition at the Nest and
+a player standing there with a Bolt Rifle, leaning on the trigger for thirty seconds of every
+minute. #26 read it as costing the Run 28 seconds — 26m32s against 27m00s on the schedule of
+the day — and the arithmetic beside it said the rifle spends rounds at 75 a minute where the
+Ammo Press makes 37.
+
+**That arithmetic is about demand and it was being read as spend. #62 measured the spend and the
+row cannot do it:** the Nest's line is a 50/50 branch off one Press, so it pays about nineteen
+rounds a minute, and the picket receives 520 over a 27-minute Run, fires all 520, and **holds an
+empty gun for 74% of it**. Its thirty-second bursts are mostly dry trigger pulls, which is the
+mechanical reason its end-to-end margin has moved five times across five tickets without one of
+them touching what a round costs. **Do not read an Ammunition finding into that row**;
+`armed_player` is the one to read, because its demand and its income are the same order and it
+is dry for 9% rather than 74%.
+
+The honest reading of #26's conclusion survives and gets sharper: **a player who wants to shoot
+needs a second production line, and it has to start at the ore.** A second *Ammo Press* off the
+one Smelter is the worst build in the table — `armed_second_press` is 14m43s with the player dry
+for 83% and 240 rounds stranded in the Factory — because it halves the only Press whose rounds
+reach either the lane Turret or the counter. See finding 3 under "What #62 measured".
+`test_balance.test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press` and
+`test_one_ammo_press_serves_a_turret_and_a_player_only_at_burst_discipline` are what keep both
+halves true.
 
 `gear.csv`, `[gear]`, `player.health` and `enemy.player_bite_reach_metres` were **not** moved
 by #26. Nothing in the measurement contradicted them, and the Run-length lever that mattered
@@ -4941,14 +4973,15 @@ sessions headless to the end of the Run and reports what happened. Change a numb
   Simulation only through `query_*` and issues nothing but Input Actions, so a measurement is a
   session the game could have had. **It records facts and derives the cause from them**, with
   every threshold a named constant at the top of the file.
-- `tests/balance_scenarios.gd` — the **fifteen** sessions of record, on `MapLayout.starter()`
+- `tests/balance_scenarios.gd` — the **seventeen** sessions of record, on `MapLayout.starter()`
   with `content/` off disk and `player.starting_stock` as written. Every one past `bare` contains
   the same six Machines on the same tiles, so the difference between two rows is the difference
   between two *decisions*. Nine are #26's and #37's; the six #60 added are each a claim this file
-  had been making on arithmetic, and the two of them that are variants of an existing row —
-  `coal_haul` and `deep_silo` of `deep_digger`, `branched_artillery` of `artillery` — are built
-  by **one private shared with the row they vary**, under a flag, so the row of record cannot
-  drift from its own variant.
+  had been making on arithmetic; the two #62 added are the player's own magazine, which nothing
+  here had ever measured. **A variant is built by one private shared with the row it varies**,
+  under a flag, so the row of record cannot drift from its own variant — `coal_haul` and
+  `deep_silo` of `deep_digger`, `branched_artillery` of `artillery`, and `armed_second_press` of
+  `armed_player`.
 
 `tests/cases/test_balance.gd` asserts the shape in bands rather than ticks — the exact figures
 belong here, and a test that pinned the tick would turn every legitimate tuning change into a
@@ -4957,12 +4990,13 @@ it from several methods.
 
 ### The table, measured 2026-10-09
 
-Seeds 7, 11 and 29. **Fourteen of the fifteen scenarios end on the same tick on all three**, and
-`rifle_picket` — the one row that has ever spread — spreads again: 27m18s, 27m20s and 26m39s,
-against the identical figures #47 and #49 measured. It is the only row that fires a ranged
-weapon, and `Simulation._scatter` is the only consumer of the seeded RNG in `sim/`, so this is
-the property behaving rather than changing — and the six rows #60 added obey it too, identical
-on all three seeds in every figure the table prints. See "What the seed can reach", below.
+Seeds 7, 11 and 29. **Fifteen of the seventeen scenarios end on the same tick on all three**,
+and the two that spread are the two that fire enough rounds to. `rifle_picket` spreads again —
+27m18s, 27m20s and 26m39s, the identical figures #47, #49, #58 and #60 measured — and #62's
+`armed_player` joins it at 24m14s, 24m15s and 24m15s. `Simulation._scatter` is the only consumer
+of the seeded RNG in `sim/` and only a *ranged* shot reaches it, so this is the property behaving
+rather than changing: the six rows #60 added fire nothing and are identical, and #62's
+`armed_second_press` fires 133 shots and is identical too. See "What the seed can reach", below.
 
 **Every column is the same scenarios through the same harness.** The first two differ by four
 numbers in one content file and nothing else. The third adds #30's collision and #34's Breaker
@@ -4991,8 +5025,19 @@ this table has been independently re-derived by a later ticket rather than carri
 added **six rows**, every one of them a claim this file had been making on arithmetic. See "What
 #60 measured, and the four claims it contradicted", below.
 
+**#62 gets no column either, and for the strongest reason in the list.** It added figures to the
+*report* rather than rules to the Simulation — the player's own magazine, which nothing here had
+ever measured — so there was nothing it could have moved, and all fifteen rows of record
+reproduced #60's figures exactly on all three seeds. What it added is the two rows at the bottom
+of the table, and one correction: `competent`'s Ammunition stockpile peaks at **446** around
+minute twenty-three rather than the 454 at minute twenty-four this file had been carrying. See
+"What #62 measured", below.
+
 The six rows below the rule are #60's and have no history: they were measured once, on the tip
-they were written against.
+they were written against. The last two are **#62's**, and the same applies — except that #62
+re-measured all fifteen rows of record and **every one of them reproduced #60's figures
+exactly**, down to the Wave number, the peak Heat and the list of Machines lost in the order
+they were lost. That is the **fourth** independent re-derivation of this table.
 
 | Scenario | #26 before | #26 after | #34 | #37 | merged | #46 | #47 | #49 | **#60** | Wave | Peak Heat | What killed it, now |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -5011,6 +5056,8 @@ they were written against.
 | `branched_artillery` — the Silo off one Smelter, no second ore line | — | — | — | — | — | — | — | — | **13m57s** | 15 | 2974 | swarmed; the Silo fired, and 104 plate was parked on the haul |
 | `deep_silo` — `deep_digger` with a Silo, going for a Barrage | — | — | — | — | — | — | — | — | **12m59s** | 16 | 3477 | swarmed with two Breaches open; **the Barrage was never unlocked** |
 | `coal_haul` — `deep_digger` that never tears the haul down | — | — | — | — | — | — | — | — | **15m41s** | 17 | 2488 | swarmed, browned out for **47%** — and **3m14s *longer*** than `deep_digger` |
+| `armed_player` — a player arming himself at the counter, firing in bursts | — | — | — | — | — | — | — | — | **24m14s** | 28 | 5447 | swarmed; the player was **dry for 9%** of 1434 s, firing 374 shots out of 452 rounds |
+| `armed_second_press` — the same player, on #60's second Press and Turret | — | — | — | — | — | — | — | — | **14m43s** | 15 | 3199 | swarmed with **240 rounds** in it and **nothing lost**; the player **dry for 83%** |
 
 **#36 moved no row of this table, and that was the control its shape predicted**: it gave a
 player a Belt-routing tool and a port table to aim it with, and a scenario issues `BUILD_BELT`
@@ -5634,10 +5681,158 @@ of `heat.decay_per_minute` against what a working Factory makes, and moving eith
 with a human in it. The honest statement is the one the figures support: on the shipped numbers a
 Factory that cannot run flat out lives longer than one that can.
 
+### What #62 measured, and the row whose premise was never true
+
+**#62 added two rows and moved none of the fifteen, and the question it was opened for had been
+open since #15.** `player.starting_stock` is plate alone, deliberately — rounds in the opening
+bill would conjure the one thing the Factory exists to make — so a Run opens with a rifle that is
+a stick, and #27's faucet at the Nest is the only way it ever fires. `test_gear` walks that chain
+once. Whether it *keeps up* across a Run, against the Turret drinking from the same Ammo Press,
+had never been played, and this file recorded it as open.
+
+**The instrument had to be built before the question could be asked, and that is the first
+finding.** `BalanceProbe`'s dryness verdict is about the **Factory**: `query_item_total` walks
+Machines and Belts and has never heard of the Nest's store or of a player's pockets. So every
+figure this table has ever printed about Ammunition was silent on whether the person holding the
+gun had anything to fire — a Run can report a perfectly fed Factory while the player standing at
+its counter is empty, and `armed_second_press` below is exactly that Run. The Report now carries
+`player_armed_ticks`, `player_dry_ticks`, `player_shots_fired`, `rounds_that_reached_the_player`
+and `most_in_the_nests_store`, counted **only over the ticks a ranged weapon was in hand** —
+`query_player_weapon_ammunition_per_shot` is 0 for a Pneumatic Wrench, so a player holding one is
+not dry, they are not in the market, and a figure that counted those ticks would report
+**fourteen of the seventeen rows** as dry for the whole of themselves — only `rifle_picket` and
+#62's own two ever draw a ranged weapon.
+
+#### 1. One Ammo Press serves a Turret and a player, and the lever is discipline rather than supply
+
+`armed_player` is the `competent` Factory plus the twenty-four-tile haul that banks rounds at the
+counter — bought with one pull of the call-early lever, which is exactly what `rifle_picket`
+pays — and a player who withdraws whatever the store has every forty seconds and spends an
+eight-second burst. Eight seconds is ten shots at `bolt_rifle`'s 0.8 s, which is a Wave's worth
+of Chaff and not a round more; forty seconds is `heat.wave_interval_minimum_seconds`, the floor a
+long Run spends most of itself pinned at.
+
+Measured: **24m14s, Wave 28, peak Heat 5447. The player held the gun for 1434 s and was dry for
+9% of it, firing 374 shots out of the 452 rounds that reached him.** So the answer is yes — and
+the two armed rows together say *why*, which is the part worth keeping:
+
+| | armed for | rounds reached him | that is | he fired | dry |
+|---|---|---|---|---|---|
+| `armed_player` — bursts | 1434 s | 452 | 18.9 a minute | 374 | **9%** |
+| `rifle_picket` — leaning on it | 1618 s | 520 | 19.3 a minute | 520 | **74%** |
+
+**The income is the same and the dryness is not, so the faucet sets what a player earns and
+their trigger discipline sets whether they are armed when it matters.** The Nest's line is a
+50/50 branch off the one Press (#46), so it pays about **nineteen rounds a minute whatever the
+player does** — half of the Press's 37.5, which is itself the Smelter's 18.75 plate doubled. A
+Bolt Rifle leaning on the trigger demands 75 a minute against that nineteen and stands empty
+three-quarters of the Run; one firing at Waves demands about fifteen and is ready for almost all
+of them.
+
+**What it costs the Turret is real and is the first measured figure for it.** The player's share
+comes out of the same branch, so the gun holding the lane spent **4431 Turret-ticks empty against
+`competent`'s 2162** and fired **418 shots against 715** — and the Run is **24m14s against
+28m48s, 4m34s and 16% shorter**. The Nest's store peaked at **24 of its 200 cap**, which is the
+sharpest single number here: there was never a reserve, only a pipe. A player arming themselves
+out of their own Factory is living hand to mouth by construction, and the cap is not what bounds
+them.
+
+(That 24m14s is the same clock `second_press` prints, and it is a coincidence rather than a
+mechanism — different Wave, different peak Heat, and nothing shared but the shape of the loss.)
+
+#### 2. `rifle_picket`'s own premise was never true, which is why its margin was never readable
+
+This is the finding that outlives the two rows. `rifle_picket`'s note in this file says it draws
+"a magazine a minute and spending half of each minute on the trigger", and that **the rifle
+spends rounds at 75 a minute where the Ammo Press makes 37**. The second half is arithmetic about
+*demand* and it was being read as a statement about *spend*. Measured, the row cannot spend 75 a
+minute and never did: it receives 19, fires 19, and **holds an empty gun for 74% of the Run**, so
+its thirty-second bursts are mostly dry trigger pulls.
+
+So the mechanical reason this file has recorded — that the picket's end-to-end margin moved five
+times across five tickets without one of them touching what a round costs or what a Press makes —
+is now a measurement rather than a shrug. **The demand the row was built to measure never
+happened.** What the row actually measures is a player who fires until empty and then waits, and
+the difference between it and `competent` is dominated by where its ~19 rounds a minute happened
+to land. The standing instruction not to re-tune Ammunition off that margin is unchanged and now
+has a reason attached; `armed_player` is the row to read instead, because its demand and its
+income are the same order.
+
+#### 3. A second Ammo Press off the one Smelter is the worst build in the table
+
+**#60's finding 1, sharpened past "a mistake" into "a net subtraction".** #60 measured
+`second_press` as 16% shorter than `competent` with 416 rounds nobody could spend, because a
+Turret's output is bounded by how long an Enemy spends inside its 16 m and not by its feed. What
+that left open was the player's side: a player is not range-bound, so rounds a Turret cannot
+spend ought to be rounds a player could.
+
+`armed_second_press` builds exactly what `second_press` builds, on the same tiles, out of the
+same two extra pulls of the lever, and puts `armed_player`'s rifleman at the counter. Measured:
+**14m43s — 39% shorter than `armed_player`, 49% shorter than `competent`, and the shortest
+defended Run in this table — with the player dry for 83% of the time, 137 rounds reaching him
+against 452, and the Factory finishing on 240 rounds with all eight Machines standing and nothing
+lost at all.** A Factory in perfect health that cannot shoot.
+
+**The reason is #46's 50/50 share applied twice over, and it is worth doing the arithmetic
+because no single row shows it.** Trace what the gun holding the lane is actually fed, in rounds
+a minute, remembering that one Smelter makes 18.75 plate a minute and a Press turns each plate
+into two rounds:
+
+| | plate into Press 1 | rounds out | Press 1's branches | **to the lane Turret** |
+|---|---|---|---|---|
+| `competent` | all 18.75 | 37.5 | the Turret alone | **37.5** |
+| `second_press` | half, 9.4 | 18.75 | the Turret alone | **18.75** |
+| `armed_player` | all 18.75 | 37.5 | the Turret and the Nest | **18.75** |
+| `armed_second_press` | half, 9.4 | 18.75 | the Turret and the Nest | **9.4** |
+
+So the second Press and the player each halve the lane Turret's feed, and **`armed_second_press`
+is the only build in the table where both halvings land on the same Press** — a quarter of what
+`competent` feeds the gun that is holding the road. The second Press's own rounds go to the
+second Turret and never come near the store, so they cannot make up either shortfall: two Turrets
+managed **169 shots** between them and the Breaker tier was never even reached. That is the
+subtraction, and it is why nothing about #60's row predicted it: `second_press` halves the feed
+once and survives it.
+
+**What a player who wants to shoot needs is a second Smelter, not a second Press** — a second ore
+line, which is the thing `artillery` builds and the thing `branched_artillery` measured the price
+of. "A player who wants to shoot needs a second production line" was this file's own conclusion
+from #26 and it survives #62 intact; what #62 adds is that the line has to start at the **ore**,
+because every Press downstream of one Smelter is dividing the same 18.75 plate a minute.
+
+#### 4. A row that fires a ranged weapon can still be seed-invariant
+
+`armed_player` is the **second** row in this table with a distribution in it, and the first
+addition to that set since `rifle_picket`: 24m14s, 24m15s and 24m15s, at peak Heat 5447, 5443 and
+5443. One second and four units of Heat, which is `Simulation._scatter` — the only consumer of
+the seeded RNG in `sim/` — moving where 374 rounds went.
+
+`armed_second_press` fires one too and is **bit-identical on all three seeds** in every figure
+the report prints. So firing a ranged weapon is **necessary for a spread and not sufficient**:
+133 shots over fourteen minutes are too few to change which Wave lands last. The property this
+file states — that a Run length is a function of the Factory and not of the seed — is intact, and
+the qualification is sharper than "the rows that fire can spread": a row spreads when it fires
+*enough to matter*.
+
+#### What #62 did not change, and one figure it corrected
+
+**No value in `content/` was touched**, which was an acceptance criterion of the ticket rather
+than a side effect. Nothing here is an argument for moving one: a player can arm themselves, the
+cost to the Turret is legible, and the two numbers most likely to be wrong about shooting are
+still `gear.view_kick_degrees_per_shot` and `gear.enemy_hit_radius_metres`, which are about what
+a fight feels like through a mouse. `player.starting_stock` stays plate alone and the keystone
+loop stays stated correctly.
+
+One measured figure in this file was wrong and is rewritten from the measurement rather than
+reconciled with it: the Turrets section said `competent`'s Ammunition stockpile "peaks at 454
+rounds around minute twenty-four". It peaks at **446, at minute twenty-three**. The 96 rounds
+still in the Factory when the Nest falls is exact.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
-the Simulation rather than of the harness.** The Map is handcrafted (`MapLayout.starter()`
+the Simulation rather than of the harness.** (#62 added the second row with a spread in it and
+also the counter-example that sharpens the rule — see finding 4 under "What #62 measured":
+firing a ranged weapon is necessary for a spread and not sufficient.) The Map is handcrafted (`MapLayout.starter()`
 consults no seed), the Wave schedule is a function of Heat, and the single consumer of the
 seeded RNG in the whole of `sim/` is `Simulation._scatter` — the spread on a *ranged* shot. So
 three seeds are three identical Runs — down to which Machines were lost in which order — for
@@ -5667,6 +5862,14 @@ Two consequences worth knowing before anybody quotes a variance:
   three seeds in every figure the table prints, including the Walls built and the hit points they
   absorbed. Six new rows and six times zero spread is what "a Run length is a function of the
   Factory" looks like when it is tested rather than asserted.
+
+  **#62's two rows then split the set in a way that was worth measuring.** Both fire a ranged
+  weapon. `armed_player` spreads — 24m14s, 24m15s, 24m15s at peak Heat 5447, 5443, 5443 — which
+  makes it the second row in this table with a distribution and the first since `rifle_picket`.
+  `armed_second_press` is **bit-identical on all three** in every printed figure, because its
+  player fires 133 shots in fourteen minutes and that is too few to change which Wave lands
+  last. So the qualification on the property is sharper than "rows that fire can spread": a row
+  spreads when it fires *enough to matter*.
 
   The last paragraph of this bullet used to warn that the spread going to zero was not an
   improvement anybody made and that the next ticket to re-phase the schedule might split the
@@ -5856,11 +6059,24 @@ Honest residue, so the next ticket does not have to rediscover it:
 - ~~**A second Ammo Press.**~~ **Measured by #60, and it is a mistake rather than an answer.**
   `second_press` builds the Press *and* the second Turret and is 16% shorter than `competent`,
   ending with 416 rounds nobody could spend — because a Turret's output is bounded by how long an
-  Enemy spends inside its 16 m and not by its feed. See finding 1 under "What #60 measured". What
-  is still open is the question that replaces it: **what a Factory can buy that converts
-  production into kills**, since neither a second feed nor a second gun does. That is a design
-  question rather than a measurement, and `mg_turret_mk1`'s `range_tiles` and `fire_mg`'s rate
-  are where it would be answered.
+  Enemy spends inside its 16 m and not by its feed. See finding 1 under "What #60 measured".
+  **#62 closed the player half of it too**: `armed_second_press` puts a rifleman on that same
+  Factory and is 14m43s with the player dry for 83%, because the second Press halves the only
+  Press whose rounds reach the counter. What is still open is the question that replaces both:
+  **what a Factory can buy that converts production into kills**, since neither a second feed,
+  nor a second gun, nor a player with a rifle does. That is a design question rather than a
+  measurement, and `mg_turret_mk1`'s `range_tiles` and `fire_mg`'s rate are where it would be
+  answered.
+- ~~**Whether a Run can keep a magazine full out of the Nest's store.**~~ **Measured by #62, and
+  the answer is yes at burst discipline and no at any other.** `armed_player` is dry for 9% of a
+  24m14s Run on the nineteen rounds a minute the Nest's line pays; `rifle_picket` is dry for 74%
+  on the same income. See "What #62 measured". What a harness still cannot say is whether
+  **eight seconds in forty is what a fight actually costs** — the burst length is a discipline
+  imposed by a clock, because a scenario cannot see a Wave coming, so the row spends some of its
+  rounds at nothing and a real player would spend them at Crawlers. That error is in the same
+  direction as the picket's and about a third of the size, so the 9% is a floor on how dry a
+  careful player would be rather than an estimate of it. The thing to watch when somebody plays
+  it is whether walking to the counter between Waves reads as a rhythm or as a chore.
 - ~~**A branched Factory.**~~ **Measured by #60 as `branched_artillery`, and the mechanic works
   while the saving does not**: thirty-five tiles of Belt to carry plate round to where the Silo
   stands is 35 plate against the 24 a second Miner and Smelter cost, and it parks 104 plate on

@@ -54,15 +54,24 @@ class Sample extends RefCounted:
 	var enemies_alive: int = 0
 	var nest_health: int = 0
 	var ammunition_in_the_factory: int = 0
+	## #62: what the player was carrying and what the Nest's store was holding at the same
+	## moment. The two figures that make a magazine legible in the trace: a store at its cap
+	## beside an empty player is a player who did not walk over, and an empty store beside an
+	## empty player is a Factory that could not pay either of its claimants.
+	var player_ammunition: int = 0
+	var ammunition_in_the_nests_store: int = 0
 	var turret_count: int = 0
 	var machine_count: int = 0
 
 	func describe() -> String:
 		return (
-			"  %3d min  wave %-3d heat %-6d gap %3ds  enemies %-4d nest %-5d ammo %-5d"
+			(
+				"  %3d min  wave %-3d heat %-6d gap %3ds  enemies %-4d nest %-5d ammo %-5d"
+				+ " store %-4d held %-4d"
+			)
 			% [
 				minute, wave, heat, wave_interval_seconds, enemies_alive, nest_health,
-				ammunition_in_the_factory,
+				ammunition_in_the_factory, ammunition_in_the_nests_store, player_ammunition,
 			]
 		)
 
@@ -123,6 +132,44 @@ class Report extends RefCounted:
 	var ammunition_in_the_factory: int = 0
 	var most_ammunition_at_once: int = 0
 	var iron_plate_in_the_factory: int = 0
+
+	## #62: the magazine, measured from the player's side rather than the Factory's.
+	##
+	## **`starved_ticks_in_the_endgame` above cannot answer #62's question and it is worth
+	## knowing why rather than rediscovering it.** That figure is about the *Factory*:
+	## `query_item_total` walks Machines and Belts and has never heard of the Nest's store or of
+	## a player's pockets. So a Run can hold four hundred rounds at the counter, report a
+	## perfectly fed Factory, and have the person holding the gun standing beside it empty — and
+	## whether a player can arm themselves out of their own Factory is exactly that second
+	## question.
+	##
+	## **Counted only over the ticks a ranged weapon was in hand**, on
+	## `query_player_weapon_ammunition_per_shot` rather than on a weapon id, because a Pneumatic
+	## Wrench spends nothing (`gear.csv` leaves its `ammunition_item` empty): a player holding
+	## one is not dry, they are not in the market. A figure that counted those ticks would report
+	## every row in this table as dry for the whole of itself, including the fourteen of seventeen
+	## that never draw a ranged weapon at all. Life state is deliberately *not* a condition — a dead player still
+	## owns their rounds, because death costs tempo and never materials (GLOSSARY.md), so this
+	## stays a fact about the magazine rather than a second reading of `player_deaths`.
+	var player_armed_ticks: int = 0
+	var player_dry_ticks: int = 0
+	var player_shots_fired: int = 0
+	var most_player_ammunition_at_once: int = 0
+
+	## Every round that ever arrived in the player's pockets, totalled over the rises in what
+	## they were carrying.
+	##
+	## **Named for what it measures and not for the mechanism**, because a rise is a withdrawal
+	## *or* a Supply Drop (`_give_to_player`), and the probe cannot tell those apart without
+	## asking the Simulation a question it does not expose. No scenario fires a Supply Drop into
+	## the hands of a player holding a rifle, so in every row of this table the figure is the
+	## store's faucet — but a later row that did would be counted here honestly rather than
+	## mislabelled.
+	var rounds_that_reached_the_player: int = 0
+	## The deepest the Nest's store of Ammunition ever got, against
+	## `nest.store_capacity_per_item`. The figure that says whether a dry player was starved by
+	## their Factory or by their own trigger discipline.
+	var most_in_the_nests_store: int = 0
 
 	## The Silo, measured: how many stood, the deepest the stockpile ever got, and what was
 	## actually called in.
@@ -202,6 +249,22 @@ class Report extends RefCounted:
 			return 0
 		@warning_ignore("integer_division")
 		return starved_ticks_in_the_endgame * 100 / endgame_ticks
+
+	## How long a player held a ranged weapon, in seconds. Its own function for the reason
+	## `seconds()` is: the division is floored once, in one place, rather than spelled out at
+	## each of the two sites that print it.
+	func player_armed_seconds() -> int:
+		@warning_ignore("integer_division")
+		return player_armed_ticks / Simulation.TICKS_PER_SECOND
+
+	## The share of the ticks a player was holding a ranged weapon in which they had nothing to
+	## fire. Zero rather than undefined for a Run that never drew one, the way
+	## `dry_endgame_percent` is zero for a Run with no endgame.
+	func player_dry_percent() -> int:
+		if player_armed_ticks <= 0:
+			return 0
+		@warning_ignore("integer_division")
+		return player_dry_ticks * 100 / player_armed_ticks
 
 	func power_deficit_percent() -> int:
 		if end_tick <= 0:
@@ -289,6 +352,22 @@ class Report extends RefCounted:
 				"%d Walls built, %d standing, absorbing %d hit points"
 				% [walls_built, walls_standing, wall_hit_points_absorbed]
 			)
+		# A fourth standing condition, said only by a Run that drew a ranged weapon, for the
+		# reason the Walls clause is said only by a Run that built one: it is the figure that
+		# row exists to be read on, and it reads as nothing anywhere else. #62's acceptance
+		# criterion is that the time a player spent with nothing to fire is *reported*, so it
+		# belongs in the printed row rather than only in the verbose trace.
+		if player_armed_ticks > 0:
+			clauses.append(
+				(
+					"the player held a gun for %ds, dry for %d%% of it, firing %d shots out of"
+					+ " %d rounds that reached them"
+				)
+				% [
+					player_armed_seconds(), player_dry_percent(), player_shots_fired,
+					rounds_that_reached_the_player,
+				]
+			)
 		return "; ".join(clauses)
 
 	func _lost_summary() -> String:
@@ -312,13 +391,15 @@ class Report extends RefCounted:
 	## hash cannot answer that question: it differs by seed from tick 0 regardless.
 	func figures() -> String:
 		return (
-			"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d [%s] [%s] [%s]"
+			"%d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d [%s] [%s] [%s]"
 			% [
 				end_tick, wave_number, most_heat_at_once, nest_health, machines_built,
 				machines_standing, turrets_built, shots_fired, dry_turret_ticks,
 				most_ammunition_at_once, breach_count, hives_standing,
 				most_charges_banked, stratagems_fired, charges_wasted,
 				walls_built, walls_standing, wall_hit_points_absorbed,
+				player_armed_ticks, player_dry_ticks, player_shots_fired,
+				rounds_that_reached_the_player, most_in_the_nests_store,
 				", ".join(machines_lost),
 				", ".join(stratagems_called),
 				", ".join(stratagems_unlocked),
@@ -355,6 +436,20 @@ class Report extends RefCounted:
 		lines.append(
 			"   ammunition %d held, %d peak; iron plate %d held"
 			% [ammunition_in_the_factory, most_ammunition_at_once, iron_plate_in_the_factory]
+		)
+		lines.append(
+			(
+				"   the player held a ranged weapon for %ds and had nothing to fire for %d%% of"
+				+ " it; %d shots"
+			)
+			% [player_armed_seconds(), player_dry_percent(), player_shots_fired]
+		)
+		lines.append(
+			"   %d rounds reached their pockets, %d carried at the peak; the Nest's store held %d"
+			% [
+				rounds_that_reached_the_player, most_player_ammunition_at_once,
+				most_in_the_nests_store,
+			]
 		)
 		lines.append(
 			"   %d Breaches, %d Hives standing, Depth %d reached, %d player deaths"
@@ -458,6 +553,13 @@ static func play(
 
 	var was_alive: bool = true
 
+	# #62: the player's own magazine, tracked the way the Turrets' is — a last-shot tick that
+	# moved is a shot fired, and a pocket count that rose is rounds that arrived. The previous
+	# count starts at whatever `player.starting_stock` granted rather than at zero, so an
+	# opening bill that did include rounds would not be miscounted as a withdrawal on tick 0.
+	var player_last_shot_tick: int = sim.query_player_last_shot_tick(0)
+	var player_ammunition_before: int = sim.query_player_item(0, "ammunition")
+
 	# The Walls, tracked by tile rather than by index, because `_remove_wall` closes the gap
 	# exactly as `_remove_machine` does — so an index says nothing about which Wall it was.
 	# Skipped entirely while no Wall has ever stood, which is every scenario but two.
@@ -529,6 +631,26 @@ static func play(
 		endgame_lived[slot_index] += 1
 		if ammunition <= 0:
 			endgame_starved[slot_index] += 1
+
+		# #62, and the condition is "in the market for a round" rather than "holding a gun":
+		# `query_player_weapon_ammunition_per_shot` is 0 for a Pneumatic Wrench, so a melee Run
+		# contributes no armed ticks and reports no dryness at all. See the Report's own note.
+		var carried: int = sim.query_player_item(0, "ammunition")
+		var store: int = sim.query_nest_store("ammunition")
+		report.most_in_the_nests_store = maxi(report.most_in_the_nests_store, store)
+		report.rounds_that_reached_the_player += maxi(carried - player_ammunition_before, 0)
+		player_ammunition_before = carried
+		if sim.query_player_weapon_ammunition_per_shot(0) > 0:
+			report.player_armed_ticks += 1
+			report.most_player_ammunition_at_once = maxi(
+				report.most_player_ammunition_at_once, carried
+			)
+			if sim.query_player_shots_remaining(0) <= 0:
+				report.player_dry_ticks += 1
+		var player_shot: int = sim.query_player_last_shot_tick(0)
+		if player_shot != -1 and player_shot != player_last_shot_tick:
+			report.player_shots_fired += 1
+			player_last_shot_tick = player_shot
 		for index: int in range(sim.query_enemy_count()):
 			var kind: int = sim.query_enemy_kind(index)
 			if kind == EnemyKind.BREAKER:
@@ -565,7 +687,9 @@ static func play(
 		was_alive = alive
 
 		if tick % Simulation.TICKS_PER_MINUTE == Simulation.TICKS_PER_MINUTE - 1:
-			report.samples.append(_sample(sim, ammunition, turret_indices.size()))
+			report.samples.append(
+				_sample(sim, ammunition, carried, store, turret_indices.size())
+			)
 
 		if sim.query_run_is_over():
 			break
@@ -619,7 +743,9 @@ static func play(
 	return report
 
 
-static func _sample(sim: Simulation, ammunition: int, turrets: int) -> Sample:
+static func _sample(
+	sim: Simulation, ammunition: int, carried: int, store: int, turrets: int
+) -> Sample:
 	var sample: Sample = Sample.new()
 	@warning_ignore("integer_division")
 	sample.minute = (sim.query_tick() + 1) / Simulation.TICKS_PER_MINUTE
@@ -630,6 +756,8 @@ static func _sample(sim: Simulation, ammunition: int, turrets: int) -> Sample:
 	sample.enemies_alive = sim.query_enemy_count()
 	sample.nest_health = sim.query_nest_health()
 	sample.ammunition_in_the_factory = ammunition
+	sample.player_ammunition = carried
+	sample.ammunition_in_the_nests_store = store
 	sample.turret_count = turrets
 	sample.machine_count = sim.query_machine_count()
 	return sample
