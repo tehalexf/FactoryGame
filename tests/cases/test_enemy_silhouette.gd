@@ -195,23 +195,15 @@ func _heights(sim: Simulation) -> Dictionary:
 ## shipped one gates the Breaker at 5200 Heat and the boss at 6400, which is twenty-odd
 ## minutes of Factory this test has no reason to play.
 func _a_wave_of_every_kind() -> Simulation:
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.get_file_as_string("res://content/machines.csv"),
-		FileAccess.get_file_as_string("res://content/recipes.csv"),
-		(
-			FileAccess
-			. get_file_as_string("res://content/tuning.toml")
-			. replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-		),
-		(
-			"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
-			+ "chaff_crawlers,crawler,0,1,0,1\n"
-			+ "shock_breakers,breaker,0,1,0,1\n"
-			+ "siege_hulks,siege_hulk,0,1,0,1\n"
-		),
-		FileAccess.get_file_as_string("res://content/deliveries.csv"),
-		FileAccess.get_file_as_string("res://content/gear.csv"),
-		FileAccess.get_file_as_string("res://content/stratagems.csv")
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = (
+		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
+		+ "chaff_crawlers,crawler,0,1,0,1\n"
+		+ "shock_breakers,breaker,0,1,0,1\n"
+		+ "siege_hulks,siege_hulk,0,1,0,1\n"
+	)
+	var definitions: Definitions = (
+		fixture.tune([["telegraph_seconds = 12", "telegraph_seconds = 0.5"]]).definitions()
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	var sim: Simulation = Simulation.new(1, 1, definitions)

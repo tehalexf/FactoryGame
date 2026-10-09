@@ -22,32 +22,38 @@ func _layout() -> MapLayout:
 ## The shipped content, exactly as the game ships it. Nothing here steps a Wave, so there is
 ## no schedule to wind forward.
 func _content(overrides: Array = []) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	for pair: PackedStringArray in overrides:
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning.replace(SHIPPED_STOCK, STOCKED),
-		_read("res://content/waves.csv"),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	return _shipped_machines().tune(overrides).stock(STOCKED_BILL).definitions()
+
+
+## The fixture the two sites that parse the **shipped** Machine table start from. They keep
+## the shipped `player.starting_machine`, because naming the Ammunition seam there would be
+## the same error `_ammo_fixture` avoids pointing the other way.
+func _shipped_machines() -> ContentFixture:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return fixture
+
+
+## The fixture every site that brings `AMMO_MACHINES` starts from: this file's two Machines,
+## the Telegraph stretched to ten seconds so a Belt can prime the Turret before the Wave a
+## test called arrives, empty pockets, and `player.starting_machine` pointed at a row this
+## table actually has (#55).
+func _ammo_fixture() -> ContentFixture:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = AMMO_MACHINES
+	fixture.recipes = AMMO_RECIPES
+	fixture.waves = ONE_CRAWLER
+	fixture.deliveries = AMMO_DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 10"]])
+		. stock(AMMO_BILL)
+		. starting_machine(AMMO_STARTING_MACHINE)
 	)
-
-
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
 
 
 ## Content that puts Ammunition on a Belt without a three-stage chain in the way: a Miner
@@ -90,28 +96,9 @@ chaff_crawlers,crawler,0,4,0,4
 ## the lever instead, which is both the same code path a player uses and what keeps Wave 2
 ## two and a half minutes out of the way of a test about one Turret.
 func _ammo_content(overrides: Array = [], waves: String = ONE_CRAWLER) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
-	tuning = tuning.replace(SHIPPED_STOCK, AMMO_STOCK)
-	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, AMMO_STARTING_MACHINE)
-	for pair: PackedStringArray in overrides:
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		AMMO_MACHINES,
-		AMMO_RECIPES,
-		tuning,
-		waves,
-		AMMO_DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var fixture: ContentFixture = _ammo_fixture()
+	fixture.waves = waves
+	return fixture.tune(overrides).definitions()
 
 
 ## A Run on the Ammunition Map with a Wave already called, so it arrives ten seconds in
@@ -338,30 +325,12 @@ func test_a_turret_with_nothing_in_reach_is_not_on_the_power_grid() -> void:
 	# A Turret idle between Waves must not be charged for, exactly as a starved Smelter is
 	# not: `_machine_would_work` is the one predicate behind what the grid bills, what
 	# advances and what fires, so this is the same assertion as "it does not burn rounds".
-	var content: Definitions = Definitions.parse(
-		AMMO_MACHINES.replace(
-			"mg_turret_mk1,MG Turret Mk1,turret,2,2,2,0,0",
-			"mg_turret_mk1,MG Turret Mk1,turret,2,2,2,90,0"
-		),
-		AMMO_RECIPES,
-		(
-			_read("res://content/tuning.toml")
-			. replace("telegraph_seconds = 12", "telegraph_seconds = 10")
-			. replace(SHIPPED_STOCK, AMMO_STOCK)
-			. replace(SHIPPED_STARTING_MACHINE, AMMO_STARTING_MACHINE)
-		),
-		ONE_CRAWLER,
-		AMMO_DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var drawing: ContentFixture = _ammo_fixture()
+	drawing.machines = AMMO_MACHINES.replace(
+		"mg_turret_mk1,MG Turret Mk1,turret,2,2,2,0,0",
+		"mg_turret_mk1,MG Turret Mk1,turret,2,2,2,90,0"
 	)
+	var content: Definitions = drawing.definitions()
 	assert_false(content.has_errors(), content.describe_errors())
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
 	sim.step([InputAction.call_wave_early(0)])
@@ -547,29 +516,16 @@ func test_an_undefended_nest_loses_the_wave_the_same_factory_holds() -> void:
 ## Deliberately built on top of the shipped files rather than beside them, so this is
 ## literally the diff a content ticket would commit.
 func _cannon_content() -> Definitions:
-	var machines: String = (
-		_read("res://content/machines.csv")
+	var fixture: ContentFixture = _shipped_machines()
+	fixture.machines = (
+		ContentFixture.shipped(Definitions.MACHINES_FILE)
 		+ "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,2,160,0,500,0,14,80,0,0,fire_cannon,iron_plate:30\n"
 	)
-	var recipes: String = (
-		_read("res://content/recipes.csv") + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n"
+	fixture.recipes = (
+		ContentFixture.shipped(Definitions.RECIPES_FILE)
+		+ "fire_cannon,Fire Cannon,ammunition:2,,1.5\n"
 	)
-	return Definitions.parse(
-		machines,
-		recipes,
-		_read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED),
-		_read("res://content/waves.csv"),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	return fixture.stock(STOCKED_BILL).definitions()
 
 
 func test_a_cannon_turret_is_addable_as_a_data_definition() -> void:
@@ -593,26 +549,13 @@ func test_a_cannon_turret_fires_further_and_harder_with_no_code_that_knows_about
 	# The acceptance criterion, asserted as behaviour rather than as a parsed row: the Cannon
 	# acquires at its own reach, spends its own two rounds a shot, and kills with its own
 	# damage — all of it through the same `_craft` the MG and a Smelter go through.
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 10")
-	tuning = tuning.replace(SHIPPED_STOCK, AMMO_STOCK)
-	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, AMMO_STARTING_MACHINE)
-	var content: Definitions = Definitions.parse(
-		AMMO_MACHINES + "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,2,0,0,500,0,14,80,0,0,fire_cannon,\n",
-		AMMO_RECIPES + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n",
-		tuning,
-		ONE_CRAWLER,
-		AMMO_DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = _ammo_fixture()
+	fixture.machines = (
+		AMMO_MACHINES
+		+ "cannon_turret_mk1,Cannon Turret Mk1,turret,3,3,2,0,0,500,0,14,80,0,0,fire_cannon,\n"
 	)
+	fixture.recipes = AMMO_RECIPES + "fire_cannon,Fire Cannon,ammunition:2,,1.5\n"
+	var content: Definitions = fixture.definitions()
 	assert_false(content.has_errors(), content.describe_errors())
 
 	var sim: Simulation = Simulation.new(5, 1, content, _ammo_layout())
@@ -797,17 +740,16 @@ func test_a_run_with_a_turret_mid_fight_saves_and_resumes_identically() -> void:
 # asserted here, so the fixtures below replace them with a tier that locks nothing and a
 # stock that pays for anything. `test_delivery.gd` is where the real chain is asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+const STOCKED_BILL: String = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"
 
 ## The Ammunition fixture brings its own Machine table, so the opening selection has to name
 ## a row in *that* table (#55). `player.starting_machine` names a row in `machines.csv` and a
 ## set naming one it has not got carries no definitions at all — the rule working rather than
-## failing. It rides alongside `AMMO_STOCK` because the three places that substitute one are
-## exactly the three that use `AMMO_MACHINES`; `_content` and `_cannon_content` parse the
-## shipped table and keep the shipped value.
-const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
-const AMMO_STARTING_MACHINE: String = 'starting_machine = "ammo_source_mk1"'
+## failing. It rides inside `_ammo_fixture` alongside `AMMO_BILL`, because the four sites
+## that bring `AMMO_MACHINES` are exactly the four that need it; `_content`,
+## `_cannon_content` and `_breaker_fixture_content` parse the shipped table through
+## `_shipped_machines` and keep the shipped value.
+const AMMO_STARTING_MACHINE: String = "ammo_source_mk1"
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier
@@ -837,7 +779,7 @@ t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 ## The Ammunition fixture's Machines are all free to build, so it opens a Run holding
 ## nothing — an empty bill is legal and says plainly that materials are not what is under
 ## test here.
-const AMMO_STOCK: String = 'starting_stock = ""'
+const AMMO_BILL: String = ""
 
 ## The same, against the one Item the Ammunition fixture's Recipes mention.
 const AMMO_DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
@@ -940,31 +882,26 @@ func test_a_turret_on_the_lane_answers_a_breaker_before_it_reaches_the_factory()
 ## Breach from a cold start. Every other number is the real file's, including
 ## `player.starting_stock`, which is what the scenario's 78-plate bill is paid out of.
 func _breaker_fixture_content() -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-	var definitions: Definitions = Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning,
-		ONE_BREAKER,
-		_read("res://content/deliveries.csv"),
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = ONE_BREAKER
+	var definitions: Definitions = (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 0.5"]])
+		. definitions()
 	)
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	return definitions
 
 
 ## The second at which the fixture pulls the call-early lever: late enough that the chain has
-## filled the Turret's magazine, early enough that the clock has not sent Wave 1 by itself —
-## the shipped cold interval is 150 s and this Factory shortens it to about 110.
+## filled the Turret's magazine, early enough that the clock has not sent Wave 1 by itself.
+##
+## This note used to read "the shipped cold interval is 150 s and this Factory shortens it to
+## about 110", and #35 split `heat.first_wave_interval_seconds` off the baseline at **90** —
+## so the arithmetic the number was picked against has not been true for several tickets
+## (#63 found it). The number itself still works, because what the fixture needs is *enough*
+## time rather than that time: the lever is pulled at 80 s, the Factory's own Heat pulls the
+## natural Wave in from 90, and either way Wave 1 is the one Breaker this fixture is about.
 const FIXTURE_LEVER_SECOND: int = 80
 
 ## How long the fixture runs. The lever, half a second of Telegraph, and then forty seconds

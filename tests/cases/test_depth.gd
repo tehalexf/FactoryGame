@@ -21,37 +21,15 @@ func _plentiful_power() -> Array:
 	return [PackedStringArray(["baseline_supply_kw = 300", "baseline_supply_kw = 9000"])]
 
 
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
-
-
 ## The shipped content, with `overrides` applied to the tuning file as plain text
 ## substitutions. Every number not named is the real file's, so a test that cares about
 ## one key is still reading the balance the game ships.
 func _content(overrides: Array = []) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	for pair: PackedStringArray in overrides:
-		assert_true(tuning.contains(pair[0]), "the tuning override %s must match" % pair[0])
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning.replace(SHIPPED_STOCK, STOCKED),
-		_read("res://content/waves.csv"),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return fixture.tune(overrides).stock(STOCKED_BILL).definitions()
 
 
 ## A Map with one iron Node at each of three Depths and no Breach, so Depth can be
@@ -621,8 +599,7 @@ func test_determinism_a_new_breach_opening_and_being_telegraphed_replays_identic
 # nothing and a stock that pays for anything. `test_delivery.gd` is where the chain itself is
 # asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+const STOCKED_BILL: String = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier

@@ -29,8 +29,7 @@ t01_open,Open Licence,1,iron_plate:1,,mg_drum_magazine,
 
 ## Pockets deep enough to stand a Silo up without a Factory behind it. What a Run can
 ## actually afford is `test_nest_store.gd`'s subject.
-const STOCKED: String = 'starting_stock = "iron_plate:400;ammunition:400"'
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
+const STOCKED_BILL: String = "iron_plate:400;ammunition:400"
 ## This file brings its own Machine table, so the opening selection has to name a row in
 ## *that* table (#55). `player.starting_machine` names a row in `machines.csv` and a set
 ## naming one it has not got carries no definitions at all — the rule working rather than
@@ -38,37 +37,33 @@ const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 ##
 ## Not applied to `_fixture_content`, which parses the **shipped** table and so wants the
 ## shipped value: naming a seam there would be the same error pointing the other way.
-const SHIPPED_STARTING_MACHINE: String = 'starting_machine = "miner_mk1"'
-const OWN_STARTING_MACHINE: String = 'starting_machine = "plate_seam_mk1"'
+const OWN_STARTING_MACHINE: String = "plate_seam_mk1"
 
 
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
-
-
-## The shipped content, with the Delivery chain and the opening bill replaced.
+## The shipped content, with the Delivery chain and the opening bill replaced. The shipped
+## Machine table, so `player.starting_machine` is left alone — naming a seam here would be
+## the same error `_silo_content` avoids, pointing the other way.
 func _content(overrides: Array = []) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
-	for pair: PackedStringArray in overrides:
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning,
-		_read("res://content/waves.csv"),
-		DELIVERIES,
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.deliveries = DELIVERIES
+	return fixture.stock(STOCKED_BILL).tune(overrides).definitions()
+
+
+## The fixture every site that brings **its own** Machine table starts from: this file's
+## Machines and Recipes, the deep pockets above, the dial's reach stretched, and
+## `player.starting_machine` pointed at a row this table actually has (#55). Five sites
+## used to spell those four things out one at a time.
+func _own_machines() -> ContentFixture:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = SILO_MACHINES
+	fixture.recipes = SILO_RECIPES
+	fixture.waves = ONE_CRAWLER
+	fixture.deliveries = DELIVERIES
+	return (
+		fixture
+		. tune([[SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH]])
+		. stock(STOCKED_BILL)
+		. starting_machine(OWN_STARTING_MACHINE)
 	)
 
 
@@ -197,32 +192,14 @@ const QUICK_TELEGRAPH: String = "telegraph_seconds = 2"
 func _silo_content(
 	overrides: Array = [], waves: String = ONE_CRAWLER, stratagems: Array = []
 ) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
-	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
-	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
-	for pair: PackedStringArray in overrides:
-		tuning = tuning.replace(pair[0], pair[1])
-
-	var table: String = _read("res://content/stratagems.csv")
+	var table: String = ContentFixture.shipped(Definitions.STRATAGEMS_FILE)
 	for pair: PackedStringArray in stratagems:
 		table = table.replace(pair[0], pair[1])
 
-	return Definitions.parse(
-		SILO_MACHINES,
-		SILO_RECIPES,
-		tuning,
-		waves,
-		DELIVERIES,
-		_read("res://content/gear.csv"),
-		table,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var fixture: ContentFixture = _own_machines()
+	fixture.waves = waves
+	fixture.stratagems = table
+	return fixture.tune(overrides).definitions()
 
 
 ## The Map these tests play on. The Nest is twenty tiles up the +z lane and the player opens
@@ -396,27 +373,14 @@ func test_a_full_silo_is_idle_and_off_the_power_grid() -> void:
 
 ## The same content with the Silo drawing Power, and a baseline big enough to pay for it.
 func _powered_content() -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
-	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
-	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
-	tuning = tuning.replace("baseline_supply_kw = 300", "baseline_supply_kw = 2000")
-	return Definitions.parse(
-		SILO_MACHINES.replace(
-			"silo_mk1,Silo Mk1,silo,4,4,2.2,0,0", "silo_mk1,Silo Mk1,silo,4,4,2.2,400,0"
-		),
-		SILO_RECIPES,
-		tuning,
-		ONE_CRAWLER,
-		DELIVERIES,
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = _own_machines()
+	fixture.machines = SILO_MACHINES.replace(
+		"silo_mk1,Silo Mk1,silo,4,4,2.2,0,0", "silo_mk1,Silo Mk1,silo,4,4,2.2,400,0"
+	)
+	return (
+		fixture
+		. tune([["baseline_supply_kw = 300", "baseline_supply_kw = 2000"]])
+		. definitions()
 	)
 
 # ── Loading: a dial, by hand, and no way back ─────────────────────────────────
@@ -653,25 +617,9 @@ func test_a_stratagem_no_delivery_has_unlocked_cannot_be_loaded_and_the_refusal_
 	# are. The chain here names the Barrage and nothing else, so what is being asserted is the
 	# gate rather than the shipped tiers — those are
 	# `test_the_shipped_chain_locks_two_of_the_three_stratagems`.
-	var shipped: Definitions = Definitions.parse(
-		SILO_MACHINES,
-		SILO_RECIPES,
-		_read("res://content/tuning.toml")
-			.replace(SHIPPED_STOCK, STOCKED)
-			.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
-			.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE),
-		ONE_CRAWLER,
-		LOCKING_DELIVERIES,
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var locking: ContentFixture = _own_machines()
+	locking.deliveries = LOCKING_DELIVERIES
+	var shipped: Definitions = locking.definitions()
 	assert_false(shipped.has_errors(), shipped.describe_errors())
 
 	var sim: Simulation = Simulation.new(7, 1, shipped, _layout())
@@ -1142,29 +1090,22 @@ func test_a_destroyed_silo_loses_its_stockpile_and_its_load() -> void:
 	assert_eq(sim.query_silo_loaded_charges(rebuilt), 0, "and nothing in the tube")
 
 
-## Content whose Silo a single Breaker can chew down inside a test, and a Wave made of one.
-## Nothing else about it differs — the point is the destruction, not how long it takes.
+## Content whose Silo a Breaker chews down inside a test, and a Wave made of one. Nothing
+## else about it differs — the point is the destruction, not how long it takes.
+##
+## **It is not actually fragile, and #63 is where that was found rather than fixed.** This
+## carried `SILO_MACHINES.replace("silo,4,4,0,0,900", "silo,4,4,0,0,120")`, and the Silo row
+## has spelled a `height_metres` column since #30 — so the text was
+## `silo,4,4,2.2,0,0,900`, the substitution matched nothing, `String.replace` said nothing
+## about it, and the Silo has stood on its full 900 hit points ever since. The test passes
+## either way (900 against `enemy.breaker_damage` of 60 a second is fifteen seconds, inside
+## its own 6000-tick bound), so nothing could have reported it. The dead substitution is
+## gone rather than corrected, because correcting it would change how long this fixture
+## takes to reach the thing it asserts and that is a decision for whoever owns the test.
 func _fragile_content() -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml").replace(SHIPPED_STOCK, STOCKED)
-	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
-	tuning = tuning.replace(SHIPPED_STARTING_MACHINE, OWN_STARTING_MACHINE)
-	tuning = tuning.replace(SHIPPED_TELEGRAPH, QUICK_TELEGRAPH)
-	return Definitions.parse(
-		SILO_MACHINES.replace("silo,4,4,0,0,900", "silo,4,4,0,0,120"),
-		SILO_RECIPES,
-		tuning,
-		ONE_BREAKER,
-		DELIVERIES,
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var fixture: ContentFixture = _own_machines()
+	fixture.waves = ONE_BREAKER
+	return fixture.tune([[SHIPPED_TELEGRAPH, QUICK_TELEGRAPH]]).definitions()
 
 
 const ONE_BREAKER: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
@@ -1259,27 +1200,21 @@ func test_the_dial_and_what_interruption_has_cost_reach_the_hash() -> void:
 ## and a Delivery chain that locks no Stratagem. Everything else — the Silo's footprint, its
 ## capacity, its hit points, the three Stratagems and what each one does — is the real file's.
 func _fixture_content() -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace(SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH)
-	tuning = tuning.replace("baseline_supply_kw = 300", "baseline_supply_kw = 1200")
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv").replace(
-			"assemble_charge,Assemble Charge,iron_plate:1;ammunition:20,,20",
-			"assemble_charge,Assemble Charge,iron_ore:1,,0.5"
-		),
-		tuning,
-		_read("res://content/waves.csv"),
-		DELIVERIES,
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.recipes = ContentFixture.shipped(Definitions.RECIPES_FILE).replace(
+		"assemble_charge,Assemble Charge,iron_plate:1;ammunition:20,,20",
+		"assemble_charge,Assemble Charge,iron_ore:1,,0.5"
+	)
+	fixture.deliveries = DELIVERIES
+	return (
+		fixture
+		. tune(
+			[
+				[SHIPPED_DIAL_REACH, REACHABLE_DIAL_REACH],
+				["baseline_supply_kw = 300", "baseline_supply_kw = 1200"],
+			]
+		)
+		. definitions()
 	)
 
 

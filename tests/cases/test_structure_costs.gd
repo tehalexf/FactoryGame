@@ -223,10 +223,18 @@ func test_a_set_that_brings_its_own_recipes_gets_structures_that_are_free() -> v
 	# resolution is that the price lives in a *table*, and a caller that supplies no
 	# structures source gets structures that cost nothing — which is exactly what an empty
 	# `build_cost` column already means for a Machine.
-	var definitions: Definitions = Definitions.parse(
-		OWN_MACHINES, OWN_RECIPES, _own_tuning(), OWN_WAVES, OWN_DELIVERIES, OWN_GEAR,
-		OWN_STRATAGEMS
-	)
+	# The shipped tuning, with its opening bill written in the one Item these Recipes
+	# mention — the shipped file rather than a hand-copied one, so this test cannot drift out
+	# of step with what a Run is actually played on. No structures source, which is the
+	# escape under test.
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = OWN_MACHINES
+	fixture.recipes = OWN_RECIPES
+	fixture.waves = OWN_WAVES
+	fixture.deliveries = OWN_DELIVERIES
+	fixture.gear = OWN_GEAR
+	fixture.stratagems = OWN_STRATAGEMS
+	var definitions: Definitions = fixture.stock("iron_ore:110").definitions()
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	assert_eq(definitions.item_index("iron_plate"), -1, "no Recipe here mentions a plate")
 	assert_true(definitions.structure_cost_items(BELT).is_empty(), "so a Belt is free")
@@ -289,19 +297,6 @@ func test_determinism_the_paying_fixture_really_did_pay_and_really_was_refused()
 
 
 # ── A definition set whose Recipes are its own ────────────────────────────────
-
-## The shipped tuning with its opening bill written in the one Item these Recipes mention.
-## The shipped file rather than a hand-copied one, so this test cannot drift out of step with
-## what a Run is actually played on — what is under test is the Recipes, not the numbers.
-func _own_tuning() -> String:
-	var file: FileAccess = FileAccess.open(
-		"%s/%s" % [Definitions.CONTENT_DIR, Definitions.TUNING_FILE], FileAccess.READ
-	)
-	assert_not_null(file, "the shipped tuning file is readable")
-	var text: String = file.get_as_text()
-	file.close()
-	return text.replace('starting_stock = "iron_plate:110"', 'starting_stock = "iron_ore:110"')
-
 
 const OWN_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
 miner_mk1,Miner Mk1,miner,2,2,1.8,120,0,400,1,0,0,0,0,mine_iron_ore,iron_ore:1

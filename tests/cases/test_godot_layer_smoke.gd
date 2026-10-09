@@ -744,24 +744,8 @@ func test_sprint_is_a_hold_when_the_tuning_says_so() -> void:
 
 ## A Simulation on the shipped content with one `[player]` tuning key changed.
 func _sim_with_tuning(key: String, value: String) -> Simulation:
-	var tuning: String = FileAccess.get_file_as_string("res://content/tuning.toml")
-	var replaced: PackedStringArray = PackedStringArray()
-	var found: bool = false
-	for line: String in tuning.split("\n"):
-		if line.begins_with("%s = " % key):
-			replaced.append("%s = %s" % [key, value])
-			found = true
-		else:
-			replaced.append(line)
-	assert_true(found, "content/tuning.toml should carry a key called %s" % key)
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.get_file_as_string("res://content/machines.csv"),
-		FileAccess.get_file_as_string("res://content/recipes.csv"),
-		"\n".join(replaced),
-		FileAccess.get_file_as_string("res://content/waves.csv"),
-		FileAccess.get_file_as_string("res://content/deliveries.csv"),
-		FileAccess.get_file_as_string("res://content/gear.csv"),
-		FileAccess.get_file_as_string("res://content/stratagems.csv")
+	var definitions: Definitions = (
+		ContentFixture.for_case(self).tune_key(key, value).definitions()
 	)
 	assert_true(definitions.errors.is_empty(), definitions.describe_errors())
 	return Simulation.new(1, 1, definitions)

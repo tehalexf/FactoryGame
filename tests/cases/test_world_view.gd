@@ -564,29 +564,23 @@ func test_a_factory_the_player_builds_really_carries_ore_to_the_smelter() -> voi
 ## calls arrives in thirty ticks. The *interval* is left alone: these fixtures bring their
 ## Wave forward with the lever, which is the same code path a player uses, rather than by
 ## rewriting a schedule into something the shipped game never runs.
-func _soon(tuning: String) -> String:
-	return tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
+const SOON: Array = [["telegraph_seconds = 12", "telegraph_seconds = 0.5"]]
+
+
+## The fixture every site in this file starts from: the shipped content, a tier that locks
+## nothing, pockets that pay for anything, and this file's readable Gear and Stratagems.
+## Seven sites used to spell all of that out a `FileAccess.open` at a time.
+func _fixture() -> ContentFixture:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return fixture.stock(STOCKED_BILL)
 
 
 ## A Run whose first Wave arrives within a second, so a test can see Crawlers.
 func _threatened_sim() -> Simulation:
-	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
-		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		_soon(tuning).replace(SHIPPED_STOCK, STOCKED),
-		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var definitions: Definitions = _fixture().tune(SOON).definitions()
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
 	return sim
@@ -673,23 +667,9 @@ shock_breakers,breaker,0,2,0,2
 
 
 func _mixed_sim() -> Simulation:
-	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
-		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		_soon(tuning).replace(SHIPPED_STOCK, STOCKED),
-		CRAWLERS_AND_BREAKERS,
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var mixed: ContentFixture = _fixture()
+	mixed.waves = CRAWLERS_AND_BREAKERS
+	var definitions: Definitions = mixed.tune(SOON).definitions()
 	assert_true(
 		not definitions.has_errors(),
 		"the mixed fixture's content must load: %s" % definitions.describe_errors()
@@ -826,24 +806,12 @@ func test_baking_a_character_adds_no_node_to_the_view() -> void:
 ## single Siege Hulk so one arrives on the first Wave of a cold Factory rather than at 1200 Heat.
 ## The Map is the shipped one, which is where the Hives are.
 func _besieged_sim() -> Simulation:
-	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
-		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		_soon(tuning).replace(SHIPPED_STOCK, STOCKED),
+	var besieged: ContentFixture = _fixture()
+	besieged.waves = (
 		"id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach\n"
-		+ "siege_hulks,siege_hulk,0,1,0,1\n",
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+		+ "siege_hulks,siege_hulk,0,1,0,1\n"
 	)
+	var definitions: Definitions = besieged.tune(SOON).definitions()
 	assert_true(
 		not definitions.has_errors(),
 		"the besieged fixture's content must load: %s" % definitions.describe_errors()
@@ -1069,22 +1037,8 @@ func test_the_hud_says_whether_the_lever_can_be_pulled_and_why_not() -> void:
 
 
 func test_the_hud_reports_a_lost_run_with_the_wave_it_reached() -> void:
-	var tuning: String = FileAccess.open("res://content/tuning.toml", FileAccess.READ).get_as_text()
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text(),
-		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		_soon(tuning).replace("health = 6000", "health = 10").replace(SHIPPED_STOCK, STOCKED),
-		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var definitions: Definitions = (
+		_fixture().tune(SOON).tune([["health = 6000", "health = 10"]]).definitions()
 	)
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	sim.step([InputAction.call_wave_early(0)])
@@ -1167,30 +1121,12 @@ func test_a_machine_body_stands_on_the_ground_rather_than_half_buried() -> void:
 ## A definition set with a Machine the asset pipeline has never heard of, so the renderer
 ## has to draw something for a row that has no art.
 func _sim_with_an_undrawn_machine() -> Simulation:
-	var machines: String = (
-		FileAccess.open("res://content/machines.csv", FileAccess.READ).get_as_text()
+	var undrawn: ContentFixture = _fixture()
+	undrawn.machines = (
+		ContentFixture.shipped(Definitions.MACHINES_FILE)
 		+ "\nwind_vane_mk1,Wind Vane Mk1,crafter,2,2,3,10,0,100,0,0,0,0,0,smelt_iron_plate,\n"
 	)
-	var definitions: Definitions = Definitions.parse(
-		machines,
-		FileAccess.open("res://content/recipes.csv", FileAccess.READ).get_as_text(),
-		(
-			FileAccess.open("res://content/tuning.toml", FileAccess.READ)
-			. get_as_text()
-			. replace(SHIPPED_STOCK, STOCKED)
-		),
-		FileAccess.open("res://content/waves.csv", FileAccess.READ).get_as_text(),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var definitions: Definitions = undrawn.definitions()
 	return Simulation.new(1, 1, definitions)
 
 
@@ -1432,25 +1368,9 @@ const TURRET_WITH_A_BODY: String = (
 
 
 func _sim_with_a_turret_taller_than_its_housing() -> Simulation:
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.get_file_as_string("res://content/machines.csv") + TURRET_WITH_A_BODY,
-		FileAccess.get_file_as_string("res://content/recipes.csv"),
-		(
-			FileAccess.get_file_as_string("res://content/tuning.toml")
-			. replace(SHIPPED_STOCK, STOCKED)
-		),
-		FileAccess.get_file_as_string("res://content/waves.csv"),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var tall: ContentFixture = _fixture()
+	tall.machines = ContentFixture.shipped(Definitions.MACHINES_FILE) + TURRET_WITH_A_BODY
+	var definitions: Definitions = tall.definitions()
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	# No Breach, so no Wave arrives to give the Turret something to shoot at and empty its
 	# magazine in the middle of an assertion about where a bar is drawn.
@@ -1688,14 +1608,13 @@ func test_the_hud_says_a_locked_machine_is_locked_rather_than_unbuildable() -> v
 # Neither is what this file asserts, so these fixtures replace them with a tier that locks
 # nothing and a stock that pays for anything.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
 ## How far over the body a player can see a starved tag has to sit, in metres. Not
 ## `WorldView.STARVED_MARK_LIFT_METRES` restated — that is the number under test, and a test
 ## that reads it back asserts nothing. This is the independent claim: a tag is readable when
 ## it is clear of the silhouette and still visibly resting on it.
 const STARVED_MARK_CLEARS_THE_BODY_METRES: float = 1.0
 
-const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+const STOCKED_BILL: String = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier
@@ -1725,25 +1644,7 @@ t01_opening,Opening Licence,1,iron_plate:1,,placeholder_gear,
 ## made — so a test about what the renderer draws can build whatever it needs to without
 ## walking the Delivery chain first.
 func _unlocked_sim(world_seed: int) -> Simulation:
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.get_file_as_string("res://content/machines.csv"),
-		FileAccess.get_file_as_string("res://content/recipes.csv"),
-		(
-			FileAccess.get_file_as_string("res://content/tuning.toml")
-			. replace(SHIPPED_STOCK, STOCKED)
-		),
-		FileAccess.get_file_as_string("res://content/waves.csv"),
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var definitions: Definitions = _fixture().definitions()
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	return Simulation.new(world_seed, 1, definitions)
 

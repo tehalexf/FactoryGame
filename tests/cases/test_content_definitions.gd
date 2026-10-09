@@ -89,6 +89,12 @@ func _restocked(bill: String) -> String:
 	return ContentFixture.for_case(self).stock(bill).tuning
 
 
+## The shipped tuning with `machine_id` as the opening selection, named by key for
+## `_restocked`'s reason.
+func _opening_machine(machine_id: String) -> String:
+	return ContentFixture.for_case(self).starting_machine(machine_id).tuning
+
+
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier
 ## naming Gear that does not exist is content somebody broke. These tests are not about
@@ -1123,7 +1129,7 @@ func test_a_starting_machine_that_names_no_row_is_refused_by_name() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		_tuned([['starting_machine = "miner_mk1"', 'starting_machine = "nonesuch"']])
+		_opening_machine("nonesuch")
 	)
 	assert_true(definitions.has_errors())
 	assert_true(
@@ -1163,7 +1169,7 @@ func test_a_starting_machine_left_blank_is_refused() -> void:
 	var definitions: Definitions = _parse(
 		GOOD_MACHINES,
 		GOOD_RECIPES,
-		_tuned([['starting_machine = "miner_mk1"', 'starting_machine = ""']])
+		_opening_machine("")
 	)
 	assert_true(definitions.has_errors())
 	assert_true(

@@ -31,6 +31,12 @@ smelt_iron_plate,Smelt Iron Plate,iron_ore:1,iron_plate:1,0.2
 """
 
 
+## The opening bill, written in the one Item these Recipes mention. Everything else is the
+## shipped tuning, which these tests are not about — `ContentFixture` reads it off disk, so a
+## tuning change cannot leave a stale copy here.
+const OPENING_BILL: String = "iron_ore:110"
+
+
 func _run(sim: Simulation, ticks: int) -> void:
 	for tick: int in range(ticks):
 		sim.step([])
@@ -45,19 +51,6 @@ func _step_until(sim: Simulation, ticks: int, condition: Callable) -> bool:
 	return condition.call()
 
 
-## The shipped tuning, which these tests are not about. Read off disk rather than copied, so a
-## tuning change cannot leave a stale copy here, with the opening bill written in the one Item
-## these Recipes mention.
-func _tuning() -> String:
-	var file: FileAccess = FileAccess.open(
-		"%s/%s" % [Definitions.CONTENT_DIR, Definitions.TUNING_FILE], FileAccess.READ
-	)
-	assert_not_null(file, "the shipped tuning file is readable")
-	var text: String = file.get_as_text()
-	file.close()
-	return text.replace('starting_stock = "iron_plate:110"', 'starting_stock = "iron_ore:110"')
-
-
 ## Puts ore on the Belt the way the game does: a Miner on the Node at the origin, feeding its
 ## own declared port. 2x2 from (0, 0), so the port tile is (1, 1) and the dock is (1, 2) — which
 ## is where every Belt in the hand-off tests below starts.
@@ -67,12 +60,15 @@ func _give_the_belt_an_item(sim: Simulation) -> void:
 
 
 func _content(ports: String = PORTS) -> Definitions:
-	return Definitions.parse(
-		MACHINES, RECIPES, _tuning(), WAVES, DELIVERIES, GEAR, STRATAGEMS,
-		Definitions.MACHINES_FILE, Definitions.RECIPES_FILE, Definitions.TUNING_FILE,
-		Definitions.WAVES_FILE, Definitions.DELIVERIES_FILE, Definitions.GEAR_FILE,
-		Definitions.STRATAGEMS_FILE, ports, Definitions.PORTS_FILE
-	)
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = MACHINES
+	fixture.recipes = RECIPES
+	fixture.waves = WAVES
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	fixture.ports = ports
+	return fixture.stock(OPENING_BILL).definitions()
 
 
 ## A Map with one iron Node at the origin and no Breach, so every tile a test names is a small

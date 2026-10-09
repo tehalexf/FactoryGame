@@ -35,33 +35,18 @@ chaff_crawlers,crawler,0,1,0,1
 ## which stays at its full baseline, so Wave 2 is still two and a half minutes away and
 ## these tests are studying one Wave rather than a stream of them.
 func _content(waves: String = SIX_CRAWLERS, overrides: Array = []) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-	for pair: PackedStringArray in overrides:
-		tuning = tuning.replace(pair[0], pair[1])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning.replace(SHIPPED_STOCK, STOCKED),
-		waves,
-		DELIVERIES,
-		GEAR,
-		STRATAGEMS,
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = waves
+	fixture.deliveries = DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	return (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 0.5"]])
+		. tune(overrides)
+		. stock(STOCKED_BILL)
+		. definitions()
 	)
-
-
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
 
 
 ## A Run with a Wave already called, so it arrives half a second in rather than two and a
@@ -521,8 +506,7 @@ func test_a_resumed_run_rebuilds_the_flowfield_rather_than_restoring_it() -> voi
 # these fixtures replace them with a tier that locks nothing and a stock that pays for
 # anything. `test_delivery.gd` is where the real chain is asserted.
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"'
+const STOCKED_BILL: String = "ammunition:400;coal:400;iron_ore:400;iron_plate:400"
 
 ## The Gear a Run is holding, inline so the fixture is a complete definition set. One
 ## weapon frame and whatever component this file's Delivery tiers name, because a tier

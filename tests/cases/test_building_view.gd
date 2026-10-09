@@ -421,18 +421,9 @@ func _run_with_a_tier_completed() -> Simulation:
 	# The hand-over reach widened, so the fixture does not have to walk the player to the
 	# Nest to prove something that is not about walking. Progression is physical and the
 	# reach is the rule that makes it so; `test_delivery` is where that rule is asserted.
-	var tuning: String = FileAccess.get_file_as_string("res://content/tuning.toml").replace(
-		"delivery_reach_metres = 5", "delivery_reach_metres = 80"
-	)
-	var definitions: Definitions = Definitions.parse(
-		FileAccess.get_file_as_string("res://content/machines.csv"),
-		FileAccess.get_file_as_string("res://content/recipes.csv"),
-		tuning,
-		FileAccess.get_file_as_string("res://content/waves.csv"),
-		deliveries,
-		FileAccess.get_file_as_string("res://content/gear.csv"),
-		FileAccess.get_file_as_string("res://content/stratagems.csv")
-	)
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.deliveries = deliveries
+	var definitions: Definitions = fixture.tune_key("delivery_reach_metres", "80").definitions()
 	assert_false(definitions.has_errors(), definitions.describe_errors())
 	var sim: Simulation = Simulation.new(1, 1, definitions)
 	# Depth 1 is the shallowest a tier can be gated at, and Depth is derived from the Factory

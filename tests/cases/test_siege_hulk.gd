@@ -62,39 +62,19 @@ chaff_crawlers,crawler,999999999,1,0,1
 """
 
 
-func _read(path: String) -> String:
-	var file: FileAccess = FileAccess.open(path, FileAccess.READ)
-	var text: String = file.get_as_text()
-	file.close()
-	return text
-
-
 ## Shipped content with the Telegraph shortened to half a second, a stock that pays for
 ## anything and a Delivery chain that locks nothing, so a test can arm a player and build
 ## without the progression chain being what it is measuring.
 func _content(waves: String = ONE_HULK, overrides: Array = []) -> Definitions:
-	var tuning: String = _read("res://content/tuning.toml")
-	tuning = tuning.replace("telegraph_seconds = 12", "telegraph_seconds = 0.5")
-	tuning = tuning.replace(SHIPPED_STOCK, STOCKED)
-	for pair: PackedStringArray in overrides:
-		var before: String = tuning
-		tuning = tuning.replace(pair[0], pair[1])
-		assert_true(before != tuning, "the override '%s' matched nothing" % pair[0])
-	return Definitions.parse(
-		_read("res://content/machines.csv"),
-		_read("res://content/recipes.csv"),
-		tuning,
-		waves,
-		DELIVERIES,
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = waves
+	fixture.deliveries = DELIVERIES
+	return (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 0.5"]])
+		. stock(STOCKED_BILL)
+		. tune(overrides)
+		. definitions()
 	)
 
 
@@ -224,24 +204,11 @@ func test_content_whose_turret_could_reach_the_stand_off_is_refused_by_name() ->
 	# "It cannot be defeated by Turrets alone" as a content check rather than as a hope about
 	# one. A Cannon Turret that outranged the Hulk would quietly turn the one threat the Factory
 	# cannot answer into one it can, and that is an edit somebody would make without noticing.
-	var machines: String = _read("res://content/machines.csv")
+	var machines: String = ContentFixture.shipped(Definitions.MACHINES_FILE)
 	machines += "zz_siege_cannon_mk1,Siege Cannon,turret,2,2,2,90,0,350,0,40,80,0,0,fire_mg,\n"
-	var definitions: Definitions = Definitions.parse(
-		machines,
-		_read("res://content/recipes.csv"),
-		_read("res://content/tuning.toml"),
-		_read("res://content/waves.csv"),
-		_read("res://content/deliveries.csv"),
-		_read("res://content/gear.csv"),
-		_read("res://content/stratagems.csv"),
-		"machines.csv",
-		"recipes.csv",
-		"tuning.toml",
-		"waves.csv",
-		"deliveries.csv",
-		"gear.csv",
-		"stratagems.csv"
-	)
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = machines
+	var definitions: Definitions = fixture.definitions()
 	assert_true(definitions.has_errors(), "a Turret that outranges the boss is a content error")
 	var text: String = definitions.describe_errors()
 	assert_true(text.contains("zz_siege_cannon_mk1"), text)
@@ -923,8 +890,7 @@ func test_the_bill_for_leaving_is_readable_before_the_player_commits() -> void:
 
 # ── Fixtures that keep progression out of the way ─────────────────────────────
 
-const SHIPPED_STOCK: String = 'starting_stock = "iron_plate:110"'
-const STOCKED: String = 'starting_stock = "ammunition:4000;coal:400;iron_ore:400;iron_plate:400"'
+const STOCKED_BILL: String = "ammunition:4000;coal:400;iron_ore:400;iron_plate:400"
 
 const DELIVERIES: String = """id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems
 t01_opening,Opening Licence,1,iron_plate:1,,reflex_sight,
