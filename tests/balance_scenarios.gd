@@ -119,6 +119,84 @@ const PAINT_APPROACH: Vector3i = Vector3i(-3, GROUND, 12)
 ## it, this row reports no Stratagem fired rather than quietly passing.
 const PAINT_TILE: Vector3i = Vector3i(-5, GROUND, 12)
 
+## #60: where the second Ammo Press stands, and the second Turret it feeds.
+##
+## **The pair #34 left unmeasured.** `competent` ends with 96 rounds still in the Factory and
+## `fortified` with 112, so one Turret cannot spend what one Press makes — which says the plate
+## is better spent on throughput than on a second gun, and leaves the obvious next build
+## untested: a second Press *and* a second Turret, so that there is both more Ammunition and
+## somewhere for it to go.
+##
+## The Press sits east of the Smelter, fed by a second Belt off the Smelter's own eastern wall,
+## and the Turret it feeds stands at (11, 7) — one tile south of `fortified`'s, because
+## `fortified`'s own tile is where this row's plate Belt has to run. Measured off the footprint
+## centres, an 8-tile reach from there covers **all six** Machines of the opening line: the iron
+## Miner at 15.2 m, the Smelter at 7.1 m, the first Ammo Press at 7.8 m, the coal Miner at
+## 6.3 m, the Boiler at 12.5 m and the second Press at 9.2 m.
+const SECOND_PRESS_TILE: Vector3i = Vector3i(14, GROUND, 10)
+const SECOND_PRESS_TURRET_TILE: Vector3i = Vector3i(11, GROUND, 7)
+
+## #60: the funnel, and the one thing on this Map a Wall can be.
+##
+## A line of Wall across the lane at x = 6, from z = -11 to z = 0, with the tile the Breach's own
+## latitude runs through left **open**. Eleven tiles at two plate each is 22 of the 25 the
+## call-early lever pays, which is what makes this row `fortified`'s sibling: the same single
+## pull, spent on Wall instead of on a second Turret.
+##
+## **A gap rather than a seal, and that is the design rather than a shortfall.** Enemies route
+## four-connected on a shared flowfield, so a line with a hole in it is a line they walk through
+## — and the hole is three and a half tiles from the Turret's own footprint, with every tile of
+## the Wall inside its 16 m reach. So what 22 plate buys is a Wave that comes through the one
+## place the gun is pointed, which is the best case a Wall has here. A line with no gap would be
+## walked round, because the Map is 129 tiles across and has no choke in it.
+const WALLED_LANE_X: int = 6
+const WALLED_LANE_FROM_Z: int = -11
+const WALLED_LANE_TO_Z: int = 0
+
+## The one tile of that line left open, which is the Breach's own latitude on the starter Map.
+const WALLED_LANE_GAP_Z: int = -6
+
+## #60: the four tiles that seal the one Breach, which is the only arrangement on this Map that
+## gets a Wall *bitten*.
+##
+## `_enemy_contact_target` chews a Wall in exactly one case — an Enemy in a pocket it cannot
+## route out of — so a Wall that can be walked round is never attacked, whatever it cost. Four
+## tiles, eight plate, and `wall.health` against `enemy.crawler_damage` and `enemy.breaker_damage`
+## is finally a measurement rather than arithmetic.
+const SEALED_BREACH_TILES: Array = [
+	Vector3i(15, GROUND, -6),
+	Vector3i(17, GROUND, -6),
+	Vector3i(16, GROUND, -7),
+	Vector3i(16, GROUND, -5),
+]
+
+## #60: where `deep_silo` stands its Silo, and where the player walks to load and paint it.
+##
+## It sits south of the Ammo Press, on ground the coal haul to the Nest is standing on — so it
+## cannot go up until that line comes down at five minutes, which is the same decision this row
+## already models. The loading spot is one tile south of the Silo's own wall, inside
+## `silo.load_reach_metres` of 4 m, and it is also the tile the Painting is held over: a Supply
+## Drop lands in the painting player's own pockets, so where they stand is the whole of the aim.
+const DEEP_SILO_TILE: Vector3i = Vector3i(9, GROUND, 14)
+const DEEP_SILO_WAYPOINT: Vector3i = Vector3i(-3, GROUND, 18)
+const DEEP_SILO_LOADING_SPOT: Vector3i = Vector3i(11, GROUND, 18)
+
+## How many Charges `deep_silo` commits to one load. **One**, against `artillery`'s two, because
+## this Run is twelve minutes long and its Ammo Press is feeding three claimants: a Charge is
+## twenty rounds, and a Charge is a multiplier rather than a minimum, so one is what a Factory
+## this stretched can actually bank before the Nest falls.
+const DEEP_SILO_CHARGES: int = 1
+
+## How far short of a target a sprint is aimed, in metres, when the tile a walk ends on matters.
+##
+## **Measured rather than reasoned about.** `_sprint_ticks_for` charges the ramp as a flat twenty
+## ticks and nothing cancels the deceleration a released throttle leaves, so a leg aimed exactly
+## at its target overshoots it by a little over four metres — two tiles, which is the difference
+## between a Painting that lands and a `NOT_AT_THE_TARGET`. The first attempt at `deep_silo`
+## overshot its loading spot by 4.2 m and reported a Silo that was never loaded, which is what
+## this constant exists to stop being rediscovered.
+const WALK_SLACK_METRES: int = 4
+
 ## How many Charges one load commits, against `silo.max_charges_per_load` of 4. Two, so the
 ## Sentry arrives with 120 rounds — a Charge is a multiplier and this row spends two of them.
 const CHARGES_PER_LOAD: int = 2
@@ -153,6 +231,12 @@ static func all() -> Array:
 		hive_sortie(),
 		rifle_picket(),
 		artillery(),
+		second_press(),
+		walled_lane(),
+		sealed_breach(),
+		branched_artillery(),
+		deep_silo(),
+		coal_haul(),
 	]
 
 
@@ -261,9 +345,62 @@ static func fortified() -> BalanceScenario:
 ## the same discipline a recorded session has, and it is why the report says which Depth was
 ## actually reached rather than assuming it.
 static func deep_digger() -> BalanceScenario:
-	var scenario: BalanceScenario = BalanceScenario.named(
-		"deep_digger", "pays the Delivery chain off the Factory's output, then digs Depth 2"
+	return _deep_digger(
+		"deep_digger",
+		"pays the Delivery chain off the Factory's output, then digs Depth 2",
+		true,
+		false
 	)
+
+
+## `deep_digger` with the coal haul **left standing**, which is finding 9's own variant.
+##
+## The finding is that a long Belt is a long buffer: forty tiles hold 160 coal before
+## back-pressure ever reaches the Miner, so a line run to the Nest to pay a twenty-coal bill goes
+## on diverting the Boiler's fuel for as long as it is filling. Measured before #46 — when that
+## line took **all** the Miner's coal rather than half of it — the Run was 6m20s with 98% of
+## itself in Power deficit, against 10m48s with the demolish in. #46 changed exactly the quantity
+## that figure depended on and nobody re-measured it, which is what this row is for: the same
+## trap on a fair share.
+##
+## It is `deep_digger` with one segment removed and nothing else, so the difference between the
+## two rows is the decision to tear the line down and nothing else.
+static func coal_haul() -> BalanceScenario:
+	return _deep_digger(
+		"coal_haul",
+		"pays the chain the same way and never tears the forty-tile coal haul down",
+		false,
+		false
+	)
+
+
+## `deep_digger` with a Silo, which is the only Run in the table that pays `t02_deep_mining` —
+## and therefore the only one that has ever unlocked a second Stratagem.
+##
+## **`artillery` fires a Sentry Drop because it is the one row the shipped chain does not lock**,
+## so a Barrage's 150 points over six tiles and a Supply Drop into a player's own pockets have
+## both been arithmetic since #17. This row goes for the Barrage first and takes whatever is
+## actually unlocked: the dial is wound to `artillery_barrage`, then to `supply_drop`, then to
+## `sentry_drop`, and a load of something a Delivery still locks is a silent refusal whose hash
+## does not move. `BalanceProbe.Report.stratagems_called` is what says which one it got, because
+## a count of Stratagems fired cannot tell those three apart.
+##
+## The Silo stands on ground the coal haul occupies, so it waits for the five-minute demolish;
+## its plate comes off the Smelter's southern wall and its rounds off the Ammo Press's southern
+## one, which makes that Press a **three-way** branch — the first Turret, the Nest, and the Silo.
+static func deep_silo() -> BalanceScenario:
+	return _deep_digger(
+		"deep_silo",
+		"pays the chain, digs Depth 2, and stands a Silo up out of what is left",
+		true,
+		true
+	)
+
+
+static func _deep_digger(
+	scenario_id: String, summary: String, tear_the_coal_line_down: bool, with_a_silo: bool
+) -> BalanceScenario:
+	var scenario: BalanceScenario = BalanceScenario.named(scenario_id, summary)
 	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
 	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
 	# **The two Nest lines are laid when the Run can pay for them, not at tick 3.** #47 gave a
@@ -294,7 +431,8 @@ static func deep_digger() -> BalanceScenario:
 	# #46 changed, so read it as the shape of the trap rather than its current size. So the diversion a long Belt can hide inside itself is bigger than the one the Nest
 	# was hiding, and tearing the line down once the tier is paid is still a decision a player has
 	# to make. See "Findings that are not tuning" in CLAUDE.md.
-	scenario.at_second(300, _demolish_all(_coal_belts_to_the_nest_tiles()))
+	if tear_the_coal_line_down:
+		scenario.at_second(300, _demolish_all(_coal_belts_to_the_nest_tiles()))
 	# Then, once a minute: pull the lever, hand over whatever the open tier wants, take plate
 	# back out, and try to put a Mk2 on the seam. **The lever is the only plate a Run has** —
 	# `wave.call_early_bounty_per_item` is 25 of each starting Item — so paying 120 plate for
@@ -309,10 +447,113 @@ static func deep_digger() -> BalanceScenario:
 	var plate: int = _definitions().item_index("iron_plate")
 	for minute: int in range(1, 55):
 		scenario.at_second(minute * 60, [InputAction.call_wave_early(0)])
-		scenario.at_second(minute * 60 + 1, [InputAction.deliver_to_nest(0)])
+		# **A Run going for artillery stops paying the chain**, and it has to: `t03_deep_survey`
+		# wants 400 plate, `deliver_to_nest` hands over everything the player is carrying up to
+		# the open bill, and the call-early lever is the only plate this Run has. Measured, the
+		# first attempt at this row shovelled every pull at a tier it could never finish and
+		# reported a Silo that was never built. Six minutes is where `t02_deep_mining` lands.
+		if not with_a_silo or minute <= 6:
+			scenario.at_second(minute * 60 + 1, [InputAction.deliver_to_nest(0)])
 		scenario.at_second(minute * 60 + 2, [InputAction.withdraw_from_nest(0, plate, 40)])
 		scenario.at_second(minute * 60 + 3, [_machine("miner_mk2", DEEP_IRON_NODE)])
+	if with_a_silo:
+		_add_a_silo_to_the_deep_dig(scenario)
 	return scenario
+
+
+## The Silo half of `deep_silo`: four builds attempted blind, a walk, a load and a Painting.
+##
+## Everything here is attempted repeatedly and from a fixed tick, because a scenario is a
+## function from tick to Input Actions and cannot look at the Run. The Silo's ground is under the
+## coal haul until five minutes, so the builds start after that; the walk goes south down the
+## corridor the haul itself has just vacated and then east along z = 18, which is clear ground on
+## both legs.
+static func _add_a_silo_to_the_deep_dig(scenario: BalanceScenario) -> void:
+	# The Silo stands on ground the coal haul occupies until the five-minute demolish, so the
+	# builds are attempted from just after it and go on being attempted: the plate they need is
+	# competing with `t02_deep_mining`'s 120, and which minute it is finally there is not
+	# something an open-loop script can know.
+	# **The second Boiler comes with the Silo**, which is #37's answer applied to a Factory that
+	# also paid for Depth 2: a Silo draws 400 kW and a Miner Mk2 on the Depth 2 seam draws its
+	# quoted 200 plus `depth.draw_percent_per_depth` of it again, so the Nest's plant and one
+	# Boiler cannot carry both. A Boiler is on the grid only while it burns, so the one coal Node
+	# pays for a second one.
+	for attempt: int in range(0, 43):
+		var second: int = 310 + attempt * 10
+		scenario.at_second(second, [_machine("silo_mk1", DEEP_SILO_TILE)])
+		scenario.at_second(second + 1, _deep_silo_belts())
+		scenario.at_second(second + 2, [_machine("steam_boiler_mk1", SECOND_BOILER_TILE)])
+		scenario.at_second(second + 3, _second_boiler_belts())
+
+	# **And the Nest's Ammunition line comes down with the chain payments.** Once a Run has
+	# stopped paying for Deliveries, the rounds it was banking at the counter are rounds the
+	# Silo could be assembling Charges out of — so the Ammo Press goes from a three-way branch
+	# back to two, and the Silo's share goes from a third to a half. Measured, the first attempt
+	# at this row left all three open and reported a Silo that stood for two minutes with eighteen
+	# rounds in the whole Factory and never banked a single Charge.
+	scenario.at_second(540, _demolish_all(_ammunition_belts_to_the_nest_tiles()))
+
+	# Out to the Silo at eight minutes, down the corridor the coal haul has just vacated and then
+	# east along z = 18. **The yaw this leg starts from is the one the walk to the Nest left**:
+	# `look` carries a delta rather than a heading, so a leg that assumed zero would set off in
+	# the wrong direction — which is exactly what it did on the first attempt, and the row reported
+	# a Silo that was never loaded rather than anything looking wrong.
+	var home: Vector3i = Vector3i(0, GROUND, 0)
+	var nest_post: Vector3i = Vector3i(-3, GROUND, -3)
+	var turn: int = _walk_to(
+		scenario,
+		480 * Simulation.TICKS_PER_SECOND,
+		DEEP_SILO_WAYPOINT,
+		WALK_SLACK_METRES,
+		nest_post,
+		heading_towards(home, nest_post)
+	)
+	_walk_to(
+		scenario,
+		turn,
+		DEEP_SILO_LOADING_SPOT,
+		0,
+		DEEP_SILO_WAYPOINT,
+		heading_towards(nest_post, DEEP_SILO_WAYPOINT)
+	)
+
+	# Then, every twenty seconds: wind the dial to the best Stratagem the chain might have reached
+	# and then to the ones it certainly has, commit, and hold the key.
+	#
+	# **A load of something a Delivery still locks is a silent refusal**, and so is a load onto a
+	# Silo that already has one — which is what makes asking for all three safe. The order is the
+	# preference: a Barrage is the thing this row exists to try, and a Supply Drop is what
+	# `t02_deep_mining` actually buys.
+	#
+	# **The load has to come before the Painting and not beside it**, because `_act_refusal`
+	# answers `PLAYER_IS_PAINTING` to every intent a player sends: somebody mid-channel cannot
+	# load. So each attempt is dial, load, then ten seconds of key — and an attempt whose Charge
+	# was lost to a bite is followed by another one twenty seconds later.
+	var wanted: PackedStringArray = PackedStringArray(
+		["artillery_barrage", "supply_drop", "sentry_drop"]
+	)
+	# Every twelve seconds rather than every twenty, because the Charge this row is waiting for
+	# arrives late and the window is a twelve-minute Run: the Ammo Press is feeding the Turret and
+	# the Silo while the Smelter is feeding the Press and the Silo, so a twenty-round Charge takes
+	# a little over two minutes to assemble. The first attempt at this row banked its Charge with
+	# twenty seconds of Run left and fired nothing.
+	for attempt: int in range(0, 22):
+		var second: int = 480 + attempt * 12
+		for choice: int in range(wanted.size()):
+			var index: int = _definitions().stratagem_index(wanted[choice])
+			scenario.at_second(
+				second + choice * 2,
+				[InputAction.set_silo_dial(0, index, DEEP_SILO_CHARGES)]
+			)
+			scenario.at_second(
+				second + choice * 2 + 1,
+				[InputAction.load_silo(0, DEEP_SILO_TILE, index, DEEP_SILO_CHARGES)]
+			)
+		# The Painting is held on the tile the player is already standing on: a Supply Drop lands
+		# in their own pockets and a Sentry lands where they stand, so there is nowhere to walk to.
+		scenario.hold_seconds(
+			second + 6, 5, [InputAction.paint(0, DEEP_SILO_LOADING_SPOT)]
+		)
 
 
 ## The competent Factory, then a sortie: the player sprints out to the eastern Hive and takes
@@ -443,9 +684,43 @@ static func rifle_picket() -> BalanceScenario:
 ## Which is worth knowing on its own — the Stratagem a Factory can reach first is the one that
 ## hands it a second Turret.
 static func artillery() -> BalanceScenario:
-	var scenario: BalanceScenario = BalanceScenario.named(
-		"artillery", "grows a second Boiler and ore line, then loads and fires a Silo"
+	return _artillery(
+		"artillery", "grows a second Boiler and ore line, then loads and fires a Silo", false
 	)
+
+
+## `artillery` with **no second ore line**: the Silo's plate comes off a branch of the first
+## Smelter, down a thirty-five-tile haul, instead of out of a Miner and a Smelter of its own.
+##
+## **The Run #46 made possible and none of the nine built.** Every scenario in this table is a
+## Factory a player would have laid out before a line could branch, and the sharpest missing one
+## is this: `artillery` saves a Miner and a Smelter — 20 plate, 300 kW and two Machines' worth of
+## Heat — at the price of halving the plate reaching the Ammo Press for as long as the Silo's
+## branch is filling. The arithmetic says it works, because the Silo wants about 3 plate a minute
+## out of 18.75 and its branch therefore fills, backs up and hands the Press everything back.
+## Arithmetic is what this harness exists to replace.
+##
+## **The haul is the thing the arithmetic left out.** The Silo stands where the second ore line
+## put it, so plate from the first Smelter has to travel the long way round the Factory and the
+## Nest to reach its western wall: thirty-five tiles, which is 35 plate against the 24 the ore
+## line and its four Belts cost. So branching is *dearer* on this geography, and it is also
+## thirty-five tiles of buffer — the Press is halved until all thirty-five are full, which is
+## finding 9's shape in a line nobody would have called a haul.
+##
+## The lever is pulled the same seven times as `artillery`, so the two rows cost the Enemy the
+## same and differ only in what was built.
+static func branched_artillery() -> BalanceScenario:
+	return _artillery(
+		"branched_artillery",
+		"the same Silo, fed off a branch of the one Smelter instead of a second ore line",
+		true
+	)
+
+
+static func _artillery(
+	scenario_id: String, summary: String, branched: bool
+) -> BalanceScenario:
+	var scenario: BalanceScenario = BalanceScenario.named(scenario_id, summary)
 	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
 	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
 
@@ -464,11 +739,15 @@ static func artillery() -> BalanceScenario:
 		if minute <= 7:
 			scenario.at_second(minute * 60, [InputAction.call_wave_early(0)])
 		scenario.at_second(minute * 60 + 1, [_machine("steam_boiler_mk1", SECOND_BOILER_TILE)])
-		scenario.at_second(minute * 60 + 2, [_machine("miner_mk1", SECOND_MINER_TILE)])
-		scenario.at_second(minute * 60 + 3, [_machine("smelter_mk1", SECOND_SMELTER_TILE)])
+		if not branched:
+			scenario.at_second(minute * 60 + 2, [_machine("miner_mk1", SECOND_MINER_TILE)])
+			scenario.at_second(minute * 60 + 3, [_machine("smelter_mk1", SECOND_SMELTER_TILE)])
 		scenario.at_second(minute * 60 + 4, [_machine("silo_mk1", SILO_TILE)])
 		scenario.at_second(minute * 60 + 5, _second_boiler_belts())
-		scenario.at_second(minute * 60 + 6, _second_ore_belts())
+		if branched:
+			scenario.at_second(minute * 60 + 6, _branched_plate_belts())
+		else:
+			scenario.at_second(minute * 60 + 6, _second_ore_belts())
 		scenario.at_second(minute * 60 + 7, _silo_ammunition_belts())
 
 	# Then the walk out to the Silo. Two legs, both on clear ground: west and south to
@@ -512,6 +791,94 @@ static func artillery() -> BalanceScenario:
 		10 * Simulation.TICKS_PER_SECOND,
 		[InputAction.paint(0, PAINT_TILE)]
 	)
+	return scenario
+
+
+## The competent Factory, then a second Ammo Press and a second Turret for it to feed.
+##
+## **The claim CLAUDE.md has made on arithmetic since #10, and the one #34 sharpened rather than
+## answered.** A second Press is "the arithmetic answer to the middle of the Run" — production is
+## the defence — and a second Turret was measured by `fortified` and came out a wash. What has
+## never been measured is the pair: more Ammunition *and* somewhere for it to go.
+##
+## Three Machines' worth of plate out of the call-early lever: the Press at 14, the Turret at 20
+## and eleven tiles of Belt at one each, which is two pulls and two Waves arriving sooner.
+##
+## **The plate it eats is the plate the first Press was eating**, which is the whole question.
+## The Smelter makes 18.75 plate a minute and one Press wants 20, so a second Belt off that
+## Smelter is a 50/50 share since #46 — about 9.4 plate a minute each, and two Presses each
+## running at half speed make exactly what one running at 94% made. If that is what happens then
+## the arithmetic answer is wrong and the answer is a second *Smelter*; the row is here to say
+## which.
+static func second_press() -> BalanceScenario:
+	var scenario: BalanceScenario = BalanceScenario.named(
+		"second_press", "a second Ammo Press and a second Turret, off the one Smelter"
+	)
+	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
+	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
+	# Two pulls, two builds, attempted blind once a minute from the first minute on — the shape
+	# `artillery` uses. A build nobody can afford is `MISSING_MATERIALS` and one on ground already
+	# taken is `OCCUPIED`, both silent, so repeating the list is how an open-loop script says "as
+	# soon as the plate is there".
+	for minute: int in range(1, 11):
+		if minute <= 2:
+			scenario.at_second(minute * 60, [InputAction.call_wave_early(0)])
+		scenario.at_second(minute * 60 + 1, [_machine("ammo_press_mk1", SECOND_PRESS_TILE)])
+		scenario.at_second(minute * 60 + 2, _second_press_plate_belts())
+		scenario.at_second(minute * 60 + 3, [_turret(SECOND_PRESS_TURRET_TILE)])
+		scenario.at_second(minute * 60 + 4, _second_press_ammunition_belts())
+	return scenario
+
+
+## The competent Factory, then a funnel of Wall across the lane instead of a second Turret.
+##
+## **`fortified`'s sibling, and the one thing in this table that has never built a Wall.**
+## `wall.health` is 240 against a Breaker's 60 a second, and since #47 a Wall costs two plate a
+## tile — priced against a Belt's one on an argument about what a player would rather lose, with
+## nothing measuring whether anybody ever wants one at that price. This row spends the same
+## single pull of the call-early lever `fortified` spends on a second MG on eleven tiles of Wall
+## instead, so the gap between the two rows is what 22 plate bought in each form.
+##
+## See `WALLED_LANE_X` for why the line has a gap in it: a Wave routes round a seal and walks
+## through a funnel, and the funnel's mouth is three and a half tiles from the Turret.
+static func walled_lane() -> BalanceScenario:
+	var scenario: BalanceScenario = BalanceScenario.named(
+		"walled_lane", "spends the call-early plate on a funnel of Wall rather than a second Turret"
+	)
+	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
+	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
+	scenario.at_second(60, [InputAction.call_wave_early(0)])
+	# Attempted for five minutes rather than once, because a Wall on ground already walled is an
+	# `OCCUPIED` no-op and a pull refused for a Wave still arriving would otherwise cost the row
+	# its whole build.
+	for minute: int in range(1, 6):
+		scenario.at_second(minute * 60 + 1, _walled_lane_walls())
+	return scenario
+
+
+## The competent Factory, then four tiles of Wall sealing the one Breach.
+##
+## **The only arrangement on this Map that gets a Wall bitten**, and therefore the only one that
+## measures `wall.health` against what chews it. `_enemy_contact_target` attacks a Wall in
+## exactly one case — an Enemy in a pocket it cannot route out of — so the funnel in
+## `walled_lane` is never attacked at all, however much it cost. Four tiles box the Breach in,
+## Enemies come out into a pocket, and `wall_hit_points_absorbed` is what 8 plate was worth.
+##
+## `test_machine_mortality.test_sealing_a_breach_buys_time_rather_than_stopping_a_wave` already
+## says a seal buys time rather than stopping a Wave. What it does not say is **how much**, on
+## the shipped Map against the shipped Waves, which is a number rather than a rule.
+##
+## Sealed once and never rebuilt, deliberately: one pull of the lever and one decision, so what
+## is measured is what a seal is worth and not what a treadmill of seals is worth.
+static func sealed_breach() -> BalanceScenario:
+	var scenario: BalanceScenario = BalanceScenario.named(
+		"sealed_breach", "spends the call-early plate on walling the Breach shut, once"
+	)
+	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
+	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
+	scenario.at_second(60, [InputAction.call_wave_early(0)])
+	for minute: int in range(1, 6):
+		scenario.at_second(minute * 60 + 1, _sealed_breach_walls())
 	return scenario
 
 
@@ -641,6 +1008,15 @@ static func _ammunition_belts_to_the_nest() -> Array:
 ## continuously and the other a third of the time. The grid cannot tell the difference — the
 ## average supply is 800 kW either way, which is what pays for the Silo — but the Factory reads
 ## very differently, because both Boilers now visibly cycle instead of one sitting idle.
+## One tile of each of the Nest's Ammunition Belts, which is all a demolish needs.
+static func _ammunition_belts_to_the_nest_tiles() -> Array:
+	return [
+		Vector3i(7, GROUND, 11),
+		Vector3i(-1, GROUND, 11),
+		Vector3i(-1, GROUND, -3),
+	]
+
+
 static func _second_boiler_belts() -> Array:
 	return [
 		InputAction.build_belt(0, Vector3i(13, GROUND, 6), Vector3i(13, GROUND, 8)),
@@ -669,6 +1045,78 @@ static func _silo_ammunition_belts() -> Array:
 	return [
 		InputAction.build_belt(0, Vector3i(7, GROUND, 11), Vector3i(3, GROUND, 11)),
 		InputAction.build_belt(0, Vector3i(2, GROUND, 11), Vector3i(2, GROUND, 13)),
+	]
+
+
+## Plate off the Smelter's **eastern** wall and round the north of the coal Miner into the second
+## Ammo Press's own northern face.
+##
+## East rather than south because an Ammo Press takes plate on its north face and nowhere else
+## (`content/machine_ports.csv`), so the Belt that feeds one has to arrive travelling south — and
+## the Smelter's southern docks are where the first Press's line already starts. Three tiles east,
+## then four south.
+static func _second_press_plate_belts() -> Array:
+	return [
+		InputAction.build_belt(0, Vector3i(11, GROUND, 6), Vector3i(13, GROUND, 6)),
+		InputAction.build_belt(0, Vector3i(14, GROUND, 6), Vector3i(14, GROUND, 9)),
+	]
+
+
+## Rounds off the second Press's western wall and north into the second Turret's southern face.
+static func _second_press_ammunition_belts() -> Array:
+	return [
+		InputAction.build_belt(0, Vector3i(13, GROUND, 10), Vector3i(12, GROUND, 10)),
+		InputAction.build_belt(0, Vector3i(11, GROUND, 10), Vector3i(11, GROUND, 9)),
+	]
+
+
+## The funnel: every tile of the line at `WALLED_LANE_X` except the one the Breach's latitude
+## runs through. One Input Action a tile, because a Wall is one tile per intent — a Belt is a run
+## because Items travel along it, and a Wall is a tile because the only question it answers is
+## whether *this* tile is walkable.
+static func _walled_lane_walls() -> Array:
+	var out: Array = []
+	for z: int in range(WALLED_LANE_FROM_Z, WALLED_LANE_TO_Z + 1):
+		if z == WALLED_LANE_GAP_Z:
+			continue
+		out.append(InputAction.build_wall(0, Vector3i(WALLED_LANE_X, GROUND, z)))
+	return out
+
+
+## The seal: the four tiles four-connected movement has to cross to leave the Breach.
+static func _sealed_breach_walls() -> Array:
+	var out: Array = []
+	for tile: Vector3i in SEALED_BREACH_TILES:
+		out.append(InputAction.build_wall(0, tile))
+	return out
+
+
+## The Silo's own plate and rounds, in `deep_silo`: plate off the Smelter's southern wall and
+## rounds off the Ammo Press's, both running straight south into the Silo's northern face.
+##
+## **That makes the Press a three-way branch** — the first Turret off its western wall, the Nest
+## off the same wall and the Silo off its southern one — which is the most claimants any Machine
+## in this table has ever had on one output.
+static func _deep_silo_belts() -> Array:
+	return [
+		InputAction.build_belt(0, Vector3i(10, GROUND, 7), Vector3i(10, GROUND, 13)),
+		InputAction.build_belt(0, Vector3i(9, GROUND, 12), Vector3i(9, GROUND, 13)),
+	]
+
+
+## The long way round: plate off the first Smelter's southern wall, south past the Factory, west
+## along z = 18 under the Nest, and back up into the Silo's western wall.
+##
+## Thirty-five tiles, which is the finding rather than the plumbing: the second ore line this
+## replaces costs 20 plate in Machines and four tiles of Belt, so **branching the Smelter is 11
+## plate dearer than building a second one** on the geography the Silo is standing on. It is also
+## thirty-five tiles of buffer in front of the Ammo Press.
+static func _branched_plate_belts() -> Array:
+	return [
+		InputAction.build_belt(0, Vector3i(10, GROUND, 7), Vector3i(10, GROUND, 17)),
+		InputAction.build_belt(0, Vector3i(10, GROUND, 18), Vector3i(-5, GROUND, 18)),
+		InputAction.build_belt(0, Vector3i(-6, GROUND, 18), Vector3i(-6, GROUND, 16)),
+		InputAction.build_belt(0, Vector3i(-6, GROUND, 15), Vector3i(-2, GROUND, 15)),
 	]
 
 

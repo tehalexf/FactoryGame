@@ -12,20 +12,27 @@
 ## every legitimate tuning change into a red suite, which is how a balance guard stops being
 ## read.
 ##
-## Measured on 2026-10-08, seeds 7/11/29, `tools/balance/measure.sh`, with #30's collision,
-## #34's Breaker approach, #37's two rules, #35's separate first-Wave interval **and** #46's
-## branching Belts in. Every scenario ends on the same tick on all three seeds. See "The table,
-## measured 2026-10-08" and "What #46 cost the table" in CLAUDE.md for which ticket owns which row.
+## Measured on 2026-10-09, seeds 7/11/29, `tools/balance/measure.sh`, with everything up to and
+## including #59 in. Every scenario but `rifle_picket` ends on the same tick on all three seeds,
+## and it is the only row that fires a ranged weapon. The nine rows of record reproduced #47's
+## and #49's figures exactly, which is the second time this table has been independently
+## re-derived. See "The table, measured 2026-10-09" and "What #60 measured" in CLAUDE.md.
 ##
-##     bare           3m22s   undefended — #35's shorter first Wave, a minute off
-##     opening_line   3m12s   undefended, and sooner than bare
-##     competent     28m48s   a Siege Hulk standing, with 96 rounds still in the Factory
-##     over_producer 20m21s   the same, 29% sooner
-##     fortified     28m45s   the same, with 112 rounds unspent — a wash against competent
-##     deep_digger   11m03s   swarmed with two Breaches open — #46 fed its Boiler, +15s
-##     hive_sortie   32m05s   the same, 3m17s later than competent — the longest Run measured
-##     rifle_picket  28m02s   swarmed, 46s sooner than competent
-##     artillery     15m22s   swarmed, 47% sooner — one Stratagem fired on two Charges
+##     bare                3m22s   undefended — #35's shorter first Wave, a minute off
+##     opening_line        3m12s   undefended, and sooner than bare
+##     competent          28m48s   a Siege Hulk standing, with 96 rounds still in the Factory
+##     over_producer      20m21s   the same, 29% sooner
+##     fortified          28m45s   the same, with 112 rounds unspent — a wash against competent
+##     deep_digger        12m27s   swarmed with two Breaches open
+##     hive_sortie        32m05s   the same, 3m17s later than competent — the longest Run measured
+##     rifle_picket       27m18s   swarmed, 90s sooner than competent
+##     artillery          16m40s   swarmed, 42% sooner — one Stratagem fired on two Charges
+##     second_press       24m14s   swarmed with 416 rounds unspent — the pair makes it *shorter*
+##     walled_lane        28m45s   11 Walls, every one standing, nothing ever bit one
+##     sealed_breach      26m42s   ran dry; 7 Walls built, 3 left, 980 hit points absorbed
+##     branched_artillery 13m57s   the Silo fires, and branching is dearer than a second Smelter
+##     deep_silo          12m59s   Depth 2 and a Silo; the Barrage was never unlocked
+##     coal_haul          15m41s   *longer* than deep_digger, browned out for 47% of itself
 extends TestCase
 
 ## An hour of game time. Every scenario here ends well inside it; reaching it is a failure
@@ -309,7 +316,7 @@ func test_building_artillery_costs_a_run_a_visible_part_of_its_length() -> void:
 	# lever, 400 kW of a grid that was running on 240 of headroom, and a third claimant on the one
 	# Ammo Press — which since #46 takes an equal share of that Press rather than the overflow
 	# off the Turret's Belt, and is 48 seconds of the price. The Run is measurably shorter for all
-	# of it: 15m22s against 28m48s, which is 47% and was a third before the Press was shared.
+	# of it: 16m40s against 28m48s, which is 42%.
 	#
 	# Asserted as a band rather than a figure, like every other claim in this file: what matters
 	# is that the Silo is a decision with a price and not a button.
@@ -328,6 +335,184 @@ func test_building_artillery_costs_a_run_a_visible_part_of_its_length() -> void:
 	assert_true(
 		shorter_by >= VISIBLE_MISTAKE_PERCENT,
 		"and by enough to feel: %d%% of the Run" % shorter_by
+	)
+
+
+# ── #60: the claims the table had been making on arithmetic ─────────────────
+
+func test_a_second_ammo_press_and_a_second_turret_bank_rounds_nobody_can_spend() -> void:
+	# **The claim this project has made since #10, measured at last, and it does not hold.** A
+	# second Ammo Press is "the arithmetic answer to the middle of the Run" — production is the
+	# defence — and #34 sharpened rather than answered it: `competent` ends with 96 rounds
+	# unspent and `fortified` with 112, so one Turret cannot spend what one Press makes. The
+	# obvious next build is therefore both at once, and nobody had played it.
+	#
+	# Measured, the pair makes the Run **shorter** and leaves four times as many rounds on the
+	# shelf. What binds is neither Presses nor guns: it is how many Enemies walk inside a
+	# Turret's 8 tiles, and the Heat and Power four more Machines' worth of Factory costs.
+	#
+	# Asserted as two bands rather than as the figures: the Run is not longer, and the Factory
+	# finishes holding several times the rounds `competent` finishes holding. A later change that
+	# made a second Press genuinely pay would fail here, which is the point.
+	var competent: BalanceProbe.Report = _play("competent")
+	var pair: BalanceProbe.Report = _play("second_press")
+	if not assert_true(pair.nest_fell and competent.nest_fell, "both Runs end"):
+		return
+	assert_eq(pair.turrets_built, 2, "a second Turret stood")
+	assert_true(
+		pair.machines_built >= competent.machines_built + 2,
+		"and a second Ammo Press with it: %d Machines against %d"
+		% [pair.machines_built, competent.machines_built]
+	)
+	assert_true(
+		pair.ammunition_in_the_factory >= competent.ammunition_in_the_factory * 3,
+		(
+			"the rounds pile up rather than being spent: %d left against %d"
+			% [pair.ammunition_in_the_factory, competent.ammunition_in_the_factory]
+		)
+	)
+	assert_true(
+		pair.end_tick <= competent.end_tick,
+		(
+			"and the Run is no longer for it: %s against %s"
+			% [pair.clock(), competent.clock()]
+		)
+	)
+
+
+func test_a_wall_that_can_be_walked_round_is_never_bitten() -> void:
+	# **What a Wall is worth, measured, and the answer is nothing a Wave ever touches.**
+	# `_enemy_contact_target` chews a Wall in exactly one case — an Enemy in a pocket it cannot
+	# route out of — so a funnel across the lane is a detour and not a defence, however much it
+	# cost. Eleven tiles at two plate each, every one of them still standing at the end, and
+	# **zero hit points absorbed between them.**
+	#
+	# That is the honest statement of where `wall.health` against `enemy.breaker_damage` stands:
+	# it is unreachable by anything a player builds in the open. `sealed_breach` is the row that
+	# reaches it.
+	var report: BalanceProbe.Report = _play("walled_lane")
+	assert_eq(report.walls_built, 11, "the funnel went up whole")
+	assert_eq(report.walls_standing, 11, "and every tile of it was still there at the end")
+	assert_eq(
+		report.wall_hit_points_absorbed,
+		0,
+		"with nothing ever having bitten one: %s" % report.cause()
+	)
+	# And it bought about what a second Turret bought, which is to say nothing outside the phase
+	# noise this file already tolerates.
+	var competent: BalanceProbe.Report = _play("competent")
+	assert_true(
+		absi(report.end_tick - competent.end_tick)
+		<= SAME_LENGTH_SECONDS * Simulation.TICKS_PER_SECOND,
+		"and the same Run: %s against %s" % [report.clock(), competent.clock()]
+	)
+
+
+func test_sealing_the_breach_is_what_gets_a_wall_bitten() -> void:
+	# The other half, and the only arrangement on this Map that puts a Wall in front of a tooth:
+	# four tiles box the one Breach in, Enemies emerge into a pocket they cannot route out of,
+	# and `_enemy_contact_target`'s last clause chews them out of it.
+	#
+	# So `wall.health` is measured rather than argued about — and it is measured as a Wall being
+	# chewed through and not rebuilt, which is what one pull of the lever buys.
+	var report: BalanceProbe.Report = _play("sealed_breach")
+	assert_true(report.walls_built >= 4, "the seal went up: %d Walls" % report.walls_built)
+	assert_true(
+		report.wall_hit_points_absorbed > 0,
+		"and was bitten, which is what a pocket does: %d hit points" % report.wall_hit_points_absorbed
+	)
+	assert_true(
+		report.walls_standing < report.walls_built,
+		(
+			"chewing all the way through some of it: %d of %d left"
+			% [report.walls_standing, report.walls_built]
+		)
+	)
+
+
+func test_branching_one_smelter_is_dearer_than_building_a_second_one() -> void:
+	# **The Run #46 made possible and none of the nine built**, and the arithmetic that said it
+	# would pay left out the geography. Feeding the Silo's plate off a branch of the first
+	# Smelter saves a Miner and a Smelter — 20 plate, 300 kW and two Machines' worth of Heat —
+	# and costs thirty-five tiles of Belt to carry that plate round the Factory and the Nest to
+	# where the Silo stands, which is 35 plate. So branching is dearer in the only currency a
+	# Run has, and it is thirty-five tiles of buffer in front of the Ammo Press as well.
+	#
+	# It still works: a Silo stands, assembles Charges and fires. What it does not do is pay.
+	var branched: BalanceProbe.Report = _play("branched_artillery")
+	var ore_line: BalanceProbe.Report = _play("artillery")
+	assert_eq(branched.silos_standing, 1, "a Silo stood up on a branch of the one Smelter")
+	assert_eq(branched.stratagems_fired, 1, "and fired: %s" % branched.cause())
+	assert_true(
+		branched.end_tick < ore_line.end_tick,
+		(
+			"and the Run was shorter for it than the second ore line's: %s against %s"
+			% [branched.clock(), ore_line.clock()]
+		)
+	)
+
+
+func test_no_run_in_this_table_ever_unlocks_the_artillery_barrage() -> void:
+	# **The premise #60 set out to measure, contradicted by the Delivery chain's own bill.**
+	# `artillery_barrage` sits behind `t03_deep_survey`, which wants 400 plate and 200 coal at
+	# Depth 2 — about twenty-one minutes of one Smelter's entire output — and the only Run that
+	# reaches Depth 2 at all lasts thirteen minutes. So a Barrage's 150 points over six tiles and
+	# `silo.paint_seconds` at five seconds are not unmeasured because nobody wrote the scenario;
+	# they are unmeasured because no Factory in Milestone 1 can buy the row.
+	#
+	# `deep_silo` is that scenario, and it is worth having: it reaches Depth 2, stands a Silo up
+	# out of what the lever has left, and assembles a Charge. What it cannot do is get there in
+	# time, because the plate for a Silo and the plate for the chain are the same plate.
+	var report: BalanceProbe.Report = _play("deep_silo")
+	assert_eq(report.depth_reached, 2, "the Run really did dig the Depth 2 seam")
+	assert_eq(report.silos_standing, 1, "and stood a Silo up as well")
+	assert_true(
+		report.most_charges_banked > 0,
+		"which assembled a Charge out of Belt-fed plate and rounds"
+	)
+	assert_false(
+		report.stratagems_unlocked.has("artillery_barrage"),
+		(
+			"and never unlocked the Barrage: %s"
+			% [", ".join(report.stratagems_unlocked) if report.stratagems_unlocked.size() > 0
+				else "no Delivery unlocked a Stratagem at all"]
+		)
+	)
+
+
+func test_a_long_belt_to_the_nest_is_a_buffer_and_no_longer_a_tax() -> void:
+	# **Finding 9's cheap half, re-measured on #46's fair share, and the sign has flipped.**
+	# A forty-tile coal haul to the Nest holds 160 coal before back-pressure reaches the Miner,
+	# so a line nobody tears down goes on diverting the Boiler's fuel. Measured *before* #46 —
+	# when that line took **all** the Miner's coal rather than half of it — leaving it standing
+	# cost the Run more than four minutes: 6m20s with 98% of itself browned out, against 10m48s
+	# with the demolish in.
+	#
+	# On a fair share, leaving it standing makes the Run **longer**. Half the coal is enough to
+	# keep the Boiler relighting, and what the haul buys instead is a Factory that stays cooler
+	# — every lump on that Belt is a lump not being burned into crafts, so the Heat curve is
+	# flatter and the Waves come slower. The trap is a buffer now, not a tax.
+	#
+	# Asserted as the direction rather than the margin, because the margin is a tuning change
+	# away from moving and the direction is the finding.
+	var torn_down: BalanceProbe.Report = _play("deep_digger")
+	var left_standing: BalanceProbe.Report = _play("coal_haul")
+	if not assert_true(torn_down.nest_fell and left_standing.nest_fell, "both Runs end"):
+		return
+	assert_eq(left_standing.breach_count, 2, "both Runs dug deep enough to open a second Breach")
+	assert_true(
+		left_standing.most_heat_at_once < torn_down.most_heat_at_once,
+		(
+			"the haul holds coal the Boiler would have burned into crafts: peak Heat %d against %d"
+			% [left_standing.most_heat_at_once, torn_down.most_heat_at_once]
+		)
+	)
+	assert_true(
+		left_standing.end_tick > torn_down.end_tick,
+		(
+			"so leaving it standing is no longer the trap it was: %s against %s"
+			% [left_standing.clock(), torn_down.clock()]
+		)
 	)
 
 
