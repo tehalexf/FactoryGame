@@ -464,6 +464,12 @@ and both exit non-zero.
 The weapon in the player's hands is the one asset path that **ends outside the
 shipping tree**, and the reason is the licence rather than the art.
 
+**With one exception, and the exception is the whole of section 7a: the Build
+Gun.** It is not a weapon, no pack ships one, and it is generated from a
+declaration rather than converted from anything — so it is the one thing a player
+holds that this repository may carry. Read 7a before concluding that a model in
+`assets/gear/` is a licence breach.
+
 The purchased first-person arms (`assets_licensed/rgsdev/`,
 `assets_licensed/fps-weapon-pack-unknown-vendor/` — see
 [LICENSED_ASSETS.md](LICENSED_ASSETS.md)) permit commercial use in a shipped game
@@ -506,6 +512,41 @@ UV layers, mangled take names. Three things are specific to a viewmodel:
 `tools/assets/tests/test_fbx_to_viewmodel.py` covers all of it against the
 `viewmodel.fbx` fixture in `build_fixtures.py`, which reproduces those breakages
 without a single licensed byte.
+
+## 7a. The Build Gun, which is the one held object this project authored
+
+    bash tools/assets/generate_build_gun.sh     # -> assets/gear/build_gun.glb
+
+**Committed, unlike everything else in this section**, and the difference is the
+licence and nothing else. A weapon viewmodel is a derivative of a purchased FBX
+and may not be redistributed; the Build Gun is assembled by
+`tools/assets/build_gun_recipe.py` out of `machine_parts` and
+`dieselpunk_palette.json` — the same kit and the same numbers the Machine meshes
+are generated from (section 6) — so it is this project's own work and lives in
+git like `assets/machines/*.glb`. **A clone with no packs at all holds the real
+tool**, which is the thing #64 bought over the two placeholder boxes.
+
+Being committed changes which half of #57's rule applies — *where the output is
+committed, prove it; where it is gitignored, date it.* So it is deliberately
+**absent from `asset_staleness.py`** and
+`tools/assets/tests/test_build_gun.py` regenerates it and compares the bytes
+instead, exactly as `test_generated_machines.py` does for a Machine.
+
+Four things about a viewmodel that a Machine recipe never has to think about, and
+every one of them was found by rendering rather than by reading:
+
+| Problem | Why it bites a viewmodel and not a Machine | What the generator does |
+|---|---|---|
+| Framing | A Machine is looked at from anywhere; a viewmodel is only ever seen through one frustum, and "framing is measured against the frustum, never argued about" is a rule three bug reports bought | Projects every vertex into `player.field_of_view_degrees`' own half-angles and **refuses to write** a model that fails any of three checks: nothing behind the eye, the business end inside the frame at rest, and the business end *outside* it when stowed |
+| A take that does not move | Nothing on a Machine is animated at all | `Idle` is one key at rest and **both ends of the pipeline delete a constant track** — `export_optimize_animation_keep_anim_object` keeps Blender's half, `WeaponViewmodel._load` passing `remove_immutable_tracks = false` keeps Godot's. Without them the model freezes at whatever the last clip left, which measured as the stowed pose, half a metre below the frame |
+| The rest pose | A Machine has no takes to be confused with its rest pose | NLA strips get `extrapolation = 'NOTHING'`, or every frame outside the takes evaluates to a blend of their opening keys and the exporter writes *that* as the node's transform |
+| Materials | Godot's importer throws a Machine's flat material away and substitutes the textured one (section 6) | Nothing substitutes here, because the file is read at **runtime** with `GLTFDocument.append_from_file` — so the palette's own `base_color` is what renders, which is the Wall's arrangement and is why it is right |
+
+`tools/visual/compose_tool_shot.gd` is the instrument, and its `compare` preset —
+the Build Gun and every weapon frame in turn — is **the one that answers the
+acceptance criterion and the one that cannot be committed**, because with the
+packs linked its weapon panels are renders of the purchased arms.
+`docs/images/build_gun_{before,after}.png` are the committable pair.
 
 ## 8. Set dressing, which never enters the repository either
 

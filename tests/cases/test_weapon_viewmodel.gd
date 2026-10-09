@@ -426,5 +426,50 @@ func test_the_view_model_will_hold_whatever_it_is_handed() -> void:
 		facts.weapon = "build_gun"
 		viewmodel.show_held(facts)
 	assert_eq(viewmodel.model_weapon(), "build_gun", "then the new thing is up")
-	assert_false(viewmodel.has_model(), "with a placeholder, because nothing converted one")
+	# And since #64 it is up as a *model* rather than as two boxes, because the Build Gun is
+	# the one held object this project authored itself and so the one whose GLB is committed.
+	# The claim this test makes is about the seam taking any id at all, which is why the id it
+	# hands over is still the production one rather than an invented one.
+	assert_true(viewmodel.has_model(), "with the committed Build Gun model (#64)")
 	view.free()
+
+
+# ── The Build Gun, which is self-authored and therefore committed ─────────────
+# Every weapon frame in this game arrives from a purchased pack, so its model is
+# gitignored and usually absent. **The Build Gun is the one held object this
+# project authored itself** — `tools/assets/generate_build_gun.sh` builds it out
+# of the same parts kit and the same palette the Machines are built from — so it
+# is committed, it is in the shipping tree, and a clone with no packs at all sees
+# the real article rather than two boxes. These assert that difference, because it
+# is the whole of what #64 bought.
+
+func test_the_build_gun_is_committed_and_inside_the_shipping_tree() -> void:
+	# The counterpart to `test_the_weapon_directory_is_outside_the_shipping_tree`,
+	# and the two have to stay opposites: a purchased weapon may never be
+	# committable, and the self-authored tool may never be *required* to be absent.
+	assert_true(
+		WeaponViewmodel.TOOL_BODY_DIRECTORY.begins_with("res://assets/"),
+		WeaponViewmodel.TOOL_BODY_DIRECTORY
+	)
+	assert_true(
+		FileAccess.file_exists(
+			"%s%s.glb" % [WeaponViewmodel.TOOL_BODY_DIRECTORY, WorldView.BUILD_GUN_HELD_ID]
+		),
+		"the Build Gun's model is committed, so every clone has it"
+	)
+
+
+func test_the_build_gun_draws_a_model_rather_than_the_placeholder_boxes() -> void:
+	# #29's Build Gun read as a *tool* at a glance and #28 cost it that, which is
+	# the ticket. The silhouette itself is judged by rendering; what is assertable
+	# here is that the model loads at all and that it carries the two takes a
+	# holster is made of, because a swap times itself off their lengths.
+	var viewmodel: WeaponViewmodel = WeaponViewmodel.new()
+	var facts: WeaponAnimator.Facts = _facts(0, WorldView.BUILD_GUN_HELD_ID)
+	facts.is_melee = true
+	facts.reach_metres = 0.0
+	viewmodel.show_held(facts)
+	assert_true(viewmodel.has_model(), "the committed Build Gun model is in frame")
+	assert_ne(viewmodel.clip_name(WeaponAnimator.DRAW), "", "it carries a Draw take")
+	assert_ne(viewmodel.clip_name(WeaponAnimator.HOLSTER), "", "and a PutAway take")
+	viewmodel.free()
