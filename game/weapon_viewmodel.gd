@@ -12,6 +12,14 @@
 ## identically: the same `WeaponAnimator`, the same sway, the same kick, the same
 ## queries. A clone without the packs is a playable, testable game.
 ##
+## **The Build Gun is the exception and it is the licence that makes it one** (#64).
+## It is not a weapon, no pack ships one, and it is generated from a declaration
+## rather than converted from anything — so its model is *committed*, in
+## `TOOL_BODY_DIRECTORY`, inside the shipping tree, and present in every clone.
+## Absence-tolerance still holds for it in the sense that matters (delete the file
+## and two boxes stand in), but nothing has to be installed for a player to hold
+## the real tool.
+##
 ## Three things it is careful about:
 ##
 ## * **Nothing here is a second opinion about the Run.** Sway comes off
