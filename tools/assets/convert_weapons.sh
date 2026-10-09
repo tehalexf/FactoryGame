@@ -106,22 +106,44 @@ else
 fi
 
 # RgsDev ships no authoring camera, so there is no `--origin-object` to frame
-# against — but the pack still answers the question, and that is the correction
-# here. `Prefabs/FPSController.prefab` parents these arms to a `WeaponHolder` at
-# (0, 0, 0) under the camera, so **the model's own origin is already the eye**
-# and the only hand number it needs is the drop from the eye to the hands. That
-# drop was bracketed by rendering: 0.18 puts the knife half off the bottom of the
-# frame, 0.10 holds it up where the swing reads end to end.
+# against and the eye has to be placed by hand. Two mistakes have been made here
+# and both of them cost a player the swing, so the reasoning is written down.
 #
-# It shipped as `--offset=0.0,0.16,-0.18`, and the middle number is the bug. An
-# offset is written in Blender's axes, where +Y is the horizontal depth axis that
-# the exporter's Y-up conversion sends to glTF -Z — the way the camera looks. So
-# 0.16 walked the viewer 16 cm *into* the arms: the elbows landed on the near
-# plane, the forearms splayed around the view, and the Knife_Attack take played
-# in full with almost none of it on screen. The swing was never broken; it was
-# never visible. #42 made the weapon the default hand and a player finally saw
-# it. `tools/assets/tests/test_fbx_to_viewmodel.py` pins both halves — the axis,
-# and that no recipe pushes a viewmodel forward again.
+# **`Prefabs/FPSController.prefab` parents these arms to a `WeaponHolder` at
+# (0, 0, 0) under the camera, so the model's own origin is the eye** — which is
+# true and is not the framing. A first-person rig authored that way is posed
+# around a camera that is also carrying a near plane and a field of view, and the
+# hands sit about 21 cm in front of the origin and 20 cm to the right of it. At
+# that distance the knife hand is 44 degrees off the axis at rest and the swing
+# throws it *behind* the camera. So the origin being the eye is the reason this
+# recipe needs an offset, not the reason it does not.
+#
+# **The middle number is forward, and forward is away from the viewer.** An
+# offset is written in Blender's axes, where +Y is the horizontal depth axis the
+# exporter's Y-up conversion sends to glTF -Z — which is the way a Godot camera
+# looks, so a positive middle number pushes the model *out in front of the eye*.
+# `tools/assets/tests/test_fbx_to_viewmodel.py` pins that axis. Reading it as
+# "into the camera" is how `--offset=0.0,0.0,-0.10` came to ship, and that build
+# is the one a player described as the knife animation still not playing: the
+# arms filled the frame and the strike left it altogether.
+#
+# **The number is bracketed by measuring the swing against the frustum**, not by
+# taste. `player.field_of_view_degrees` is 75 vertical, which at 16:9 is 53.8
+# degrees of horizontal half-angle, and the worst the `Knife_Attack_1_Anim` take
+# asks for is the Hand_R bone a third of a second in:
+#
+#     offset (forward, down)   at rest   worst of the swing
+#     0.00, 0.10  (shipped)    43.6 deg  89.7 deg — behind the camera
+#     0.16, 0.18  (before it)  28.5 deg  59.2 deg — the strike is off screen
+#     0.26, 0.22               23.2 deg  50.6 deg
+#     0.30, 0.24               21.5 deg  47.7 deg  <- this
+#     0.36, 0.26               19.4 deg  43.8 deg — reads small and low
+#
+# 0.30 is the nearest framing that keeps the whole swing in frame with room to
+# spare: it tolerates the field of view being tuned down to about 68 degrees
+# before the strike clips again. `SHOT_SCRIPT=tools/visual/compose_swing_shot.gd
+# bash tools/visual/shot.sh out.png` is what renders the strip these were read
+# off, and it is the only instrument in the project that can see this defect.
 #
 # The rig still needs the half turn the Weapon pack does: it reaches along -Y,
 # which the conversion would otherwise put behind the camera.
@@ -131,7 +153,7 @@ if [ -d "$rgsdev" ]; then
     --output "$out_dir/pneumatic_wrench.glb" \
     --scale 1.0 \
     --rotate=0,0,180 \
-    --offset=0.0,0.0,-0.10 \
+    --offset=0.0,0.30,-0.24 \
     --material-colour "Skin=40442F,0,0.58" \
     --material-colour "Gloves=211F1E,0,0.8" \
     --material-colour "Fingers=211F1E,0,0.8" \
