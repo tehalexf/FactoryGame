@@ -1188,6 +1188,213 @@ func test_a_number_key_reaches_the_machine_whose_cell_carries_it() -> void:
 	view.free()
 
 
+# ── Why a Belt will not dock, in words (#56) ──────────────────────────────────
+# The docking rule has been the Simulation's since #47 and the arrows have been drawn since
+# #36, so a player is both governed by the rule and shown it — and the *consequence* was
+# still missing: a red post at the dangling end with nothing saying what would clear it.
+# These assert the sentences, which is this layer's half. The reasons themselves are
+# `test_declared_ports.gd`'s, because a `Refusal` is a fact and a sentence about it is
+# presentation.
+
+## A Smelter and a Steam Boiler on empty ground with a Belt at the wrong wall of each: the
+## Smelter's northern face is where ore **arrives**, so a line leaving it is never loaded, and
+## the Boiler's southern face declares no port at all. Two walls, two different answers, which
+## is the whole of why there are two reasons.
+func _view_of_two_belts_that_cannot_dock() -> Array:
+	var sim: Simulation = Simulation.new(1, 1, null, MapLayout.empty())
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(
+			0, definitions.machine_index("smelter_mk1"), Vector3i(4, 0, 0)
+		),
+		InputAction.build_machine(
+			0, definitions.machine_index("steam_boiler_mk1"), Vector3i(10, 0, 0)
+		),
+	])
+	sim.step([
+		InputAction.build_belt(0, Vector3i(5, 0, -1), Vector3i(5, 0, -4)),
+		InputAction.build_belt(0, Vector3i(11, 0, 5), Vector3i(11, 0, 2)),
+	])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	return [sim, view]
+
+
+func test_the_hud_says_what_would_make_a_belt_at_a_machines_wall_connect() -> void:
+	var pair: Array = _view_of_two_belts_that_cannot_dock()
+	var sim: Simulation = pair[0]
+	var view: WorldView = pair[1]
+	assert_eq(sim.query_machine_count(), 2, "both Machines stood up")
+	assert_eq(sim.query_belt_count(), 2, "and both lines laid, because this is advice")
+
+	var hud: String = view.hud_brief_text()
+	# Four, not two: each of these lines is unfed at its entry as well as refused at its far
+	# end, which is exactly what a player who laid one gets. The count is read off the marks
+	# rather than restated here, because that is the division of labour #36 settled — the mark
+	# says where, the line says how many.
+	assert_true(
+		hud.contains("%d belt ends lead nowhere" % view.dangling_marker_count()),
+		"the count is still where #36 put it: %s" % hud
+	)
+	assert_true(
+		hud.contains(BuildGun.refusal_text(Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY)),
+		"and the wall that is a port pointing the wrong way says so: %s" % hud
+	)
+	assert_true(
+		hud.contains(BuildGun.refusal_text(Simulation.Refusal.NO_PORT_ON_THAT_FACE)),
+		"as does the wall that declares nothing at all: %s" % hud
+	)
+	view.free()
+
+
+func test_the_two_sentences_name_different_fixes() -> void:
+	# The distinction is the ticket. A wall with no port on it can be answered by turning the
+	# Machine *or* by docking somewhere else, so both are offered; a wall whose port runs the
+	# other way can only be answered by turning it, and "aim somewhere else" would be wrong
+	# advice about the one face the player chose on purpose.
+	var blank: String = BuildGun.refusal_text(Simulation.Refusal.NO_PORT_ON_THAT_FACE)
+	var backwards: String = BuildGun.refusal_text(Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY)
+	assert_ne(blank, backwards, "two reasons, two sentences")
+	assert_true(blank.contains("turn the Machine"), blank)
+	assert_true(blank.contains("another face"), "and the second way out: %s" % blank)
+	assert_true(backwards.contains("turn the Machine"), backwards)
+	assert_false(
+		backwards.contains("another face"),
+		"which rotation alone fixes, so only rotation is offered: %s" % backwards
+	)
+
+
+func test_one_sentence_per_reason_rather_than_one_per_belt() -> void:
+	# A Smelter stood square in an east-to-west line refuses **both** of its Belts for the
+	# same reason, which is the shape of the mistake this exists for — and two identical
+	# sentences would be the wall of text this HUD is trying to stop being.
+	var sim: Simulation = Simulation.new(1, 1, null, MapLayout.empty())
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(4, 0, 0)
+		)
+	])
+	sim.step([
+		InputAction.build_belt(0, Vector3i(10, 0, 1), Vector3i(7, 0, 1)),
+		InputAction.build_belt(0, Vector3i(3, 0, 1), Vector3i(0, 0, 1)),
+	])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	var sentence: String = BuildGun.refusal_text(Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY)
+	var hud: String = view.hud_brief_text()
+	assert_true(hud.contains(sentence), "the reason is said: %s" % hud)
+	assert_eq(hud.count(sentence), 1, "once, for two Belts that share it: %s" % hud)
+	view.free()
+
+
+func test_a_factory_whose_belts_all_dock_is_told_nothing_about_ports() -> void:
+	# Silence is the default. A HUD that carried port advice about a working Factory would be
+	# one more line to read on every frame of a Wave.
+	var sim: Simulation = Simulation.new(1, 1, null, MapLayout.empty())
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(4, 0, 0)
+		)
+	])
+	sim.step([InputAction.build_belt(0, Vector3i(5, 0, -4), Vector3i(5, 0, -1))])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	assert_true(sim.query_belt_end_is_connected(0), "the line docks at the declared input")
+	assert_false(
+		view.hud_brief_text().contains("belt will not dock"),
+		"so nothing is said: %s" % view.hud_brief_text()
+	)
+	view.free()
+
+
+func test_the_route_line_says_it_before_the_drag_is_released() -> void:
+	# The strongest version of the claim: no Belt exists, the button is still down, and the
+	# HUD already names the fix. The anchor is four tiles east of the aim, so the route's
+	# first run travels west and the wall behind its entry is the Smelter's western face —
+	# which is where ore goes **in**, so nothing would ever load this line.
+	var sim: Simulation = Simulation.new(1, 1, null, MapLayout.empty())
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+	var anchor: Vector3i = Vector3i(aimed.x + 4, aimed.y, aimed.z)
+	sim.step([
+		InputAction.build_machine(
+			0,
+			sim.query_definitions().machine_index("smelter_mk1"),
+			Vector3i(aimed.x + 5, aimed.y, aimed.z)
+		)
+	])
+	assert_eq(sim.query_machine_count(), 1, "the Smelter stood up beside the route")
+
+	var view: WorldView = WorldView.new()
+	view.note_belt_drag(true, anchor, BeltRoute.ALONG_X)
+	view.sync(sim)
+	assert_eq(sim.query_belt_count(), 0, "nothing has been laid")
+	assert_true(
+		view.hud_brief_text().contains(
+			BuildGun.refusal_text(Simulation.Refusal.PORT_RUNS_THE_OTHER_WAY)
+		),
+		"and the reason is already on screen: %s" % view.hud_brief_text()
+	)
+	view.free()
+
+
+func test_a_post_at_a_machines_wall_stands_clear_of_the_port_arrows_under_it() -> void:
+	# #56's first render, as an assertion. #48 raised the *branch* post to 2.25 m because a
+	# dock tile is where #36 draws a 3.2 m port arrow, and wrote that nothing else collided
+	# with them "because a dangling end has no Machine behind it and therefore no arrow".
+	# The end this whole section is about is exactly that end, and its hip-height post was a
+	# small red cube half inside a 0.9 m conveyor deck among the arrows. So a post refused by
+	# a wall gets the clearance #48 already measured, and one on open ground does not.
+	var sim: Simulation = Simulation.new(1, 1, null, MapLayout.empty())
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(4, 0, 0)
+		)
+	])
+	sim.step([
+		# Into the Smelter's eastern wall, which gives plate out: refused, and standing on a
+		# tile that carries a port arrow.
+		InputAction.build_belt(0, Vector3i(10, 0, 1), Vector3i(7, 0, 1)),
+		# And one on open ground, with nothing to clear.
+		InputAction.build_belt(0, Vector3i(10, 0, 9), Vector3i(13, 0, 9)),
+	])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+
+	assert_ne(
+		sim.query_belt_end_dock_refusal(0),
+		Simulation.Refusal.NONE,
+		"the first line really is refused by a wall"
+	)
+	assert_eq(
+		sim.query_belt_end_dock_refusal(1),
+		Simulation.Refusal.NONE,
+		"and the second really is pouring onto open ground"
+	)
+
+	var at_a_wall: float = -1.0
+	var on_open_ground: float = -1.0
+	for marker: int in range(view.dangling_marker_count()):
+		var at: Vector3 = view.dangling_marker_position(marker)
+		# The refused end of the first line is its last tile; the second line's far end is
+		# the only mark out on the open ground to the east of it.
+		if at.z < 4.0:
+			at_a_wall = maxf(at_a_wall, at.y)
+		else:
+			on_open_ground = maxf(on_open_ground, at.y)
+
+	assert_true(
+		at_a_wall > on_open_ground,
+		"a post at a wall stands above one on open ground: %f against %f"
+			% [at_a_wall, on_open_ground]
+	)
+	assert_true(
+		at_a_wall > Fixed.to_float(sim.query_belt_deck_height_metres())
+			+ WorldView.PORT_MARKER_HEIGHT_METRES,
+		"and clear of the port arrows lying at deck height: %f" % at_a_wall
+	)
 func test_a_run_opens_pointed_at_the_first_cell_of_the_chain() -> void:
 	# #55, and the acceptance criterion for it: on tick 0 the hologram, the lit cell and the
 	# objective line all name the same Machine. #53 got the hotbar into chain order and left

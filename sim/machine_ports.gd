@@ -259,6 +259,39 @@ func has_port_at(
 	return false
 
 
+## Whether a Machine declares **any** port on this face, of either flow. What tells a Belt that
+## will not dock whether the wall it is standing against is a port at all.
+##
+## **Deliberately not an authority on docking and deliberately not returning the flow.**
+## `has_port_at` is the one function that says whether a Belt may dock, and this exists only to
+## classify the *failure* when that one has already said no: a face with no port at all is
+## answerable by rotating the Machine or by aiming at another face, and a face whose port runs
+## the other way is answerable only by rotating. Those are two different sentences, so the
+## Simulation has to be able to tell them apart (#56). Returning the flow instead would make
+## this a second opinion about which way goods cross a wall, which is exactly the shape #47's
+## own notes warn about — and a face could in principle declare both flows, where "is it a
+## port" has one answer and "which way does it run" would have two.
+func declares_a_port_at(
+	machine_id: String,
+	port_of_tile: Vector3i,
+	facing: int,
+	origin: Vector3i,
+	footprint_x: int,
+	footprint_z: int,
+	rotation: int
+) -> bool:
+	var at: int = _machines_with_ports.find(machine_id)
+	if at == -1:
+		return false
+	var group: Array[Port] = _ports_of_machine[at]
+	for port: Port in group:
+		if port_direction(port, rotation) != facing:
+			continue
+		if port_tile(port, origin, footprint_x, footprint_z, rotation) == port_of_tile:
+			return true
+	return false
+
+
 ## Feeds the declaration into a hasher, in file order.
 ##
 ## **In `Definitions.digest()` since #47, and it was deliberately out of it before.** The
