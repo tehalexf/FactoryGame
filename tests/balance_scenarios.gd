@@ -187,6 +187,50 @@ const DEEP_SILO_LOADING_SPOT: Vector3i = Vector3i(11, GROUND, 18)
 ## this stretched can actually bank before the Nest falls.
 const DEEP_SILO_CHARGES: int = 1
 
+## #62: how long a burst is, and how often one is spent.
+##
+## **The difference between this and `rifle_picket`, and the whole reason #62 needed a second
+## armed row.** The picket leans on the trigger for thirty seconds of every minute whether or
+## not there is anything on the Map to shoot — 37 rounds a minute, which is one whole Ammo
+## Press, so it is a measurement of a player's impatience rather than of a player's fight. A
+## burst is what fighting a Wave actually costs: a Bolt Rifle does 30 damage a shot against a
+## Crawler's 30 hit points, so one shot is one Crawler, and `competent` is sent six Crawlers a
+## Wave early on and ten late. Eight seconds at `bolt_rifle`'s 0.8 s between shots is ten
+## shots, which is a Wave's worth of Chaff and not a round more.
+##
+## Forty seconds between bursts because that is `heat.wave_interval_minimum_seconds` — the
+## floor the schedule spends most of a long Run pinned at — so a Run that lasts is a Run
+## firing about one burst a Wave. Early, when the gap is ninety seconds and then sixty, the
+## player is firing more often than Waves arrive and the report says so in the shots fired
+## against the rounds that reached him.
+##
+## **It is a discipline and not a reaction, and that limit is the instrument's rather than the
+## design's.** A scenario is a function from tick to Input Actions and cannot see a Wave
+## coming, so a burst lands where the clock says and not where the Crawlers are. What that
+## costs is rounds spent at nothing, which is the same error in the same direction as the
+## picket's and about a third of the size.
+const BURST_SECONDS: int = 8
+const BURST_CYCLE_SECONDS: int = 40
+
+## Where a player stands to arm themselves, which is **not a choice the scenario makes**.
+##
+## A withdrawal is made from `nest.delivery_reach_metres` of the Nest's footprint, through the
+## same `_player_is_at_the_nest` a hand-over goes through — there is no spot a player can stand
+## on where the Nest takes goods but hands none back, and there is no spot off it where it hands
+## any back at all. So "a player who arms themselves out of their own store" is a player standing
+## at the counter, and that is a property of the faucet rather than of this row. It is also the
+## same tile `rifle_picket` fires from, which is what makes the two rows comparable.
+const NEST_COUNTER: Vector3i = Vector3i(-3, GROUND, -3)
+
+## How many rounds a withdrawal asks for.
+##
+## Deliberately far more than a burst spends, because `_apply_withdraw_from_nest` clamps to what
+## is there: asking for sixty is asking for *whatever the store has*, which is what a player
+## does, and it makes the dryness figure a measurement of the Factory rather than of how much
+## this scenario thought to ask for. The same figure `rifle_picket` asks for, for the same
+## reason.
+const ROUNDS_PER_WITHDRAWAL: int = 60
+
 ## How far short of a target a sprint is aimed, in metres, when the tile a walk ends on matters.
 ##
 ## **Measured rather than reasoned about.** `_sprint_ticks_for` charges the ramp as a flat twenty
@@ -237,6 +281,8 @@ static func all() -> Array:
 		branched_artillery(),
 		deep_silo(),
 		coal_haul(),
+		armed_player(),
+		armed_second_press(),
 	]
 
 
@@ -617,9 +663,15 @@ static func hive_sortie() -> BalanceScenario:
 ## schedule is a function of Heat. That is worth proving rather than asserting, which is what
 ## this row is for.
 ##
-## It is also #17's fourth claimant, measured: the rifle spends the same Ammunition the Turret
-## does, out of the Nest's store, at 75 rounds a minute against the Press's 37. A player who
-## leans on the trigger is competing with his own Turret.
+## It is also #17's fourth claimant, and **#62 measured what it actually spends rather than what
+## it demands.** This comment used to say the rifle spends rounds at 75 a minute against a Press
+## that makes 37, and that figure is a *demand*: the Nest's line is a 50/50 branch off one Press,
+## so it pays about nineteen rounds a minute, and this row receives 520 over a 27-minute Run,
+## fires all 520, and **holds an empty gun for 74% of it.** Its thirty-second bursts are mostly
+## dry trigger pulls, which is the mechanical reason its end-to-end margin has moved five times
+## across five tickets without anything about Ammunition changing — the demand it was built to
+## measure never happened. `armed_player` is the row to read about arming a player; this one is
+## still the row the seed can reach.
 static func rifle_picket() -> BalanceScenario:
 	var scenario: BalanceScenario = BalanceScenario.named(
 		"rifle_picket", "the competent chain, plus a rifleman at the Nest spending the same rounds"
@@ -827,6 +879,126 @@ static func second_press() -> BalanceScenario:
 		scenario.at_second(minute * 60 + 2, _second_press_plate_belts())
 		scenario.at_second(minute * 60 + 3, [_turret(SECOND_PRESS_TURRET_TILE)])
 		scenario.at_second(minute * 60 + 4, _second_press_ammunition_belts())
+	return scenario
+
+
+## The competent Factory, a haul banking rounds at the Nest, and a player who arms himself out
+## of it and fights in bursts.
+##
+## **#62's question, which this table could not ask.** `player.starting_stock` is plate alone
+## and deliberately so — rounds in the opening bill would conjure the one thing the Factory
+## exists to make — so a Run opens with a rifle that is a stick, and #27's faucet is the only
+## way it ever fires. `test_gear` walks that chain once: belt plate to the Nest, bank a round,
+## withdraw it, kill a Crawler. Whether it *keeps up* across a Run, against the Turret drinking
+## from the same Ammo Press, had never been played.
+##
+## **It is not `rifle_picket` and the difference is the point.** That row leans on the trigger
+## for thirty seconds of every minute, which is 37 rounds a minute — one whole Press — spent
+## whether or not anything is on the Map; its own note says so, and CLAUDE.md records that its
+## end-to-end margin has moved five times across five tickets without one of them touching what
+## a round costs or what a Press makes. So the picket's clock cannot be read as an Ammunition
+## finding, and a row that could had to spend rounds the way a fight does. See `BURST_SECONDS`.
+##
+## What it costs to set up is one pull of the call-early lever for the twenty-four-tile haul
+## that banks rounds at the counter, which is exactly what the picket pays — so the two rows
+## differ in trigger discipline and in nothing else a player paid for.
+static func armed_player() -> BalanceScenario:
+	return _armed_player(
+		"armed_player",
+		"arms himself at the Nest's counter and fights the Waves in bursts",
+		false
+	)
+
+
+## `armed_player` with #60's second Ammo Press and the second Turret that spends it.
+##
+## **The second half of #62's acceptance criterion, and the pair is controlled against #60's.**
+## `second_press` answered the Turret side and answered it against expectation: the pair is 16%
+## *shorter* than `competent` and ends holding 416 rounds nobody could spend, because a Turret's
+## output is bounded by how long an Enemy spends inside its 16 m and not by its feed. What that
+## leaves open is the player's side — a player is not range-bound, so rounds a Turret cannot
+## spend are rounds a player could.
+##
+## This row builds exactly what `second_press` builds, on the same tiles, out of the same two
+## extra pulls of the lever, so `armed_player` against this is the same difference
+## `competent` against `second_press` is: a Press, a gun, eleven tiles of Belt and two Waves
+## arriving sooner.
+##
+## **And it is a real question rather than a formality, because the second Press does not
+## obviously help the player at all.** It is fed off a second Belt from the one Smelter, which
+## since #46 is a 50/50 share — so the first Press, the only one whose rounds reach *either* the
+## lane Turret or the Nest's counter, is halved. Measured, this is the one build in the table
+## where that halving and the player's own share land on the same Press: the lane Turret is fed
+## 9.4 rounds a minute against `competent`'s 37.5, which is a quarter. The second Press's rounds
+## go to the second Turret and never come near the store, so they make up neither shortfall. On
+## the arithmetic the player is worse off; the row is here to say by how much.
+static func armed_second_press() -> BalanceScenario:
+	return _armed_player(
+		"armed_second_press",
+		"the same armed player, on #60's second Ammo Press and second Turret",
+		true
+	)
+
+
+static func _armed_player(
+	scenario_id: String, summary: String, with_a_second_press: bool
+) -> BalanceScenario:
+	var scenario: BalanceScenario = BalanceScenario.named(scenario_id, summary)
+	scenario.at(1, _iron_line() + _power_line() + [_turret(TURRET_TILE)])
+	scenario.at(2, _iron_belts() + _power_belts() + _first_ammunition_belts())
+
+	# The haul that banks rounds at the counter costs twenty-four plate, which the opening bill
+	# does not stretch to: it covers the Factory's own thirty tiles and two plate over. So it is
+	# bought with a pull of the lever, exactly as `rifle_picket` buys the same line — one Wave
+	# arriving sooner, which is the right price for it, because the rounds he spends were never
+	# free and nor is the Belt that brings them to him.
+	scenario.at_second(60, [InputAction.call_wave_early(0)])
+	scenario.at_second(61, _ammunition_belts_to_the_nest())
+
+	# #60's pair, on #60's tiles, out of two more pulls. Attempted blind once a minute from the
+	# first minute on, the shape `second_press` uses: a build nobody can afford is
+	# `MISSING_MATERIALS` and one on ground already taken is `OCCUPIED`, both silent no-ops whose
+	# hash does not move, so repeating the list is how an open-loop script says "as soon as the
+	# plate is there".
+	if with_a_second_press:
+		for minute: int in range(2, 12):
+			if minute <= 3:
+				scenario.at_second(minute * 60 + 10, [InputAction.call_wave_early(0)])
+			scenario.at_second(minute * 60 + 11, [_machine("ammo_press_mk1", SECOND_PRESS_TILE)])
+			scenario.at_second(minute * 60 + 12, _second_press_plate_belts())
+			scenario.at_second(minute * 60 + 13, [_turret(SECOND_PRESS_TURRET_TILE)])
+			scenario.at_second(minute * 60 + 14, _second_press_ammunition_belts())
+
+	# To the counter, which is where a withdrawal has to be made from. See `NEST_COUNTER`.
+	_walk_to(scenario, 10 * Simulation.TICKS_PER_SECOND, NEST_COUNTER, 0)
+	# Rifle out, pointed down the lane the one Breach feeds. The weapon has to be drawn before
+	# anything is fired: a Run opens with the Build Gun holstered and the wrench in hand (#42),
+	# and a `fire` sent in build mode places a Machine instead.
+	scenario.at_second(20, [
+		InputAction.set_build_mode(0, false),
+		InputAction.equip_weapon(0, _definitions().gear_index("bolt_rifle")),
+		InputAction.look(
+			0,
+			_look_pixels_between(
+				heading_towards(Vector3i(0, GROUND, 0), NEST_COUNTER),
+				heading_towards(NEST_COUNTER, Vector3i(16, GROUND, -6))
+			),
+			0
+		),
+	])
+
+	# Then the fight, as a cycle rather than as a minute: take whatever the store has, wait a
+	# second for it to land, and spend a burst. See `BURST_SECONDS` for why eight seconds in
+	# forty rather than thirty in sixty, and `ROUNDS_PER_WITHDRAWAL` for why he asks for sixty
+	# of something he will spend ten of.
+	var ammunition: int = _definitions().item_index("ammunition")
+	var cycles: int = 60 * 60 / BURST_CYCLE_SECONDS
+	for cycle: int in range(1, cycles):
+		var second: int = cycle * BURST_CYCLE_SECONDS
+		scenario.at_second(
+			second, [InputAction.withdraw_from_nest(0, ammunition, ROUNDS_PER_WITHDRAWAL)]
+		)
+		scenario.hold_seconds(second + 1, BURST_SECONDS, [InputAction.fire(0)])
 	return scenario
 
 
