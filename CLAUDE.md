@@ -2691,13 +2691,69 @@ inside anything, because a move into something too tall is refused. So
   who went down on a Smelter roof stays on the roof, for the same reason a corpse does not
   slide two metres.
 
-**Open: a roof is not cover.** An Enemy's reach is compared horizontally — `_bite` subtracts
-positions on two axes and has never heard of `_player_y` — so a Crawler on the ground can
-still bite a player standing on a 2.2 m Boiler. That is the conservative default rather than
-the considered one: the alternative is a free safe spot on top of every Machine in the
-Factory, which would quietly undo the keystone loop, and the right fix is a deliberate
-decision about how high is out of reach rather than an accident of which axes a subtraction
-happens to use.
+#### A roof is cover against what is shorter than it, and against nothing else
+
+#58, and until it the reach was compared **horizontally**: `_player_in_contact` subtracted
+positions on two axes and had never heard of `_player_y`, so a 1.6 m Crawler on the ground bit
+a player standing on a 2.2 m Boiler. That was the conservative default rather than a decision,
+and what made it worth settling is the section above — a player reaches 1.85 m, so their own
+Factory is the staircase and they *will* be up there, with a Crawler at their ankles reading as
+a bug whichever way the design went.
+
+**Height counts now, and the rule is that a thing reaches as high as it is tall.**
+`_enemy_player_vertical_reach` is `_enemy_hit_height` — the one authority on how big a kind is
+and the very number `WorldView` scales the drawn body by — so **the thing that can reach you is
+the thing you can see reaching**, and there is no second opinion, no new tuning key and no
+table of multipliers. A kind is still four tuning keys and a `match` arm, and `_enemy_damage` is
+still one number per kind whatever it is biting.
+
+**What protects the keystone loop is not a ceiling anybody tuned; it is that the Breaker is the
+tall one.** Measured against the declared heights:
+
+| | reaches | so it can reach a player on | and cannot |
+|---|---|---|---|
+| Crawler | 1.60 | a Belt deck (0.9), a Smelter (1.5) | a Miner (1.8) and everything above |
+| Breaker | 2.20 | a Miner, an Ammo Press, an MG Turret (2.0), a Boiler, a Silo (2.2) | a Repair Pylon or a Wall (2.4) |
+| Siege Hulk | 3.20 | every roof `machines.csv` declares | — |
+
+So **Chaff cannot reach a player on a production roof and the thing that actually takes a
+Factory apart can**, which is DESIGN.md's own split — Chaff is the sense of threat, the Breaker
+is the threat — arriving as geometry rather than as a sentence. And the free-safe-spot worry is
+answered by a clause that was already there: a Breaker takes a **Machine** over a player
+(`_enemy_contact_target`'s first clause), and a player on a roof is standing on a Machine, so
+climbing one means watching it eat your floor. `test_roof_cover` plays exactly that — the
+Boiler is chewed down at 60 a bite, the player falls on the next tick, and then they are an
+ordinary person standing in front of a Breaker.
+
+**Two tests rather than one three-dimensional distance**, and the split is the design. The
+horizontal is a *tuned* reach, how far a thing leans; the vertical is *anatomy*, how high the
+body goes. A single radius would conflate them, make `enemy.player_bite_reach_metres` silently
+also a climbing allowance, and give the absurd result that getting nearer buys an Enemy height.
+The vertical comparison is a single axis, so it needs no `Fixed.sqrt` and therefore none of the
+squaring the rest of the file does to avoid one; the horizontal is squared exactly as before.
+**No state was added** — the rule is a function of the kind and of `_player_y`, both of which
+were hashed already.
+
+Three consequences recorded rather than hidden:
+
+- **A Wall and a Repair Pylon at 2.4 m are cover from everything but the boss.** A Wall is the
+  one structure whose entire job is to stop something and #30 already put its top out of reach
+  from the ground, so that is the right answer; the price of standing up there is that a wrench
+  reaches nothing you climbed to protect.
+- **Nothing reaches the Nest's 4.2 m crown, which is where `_respawn` puts a player.** That is
+  the one perch whose own destruction ends the Run, so a player standing on it is losing slowly
+  rather than safe — and `_a_shell_lands` is a blast radius that has never heard of `_player_y`
+  either, deliberately: a roof is not cover from artillery.
+- **A wrench's reach is still horizontal**, so a player on a roof can mend the Machine under
+  them. On a 2.4 m Pylon that is a player holding one Breaker off indefinitely without being
+  bitten — which is a marginal improvement on the trade hand repair already is (standing still,
+  in the open, during a Wave, doing nothing else) and is left as it is. Extending
+  `_within_wrench_reach` upward is a decision about repair, not about reach, and wants its own
+  ticket.
+
+**No measured figure moved**, and the null result is explained rather than merely reported: no
+scenario in `tools/balance/measure.sh` puts a player above the ground, so `_player_y` is zero
+in all nine and the new clause cannot fire. See "What roof cover cost the table", below.
 
 ### Build mode is a hand, not a gate
 
@@ -4406,7 +4462,11 @@ the Belt price and the declared port cost the table". It is one fresh run of
 carried across it, because the rule this file keeps is that a measured figure is rewritten from a
 measurement and never reconciled with one. The eighth is **#49's bigger Breaker**, and **not one
 of the nine rows moved by a single tick** — see "What a bigger Breaker cost the table", below,
-for why that is the expected answer rather than a suspicious one.
+for why that is the expected answer rather than a suspicious one. **#58 gets no column**, for
+the same reason and more strongly: it made an Enemy's reach care how high a player is standing,
+and no scenario here ever leaves the ground, so all nine rows reproduced #49's exactly and the
+clause it added was unreachable. That is a gap in the instrument rather than a measurement of
+the mechanic — see "What roof cover cost the table".
 
 | Scenario | #26 before | #26 after | #34 | #37 | merged | #46 | #47 | **#49** | Wave | Peak Heat | What killed it, now |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -4841,6 +4901,33 @@ the hull got wider. Nothing in the nine scenarios stands next to a Breaker on pu
 same hole that leaves hand repair under fire unmeasured — so that is an arithmetic claim, and it
 is listed under "What is still unmeasured" with the others rather than dressed up as a finding.
 
+### What roof cover cost the table
+
+**#58 made an Enemy's reach care how high a player is standing, and every one of the nine rows
+is bit-identical to #49's on all three seeds** — the Run length, the Wave, the peak Heat and the
+list of Machines lost. Measured rather than reasoned about, because the rule is a combat
+quantity and this project has twice paid for a tuning change nobody played.
+
+**The null result is explained by the harness rather than by the mechanic, and that is the
+honest reading.** `_player_in_contact` is the one function that changed and the new clause fires
+only when `_player_y` is above the biting kind's own height. **No scenario in
+`tests/balance_scenarios.gd` ever leaves the ground**: nothing jumps, nothing is built on top of
+anybody, and the two rows whose player walks anywhere — `hive_sortie` and `rifle_picket` — walk
+on clear ground, the first because #30's collision forced it round the Factory rather than
+through it. So `_player_y` is zero for every tick of all twenty-seven Runs and the clause is
+unreachable by construction.
+
+That is worth stating as a **gap in the instrument** rather than as evidence the change is free.
+The thing a table of nine ground-bound scenarios can confirm is that the ground case did not
+move, which is the regression that mattered and which
+`test_roof_cover.test_an_enemy_still_bites_a_player_standing_on_the_ground` also pins on both
+kinds. What it cannot say is what a roof is worth to a player who uses one, and that is the same
+category as hand repair under fire: it needs somebody who can climb a Boiler when a Wave arrives
+and decide whether doing so felt clever or cheap. The scenario that would begin to say is a
+`competent` Factory whose player stands on its Ammo Press through the Breaker tier — and the
+interesting half of it, whether the Breaker eating the floor reads as the right answer, is a
+question about watching rather than about a Run length.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
@@ -4864,8 +4951,10 @@ Two consequences worth knowing before anybody quotes a variance:
 
   **#49 re-measured all three seeds and reproduced those six figures exactly** — 27m18s, 27m20s
   and 26m39s at peak Heat 6051, 6001 and 5892 — which is the first time any row of this table
-  has been independently re-derived by a later ticket rather than carried forward. A table whose
-  whole value is that somebody can re-derive it is worth occasionally re-deriving.
+  has been independently re-derived by a later ticket rather than carried forward. **#58 got the
+  same six again**, so the one row with a distribution in it has now been reproduced twice by
+  tickets that had no stake in it. A table whose whole value is that somebody can re-derive it is
+  worth occasionally re-deriving.
 
   The last paragraph of this bullet used to warn that the spread going to zero was not an
   improvement anybody made and that the next ticket to re-phase the schedule might split the
@@ -5005,6 +5094,16 @@ Honest residue, so the next ticket does not have to rediscover it:
 - **Hand repair under fire.** No scenario picks up a wrench to save a Machine, because chasing a
   Breaker open-loop is not possible. `wrench.repair_points_per_second` against
   `enemy.breaker_damage` is still an arithmetic claim.
+- **What a roof is worth, which is #58's residue and the same hole one step along.** Height
+  counts now — an Enemy reaches as high as it is tall — and **no scenario ever leaves the
+  ground**, so the table confirmed only that the ground case did not move. What is unmeasured is
+  whether climbing a Machine to get out of Chaff's reach is a decision or a cheese, and whether
+  the Breaker eating the floor out from under a player reads as the right answer or as a
+  punishment. Both are about watching rather than about a Run length. The two numbers to reach
+  for if it reads as a cheese are the heights themselves, `enemy.enemy_hit_height_metres` and
+  `enemy.breaker_hit_height_metres` — which are also what a Breaker *looks* like, so neither can
+  be moved for balance without moving what is on screen. That coupling is deliberate (#49) and
+  is the thing to argue with before the thing to change.
 - **What a bigger Breaker is worth to a player, in both directions**, which is #49's residue.
   It is easier to shoot — a 2.2 m by 0.8 m capsule against the Crawler's 1.6 by 0.6 — and it
   bites from 0.2 m further out, because reach is measured from the hull. Neither showed in the
