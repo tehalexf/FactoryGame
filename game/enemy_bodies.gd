@@ -147,12 +147,16 @@ static func separation(left: Dictionary, right: Dictionary) -> float:
 ## committed character that is visibly *armoured and carrying something*, which is what has
 ## to separate "the threat" from "the sense of threat" at thirty metres.
 class Recipe extends RefCounted:
-	## The character `.glb`, which carries the mesh and the rig and no animation at all.
+	## The body `.glb`, which carries the mesh and the rig.
 	var character: String = ""
-	## The animation libraries to resolve clip names against, in order. KayKit ships its
-	## animation as separate files on a shared rig — the arrangement
-	## `docs/ASSET_PIPELINE.md` section 4 calls the worked example of doing it right — so
-	## movement and everything else are two files.
+	## The files to resolve clip names against, in order.
+	##
+	## **Since #79 this is the body itself**, because the three kinds are three *different*
+	## rigs and a shared library between them could only carry the bones they have in common
+	## — which is the root. It stays a list rather than collapsing to one path because the
+	## other arrangement is the right one whenever a rig *is* shared: a pack of thirteen
+	## characters on one skeleton belongs in one animation file, which is what
+	## `docs/ASSET_PIPELINE.md` section 4 argues and what the KayKit cast used.
 	var libraries: PackedStringArray = PackedStringArray()
 	## Role to clip name. A role is what the game asks for and a clip name is what the pack
 	## happens to call it, which is the split `WeaponAnimator.CLIP_NEEDLES` already makes.

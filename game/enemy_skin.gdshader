@@ -45,11 +45,19 @@ uniform bool has_albedo_texture = false;
 // Siege Hulk coarser plate than a 1.6 m Crawler in absolute terms, which is the right way
 // round.
 uniform vec2 uv_scale = vec2(1.0);
-// What the pack's own colours are multiplied by. The committed skeletons are bone-white and
-// this palette runs 0.055 to 0.14 albedo, so a character dropped in untinted is the
-// brightest thing in frame — which is the mistake #32 found on the Walls, measured rather
-// than guessed, and the reason a colour picked against a white background is a colour
-// picked against the wrong thing.
+
+// What the map is multiplied by, and **what it means changed twice.** It used to be the
+// level: the pack's skeletons were bone-white against a palette running 0.055 to 0.14, so an
+// untinted character was the brightest thing in frame — #32's mistake on the Walls, which is
+// why a colour picked against a white background is a colour picked against the wrong thing.
+// #75 moved the level into a graded atlas and left a cast here.
+//
+// Since #79 this carries the palette entry a part was **declared** as, times that cast, times
+// `WorldView.ENEMY_LIFT` — so it is a colour out of `dieselpunk_palette.json` rather than a
+// correction to somebody else's art. The lift is there because the palette is tuned for six
+// metres of Machine with sunlit horizontal faces and an Enemy is 1.6 m of vertical plate
+// between the sun and the player; at the entries' own levels the median Enemy pixel measured
+// 0.000 against a ground of 0.047. See `world_view._enemy_tint` and CLAUDE.md.
 uniform vec4 albedo_tint : source_color = vec4(1.0);
 uniform float metallic : hint_range(0.0, 1.0) = 0.0;
 uniform float roughness : hint_range(0.0, 1.0) = 0.8;
@@ -136,10 +144,12 @@ uniform float hit_flash_whiteness : hint_range(0.0, 1.0) = 0.65;
 // Crawler's whole thigh samples one of them, so graded or not an Enemy renders as a
 // *shape* with no surface inside it — which is half of what #75 was opened about.
 //
-// The props had an answer in hand and these characters do not: heyheythere bakes its
-// ambient occlusion into `COLOR_0`, so `prop_grade.deepen_grime` had per-prop geometric
-// information about where dirt collects. KayKit's six characters carry **no `COLOR_0` at
-// all**, measured — `JOINTS_0, NORMAL, POSITION, TEXCOORD_0, WEIGHTS_0` and nothing more.
+// The props had an answer in hand and these bodies do not: heyheythere bakes its ambient
+// occlusion into `COLOR_0`, so `prop_grade.deepen_grime` had per-prop geometric information
+// about where dirt collects. The KayKit cast carried **no `COLOR_0` at all**, measured, and
+// the generated bodies that replaced it in #79 do not carry one either — `machine_parts`
+// writes a position, a normal and one UV, and baking occlusion into a procedural body would
+// be a second pass over geometry the declaration can change on any run.
 //
 // So the grime is derived, which is exactly `ground.gdshader`'s answer to the same
 // complaint about the yard: *"the ground should be slightly bumpy/textured like real
