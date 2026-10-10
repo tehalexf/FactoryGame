@@ -608,14 +608,31 @@ away from the Crawler. A body slung at 0.30 against 0.50 against 0.58, a bare ba
 plate at 0.96, and mass spread down a long tail against massed in a front shield are
 independent differences, so the pairs no longer trade against one another.
 
+> ### ⚠️ The Crawler-against-Breaker pair has about four hundredths of headroom
+>
+> **0.538 against a 0.50 floor.** If you are about to move a Crawler or a Breaker proportion —
+> a width, a depth, a sling height, a tail length — that is your whole budget, and
+> `test_enemy_silhouette` is what will tell you. **Re-measure after
+> `godot --headless --path . --import`**, for the reason two paragraphs down, and read "leg
+> thinning is free against this gate and body bulk is not" before you pick which number to
+> move.
+
 **The third column is #79's second look and it cost real margin — 0.655 to 0.538 on the
 binding pair — which is reported rather than hidden.** The Breaker went from four legs to six,
 because four under a body carried high is a *quadruped* silhouette and at `triage`'s thirty
 metres it read as a horse; six legs splayed low is the cue that says insect at range. Leg count
 was carrying 0.12 of that separation and is now carrying none of it, so the body is carrying all
 of it. The gate was **not touched** — the threshold is still 0.50, and a gate rewritten to admit
-what it is measuring is not a gate — and the margin is now thin enough to say out loud: the next
-ticket to move a Crawler or Breaker proportion has about four hundredths to spend.
+what it is measuring is not a gate.
+
+**Six legs were kept at 0.538 over four at 0.655 deliberately, and the rule is #68's own.**
+*Separation is a floor to clear, not a quantity to maximise* — that ticket measured a saturated
+green at ΔE 73 and threw it away, because clearing the floor was the whole requirement and the
+rest was a neon slab in a dark palette. The same trade is here in geometry: the four-legged
+Breaker buys 0.12 of margin **on the instrument** at the cost of the thing the instrument exists
+to serve, because the gate rasterises an outline and cannot see that the outline is a *horse*.
+When a gate and the judgement it stands in for disagree, the gate is the thing that is wrong
+about the world — and the right response is to spend its margin, not to protect it.
 
 **And the re-tune had to be driven back and forth across that floor to land, which is worth
 knowing before somebody repeats it.** Bodies widened and legs shrunk to kill the fence took the
@@ -987,8 +1004,23 @@ tuning, because the Simulation reads none of them.
 
 **And the bodies are faceted plate rather than organic**, which is the honest limit of this kit.
 A Terminid has curved chitin and a lot of it; these have chamfered boxes, because that is what
-`machine_parts` is good at and what every other surface in this world is made of. Whether that
-reads as *this game's* bug or as a Machine with legs is a judgement for somebody with a mouse.
+`machine_parts` is good at and what every other surface in this world is made of.
+
+**That was looked at rather than left as a worry, and the answer splits by range.** At thirty
+metres it works and is the read the ticket was for: a low dark line with a taller plated thing
+standing over it. At the `pair` camera's six to twelve metres it does not — the Breaker is a
+boxy mass on thin legs and the Crawler's abdomen is a saturated orange block, and the whole
+reads as **a machine with legs rather than as a bug**. That is a real gap and it is recorded as
+one; it was not grounds to hold the branch, because the geometry is separated, the frame is a
+quarter cheaper, the surface is fixed, the licence position is strictly better than a CC0 cast,
+and it is emphatically not a skeleton — and a long-lived art branch against three other agents
+in `world_view.gd` costs more than it buys.
+
+**The shape the renders suggest, for whoever picks the close range up**: a *segmented* body —
+thorax and abdomen as two masses with a narrow waist between them rather than one run of boxes —
+**arched** legs rather than straight ones, and a front feature where a head would be. And the
+orange abdomen wants measuring: at `pair` it is the brightest thing in frame, which is adjacent
+to #80's finding about the Nest and may share a cause.
 
 #### Five things about the shader, three of them carried over from the ground
 
