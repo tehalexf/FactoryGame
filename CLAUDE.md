@@ -516,8 +516,8 @@ alike, and gross form is.
 headless and make helldivers 2-esque bugs (not too detailed)"*.** #38 cast three KayKit CC0
 characters because they existed and shared a rig, #49 made them tellable apart by size, and
 #75 graded their atlas into the palette and gave them metal and grime. Every one of those was
-the right move for the asset it had. The asset was still a bone-white skull with a skull a
-third of its own height, and #75's closing note had already said so without acting on it.
+the right move for the asset it had. The asset was still a fantasy skeleton whose skull is a third
+of its own height, and #75's closing note had already said so without acting on it.
 
 So the three kinds joined the Machine meshes and the Build Gun: **declared, generated,
 committed.** `tools/assets/enemy_recipe.py` holds the geometry and the gaits,
@@ -829,10 +829,18 @@ SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "<pre
   silhouettes where the cast was pale. Some of that is a chitin bug doing what a chitin bug
   should do between you and a low sun, and some of it is a real step backwards; the measurement
   above says which frames it costs and the lever is `ENEMY_LIFT`.
-- **`wounded` has a before and no after**, and that is deliberate rather than an omission: #70's
-  glowing cracks are drawn by the shader off `INSTANCE_CUSTOM`, which #79 did not touch, so the
-  after is `pair`'s surface with #70's marks on it and the pair would be comparing two tickets
-  at once. The *before* is kept because it is the frame #70 argued from.
+- **`wounded`'s after is committed and it is a bad picture, which is worth recording.** That
+  preset frames the spot where the last Enemy died, and the composer drives the kill by aiming
+  the player at a target read back out of the queries — so where the camera ends up is a
+  function of where the Wave happened to be. On the generated bodies it came to rest about
+  forty metres from its subject and the Enemies are a smudge on the horizon. That is the
+  vantage hazard this file has now paid for five times (#48's split marks, #49's `triage`,
+  #52's survey ore, #56's dock posts, #76's `crush`): **a composer that frames from what it
+  meant to produce is a composer that cannot see what it produced.** Nothing here chased it,
+  because #70's glowing cracks are drawn by the shader off `INSTANCE_CUSTOM` and #79 did not
+  touch that path — so the surface claim is carried by `pair` and `triage`, and re-aiming
+  `compose_wave_shot`'s `wounded` camera is a job for whoever next has a reason to look at a
+  wound.
 
 **What no still image settles**, and it is the question the whole ticket is really about:
 whether a tripod walk reads as an insect walking. Everything measurable is measured —
