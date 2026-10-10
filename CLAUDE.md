@@ -2819,6 +2819,156 @@ apart, because separation is a fact about the plan and a camera at head height r
 as one silhouette behind another whether or not they are inside each other. That is #48's
 fourth finding and #49's `triage` a third time: a vantage that cannot see its subject.
 
+### Where a body may stand, and the one solid thing nobody had painted
+
+**#78, and the report is one sentence from the Windows build: *"the skeletons phase into the
+base"*.** It was exactly right and it was a Simulation defect rather than a renderer one.
+Measured before the fix, on a Wave converging on a 4x4 Nest, a Crawler's **centre reached
+3.000 metres inside the footprint** — the dead middle of the building — and stood there
+chewing with the ziggurat drawn around it.
+
+**The cause is not the one the ticket named, and the difference is worth keeping.** The issue
+diagnosed it as `_advance_enemy` adding a step to a position without consulting
+`_tile_is_blocked`, which is true and was *latent rather than live*: the field never points
+into a blocked tile except from a tile adjacent to a **seed**, and a body on a tile adjacent
+to a seed is a body in contact, which bites and therefore never calls the walk at all. What
+actually let a Wave in is one line further down. **`_mark_obstructions` painted the Machines
+and the Walls and did not paint the Nest**, so the Nest's sixteen tiles were *open ground* —
+there was nothing for a refusal to refuse, the sweep routed over the building, and separation,
+which has checked since #76, checked against a field that called the destination open ground.
+
+The note that stood above that function said the Nest could not be painted, because it is the
+destination and a sweep that treated its tiles as solid would have nowhere to start. **That is
+simply not how `_sweep` works**: a seed takes distance 0 *unconditionally* and only the
+expansion tests `_flow_blocked`, which is precisely why a Machine has always been painted
+**and** seeded at once. So the exception was argued from a premise the function beside it
+disproves, and it survived every ticket that has touched the Enemy walk since.
+
+**Painting it is the half of the fix that matters.** It costs one loop in the shape the other
+two already have, it changes no route — the Nest is the destination, so nothing ever needed to
+path through it — and the tile beside it still points at it and is still in contact with it,
+which is what keeps a body stopped at the wall biting at the rate it did. It also brings two
+things into agreement that had no business disagreeing: `query_tile_obstructs_enemies` now
+tells the truth about the 4x4 a player respawns on top of, and the Enemies' obstruction set
+says what `_solid_height` has said to a player since #30.
+
+**The other half is `_move_enemy_against_the_factory`, and it is the rule the walk never
+had.** `_apply_separation` has refused a step into an obstruction since #76 and
+`_move_against_the_factory` has refused one for a player since #30; the *walk* never did. All
+three movers go through one function now — the march, the lane-gathering slide, the Siege
+Hulk's withdrawal and the separation push — so there is one rule rather than three that could
+come to disagree about where a body may stand. One axis at a time, x then z, a refused axis
+keeping the coordinate it had rather than snapping to the face, which is #30's written-down
+convention and is kept for #30's sharper reason: the face is a tile boundary minus a radius,
+and getting it wrong puts a body *inside* a solid.
+
+Four things about it worth knowing rather than rediscovering:
+
+- **`escaping` is how #9's rule survives a refusal, and it is deliberately the same predicate
+  `_enemy_contact_target` already decides the question with.** A body whose own tile is
+  blocked is one a player has dropped a Machine on top of, and a player who does that has not
+  built a prison. The naive refusal freezes it there for ever, because every step out of the
+  middle of a 3x3 footprint is a step into another blocked tile of the same footprint. Sharing
+  the predicate means "inside an obstruction" cannot come to mean one thing to the walk and
+  another to the bite. The alternative shape — permit a step only where it does not *increase*
+  how blocked a body is — was considered and is worse rather than safer: there is no measure of
+  blockedness in the file to compare against, and on the case it exists for the two rules give
+  the same answer anyway, because every tile of a footprint is blocked to the same degree.
+- **A body the wall refused reports `MARCHED_NOWHERE`**, which is what a body that bit or held
+  station already reports and for the same reason: `_apply_separation` rations what may be
+  taken *away from a march*, and there is no march to take anything away from. A rank stopped
+  against the Nest is allowed the whole of its sideways step.
+- **Of the three movers only `_withdraw_enemy` was live, and it was live without a single
+  measurement to say so.** Nothing checks what is behind a Siege Hulk before it backs away
+  from the Turret in front of it, so a boss pushed out of a Factory reversed through it. It
+  now stops at the first solid thing behind it and goes on shelling, which is the right
+  answer: where it comes to rest is `siege_hulk.range_metres` or a wall, and neither is a
+  number that can disagree with the other.
+- **The lane-gathering slide is routed through the same refusal and could not have needed
+  it.** `_gathered_towards` closes towards the centre of the tile the body is *already
+  standing on*, so it cannot leave that tile and therefore cannot reach a blocked one. That is
+  a property of its bound rather than a rule, and a later change to the corridor would quietly
+  turn it into a path back into the Factory.
+
+#### The render caught a second defect, and it is #76's complaint one obstruction later
+
+The first picture of the fix is why this ticket has a third change in it.
+[`docs/images/nest_phasing_before.png`](docs/images/nest_phasing_before.png) is the Wave
+inside the ziggurat with a skull protruding from its plinth; the first `_after` had **nothing
+inside the Nest and a knot of bodies standing inside one another** against its wall.
+`test_enemy_separation.test_a_crowd_pressed_against_the_nest_crushes_rather_than_interpenetrating`
+went red at the same moment, which is the guard working: measured, the tightest pair went from
+**0.97 of the room their two bodies ask for to 0.006** — two Crawlers seven millimetres apart.
+
+**The cause is a degeneracy that was always there and that the Nest was simply the first wall
+to expose.** An Enemy is released at the *centre* of a Breach tile, the field walks it down one
+row, and nothing between there and the Nest ever gives it a reason to move across the lane — so
+**a queue down a one-tile lane is exactly collinear**, every push in it is along the lane, and
+the half of each pair that points at the Nest is refused by the wall. Eight Crawlers ended up
+in 1.97 m of road with nowhere for the overlap to go. While they could still spill over the
+Nest's own sixteen tiles the pile had two dimensions to relax in and the degeneracy never
+showed; a Wave sealed behind a line of Wall meets it too, and nothing had looked.
+
+`_squeezed_along_the_wall` is the answer and it is one right angle: a body squeezed against a
+wall by the crowd behind it squirts sideways, so a refused push keeps its magnitude and turns
+rather than being dropped. What it cannot take from the arithmetic is a **sign**, because the
+configuration is symmetric — so it comes off the Enemy's own **serial**, which is issued once,
+never reused and hashed, and which is already this project's answer to de-locksteping a crowd
+without spending the Run an RNG draw (`game/enemy_animator.gd` picks an animation frame the
+same way). Even serials fan one way along the face and odd ones the other. It is **not**
+applied to a body that is `escaping`, for the reason nothing else is: a body on its way out of
+an obstruction must not be given a second opinion about which way that is.
+
+Measured on the same crush: **0.99997 of the room they ask for**, which is tangency to four
+decimal places — better than the 0.97 the Nest's interior used to buy them and well past the
+0.82 #76 recorded against a bottleneck. The picture is a ragged arc of distinct bodies pressed
+along the wall they are eating.
+
+**No new state, no new tuning key and no new `# purity-ok:` exemption**, which was an
+acceptance criterion rather than a happy accident: the whole of #78 is a function of a position
+and the obstruction field, and of a serial that was hashed already.
+
+#### Why no test could see it, which is the durable half
+
+Every existing assertion about an Enemy's position is about one of two things. Either it is
+about **separation between bodies** — `test_enemy_separation` counts coincident pairs and
+measures the room between them — or it is about **who gets bitten**, which
+`test_machine_mortality` and `test_enemies` assert at length. **Nothing anywhere asserted where
+a body is allowed to be.** `test_enemies.test_a_crawler_walks_round_a_machine_in_its_way` is
+the closest thing to it and is about a *Machine*, which was painted; the one solid thing that
+was not had no such test, and the query that would have said so —
+`query_tile_obstructs_enemies` — was never once asked about a Nest tile in the whole suite.
+
+**The pair is committed and it is the argument.**
+[`docs/images/nest_phasing_before.png`](docs/images/nest_phasing_before.png) against
+[`_after`](docs/images/nest_phasing_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+```
+
+#76's own preset, unchanged and pointed at the obstruction one layer out. Before: a Crawler's
+skull protruding from the ziggurat's plinth with its body inside the masonry, and the rest of
+the Wave strung across ground that is supposed to be a building. After: a ragged arc of
+distinct bodies pressed along the wall they are eating, nothing inside the Nest and nothing
+inside anything else.
+
+**What the balance table said is under "What stopping at the wall cost the table"**, below,
+and the short version is that it said almost nothing: no row moved by more than four seconds,
+because a body stopped at the wall bites at the rate it bit at before.
+
+**What no render can settle** is whether a crowd that presses along a face rather than
+spilling over the thing it is eating reads as a siege or as a queue, which is #76's own open
+question asked about the one building it could not reach before.
+
+`tests/cases/test_enemy_collision.gd` is the gap closed, and its load-bearing test is an
+**invariant** in the shape `test_collision` states the player's: on *every* tick of a Wave
+converging on the Nest, no Enemy's position is inside a blocked tile. Beside it are the two
+regressions a refusal can cause and that nothing else would have caught — that a body stopped
+at the wall is still in contact and still brings the Nest down, and that a Wave sealed in a
+pocket chews rather than shuffling against the inside of its box — plus #9's rule from both
+ends, a Machine built over a Crawler and a Wall built around its feet.
+
 ### Both facts about the Nest's box have one authority each, and #61 closed the second
 
 `MapLayout.NEST_FOOTPRINT_TILES` is **the** authority on the Nest's footprint. The mesh
@@ -7695,6 +7845,64 @@ That is #62's own qualification arriving as a measurement: a row spreads when it
 to matter*, and separation is precisely what makes each of its 133 shots matter more, because a
 scatter-miss into a spread crowd now misses. `armed_player` fires 374 shots and is identical on
 all three, which is the counter-example that keeps the rule honest.
+
+### What stopping at the wall cost the table
+
+**#78 painted the Nest as an obstruction and refused every Enemy step into one, and no row
+moved by more than four seconds.** Seventeen scenarios, seeds 7, 11 and 29, measured against
+#76's column.
+
+| Scenario | #76 | **#78** | moved by |
+|---|---|---|---|
+| `bare` | 3m22s | **3m22s** | — |
+| `opening_line` | 3m12s | **3m12s** | — |
+| `competent` | 28m51s | **28m49s** | −2s |
+| `over_producer` | 20m22s | **20m22s** | — |
+| `fortified` | 28m48s | **28m46s** | −2s |
+| `deep_digger` | 12m28s | **12m29s** | +1s |
+| `hive_sortie` | 32m07s | **32m06s** | −1s |
+| `rifle_picket` | 25m03s | **25m04s** | +1s |
+| `artillery` | 16m41s | **16m42s** | +1s |
+| `second_press` | 24m16s | **24m15s** | −1s |
+| `walled_lane` | 28m48s | **28m46s** | −2s |
+| `sealed_breach` | 26m41s | **26m44s** | +3s |
+| `branched_artillery` | 13m58s | **13m59s** | +1s |
+| `deep_silo` | 13m00s | **13m01s** | +1s |
+| `coal_haul` | 15m42s | **15m46s** | +4s |
+| `armed_player` | 24m14s | **24m15s** | +1s |
+| `armed_second_press` | 14m26s | **14m26s** | — |
+
+**The ticket predicted this would move rows and it very nearly did not, which is the fix's own
+argument arriving as a measurement.** What stops a Wave walking into the Nest cannot change
+how fast the Nest is chewed, because `_nest_in_contact` tests the tile a body stands on **or
+one sharing an edge with it** — so the tile a refusal leaves a body on is a tile it bites
+from, at the rate it bit at before. The sixteen tiles a Wave used to stand on were never where
+the damage was decided; they were only where the bodies were drawn.
+
+**It holds where melee against the Nest really is the clock, which is the sharper test.** On
+`test_enemy_collision`'s own fixture — eight Crawlers, no Factory, nothing shooting at them, so
+the whole Run is a pile chewing one building — the Nest falls at tick **4737 against 4765
+before**, half a second *sooner*. So the rate is not merely preserved; it is marginally faster,
+and the reason is `_squeezed_along_the_wall`: a crowd fanned out along a face has more of
+itself within biting range than a crowd compressed into one lane. Measured on the intermediate
+build that had the refusal and **not** the squeeze, the same fixture took 5637 ticks — 18%
+longer — which is what a crush that cannot spread costs and is the second reason that change
+had to be made rather than deferred.
+
+Three smaller things the figures say. `sealed_breach` absorbed **960** hit points against
+#60's 980 across the same 7 Walls built and 3 standing, which is the one row where a crowd
+pressed into a pocket is the mechanic and where three extra seconds of chewing is the whole
+delta. `walled_lane` is still **11 Walls built, 11 standing, 0 hit points absorbed** — a Wall a
+Wave can walk round is still never bitten, and nothing here was going to change that.
+And `rifle_picket` spread a little wider — 25m04s, 25m09s and 24m40s against #76's 25m03s,
+24m40s and 25m08s — which is the same seed sensitivity that row has had since #47 and is still
+`Simulation._scatter` moving where 457 rounds went; its economy is untouched at 468 rounds
+reaching the player and 75% of the Run dry, the identical figures #76 measured. **Do not read
+an Ammunition finding into it**; `armed_player` is the row for that, and it is unchanged at 9%
+dry on 446 rounds.
+
+**No value in `content/` was touched**, and nothing in the measurement is an argument for
+touching one.
 
 ### What the seed can reach
 
