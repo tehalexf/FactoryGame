@@ -3188,3 +3188,19 @@ func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal()
 			"kind %d is %f metallic" % [kind, view.enemy_surface_metallic(kind)]
 		)
 	view.free()
+
+
+func test_the_nests_delivery_marks_are_never_nodes_however_often_the_view_is_synced() -> void:
+	# Count decides node or instance, and a square Nest's four bands are one MultiMesh — so
+	# the tree does not grow by one for them on the first sync or on the hundredth. #72.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var settled: int = view.get_child_count()
+	assert_true(view.nest_delivery_marker_count() > 0, "the premise: there are marks to draw")
+
+	for frame: int in range(10):
+		view.sync(sim)
+	assert_eq(view.get_child_count(), settled, "ten more frames must cost nothing")
+	view.free()
