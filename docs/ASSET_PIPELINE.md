@@ -864,7 +864,7 @@ edit instead of three separate piles of geometry.
 
 Everything is in **body heights**, because `EnemyBodies` bakes a body one metre tall and
 `WorldView` scales it by `query_enemy_hit_height_metres`: a declaration in metres would be a
-declaration in units nothing uses, where `thorax_centre = 0.40` reads as *"slung at two
+declaration in units nothing uses, where `thorax_centre = 0.42` reads as *"slung at two
 fifths of the Enemy's height"*, which is the sentence somebody editing it is trying to write.
 The generator scales the finished assembly so its vertical extent is exactly 1.0, so the
 numbers are proportions and their sum is not a constraint.
@@ -874,9 +874,9 @@ risk the ticket named. What separates them is gross form and not detail:
 
 | | legs | body slung at | the mass is | carapace |
 |---|---|---|---|---|
-| Crawler | 6 | 0.40 | spread down a long thin body | none — bare chitin |
-| Breaker | 4 | 0.52 | a shield at the front | 0.94, the tallest thing on it |
-| Siege Hulk | 6 | 0.66 | a raised tail at the back | 0.86 |
+| Crawler | 6 | 0.42 | spread down a long low body | none — bare chitin |
+| Breaker | 4 | 0.50 | a shield at the front, head carried low | 0.92, the tallest thing on it |
+| Siege Hulk | 6 | 0.62 | a raised tail at the back | 0.82 |
 
 A four-legged body has gaps a six-legged one fills, which is most of the front-view
 difference; the sling height is what makes a Crawler scuttle under its own knees and a Hulk

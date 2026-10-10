@@ -543,9 +543,9 @@ risk the ticket named, so they are separated by gross form and never by detail:
 
 | | legs | body slung at | the mass is | carapace |
 |---|---|---|---|---|
-| Crawler | 6 | 0.40 | spread down a long thin body | none — bare chitin |
-| Breaker | 4 | 0.52 | a shield at the front, head carried low | 0.94, the tallest thing on it |
-| Siege Hulk | 6 | 0.66 | a raised tail at the back | 0.86 |
+| Crawler | 6 | 0.42 | spread down a long low body | none — bare chitin |
+| Breaker | 4 | 0.50 | a shield at the front, head carried low | 0.92, the tallest thing on it |
+| Siege Hulk | 6 | 0.62 | a raised tail at the back | 0.82 |
 
 A four-legged body has gaps a six-legged one fills, which is most of the front-view
 difference; the sling height is what makes a Crawler scuttle under its own knees and a Hulk
@@ -603,7 +603,7 @@ posed and scaled exactly as `WorldView` draws them:
 Crawler against the Breaker.** That is the declaration working rather than luck: the cast was
 three humanoids of the same proportions at three heights, so #49 could only separate them by
 size and that walked the Breaker toward the boss as fast as it walked it away from the Crawler.
-Six legs against four, a body slung at 0.40 against 0.52, and mass spread down a tail against
+Six legs against four, a body slung at 0.42 against 0.50, and mass spread down a tail against
 massed in a front shield are three independent differences, so the pairs no longer trade
 against one another.
 

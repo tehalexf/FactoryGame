@@ -372,9 +372,15 @@ class RegeneratingFromTheDeclaration(unittest.TestCase):
             recipe = REPO / "tools" / "assets" / "enemy_recipe.py"
             cache = REPO / "tools" / "assets" / "__pycache__"
             original = recipe.read_text()
-            widened = original.replace("            foot_out=0.66,",
-                                       "            foot_out=0.96,", 1)
-            self.assertNotEqual(widened, original, "the test's edit matched nothing")
+            # **Unique, and asserted to be.** The first version edited `foot_out=0.66`,
+            # which was the Crawler's when it was written and is the Siege Hulk's now —
+            # so it regenerated the Crawler, measured no change and reported the generator
+            # broken. A substitution that silently moves to another kind is #63's lesson
+            # about `String.replace` in a fixture, in Python.
+            target = "            foot_out=0.50,"
+            self.assertEqual(original.count(target), 1,
+                             f"{target!r} no longer names the Crawler alone")
+            widened = original.replace(target, "            foot_out=0.95,", 1)
             try:
                 recipe.write_text(widened)
                 shutil.rmtree(cache, ignore_errors=True)
