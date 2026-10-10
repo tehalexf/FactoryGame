@@ -113,7 +113,8 @@ class Rigged:
 
 
 def limb(start, end, thickness_start: float, thickness_end: float,
-         aspect: float = 1.0) -> bmesh.types.BMesh:
+         aspect: float = 1.0, bow: float = 0.0,
+         towards=(0.0, 0.0, 1.0), sections: int = 1) -> bmesh.types.BMesh:
     """One segment of a leg: a tapered box leaning from `start` to `end`.
 
     Boxes rather than cylinders, and that is the "not too detailed" instruction
@@ -135,11 +136,24 @@ def limb(start, end, thickness_start: float, thickness_end: float,
     the limb's own direction, so `side` is across the body and `other` is along
     it, and the blade falls the right way round by construction rather than by a
     sign somebody has to maintain.
+
+    **`bow` is #81's fix and it is the difference between a limb and a rod.** #79
+    thinned these and gave them a blade cross-section, which took the picket fence
+    away and left two straight segments meeting at a knee — a V, which reads as a
+    linkage rather than as a leg. Chitin is *curved*, and at the six to twelve
+    metres a player fights at that curve is most of what says the thing is alive.
+    So a segment follows a quadratic Bezier whose control point is pushed off the
+    chord by `bow` of the segment's own length, in the direction `towards` taken
+    **perpendicular to the segment** — so a bow is an arch however the declaration
+    happens to aim the limb, and there is no sign to maintain here either. At
+    `sections = 1` the control point is the chord's own midpoint and the result is
+    the straight rod this replaces, vertex for vertex.
     """
     mesh = bmesh.new()
     a = Vector(start)
     b = Vector(end)
     along = (b - a)
+    span = along.length
     if along.length <= 1e-9:
         along = Vector((0.0, 0.0, 1.0))
     along = along.normalized()
@@ -154,18 +168,40 @@ def limb(start, end, thickness_start: float, thickness_end: float,
     side = along.cross(reference).normalized()
     other = along.cross(side).normalized()
 
+    # Where the arc bows to. The component of `towards` across the limb, so a
+    # segment aimed anywhere arches rather than shearing along itself; a `towards`
+    # parallel to the limb has no cross component and leaves it straight.
+    rings = max(sections, 1) + 1
+    control = (a + b) * 0.5
+    if bow > 0.0 and rings > 2:
+        lift = Vector(towards)
+        lift = lift - along * lift.dot(along)
+        if lift.length > 1e-9:
+            control = control + lift.normalized() * (bow * span)
+
     corners = ((-1, -1), (1, -1), (1, 1), (-1, 1))
-    lower = [mesh.verts.new(a + side * (sx * thickness_start / 2.0)
-                            + other * (sy * thickness_start * aspect / 2.0))
-             for sx, sy in corners]
-    upper = [mesh.verts.new(b + side * (sx * thickness_end / 2.0)
-                            + other * (sy * thickness_end * aspect / 2.0))
-             for sx, sy in corners]
-    mesh.faces.new(list(reversed(lower)))
-    mesh.faces.new(upper)
-    for i in range(4):
-        j = (i + 1) % 4
-        mesh.faces.new((lower[i], lower[j], upper[j], upper[i]))
+    loops = []
+    for ring in range(rings):
+        at = ring / float(rings - 1)
+        centre = (
+            a * ((1.0 - at) * (1.0 - at))
+            + control * (2.0 * (1.0 - at) * at)
+            + b * (at * at)
+        )
+        thickness = thickness_start + (thickness_end - thickness_start) * at
+        loops.append([
+            mesh.verts.new(centre + side * (sx * thickness / 2.0)
+                           + other * (sy * thickness * aspect / 2.0))
+            for sx, sy in corners
+        ])
+    mesh.faces.new(list(reversed(loops[0])))
+    mesh.faces.new(loops[-1])
+    for ring in range(rings - 1):
+        lower = loops[ring]
+        upper = loops[ring + 1]
+        for i in range(4):
+            j = (i + 1) % 4
+            mesh.faces.new((lower[i], lower[j], upper[j], upper[i]))
     mesh.normal_update()
     return mesh
 
@@ -196,12 +232,46 @@ def head_at(insect: recipe.Insect):
 
 
 def abdomen_root(insect: recipe.Insect):
+    """Where the waist leaves the thorax, which is also the `Abdomen` bone's head.
+
+    The pivot is at the thorax rather than past the waist on purpose: a body that
+    lags its thorax (`enemy_recipe.pose_at`) should swing **from** the joint, and
+    an abdomen hinged behind its own waist would slide the waist through the
+    thorax on every stride.
+    """
     return (0.0, insect.thorax_length / 2.0, insect.thorax_centre)
 
 
-def abdomen_tip(insect: recipe.Insect):
+def abdomen_start(insect: recipe.Insect):
+    """Where the abdomen's first segment begins: past the waist."""
     root = abdomen_root(insect)
-    return (0.0, root[1] + insect.abdomen_length, root[2] + insect.abdomen_rise)
+    return (root[0], root[1] + insect.waist_length, root[2])
+
+
+#: Where along the abdomen the swell reaches its widest, as a fraction of the
+#: whole. Not a field, because it is the shape of an abdomen rather than a
+#: property of a kind: a body is drawn in at the waist and is at its fullest
+#: about a third of the way back, and a kind that wanted that somewhere else
+#: would be a different animal rather than a different number.
+SWELL_PEAK = 0.38
+
+
+def abdomen_profile(insect: recipe.Insect, at: float) -> float:
+    """How wide the abdomen is `at` of the way from the waist to the tip, as a
+    fraction of `abdomen_width`.
+
+    One function for the width and the depth, so a segment swells and tapers in
+    both at once — an abdomen that widened without deepening is a fin.
+    """
+    swell = 1.0
+    if SWELL_PEAK > 0.0:
+        swell = 1.0 - insect.abdomen_swell * max(0.0, 1.0 - at / SWELL_PEAK)
+    return (1.0 - insect.abdomen_taper * at) * swell
+
+
+def abdomen_tip(insect: recipe.Insect):
+    start = abdomen_start(insect)
+    return (0.0, start[1] + insect.abdomen_length, start[2] + insect.abdomen_rise)
 
 
 def build(insect: recipe.Insect) -> Rigged:
@@ -220,10 +290,26 @@ def build(insect: recipe.Insect) -> Rigged:
     # It read as a bright slab with legs, which is nothing like an insect — and no
     # test could have seen it, because the mesh was watertight, correctly named and
     # the right number of triangles.
-    rig.add(insect.material("thorax"), "Thorax", parts.box(
-        (insect.thorax_width, insect.thorax_length, insect.thorax_depth),
-        (0.0, 0.0, insect.thorax_centre),
-        chamfer=CHAMFER,
+    #
+    # **#81 made the box two frusta, and it is cheaper as well as better.** A box
+    # has a rectangular cross-section from every one of the four directions a
+    # player walks round it from, which is the single loudest thing saying
+    # *crate*; a chitin thorax is drawn in underneath and widest at the shoulder
+    # the legs hang from. Two frusta give it a hexagonal section for **24
+    # triangles against a chamfered box's 44**, so the shape this ticket is about
+    # is paid for out of the shape it replaces.
+    shoulder = insect.thorax_centre + insect.thorax_depth * 0.10
+    rig.add(insect.material("thorax"), "Thorax", parts.frustum(
+        (insect.thorax_width * 0.68, insect.thorax_length * 0.84),
+        (insect.thorax_width, insect.thorax_length),
+        insect.thorax_depth * 0.60,
+        (0.0, 0.0, insect.thorax_centre - insect.thorax_depth * 0.50),
+    ))
+    rig.add(insect.material("thorax"), "Thorax", parts.frustum(
+        (insect.thorax_width, insect.thorax_length),
+        (insect.thorax_width * 0.94, insect.thorax_length * 0.94),
+        insect.thorax_depth * 0.34,
+        (0.0, 0.0, shoulder),
     ))
     # The dome is what says which way up a thorax is, and the shoulder it puts on the
     # silhouette is what stops a body reading as a crate on legs.
@@ -253,8 +339,27 @@ def build(insect: recipe.Insect) -> Rigged:
             (insect.carapace_width * 0.06, insect.carapace_length * 0.16),
         ))
 
+    # ── the waist: a narrow dark collar between the two masses ───────────────
+    # **The single change #81 is most about.** An insect is a thorax and an abdomen
+    # with a pinch between them; #79 butted a run of boxes straight onto the back
+    # of another box, so at the `pair` camera's six to twelve metres a Crawler read
+    # as one long crate with legs. The collar is `joint` — the palette's matte
+    # black — because what separates two masses at that range is a *dark* gap
+    # rather than a change of width the eye has to measure, and it is one `limb`
+    # rather than a box because a chamfered cube here is 44 triangles to say what
+    # twelve say.
+    waist_from = Vector(abdomen_root(insect))
+    waist_to = Vector(abdomen_start(insect))
+    if insect.waist_length > 0.0:
+        waist_depth = insect.abdomen_depth * insect.waist_width
+        rig.add(insect.material("joint"), "Abdomen", limb(
+            tuple(waist_from), tuple(waist_to),
+            waist_depth * 1.45, waist_depth,
+            insect.abdomen_width / max(insect.abdomen_depth, 1e-6),
+        ))
+
     # ── abdomen: segments, each a little smaller than the last ───────────────
-    root = Vector(abdomen_root(insect))
+    root = Vector(abdomen_start(insect))
     tip = Vector(abdomen_tip(insect))
     segments = max(insect.abdomen_segments, 1)
     for segment in range(segments):
@@ -262,10 +367,10 @@ def build(insect: recipe.Insect) -> Rigged:
         high = (segment + 1) / segments
         at_low = root.lerp(tip, low)
         at_high = root.lerp(tip, high)
-        width_low = insect.abdomen_width * (1.0 - insect.abdomen_taper * low)
-        width_high = insect.abdomen_width * (1.0 - insect.abdomen_taper * high)
-        depth_low = insect.abdomen_depth * (1.0 - insect.abdomen_taper * low)
-        depth_high = insect.abdomen_depth * (1.0 - insect.abdomen_taper * high)
+        width_low = insect.abdomen_width * abdomen_profile(insect, low)
+        width_high = insect.abdomen_width * abdomen_profile(insect, high)
+        depth_low = insect.abdomen_depth * abdomen_profile(insect, low)
+        depth_high = insect.abdomen_depth * abdomen_profile(insect, high)
         bone = "Abdomen" if segment * 2 < segments else "AbdomenTip"
         # One box a segment, each a little smaller than the last. The taper is what
         # makes a segmented body read as segmented at ten metres, and it has to be
@@ -307,6 +412,22 @@ def build(insect: recipe.Insect) -> Rigged:
                                insect.head_depth / 2.0))),
         (insect.head_width * 0.56, insect.head_length * 0.52),
     ))
+    # A plated snout over the face, sloping forward and down. **This is #81's
+    # "front feature", and the head alone was not one**: a wedge tucked under the
+    # thorax's own dome is a nub at six metres, so what the body lacked was not a
+    # head but a *brow* — one plate that catches the sun on its own angle and puts
+    # an edge where the eye goes looking for a face. Twelve triangles, and it is
+    # the one part of an insect that is allowed to be a flat plane.
+    if insect.brow_rise > 0.0:
+        rig.add(insect.material("head"), "Head", parts.prism(
+            tuple(centre + Vector((0.0, insect.head_length * 0.34,
+                                   insect.head_depth * 0.28))),
+            (insect.head_width * 0.88, insect.head_length * 0.46),
+            tuple(centre + Vector((0.0, -insect.head_length * 0.34,
+                                   insect.head_depth * (0.28 + insect.brow_rise)))),
+            (insect.head_width * 0.52, insect.head_length * 0.30),
+        ))
+
     nose = centre + Vector((0.0, -insect.head_length / 2.0, 0.0))
     for side, sign in (("L", 1.0), ("R", -1.0)):
         base = nose + Vector((sign * insect.head_width * 0.34, 0.0, 0.0))
@@ -335,12 +456,18 @@ def build(insect: recipe.Insect) -> Rigged:
                 (leg.thickness * 1.5, leg.thickness * 1.5, leg.thickness * 1.5),
                 start, chamfer=CHAMFER * 0.5,
             ))
+            # **Which way each segment arches is anatomy, not a free parameter.**
+            # The coxa climbs from the hip to a knee above the back, so it bows
+            # *up* and the shoulder of the arch is the top of the leg; the tibia
+            # drops from that knee to a planted foot, so it bows *outward* and the
+            # foot comes down nearer vertical than the chord. Bow them the same way
+            # and a leg is a banana; bow them these two ways and it is a leg.
             rig.add(insect.material("leg"), f"Leg{index}{side}Coxa",
                     limb(start, knee, leg.thickness * 1.15, leg.thickness * 0.85,
-                         leg.blade))
+                         leg.blade, leg.bow, (0.0, 0.0, 1.0), leg.sections))
             rig.add(insect.material("leg"), f"Leg{index}{side}Tibia",
                     limb(knee, foot, leg.thickness * 0.85, leg.thickness * 0.30,
-                         leg.blade))
+                         leg.blade, leg.bow, (sign, 0.0, 0.0), leg.sections))
     return rig
 
 
@@ -512,7 +639,7 @@ def vent_offset(insect: recipe.Insect, scale: float, lift: float):
     puts the vent behind the body, which is the end `_armoured` does not protect.
     """
     tip = Vector(abdomen_tip(insect))
-    behind = insect.abdomen_depth * (1.0 - insect.abdomen_taper) * 0.5
+    behind = insect.abdomen_depth * abdomen_profile(insect, 1.0) * 0.5
     y = tip.z * scale + lift
     z = -((tip.y + behind) * scale)
     return (0.0, y, z)

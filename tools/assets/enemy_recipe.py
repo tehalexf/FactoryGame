@@ -111,6 +111,20 @@ class Leg:
     #: narrower front-on *and* has a lit face side-on, which is the pair of
     #: properties the fence read needed. `generate_enemies.limb` has the geometry.
     blade: float = 1.0
+    #: How far each segment arches off its own chord, as a fraction of that
+    #: segment's length. **#81, and it is the close-range half of `blade`.** A
+    #: straight rod with a knee in it is a linkage; a limb curves, and at six to
+    #: twelve metres that curve is most of what separates a leg from a strut.
+    #: 0 is #79's straight segment exactly. Costs `sections` worth of geometry and
+    #: **no bone at all** — the arc is rigid plate about the segment's own bone,
+    #: which is what an exoskeleton is anyway.
+    bow: float = 0.0
+    #: How many facets each segment is built from. 1 is the flat rod and draws no
+    #: arc whatever `bow` says; 2 is one bend in the middle, which at the only
+    #: range this matters at is a curve. Each extra section is eight more
+    #: triangles a segment and twelve segments a body, so this is the number to
+    #: look at before anything else if an Enemy ever gets expensive.
+    sections: int = 1
 
 
 @dataclass(frozen=True)
@@ -141,6 +155,19 @@ class Insect:
     carapace_width: float
     carapace_length: float
 
+    # ── the waist: the pinch that makes a body two masses rather than one ─────
+    #: How long the collar between the thorax and the abdomen is. **#81's central
+    #: change.** #79 butted the abdomen's first box straight onto the back of the
+    #: thorax, so what a player saw at six metres was one unbroken run of boxes —
+    #: a crate with legs, which is the ticket's own complaint. 0 restores that;
+    #: anything else puts a gap where an insect has one.
+    waist_length: float
+    #: How thin the collar is, as a fraction of `abdomen_depth`. The *width* is
+    #: carried across by the abdomen's own aspect rather than by a second number,
+    #: so a wide-bodied kind gets a proportionally wide waist instead of a round
+    #: one — which is right, because the pinch is lateral and vertical at once.
+    waist_width: float
+
     # ── the abdomen: where the mass trails off to ──────────────────────────────
     abdomen_length: float
     abdomen_width: float
@@ -151,6 +178,16 @@ class Insect:
     abdomen_rise: float
     #: How much narrower the far end is than the root, as a fraction.
     abdomen_taper: float
+    #: How much the segment at the waist is pulled *in* against the swell behind
+    #: it, as a fraction. **#81, and the render is why it exists.** A waist with a
+    #: linearly tapering run of boxes behind it still reads as a staircase: the
+    #: widest segment is the one touching the pinch, so the pinch is a cliff and
+    #: the abdomen is a crate standing on its edge. Drawing the body in instead and
+    #: letting it swell to its widest about a third of the way back is what makes
+    #: the same three boxes a teardrop. 0 is #79's straight taper. It costs no
+    #: geometry at all — the segments were always sized from a profile; this
+    #: changes the profile.
+    abdomen_swell: float
     #: How many segments the abdomen is built in. Three reads as segmented at ten
     #: metres and costs nine faces; more is detail nobody can see.
     abdomen_segments: int
@@ -166,6 +203,13 @@ class Insect:
     mandible_length: float
     mandible_spread: float
     mandible_thickness: float
+    #: How far a plated brow stands proud of the head, as a fraction of
+    #: `head_depth`. **#81, and the ticket's third criterion.** The head and the
+    #: mandibles were both there and #79's close-range render still had no front
+    #: on any of the three, because a small wedge carried low under the thorax's
+    #: dome is a nub: there was nothing at the front with an *angle* on it. 0 is
+    #: no plate.
+    brow_rise: float
 
     legs: tuple[Leg, ...]
 
@@ -405,33 +449,39 @@ def crawler() -> Insect:
             foot_along=0.10,
             thickness=0.038,
             blade=1.6,
+            bow=0.16,
+            sections=2,
         )
         for along in (-0.20, 0.02, 0.24)
     )
     return Insect(
         kind_id="crawler",
         hit_height_metres=1.6,
-        thorax_length=0.66,
-        thorax_width=0.44,
-        thorax_depth=0.34,
+        thorax_length=0.56,
+        thorax_width=0.46,
+        thorax_depth=0.38,
         thorax_centre=0.30,
         carapace_rise=0.0,
         carapace_width=0.0,
         carapace_length=0.0,
-        abdomen_length=0.88,
-        abdomen_width=0.42,
-        abdomen_depth=0.38,
-        abdomen_rise=0.08,
-        abdomen_taper=0.50,
+        waist_length=0.13,
+        waist_width=0.38,
+        abdomen_length=0.60,
+        abdomen_width=0.44,
+        abdomen_depth=0.40,
+        abdomen_rise=0.10,
+        abdomen_taper=0.46,
+        abdomen_swell=0.40,
         abdomen_segments=3,
-        head_length=0.26,
-        head_width=0.26,
-        head_depth=0.22,
-        head_forward=-0.05,
-        head_drop=-0.14,
-        mandible_length=0.22,
-        mandible_spread=0.110,
-        mandible_thickness=0.050,
+        head_length=0.30,
+        head_width=0.30,
+        head_depth=0.26,
+        head_forward=-0.09,
+        head_drop=-0.10,
+        mandible_length=0.30,
+        mandible_spread=0.135,
+        mandible_thickness=0.056,
+        brow_rise=0.46,
         legs=legs,
         # **`OxideRed` is the abdomen and nothing else, and a render is why.** The first
         # version wore it on the thorax and the head too, and at thirty metres a Chaff
@@ -445,7 +495,7 @@ def crawler() -> Insect:
             "abdomen": "OxideRed",
             "head": "CastIron",
             "joint": "Soot",
-            "leg": "CastIron",
+            "leg": "Soot",
             "mandible": "DullBrass",
         },
     )
@@ -476,39 +526,45 @@ def breaker() -> Insect:
     legs = tuple(
         Leg(
             along=along,
-            knee_out=0.32,
+            knee_out=0.40,
             knee_up=0.72,
-            foot_out=0.50,
+            foot_out=0.64,
             foot_along=0.12,
             thickness=0.050,
             blade=1.6,
+            bow=0.17,
+            sections=2,
         )
         for along in (-0.18, 0.02, 0.22)
     )
     return Insect(
         kind_id="breaker",
         hit_height_metres=2.2,
-        thorax_length=0.54,
+        thorax_length=0.52,
         thorax_width=0.88,
         thorax_depth=0.60,
         thorax_centre=0.50,
         carapace_rise=0.96,
         carapace_width=1.02,
         carapace_length=0.56,
+        waist_length=0.11,
+        waist_width=0.40,
         abdomen_length=0.34,
-        abdomen_width=0.48,
-        abdomen_depth=0.38,
+        abdomen_width=0.50,
+        abdomen_depth=0.40,
         abdomen_rise=-0.06,
         abdomen_taper=0.35,
+        abdomen_swell=0.30,
         abdomen_segments=2,
-        head_length=0.30,
-        head_width=0.34,
-        head_depth=0.28,
-        head_forward=-0.06,
-        head_drop=-0.20,
-        mandible_length=0.28,
-        mandible_spread=0.180,
-        mandible_thickness=0.085,
+        head_length=0.34,
+        head_width=0.40,
+        head_depth=0.32,
+        head_forward=-0.10,
+        head_drop=-0.18,
+        mandible_length=0.36,
+        mandible_spread=0.200,
+        mandible_thickness=0.090,
+        brow_rise=0.44,
         legs=legs,
         # **The legs are `Soot` and the render is why.** Every surface of a kind takes that
         # kind's one roughness (`WorldView._enemy_roughness`), and the Breaker's is
@@ -561,33 +617,39 @@ def siege_hulk() -> Insect:
             foot_along=0.14,
             thickness=0.046,
             blade=1.6,
+            bow=0.18,
+            sections=2,
         )
         for along in (-0.18, 0.03, 0.24)
     )
     return Insect(
         kind_id="siege_hulk",
         hit_height_metres=3.2,
-        thorax_length=0.54,
+        thorax_length=0.52,
         thorax_width=0.62,
         thorax_depth=0.50,
         thorax_centre=0.58,
         carapace_rise=0.94,
         carapace_width=0.52,
         carapace_length=0.48,
-        abdomen_length=0.64,
-        abdomen_width=0.42,
-        abdomen_depth=0.40,
+        waist_length=0.12,
+        waist_width=0.38,
+        abdomen_length=0.58,
+        abdomen_width=0.44,
+        abdomen_depth=0.42,
         abdomen_rise=0.22,
-        abdomen_taper=0.35,
+        abdomen_taper=0.38,
+        abdomen_swell=0.40,
         abdomen_segments=3,
-        head_length=0.32,
-        head_width=0.32,
-        head_depth=0.28,
-        head_forward=-0.06,
-        head_drop=-0.18,
-        mandible_length=0.30,
-        mandible_spread=0.140,
-        mandible_thickness=0.075,
+        head_length=0.36,
+        head_width=0.36,
+        head_depth=0.32,
+        head_forward=-0.10,
+        head_drop=-0.16,
+        mandible_length=0.38,
+        mandible_spread=0.160,
+        mandible_thickness=0.080,
+        brow_rise=0.44,
         legs=legs,
         materials={
             "thorax": "CastIron",
@@ -595,7 +657,7 @@ def siege_hulk() -> Insect:
             "head": "CastIron",
             "carapace": "CastIron",
             "joint": "Soot",
-            "leg": "CastIron",
+            "leg": "Soot",
             "mandible": "DullBrass",
         },
         has_vent=True,

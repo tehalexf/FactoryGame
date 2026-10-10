@@ -51,8 +51,9 @@ INFLUENCES_PER_VERTEX = 1
 #: "Not too detailed" is the user's own instruction and a performance one: these are drawn
 #: through one MultiMesh a kind in the thousands. The KayKit characters were 4,858 vertices
 #: each; a declared body is well under a fifth of that, and this is the ceiling that keeps
-#: it so when somebody adds a part. Per kind, because the Breaker has four legs and the
-#: other two have six.
+#: it so when somebody adds a part. Per kind, because a kind is free to carry parts the
+#: others do not — a carapace, a raised tail — and the ceiling is about what one body
+#: costs rather than about what they have in common.
 TRIANGLE_BUDGET = 1200
 
 #: How far off exactly one metre tall a committed body may be. `EnemyBodies._bake`
