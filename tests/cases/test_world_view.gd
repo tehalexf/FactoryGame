@@ -2431,6 +2431,14 @@ func test_two_belts_carrying_different_items_are_drawn_differently() -> void:
 	for form: int in forms:
 		var drawn: int = view.cargo_instance_count(form)
 		assert_true(drawn > 0, "form %d carries Items and drew none" % form)
+		# And it was written where the Simulation says, into that form's own buffer rather
+		# than into a copy of it — the count alone would be satisfied by a buffer of zeros,
+		# which would draw every Item of that form stacked at the Map's origin.
+		var at: Vector3 = view.cargo_instance_position(form, 0)
+		assert_true(
+			at.length() > 0.001,
+			"form %d drew %d instances and left the buffer at the origin" % [form, drawn]
+		)
 		materials[view.cargo_material_name(form)] = form
 	assert_eq(materials.size(), 2, "two forms wearing one surface is one picture, %s" % materials)
 	view.free()
@@ -2540,5 +2548,44 @@ func test_the_deck_that_scrolls_is_the_belts_own_rubber_and_not_its_frame() -> v
 	assert_eq(
 		view.belt_surfaces_that_scroll(), 1,
 		"exactly one surface scrolls, and it is the rubber rather than the frame"
+	)
+	view.free()
+
+
+func test_a_hot_reload_redraws_cargo_that_changed_what_it_is() -> void:
+	# The form table is resolved once per *content change* rather than per Item per frame, so
+	# that the hottest loop in the project does not walk the Recipes for every Item on every
+	# Belt. A cache keyed on the definition digest is a real risk and this is what makes it
+	# safe: reload content in which the Boiler burns iron ore, and the ore already riding a
+	# Belt has to be drawn as fuel on the very next frame.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	_two_lines(sim)
+	_run(sim, 200)
+	view.sync(sim)
+
+	var ore: int = -1
+	for index: int in range(sim.query_belt_count()):
+		if sim.query_belt_item_id(index, 0) == "iron_ore":
+			ore = index
+	assert_true(ore >= 0, "the premise: a Belt is carrying ore")
+	assert_eq(
+		view.cargo_form_of_belt_item(sim, ore, 0),
+		ItemAppearance.FORM_ORE,
+		"the premise: it is drawn as what the ground gives up"
+	)
+
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.recipes = ContentFixture.shipped(Definitions.RECIPES_FILE).replace(
+		"burn_coal,Burn Coal,coal:1,,2", "burn_coal,Burn Coal,iron_ore:1,,2"
+	)
+	var burning: Definitions = fixture.definitions()
+	assert_false(burning.has_errors(), burning.describe_errors())
+	sim.step([InputAction.reload_definitions(0, burning)])
+	view.sync(sim)
+	assert_eq(
+		view.cargo_form_of_belt_item(sim, ore, 0),
+		ItemAppearance.FORM_FUEL,
+		"ore a Boiler now burns is drawn as fuel, without the view being told to forget"
 	)
 	view.free()

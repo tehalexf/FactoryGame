@@ -49,6 +49,13 @@ void fragment() {
 
 	// Subtracted rather than added, so the cleats travel toward +Z — the direction the body is
 	// modelled running in and therefore the direction its Items advance.
+	//
+	// **Every tile is the same mesh instanced, so this coordinate restarts at every tile
+	// boundary** — which means the pattern is only continuous along a run because the pitch
+	// divides the tile exactly. It does, by construction and not by luck: `WorldView` hands in
+	// `tile_size / items_per_tile`, one pitch per Item slot. That is a second reason to derive
+	// the pitch from the Belt's own rating rather than to pick a number that looks right, and
+	// a pitch chosen by eye would have put a visible seam at every tile join.
 	float phase = fract(along_the_run.z / cleat_pitch_metres - scroll);
 	// Distance to the nearest cleat line, as a fraction of half a pitch, so the band is
 	// symmetric and wraps without a seam.

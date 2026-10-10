@@ -213,6 +213,11 @@ const BELT_DECK_MATERIAL: String = "BeltRubber"
 
 const BELT_DECK_SHADER: String = "res://game/belt_deck.gdshader"
 
+## What a Belt's cleats are made of. The palette's own plate — the same file the Walls wear,
+## named separately here because "the Wall's material" is the wrong sentence to read at the
+## place a conveyor's slats are being coloured.
+const BELT_CLEAT_MATERIAL: String = "res://assets/machines/materials/WeldedSteel.tres"
+
 ## How many cells the Telegraph's gauge is drawn with. A rising bar of text, because there
 ## is no audio yet and a countdown alone does not read as a klaxon.
 const TELEGRAPH_GAUGE_CELLS: int = 20
@@ -429,6 +434,13 @@ var _cargo_meshes: Array[MultiMeshInstance3D] = []
 ## this file; a MultiMesh keeps its own copy on the rendering server where a headless test
 ## cannot read it back, which is why `_item_transforms` below exists as well.
 var _cargo_transforms: Array[PackedFloat32Array] = []
+
+## Every Item's form, indexed by the definition set's own Item index, resolved once per
+## content change rather than per Item per frame. See `_resolve_cargo_forms`.
+var _cargo_forms: PackedInt64Array = PackedInt64Array()
+
+## The definition digest `_cargo_forms` was resolved against, so a hot-reload re-derives it.
+var _cargo_forms_digest: int = 0
 
 ## Which form each Item was drawn as, in the Simulation's own order.
 ##
@@ -1282,6 +1294,17 @@ func cargo_instance_count(form: int) -> int:
 	if form < 0 or form >= _cargo_transforms.size():
 		return 0
 	return _cargo_meshes[form].multimesh.instance_count
+
+
+## Where one instance of a form's cargo was actually written into that form's own buffer.
+##
+## The read-back that makes the per-form drawing assertable rather than inferred: the buffer a
+## MultiMesh is handed lives on the rendering server, so without this a test could only check
+## that the *count* was right and would miss cargo written to the wrong place — or to a copy.
+func cargo_instance_position(form: int, instance: int) -> Vector3:
+	if form < 0 or form >= _cargo_transforms.size():
+		return Vector3.ZERO
+	return _instance_position(_cargo_transforms[form], instance)
 
 
 ## The palette material one form's cargo is wearing, by name, as the renderer actually
@@ -3053,7 +3076,7 @@ func _make_the_deck_run(body: Mesh) -> void:
 		# The palette's own plate for the cleats, so the one bright thing on a Belt is a colour
 		# the Factory already wears — #42's lesson about a colour picked against the wrong
 		# background, which this project has now paid for five times.
-		var plate: StandardMaterial3D = load(WALL_MATERIAL) as StandardMaterial3D
+		var plate: StandardMaterial3D = load(BELT_CLEAT_MATERIAL) as StandardMaterial3D
 		if plate != null:
 			running.set_shader_parameter("cleat_colour", plate.albedo_color)
 		body.surface_set_material(surface, running)
@@ -3145,6 +3168,7 @@ func _sync_walls(sim: Simulation) -> void:
 func _sync_items(sim: Simulation) -> void:
 	var definitions: Definitions = sim.query_definitions()
 	_build_cargo_meshes()
+	_resolve_cargo_forms(sim, definitions)
 
 	# How high the deck is comes from the Simulation, because #30 made a Belt solid and
 	# `belt.deck_height_metres` is what a player stands on — an Item riding 10 cm above or
@@ -3169,8 +3193,14 @@ func _sync_items(sim: Simulation) -> void:
 	_item_forms.resize(total)
 	var drawn: PackedInt64Array = PackedInt64Array()
 	drawn.resize(ItemAppearance.FORM_COUNT)
+	# **Grown and never shrunk**, because a form's share of the cargo is not known until the
+	# walk is done and this is the hottest loop in the project: sizing each buffer to the whole
+	# Map every frame and back down again would reallocate four arrays a frame for a Factory
+	# whose Item count barely moves. What is handed to the MultiMesh is a slice of exactly the
+	# length it carries, which is the one allocation this has to make.
 	for form: int in range(ItemAppearance.FORM_COUNT):
-		_cargo_transforms[form].resize(total * FLOATS_PER_INSTANCE)
+		if _cargo_transforms[form].size() < total * FLOATS_PER_INSTANCE:
+			_cargo_transforms[form].resize(total * FLOATS_PER_INSTANCE)
 
 	var instance: int = 0
 	for index: int in range(sim.query_belt_count()):
@@ -3184,13 +3214,9 @@ func _sync_items(sim: Simulation) -> void:
 			var at: Vector3 = Vector3(
 				Fixed.to_float(where.x), height, Fixed.to_float(where.z)
 			)
-			# **What it is decides which buffer it goes in**, and the question is asked of the
-			# definition set rather than of anything remembered — so an Item that did not
-			# exist before a hot-reload is drawn correctly on the next frame, like everything
-			# else in this file.
-			var form: int = ItemAppearance.form_of(
-				definitions, definitions.item_index(sim.query_belt_item_id(index, slot))
-			)
+			# **What it is decides which buffer it goes in**, read off the table resolved at
+			# the top of this sync rather than derived here — see `_resolve_cargo_forms`.
+			var form: int = _cargo_form_of(definitions, sim.query_belt_item_id(index, slot))
 			_write_instance(_item_transforms, instance, at, 0.0)
 			_item_forms[instance] = form
 			_write_instance(_cargo_transforms[form], drawn[form], at, 0.0)
@@ -3201,11 +3227,42 @@ func _sync_items(sim: Simulation) -> void:
 		var node: MultiMeshInstance3D = _cargo_meshes[form]
 		node.multimesh.instance_count = drawn[form]
 		if drawn[form] > 0:
-			# Trimmed to what this form actually carries: the buffer was sized for every Item
-			# on the Map, because a form's share of them is not known until the walk is done,
-			# and a MultiMesh refuses a buffer longer than its instance count.
-			_cargo_transforms[form].resize(drawn[form] * FLOATS_PER_INSTANCE)
-			node.multimesh.buffer = _cargo_transforms[form]
+			# A MultiMesh refuses a buffer longer than its instance count, so what crosses is
+			# a slice of the working array rather than the array.
+			node.multimesh.buffer = _cargo_transforms[form].slice(
+				0, drawn[form] * FLOATS_PER_INSTANCE
+			)
+
+
+## Resolves every Item's form once a sync, and only when the content could have changed.
+##
+## **This is a performance decision and it is not a small one.** `ItemAppearance.form_of` walks
+## the Recipes and the Machines to answer, which is the right shape for a question asked about
+## the definition set — and asking it per Item per frame would make the hottest loop in the
+## project O(Items x (Recipes + Machines)), on the one system whose scale this whole data layout
+## exists to protect. The answer is a property of the **content** rather than of the Run, so it
+## is resolved once for every Item the Recipes mention — four, on the shipped set — and read
+## back per Item as an array index.
+##
+## Keyed on `query_definition_digest`, which is the number that moves when a hot-reload changes
+## what the Run is playing by, so an Item interned by an edit mid-Run is picked up on the next
+## frame rather than drawn as whatever happened to sort there before.
+func _resolve_cargo_forms(sim: Simulation, definitions: Definitions) -> void:
+	var digest: int = sim.query_definition_digest()
+	if digest == _cargo_forms_digest and _cargo_forms.size() == definitions.item_count():
+		return
+	_cargo_forms_digest = digest
+	_cargo_forms.resize(definitions.item_count())
+	for item: int in range(definitions.item_count()):
+		_cargo_forms[item] = ItemAppearance.form_of(definitions, item)
+
+
+## The form of one Item by id, off that table.
+func _cargo_form_of(definitions: Definitions, item_id: String) -> int:
+	var item: int = definitions.item_index(item_id)
+	if item < 0 or item >= _cargo_forms.size():
+		return ItemAppearance.FORM_ORE
+	return _cargo_forms[item]
 
 
 ## One MultiMesh per form, built once, on the first sync.
