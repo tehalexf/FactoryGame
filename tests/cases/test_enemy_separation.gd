@@ -415,3 +415,202 @@ func test_determinism_the_fixture_really_did_put_a_crowd_through_the_pass() -> v
 		sim.step([])
 	assert_true(sim.query_enemy_count() >= 2, "a crowd was on the Map for the whole fixture")
 	assert_eq(_count_coincident(sim), 0, "and no two of them ever shared a coordinate")
+
+
+# ── The cap, and what a crowd thicker than it does ────────────────────────────
+#
+# **#77, and it is the half #76 deliberately left.** That pass was linear in the number of
+# Enemies and quadratic in the *density* of a crush: bucketing is O(1) neighbours at bounded
+# density and a crush is not bounded density, so when a whole Wave presses onto one tile the
+# bodies genuinely are all one another's neighbours and the search found every one. A body is
+# now pushed by at most a capped sample of its neighbours.
+#
+# What that cannot be asserted as is a count: the cap is not visible through the façade and
+# must not be. What it *can* be asserted as is the two things it must not have cost — a crowd
+# far thicker than the cap still comes apart, and it still never stands in one place — plus,
+# in each test, the evidence that the crowd really was thicker than the cap, because a test
+# that exercised only the uncapped case would pass for as long as the cap was broken.
+
+## How many neighbours one body may be pushed by on one tick, on the shipped content.
+##
+## Written down here and derived in the Simulation, which is the right way round: this is a
+## fixture's claim about the content it is playing, and `_separation_neighbour_cap` is the
+## authority. It is the kissing number of equal discs — six — scaled by the ratio of the room
+## the widest and narrowest separating kinds ask for to the room two of the narrowest ask for,
+## which on a 0.8 m Breaker and a 0.6 m Crawler is `6 * 1.4 / 1.2`, floored to **seven**.
+##
+## Only used to show these tests are not vacuous: every assertion below is about the crowd and
+## not about the number, and a cap that moved would change which of them has teeth rather than
+## which of them pass.
+const SHIPPED_NEIGHBOUR_CAP: int = 7
+
+
+## Twenty-four Crawlers, three times the Wave the tests above use: enough that a release pile
+## and a bottleneck are both several times deeper than the cap.
+const A_THICK_CROWD: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,24,0,24
+"""
+
+
+## The most Enemies standing on one tile.
+##
+## **The evidence that the cap is binding at all**, and the only honest way to show it from
+## outside. A body spends its budget cell by cell and a bucket cell is a tile, so a tile
+## holding more bodies than the cap holds a body whose own tile alone can exhaust the budget —
+## which is to say a body whose neighbours were sampled rather than all consulted. All-tiles,
+## because a test is allowed to be quadratic about two dozen Enemies.
+func _thickest_tile(sim: Simulation) -> int:
+	var thickest: int = 0
+	for a: int in range(sim.query_enemy_count()):
+		var here: int = 0
+		for b: int in range(sim.query_enemy_count()):
+			if sim.query_enemy_tile(a) == sim.query_enemy_tile(b):
+				here += 1
+		thickest = maxi(thickest, here)
+	return thickest
+
+
+func test_a_crowd_thicker_than_the_cap_comes_apart_rather_than_deadlocking() -> void:
+	# **The failure the cap could have produced, and it is #76's own first finding wearing a
+	# different hat.** That ticket measured a queue deadlocking when the push was allowed to
+	# match the walk: four of eight Crawlers stood still for a whole Run, which on screen reads
+	# as a hang rather than as crowding. A cap is the other way to arrive at the same picture —
+	# a body pushed by a sample rather than by everything could in principle be handed a push
+	# that fights its walk for ever — so what is asserted is that **every body in the crowd is
+	# still making ground**, and the floor it is asserted against is the clamp's own guarantee.
+	var sim: Simulation = _sim(A_THICK_CROWD, 50)
+	assert_eq(_step_until_released(sim, 24), 24, "twenty-four Crawlers, released onto one tile")
+	# **Measured over the second the pile is at its thickest, which is the one right after the
+	# release.** A crowd with road ahead comes apart as it walks — eighteen bodies on one tile
+	# in the first second, twelve in the second, seven in the third, and a settled 1.2 m queue
+	# four seconds in, which is four to a tile and under the cap. So a window taken after it
+	# has settled would be a window in which the cap is not binding, and the assertion below
+	# would be about the open case rather than about the crush.
+	var thickest: int = 0
+	var rearmost_before: int = -(1 << 60)
+	for i: int in range(sim.query_enemy_count()):
+		rearmost_before = maxi(rearmost_before, sim.query_enemy_position_metres(i).x)
+	for i: int in range(Simulation.TICKS_PER_SECOND):
+		sim.step([])
+		thickest = maxi(thickest, _thickest_tile(sim))
+	var rearmost_after: int = -(1 << 60)
+	for i: int in range(sim.query_enemy_count()):
+		rearmost_after = maxi(rearmost_after, sim.query_enemy_position_metres(i).x)
+
+	assert_true(
+		thickest > SHIPPED_NEIGHBOUR_CAP,
+		"a tile held more bodies than any one of them may be pushed by, so the cap was binding"
+		+ " — it held %d" % thickest
+	)
+	# They walk west, so the rearmost body's x is what falls. **One metre a second is the
+	# floor and it is derived rather than picked**: `_apply_separation` bounds what separation
+	# may take away from a march at half a tick's travel, so a body in the thickest part of a
+	# pile makes at least half of `enemy.crawler_speed_metres_per_second`, which is 1.5 m a
+	# second. Measured, the rearmost body makes exactly that, every second, for as long as the
+	# crowd is queued — and the leader makes *more* than three, because it is being pushed
+	# along from behind.
+	var floor_metres: int = Fixed.div(Fixed.from_int(3), Fixed.from_int(2))
+	assert_true(
+		rearmost_before - rearmost_after >= floor_metres - Fixed.from_decimal_string("0.5"),
+		"the body at the back of a crowd twenty-four deep is still making ground, and it"
+		+ " made %.3f m in the second" % Fixed.to_float(rearmost_before - rearmost_after)
+	)
+
+
+func test_a_crush_deeper_than_the_cap_still_never_stands_two_bodies_in_one_place() -> void:
+	# **The claim the cap most nearly cost, and it was measured costing it.** With a body
+	# pushed by a sample, the pair that is about to merge is no longer guaranteed to be in that
+	# sample — and a crush *saturates* the clamp, so two bodies whose displacements both come
+	# out at exactly one tick of travel in the same axes end the tick exactly as far apart as
+	# they began. For a pair one step apart that is nowhere apart at all. Measured on the first
+	# capped build: a twenty-four-body release pile ended one tick in twelve hundred with two
+	# Crawlers at one coordinate, where #76 ended none.
+	#
+	# What fixed it is in `Simulation._break_coincidence` — the tie-break moved from before the
+	# pairwise pass to after it, so it sees what the pass itself produces. This is the
+	# assertion that it does, on every tick, over a crowd three times the one the test above it
+	# watches.
+	var sim: Simulation = _sim(A_THICK_CROWD, 10)
+	assert_eq(_step_until_released(sim, 24), 24)
+	var thickest: int = 0
+	var checked: int = 0
+	for i: int in range(12 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
+		thickest = maxi(thickest, _thickest_tile(sim))
+		assert_eq(_count_coincident(sim), 0, "two Enemies at one coordinate on tick %d" % i)
+		checked += 1
+	assert_true(checked > 600, "the crush was watched for the ticks that were checked")
+	assert_true(
+		thickest > SHIPPED_NEIGHBOUR_CAP * 2,
+		"and the crush really was far deeper than the cap — %d bodies on one tile" % thickest
+	)
+
+
+# ── Determinism over a crush ──────────────────────────────────────────────────
+#
+# The fixture above these replays a Wave *converging* on a Breach, which is the regime #76's
+# arithmetic was written for. #77 changes which neighbours a body is pushed by, and the one
+# place that choice can be observed is a configuration dense enough for there to be a choice
+# to make — so the crush gets a fixture of its own.
+#
+# **It is the fixture that proves the choice is a property of the configuration and the tick
+# and of nothing else.** The selection rotates with the tick and the body's own serial, which
+# are hashed Simulation state; what it must never depend on is the order the Enemy loop
+# happened to walk, and a replay is the only instrument that can say so.
+
+## The crush content: twenty-four Crawlers onto the starter Map's one Breach, and a Nest with
+## enough hit points that the crowd is still pressed against it at the end of the fixture.
+##
+## **The Nest is the thing that makes it a crush rather than a queue.** A Wave with road ahead
+## of it settles at tangency and stops pushing; a Wave with nowhere left to go compresses, and
+## compression is what makes a cell hold more bodies than one of them may be pushed by.
+## Measured, this one piles eighteen onto one tile.
+func _crush_content() -> Definitions:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.waves = A_THICK_CROWD
+	return (
+		fixture
+		. tune([
+			["telegraph_seconds = 12", "telegraph_seconds = 0.5"],
+			["spawn_interval_seconds = 0.5", "spawn_interval_seconds = 0.01"],
+			["health = 6000", "health = 1000000"],
+		])
+		. definitions()
+	)
+
+
+## Call the Wave and stand back for forty-five seconds, which is long enough for the crowd to
+## cross the starter Map and press up against the Nest rather than merely arrive at it.
+func _crush_script() -> InputScript:
+	var script: InputScript = InputScript.new()
+	script.add_tick([InputAction.call_wave_early(0)])
+	script.add_idle_ticks(45 * Simulation.TICKS_PER_SECOND)
+	return script
+
+
+func test_determinism_a_crush_against_the_nest_replays_tick_for_tick() -> void:
+	var content: Definitions = _crush_content()
+	var recording: ReplayRecording = DeterminismHarness.record(_crush_script(), 23, 1, content)
+	var divergence: DeterminismHarness.Divergence = DeterminismHarness.verify(recording)
+	assert_true(divergence.is_identical, divergence.describe())
+
+
+func test_determinism_the_crush_fixture_really_was_denser_than_the_cap() -> void:
+	# A replay of a Run whose crowd never got thick enough for the cap to bind would read as a
+	# pass and would be asserting nothing about #77 at all — `test_silo`'s pair of fixtures is
+	# the shape, and #50 is what an assertion whose only exercised case is the trivial one
+	# costs. So the scenario is checked separately from the replay, and at both ends: that it
+	# really was a crush, and that it really was a crush that never stacked.
+	var sim: Simulation = Simulation.new(23, 1, _crush_content())
+	sim.step([InputAction.call_wave_early(0)])
+	var thickest: int = 0
+	for i: int in range(45 * Simulation.TICKS_PER_SECOND):
+		sim.step([])
+		thickest = maxi(thickest, _thickest_tile(sim))
+	assert_false(sim.query_run_is_over(), "the Nest held, so the crowd was pressing all along")
+	assert_eq(sim.query_enemy_count(), 24, "and the whole Wave was alive for the whole fixture")
+	assert_true(
+		thickest > SHIPPED_NEIGHBOUR_CAP * 2,
+		"the crowd really was thicker than the cap — %d bodies on one tile" % thickest
+	)
+	assert_eq(_count_coincident(sim), 0, "and no two of them ended it sharing a coordinate")
