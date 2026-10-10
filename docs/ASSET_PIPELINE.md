@@ -874,13 +874,15 @@ risk the ticket named. What separates them is gross form and not detail:
 
 | | legs | body slung at | the mass is | carapace |
 |---|---|---|---|---|
-| Crawler | 6 | 0.42 | spread down a long low body | none — bare chitin |
-| Breaker | 4 | 0.50 | a shield at the front, head carried low | 0.92, the tallest thing on it |
-| Siege Hulk | 6 | 0.62 | a raised tail at the back | 0.82 |
+| Crawler | 6 | 0.30 | spread down a long low body | none — bare chitin |
+| Breaker | 6 | 0.50 | a shield at the front, head carried low | 0.96, the tallest thing on it |
+| Siege Hulk | 6 | 0.58 | a raised tail at the back | 0.94 |
 
-A four-legged body has gaps a six-legged one fills, which is most of the front-view
-difference; the sling height is what makes a Crawler scuttle under its own knees and a Hulk
-stride over them. Measured separations are in CLAUDE.md.
+**All three walk on six since #79's second look**, and the leg *count* is deliberately no
+longer one of the separators: four legs under a body carried high is a quadruped silhouette,
+and at thirty metres a Breaker read as a horse. What separates them is the body — a long low
+narrow wedge against a wide plate carried high against a hull slung over a raised tail — which
+is the thing that should be separating them. Measured separations are in CLAUDE.md.
 
 ### Axes, which is the one fact to get right
 
@@ -900,7 +902,7 @@ The bake writes `bone_count * 3` texels across one row a frame, and its whole ar
 the texture is a property of the **rig** rather than of the model. So the declaration stays
 inside what #38 measured:
 
-- **19 bones for a six-legged body, 15 for the four-legged one**, against the 23 the KayKit
+- **19 bones a body, every kind, against the 23 the KayKit
   cast used. Two segments a leg and no more — a coxa out to the knee and a tibia down to the
   foot — because six legs at three segments would be 25 bones of leg alone, and because two is
   what an insect looks like at the only range this matters at.
@@ -928,7 +930,7 @@ six-legged insect carries its weight on front-left, middle-right and rear-left w
 three swing, so `tripod_phase` takes the pair index *and the side*. Get it from the pair alone
 and both sides step in unison, which is a pace and reads as a pantomime horse — the first
 version did exactly that. With two pairs it degenerates to a diagonal trot, which is what a
-four-legged body does, so the Breaker needs no case of its own.
+six-legged body does, so no kind needs a case of its own.
 
 Two thirds of each step is the stance and one third the swing, because that ratio is what a
 walk *is*; an even split reads as paddling. Four clips a body — `walk`, `run`, `idle`,

@@ -112,7 +112,8 @@ class Rigged:
         return sorted({material for material, _, _ in self.parts})
 
 
-def limb(start, end, thickness_start: float, thickness_end: float) -> bmesh.types.BMesh:
+def limb(start, end, thickness_start: float, thickness_end: float,
+         aspect: float = 1.0) -> bmesh.types.BMesh:
     """One segment of a leg: a tapered box leaning from `start` to `end`.
 
     Boxes rather than cylinders, and that is the "not too detailed" instruction
@@ -120,6 +121,20 @@ def limb(start, end, thickness_start: float, thickness_end: float) -> bmesh.type
     which on six legs of two segments is 1,152 triangles of leg on a body a player
     sees twenty of at once; this is 12. It is also what a chitin leg looks like —
     faceted plate, not a tube.
+
+    **`aspect` is #79's second-look fix and it is about which way a leg is thin.**
+    A square section is the same width from every angle, so a thin leg is a thin
+    dark rod whichever way a player stands — and at the `pair` camera's six to
+    twelve metres a rank of them reads as a picket fence rather than as limbs on a
+    body. A real chitin leg is a **blade**, broad in the plane it swings through
+    and thin across it, so `thickness` is the across-the-swing width and `aspect`
+    multiplies the in-swing depth. That is what makes a leg read as having a
+    surface side-on — it catches the sun on its broad face and shades on its
+    narrow one — while being *narrower* front-on than the square section it
+    replaces, which is what takes the fence away. The frame below is derived from
+    the limb's own direction, so `side` is across the body and `other` is along
+    it, and the blade falls the right way round by construction rather than by a
+    sign somebody has to maintain.
     """
     mesh = bmesh.new()
     a = Vector(start)
@@ -141,10 +156,10 @@ def limb(start, end, thickness_start: float, thickness_end: float) -> bmesh.type
 
     corners = ((-1, -1), (1, -1), (1, 1), (-1, 1))
     lower = [mesh.verts.new(a + side * (sx * thickness_start / 2.0)
-                            + other * (sy * thickness_start / 2.0))
+                            + other * (sy * thickness_start * aspect / 2.0))
              for sx, sy in corners]
     upper = [mesh.verts.new(b + side * (sx * thickness_end / 2.0)
-                            + other * (sy * thickness_end / 2.0))
+                            + other * (sy * thickness_end * aspect / 2.0))
              for sx, sy in corners]
     mesh.faces.new(list(reversed(lower)))
     mesh.faces.new(upper)
@@ -321,9 +336,11 @@ def build(insect: recipe.Insect) -> Rigged:
                 start, chamfer=CHAMFER * 0.5,
             ))
             rig.add(insect.material("leg"), f"Leg{index}{side}Coxa",
-                    limb(start, knee, leg.thickness * 1.15, leg.thickness * 0.85))
+                    limb(start, knee, leg.thickness * 1.15, leg.thickness * 0.85,
+                         leg.blade))
             rig.add(insect.material("leg"), f"Leg{index}{side}Tibia",
-                    limb(knee, foot, leg.thickness * 0.85, leg.thickness * 0.30))
+                    limb(knee, foot, leg.thickness * 0.85, leg.thickness * 0.30,
+                         leg.blade))
     return rig
 
 

@@ -25,8 +25,12 @@ saving. All three are insects — thorax, abdomen, head, mandibles, legs — so 
 difference between a Crawler and a Siege Hulk is *numbers*, which means
 `tests/cases/test_enemy_silhouette.gd` is measuring a declaration a person can
 edit rather than three separate piles of geometry. The three silhouettes are
-separated by **leg count, how high the body is slung, and where the mass is**, and
-all three of those are fields below.
+separated by **how high the body is slung, whether there is a carapace over it and
+where the mass trails off to**, and all of those are fields below. Leg *count* was
+one of the three until #79's second look and is deliberately no longer: all three
+kinds walk on six now, because four legs under a tall body is a quadruped
+silhouette and at thirty metres a Breaker read as a horse. What separates them is
+the body, which is the thing that should be separating them.
 
 ### Everything here is in body heights, not metres
 
@@ -34,7 +38,7 @@ all three of those are fields below.
 and folds that normalisation into the bone matrices; `WorldView` then scales each
 instance by `query_enemy_hit_height_metres`, so what a player shoots at is what
 they can see (#49). A declaration in metres would therefore be a declaration in
-units nothing uses. In body heights, `thorax_centre = 0.42` reads as *"the body is
+units nothing uses. In body heights, `thorax_centre = 0.40` reads as *"the body is
 slung at two fifths of the Enemy's height"* — which is the sentence a person
 editing this file is actually trying to write. The generator scales the finished
 assembly so its vertical extent is exactly 1.0, so these numbers are proportions
@@ -80,16 +84,33 @@ class Leg:
     along: float
     #: How far out and how high the knee stands. **This is the number that makes an
     #: insect an insect**: a knee above the back is what reads as splayed rather
-    #: than as a quadruped, and on the Crawler and the Hulk it is also the tallest
-    #: thing in the body, so it is what the normalisation measures.
+    #: than as a quadruped.
+    #:
+    #: **It is deliberately no longer the tallest thing on the body**, which is
+    #: #79's second-look correction. The first version put the Crawler's knee at
+    #: 0.95 against a back at 0.59, so the leg arc was the top of the silhouette
+    #: and the normalisation measured *it* — which means the body was a small lump
+    #: under a cage and a rank of Crawlers read as a picket fence with nothing
+    #: behind it. A Terminid is a big armoured body carried low with legs arching
+    #: a little *above* a body that is still the dominant mass, so the knee now
+    #: clears the back by a few hundredths and no more. The arch is still there;
+    #: what changed is which of the two is the subject.
     knee_out: float
     knee_up: float
     #: Where the foot lands. `foot_along` is relative to `along`, so a positive
     #: number plants the foot behind the hip.
     foot_out: float
     foot_along: float
-    #: How thick the two segments are, as a square cross-section.
+    #: How thick the two segments are, measured **across** the plane the leg
+    #: swings through. See `blade` for the other axis.
     thickness: float
+    #: How much deeper the segment is along its own swing plane than it is across
+    #: it — so 1.0 is the square rod the first version shipped and 2.6 is a blade.
+    #: A square section is the same width from every angle, so a leg thin enough
+    #: not to be the mass is a thin dark rod from every angle too; a blade is
+    #: narrower front-on *and* has a lit face side-on, which is the pair of
+    #: properties the fence read needed. `generate_enemies.limb` has the geometry.
+    blade: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -350,35 +371,46 @@ def crawler() -> Insect:
 
     It is the **sense** of threat rather than the threat, so it is the only kind
     with no carapace plate at all — bare segmented chitin, nothing to shoot
-    *around*. Its body is slung lowest of the three and its knees are the tallest
-    thing on it, which is what makes a front-on Crawler read as a star of legs
-    with very little in the middle.
+    *around*. Its body is slung lowest of the three and is the longest relative to
+    its height, so a Crawler is a **low wedge of body** with its legs arching
+    just over it.
+
+    That last sentence is #79's second look and it used to say the opposite: the
+    knees were the tallest thing on it and a front-on Crawler was "a star of legs
+    with very little in the middle". That is what it was, and side-on at the
+    `pair` camera's six to twelve metres a rank of them read as a picket fence
+    with no bodies behind it — which is a worse failure than the one it was
+    solving, because the thing a player has to shoot was the thing that had gone
+    missing. The body is now deeper and wider than its own legs are long, the
+    knees clear its back by four hundredths, and the legs are blades (see
+    `Leg.blade`) rather than square rods.
     """
     legs = tuple(
         Leg(
             along=along,
-            knee_out=0.34,
-            knee_up=0.95,
-            foot_out=0.50,
+            knee_out=0.30,
+            knee_up=0.70,
+            foot_out=0.44,
             foot_along=0.10,
-            thickness=0.075,
+            thickness=0.038,
+            blade=1.6,
         )
-        for along in (-0.19, 0.02, 0.23)
+        for along in (-0.20, 0.02, 0.24)
     )
     return Insect(
         kind_id="crawler",
         hit_height_metres=1.6,
-        thorax_length=0.52,
-        thorax_width=0.40,
+        thorax_length=0.66,
+        thorax_width=0.44,
         thorax_depth=0.34,
-        thorax_centre=0.42,
+        thorax_centre=0.30,
         carapace_rise=0.0,
         carapace_width=0.0,
         carapace_length=0.0,
-        abdomen_length=0.52,
-        abdomen_width=0.40,
+        abdomen_length=0.88,
+        abdomen_width=0.42,
         abdomen_depth=0.38,
-        abdomen_rise=0.10,
+        abdomen_rise=0.08,
         abdomen_taper=0.50,
         abdomen_segments=3,
         head_length=0.26,
@@ -409,12 +441,22 @@ def crawler() -> Insect:
 
 
 def breaker() -> Insect:
-    """The threat: four heavy legs under a shield, head down, mass at the front.
+    """The threat: a shield on six splayed legs, head down, mass at the front.
 
     A Hive Guard rather than a scavenger. Everything about it says *a wall coming
-    down the lane*: four legs instead of six so the gaps read, a carapace plate
-    that is the tallest and widest thing on the body, a short tucked abdomen so
-    the mass is forward, and a head carried low in front of it.
+    down the lane*: a carapace plate that is the tallest and widest thing on the
+    body, the widest thorax of the three, a short tucked abdomen so the mass is
+    forward, and a head carried low in front of it.
+
+    **It had four legs until #79's second look and that was a real mistake.** The
+    argument for four was that the gaps between them read at distance, which is
+    true and is the wrong trade: four legs under a body carried high is the
+    silhouette of a *quadruped*, and at the `triage` camera's thirty metres it
+    read as a pale-legged horse rather than as anything with a carapace. Six legs
+    splayed low is the cue that says insect at range, and it widens the
+    Crawler-against-Breaker pair rather than narrowing it, because what then
+    separates the two is the plate and the stance instead of a leg count a player
+    cannot resolve at thirty metres anyway.
 
     #49 gave a Breaker its own 2.2 m because a Crawler and a Breaker were the same
     dark silhouette past twelve metres; that height is untouched here and the form
@@ -424,22 +466,23 @@ def breaker() -> Insect:
         Leg(
             along=along,
             knee_out=0.32,
-            knee_up=0.78,
-            foot_out=0.48,
+            knee_up=0.72,
+            foot_out=0.50,
             foot_along=0.12,
-            thickness=0.125,
+            thickness=0.050,
+            blade=1.6,
         )
-        for along in (-0.15, 0.19)
+        for along in (-0.18, 0.02, 0.22)
     )
     return Insect(
         kind_id="breaker",
         hit_height_metres=2.2,
-        thorax_length=0.46,
-        thorax_width=0.54,
-        thorax_depth=0.42,
+        thorax_length=0.54,
+        thorax_width=0.88,
+        thorax_depth=0.60,
         thorax_centre=0.50,
-        carapace_rise=0.92,
-        carapace_width=0.72,
+        carapace_rise=0.96,
+        carapace_width=1.02,
         carapace_length=0.56,
         abdomen_length=0.34,
         abdomen_width=0.48,
@@ -456,13 +499,22 @@ def breaker() -> Insect:
         mandible_spread=0.180,
         mandible_thickness=0.085,
         legs=legs,
+        # **The legs are `Soot` and the render is why.** Every surface of a kind takes that
+        # kind's one roughness (`WorldView._enemy_roughness`), and the Breaker's is
+        # `WeldedSteel`'s 0.45 — so at metallic 1 under this project's bright ochre sky its
+        # `CastIron` legs came back as *pale planks*, brighter than the carapace they hang
+        # from and brighter than a Crawler's legs of the identical material. A limb that is
+        # the brightest thing on a body reads before the body does, which is the fence #79's
+        # second look set out to remove. `Soot` is the palette's matte black and it costs no
+        # silhouette, because a material cannot move an outline: dark limbs under a steel
+        # shield is also the right way round for the thing a player has to answer.
         materials={
             "thorax": "CastIron",
             "abdomen": "CastIron",
             "head": "CastIron",
             "carapace": "WeldedSteel",
             "joint": "Soot",
-            "leg": "CastIron",
+            "leg": "Soot",
             "mandible": "DullBrass",
         },
     )
@@ -470,6 +522,10 @@ def breaker() -> Insect:
 
 def siege_hulk() -> Insect:
     """The boss: slung high on six long legs, with a raised tail and the vent in it.
+
+    Its carapace crowns it since #79's second look — the knees used to, which made
+    the tallest thing on the one kind a player has to walk *around* a leg rather
+    than the hull they are trying to get behind.
 
     **The vent is the only place geometry carries a rule in this project**, and an
     insect abdomen is a better home for it than a golem's back was. `_armoured`
@@ -488,22 +544,23 @@ def siege_hulk() -> Insect:
     legs = tuple(
         Leg(
             along=along,
-            knee_out=0.42,
-            knee_up=1.00,
-            foot_out=0.66,
+            knee_out=0.38,
+            knee_up=0.88,
+            foot_out=0.58,
             foot_along=0.14,
-            thickness=0.095,
+            thickness=0.046,
+            blade=1.6,
         )
         for along in (-0.18, 0.03, 0.24)
     )
     return Insect(
         kind_id="siege_hulk",
         hit_height_metres=3.2,
-        thorax_length=0.46,
-        thorax_width=0.46,
-        thorax_depth=0.40,
-        thorax_centre=0.62,
-        carapace_rise=0.82,
+        thorax_length=0.54,
+        thorax_width=0.62,
+        thorax_depth=0.50,
+        thorax_centre=0.58,
+        carapace_rise=0.94,
         carapace_width=0.52,
         carapace_length=0.48,
         abdomen_length=0.64,

@@ -372,15 +372,23 @@ class RegeneratingFromTheDeclaration(unittest.TestCase):
             recipe = REPO / "tools" / "assets" / "enemy_recipe.py"
             cache = REPO / "tools" / "assets" / "__pycache__"
             original = recipe.read_text()
-            # **Unique, and asserted to be.** The first version edited `foot_out=0.66`,
-            # which was the Crawler's when it was written and is the Siege Hulk's now —
-            # so it regenerated the Crawler, measured no change and reported the generator
-            # broken. A substitution that silently moves to another kind is #63's lesson
-            # about `String.replace` in a fixture, in Python.
-            target = "            foot_out=0.50,"
-            self.assertEqual(original.count(target), 1,
-                             f"{target!r} no longer names the Crawler alone")
-            widened = original.replace(target, "            foot_out=0.95,", 1)
+            # **Scoped to the Crawler's own block, because naming a value drifted
+            # twice.** `foot_out=0.66` was the Crawler's when this was written and
+            # became the Siege Hulk's; `foot_out=0.50` replaced it and became the
+            # Breaker's one ticket later. Both times the substitution matched exactly
+            # once, so a uniqueness assertion passed while the test regenerated the
+            # Crawler and measured a body it had not edited. Slicing `def crawler()`
+            # out first makes the class of mistake unreachable rather than caught —
+            # #63's lesson about `String.replace` in a fixture, settled structurally.
+            start = original.index("def crawler()")
+            end = original.index("def breaker()")
+            block = original[start:end]
+            target = "foot_out="
+            self.assertEqual(block.count(target), 1,
+                             "the Crawler declares exactly one foot spread")
+            edited = re.sub(r"foot_out=[0-9.]+", "foot_out=0.95", block, count=1)
+            widened = original[:start] + edited + original[end:]
+            self.assertNotEqual(widened, original, "the edit reached the declaration")
             try:
                 recipe.write_text(widened)
                 shutil.rmtree(cache, ignore_errors=True)

@@ -436,7 +436,7 @@ data. There is nothing per Crawler anywhere on this side of the boundary.
   kind, growing with the model. Skinning matrices are 23 bones by ninety frames: about two
   thousand texels, and it does not grow by one texel if the mesh triples. (Those are the
   **cast's** figures, which is the comparison the decision was made against. The generated
-  bodies are 19 bones for a six-legged one and 15 for the Breaker over 104 frames, so #79
+  bodies are 19 bones a kind over 104 frames, so #79
   made the texture smaller rather than larger — the budget was a constraint on the
   declaration and `test_generated_enemies` holds it there.) The price is that
   `ARRAY_BONES` is only readable through a `Skeleton3D`, so `EnemyBodies` moves the indices
@@ -543,17 +543,19 @@ risk the ticket named, so they are separated by gross form and never by detail:
 
 | | legs | body slung at | the mass is | carapace |
 |---|---|---|---|---|
-| Crawler | 6 | 0.42 | spread down a long low body | none — bare chitin |
-| Breaker | 4 | 0.50 | a shield at the front, head carried low | 0.92, the tallest thing on it |
-| Siege Hulk | 6 | 0.62 | a raised tail at the back | 0.82 |
+| Crawler | 6 | 0.30 | spread down a long low body | none — bare chitin |
+| Breaker | 6 | 0.50 | a shield at the front, head carried low | 0.96, the tallest thing on it |
+| Siege Hulk | 6 | 0.58 | a raised tail at the back | 0.94 |
 
-A four-legged body has gaps a six-legged one fills, which is most of the front-view
-difference; the sling height is what makes a Crawler scuttle under its own knees and a Hulk
-stride over them.
+**All three walk on six since #79's second look**, and the leg *count* is deliberately no
+longer one of the separators: four legs under a body carried high is a quadruped silhouette,
+and at thirty metres a Breaker read as a horse. What separates them is the body — a long low
+narrow wedge against a wide plate carried high against a hull slung over a raised tail — which
+is the thing that should be separating them.
 
 #### The rig fits inside #38's bake, and that was a constraint rather than an outcome
 
-- **19 bones for a six-legged body and 15 for the four-legged one**, against the cast's 23.
+- **19 bones a body, every kind, against the cast's 23.**
   Two segments a leg and no more, because six legs at three would be 25 bones of leg alone —
   and because two is what an insect looks like at the only range this matters at.
 - **One influence a vertex, at weight 1.** `EnemyBodies.INFLUENCES` keeps the four heaviest, so
@@ -593,23 +595,87 @@ stomp played `Hit_A`, a lurch rather than a swing. A declared body declares its 
 gate rewritten to admit what it is measuring is not a gate. Measured on the generated bodies,
 posed and scaled exactly as `WorldView` draws them:
 
-| pair | the cast (#49) | declared (#79) |
-|---|---|---|
-| Crawler vs Breaker | 0.58 | **0.655** |
-| Crawler vs Siege Hulk | 0.83 | **0.989** |
-| Breaker vs Siege Hulk | 0.67 | **0.868** |
+| pair | the cast (#49) | first pass | **shipped** |
+|---|---|---|---|
+| Crawler vs Breaker | 0.58 | 0.655 | **0.538** |
+| Crawler vs Siege Hulk | 0.83 | 0.989 | **0.878** |
+| Breaker vs Siege Hulk | 0.67 | 0.868 | **0.794** |
 
-**Every pair is further apart than the cast managed, and the binding one moved back to the
-Crawler against the Breaker.** That is the declaration working rather than luck: the cast was
-three humanoids of the same proportions at three heights, so #49 could only separate them by
-size and that walked the Breaker toward the boss as fast as it walked it away from the Crawler.
-Six legs against four, a body slung at 0.42 against 0.50, and mass spread down a tail against
-massed in a front shield are three independent differences, so the pairs no longer trade
-against one another.
+**Every pair is further apart than the cast managed**, which is the declaration working rather
+than luck: the cast was three humanoids of the same proportions at three heights, so #49 could
+only separate them by size, and that walked the Breaker toward the boss as fast as it walked it
+away from the Crawler. A body slung at 0.30 against 0.50 against 0.58, a bare back against a
+plate at 0.96, and mass spread down a long tail against massed in a front shield are
+independent differences, so the pairs no longer trade against one another.
 
-The Crawler against the Siege Hulk at 0.989 is very nearly disjoint, which is the expected
-answer rather than a suspicious one: a 1.6 m body slung low and a 3.2 m one slung high share
-almost no cell of a grid rasterised at one cell per player pixel at thirty metres.
+**The third column is #79's second look and it cost real margin — 0.655 to 0.538 on the
+binding pair — which is reported rather than hidden.** The Breaker went from four legs to six,
+because four under a body carried high is a *quadruped* silhouette and at `triage`'s thirty
+metres it read as a horse; six legs splayed low is the cue that says insect at range. Leg count
+was carrying 0.12 of that separation and is now carrying none of it, so the body is carrying all
+of it. The gate was **not touched** — the threshold is still 0.50, and a gate rewritten to admit
+what it is measuring is not a gate — and the margin is now thin enough to say out loud: the next
+ticket to move a Crawler or Breaker proportion has about four hundredths to spend.
+
+**And the re-tune had to be driven back and forth across that floor to land, which is worth
+knowing before somebody repeats it.** Bodies widened and legs shrunk to kill the fence took the
+pair to **0.385**, *below* the floor, because a fat Crawler is a small Breaker. What bought it
+back was pushing the two the opposite ways at once — the Crawler longer, lower and narrower
+(0.44 wide, slung at 0.30, an 0.88 tail) and the Breaker wider and higher (0.88 wide, slung at
+0.50, a 1.02 plate at 0.96). **Leg thinning is free against this gate and body bulk is not.**
+
+The Crawler against the Siege Hulk at 0.878 is nearly disjoint, which is the expected answer
+rather than a suspicious one: a 1.6 m body slung low and a 3.2 m one slung high share almost no
+cell of a grid rasterised at one cell per player pixel at thirty metres.
+
+**⚠️ Every one of these numbers must be taken after `godot --headless --path . --import`, and
+three readings in this ticket were taken without it and were lies.** The measurement loads the
+`.glb` through `res://`, so it gets whatever the **import cache** holds — and regenerating a
+body does not refresh that. Three separate geometry changes reported *byte-identical*
+separations, which is how it was caught: a figure that does not move when the mesh does is the
+symptom. `tools/run_tests.sh` runs `--import` on every invocation for exactly this reason, so
+the suite is safe; a one-off script is not. It is the `.pyc` trap below in a second costume —
+**a generated asset has two caches between the declaration and the answer, and both will lie
+quietly.**
+
+#### The legs were the subject and the body was the background, and a render is the only thing that said so
+
+**#79's second look, and it is #41's rule arriving from a direction this file had not met: a
+mark can be in the right place, the right colour and the right size and still be wrong because
+it is *bigger than the thing it is attached to*.** The first pass put a Crawler's knee at 0.95
+against a back at 0.59 — so the leg arc was the top of the silhouette, the normalisation
+measured *it*, and the body was a small lump inside a cage. At the `pair` camera's six to twelve
+metres a rank of them read as a **picket fence with no bodies behind it**, which is a worse
+failure than the one it was solving: the thing a player has to shoot had gone missing.
+
+Three changes, and the order they had to be made in is the finding:
+
+- **The knee comes down to just over the back.** 0.70 on the Crawler against a body that now
+  tops at a little under it, so the arch is a few hundredths rather than a third of the Enemy.
+  The arch is still there — a knee above the back is what reads as splayed rather than as a
+  quadruped — and it is no longer the subject.
+- **The legs are blades and are much thinner.** `Leg.blade` is #79's one new field: a square
+  section is the same width from every angle, so a leg thin enough not to be the mass is a thin
+  dark rod from *every* angle too, which is the "flat planes" half of the complaint. 1.6 deep in
+  the plane it swings through against its across-swing width gives it a lit face and a shaded
+  one. Thickness went from 0.075 of a body to 0.038 on the Crawler at the same time, and
+  **that** is what took the fence away rather than the cross-section.
+- **The body got the room the legs gave up**, and then had to give some of it back. See the
+  gate section above: widening both bodies took the Crawler-against-Breaker pair *below the
+  floor*, and what landed was pushing the two opposite ways rather than both outward.
+
+**And the Breaker's legs are `Soot` rather than `CastIron`, which is a one-line content change
+that a render forced.** Every surface of a kind takes that kind's single roughness, and the
+Breaker's is `WeldedSteel`'s 0.45 — so at metallic 1 under this project's bright ochre sky its
+*legs*, of the identical material a Crawler's dark legs are made of, came back as **pale planks
+brighter than the carapace they hang from**. A limb that is the brightest thing on a body reads
+before the body does. It costs no silhouette, because a material cannot move an outline.
+
+**What the pair of renders settles**, and both are committed: a Breaker that was a pile of white
+planks is a heavy plated mass on thin dark limbs, and a Crawler rank that was a fence is a row of
+low dark bodies with an oxide tail. **What it does not settle** is the honest limit already
+recorded below — these are chamfered boxes, and whether that reads as *this game's* bug or as a
+Machine with legs is a judgement for somebody with a mouse.
 
 #### The weak point is in the mesh now, which closes the one disagreement it could have
 
@@ -756,7 +822,7 @@ the noise of the instrument — and both columns are far above the figures this 
 the two columns above it, which are counts rather than timings.
 
 **The pose texture went down too**, which is the half #38's architecture actually cares about:
-19 bones for a six-legged body and 15 for the four-legged one against the cast's 23, over 104
+19 bones a kind against the cast's 23, over 104
 frames rather than 90. `test_generated_enemies` holds the bone budget at 23 so a later
 declaration cannot quietly walk past it.
 
@@ -823,15 +889,17 @@ same picture.
 
 | frame | before, median | after, median | ground | after / ground |
 |---|---|---|---|---|
-| `triage` — thirty metres, the readability shot | 0.090 | **0.088** | 0.049 | **1.82x** |
-| `boss` | 0.049 | **0.048** | 0.046 | 1.03x |
-| `pair` — six to twelve metres | 0.072 | 0.032 | 0.052 | 0.60x |
-| `crush` — from above, in the Nest's shadow | 0.032 | 0.013 | 0.042 | 0.31x |
-| `swarm` — six metres, **into the sun** | 0.055 | **0.004** | 0.047 | **0.09x** |
+| `triage` — thirty metres, the readability shot | 0.091 | **0.078** | 0.049 | **1.61x** |
+| `boss` | 0.049 | **0.051** | 0.046 | 1.11x |
+| `pair` — six to twelve metres | 0.074 | 0.031 | 0.052 | 0.58x |
+| `crush` — from above, in the Nest's shadow | 0.021 | 0.014 | 0.042 | 0.33x |
+| `swarm` — six metres, **into the sun** | 0.058 | **0.004** | 0.046 | **0.09x** |
 
-**At the two vantages that decide whether a Wave is readable the bodies are now at parity with
-the cast** — `triage` within 0.002 of it and `boss` within 0.001 — and `triage` sits at 1.82
-times the ground where #75 left an Enemy at 0.46 times.
+**At the two vantages that decide whether a Wave is readable the bodies are at parity with the
+cast** — `triage` at 1.61 times the ground where #75 left an Enemy at 0.46 times, and `boss`
+fractionally *above* the cast. Re-measured after #79's geometry second look and they moved by
+hundredths, which is the expected answer rather than a lucky one: that pass changed proportions
+and a leg count and touched no material, and these are a property of the surface.
 
 **`swarm` and `crush` are still below the ground and that is said plainly rather than
 defended.** `swarm` is a *ninth* of the floor, which is worse than the fifth #75 called "not a
@@ -857,7 +925,7 @@ SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "<pre
 - **`triage` is the one that carries the ticket**, because thirty metres is where a player
   decides what a Wave is. Before: three humanoid silhouettes in three sizes, the Crawler and the
   Breaker separated by height alone. After: a line of low six-legged bodies with oxide tails
-  against the iron of their own thorax and legs, and a four-legged plated thing standing over
+  against the iron of their own thorax and legs, and a wide plated thing standing over
   them. The oxide tail is a second cue beside height, which is the thing #49 recorded as missing
   and #75 could not buy with a tint.
 - **`crush` answers #76's question for the new bodies**, and it answers it better than the cast
