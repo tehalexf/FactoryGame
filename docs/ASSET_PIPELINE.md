@@ -507,11 +507,80 @@ UV layers, mangled take names. Three things are specific to a viewmodel:
 | A take is a *group* of actions | The hands are animated as bones and the weapon's own magazine, bolt and trigger as **objects**, so one take imports as a dozen separate actions named `<object>\|<take>\|BaseLayer` — plus a `default` take holding every action end to end | Groups the actions by take, slides each take's keyframes back to frame 1, and puts each on an **NLA track named for the take**. The glTF exporter's `NLA_TRACKS` mode merges same-named tracks across objects, which is the only mode that can express "one animation that moves the hands and the weapon together". `--drop-take` throws `default` away |
 | The weapon body arrives loose | An FBX skin cluster over plain helper objects is not something Blender's importer can reconstruct, so the hands animate and the rifle sits on the floor at the world origin | `--parent L96_mesh=Main_Bone` attaches it to the helper that *is* animated, measured in the bind pose, and drops that mesh's own takes |
 | Framing | A viewmodel is only ever seen from the authoring camera, and guessing an offset by hand is hours of nudging numbers | `--origin-object Camera001` moves that object to the origin. **Its position only** — an FBX camera's own axes are a convention Blender's importer does not normalise, and taking its orientation puts the weapon across the view. The scene around it is already in Blender's world convention, which is the frame the exporter's Y-up conversion expects, so `--rotate` handles a pack that is not square to its own world and nothing else is guessed |
-| Weight and white surfaces | The Deagle's three normal maps alone are 180 MB; and several packs reference textures they do not ship, so the arms and the weapon render white | `--max-texture` downscales on the way in. `--material-colour NAME=RRGGBB,metallic,roughness` repaints a material from `dieselpunk_palette.json`, so the thing in the player's hands belongs to the same world as the Machines they built it with — and a palette value is a number rather than an asset, so it can be committed |
+| Weight | The Deagle's three normal maps alone are 180 MB | `--max-texture` downscales on the way in, and `--surface-max-texture` caps a palette surface lower — see the density measurement below |
+| The surfaces (#65) | Every material arrives as a bare Principled BSDF with **nothing connected**, because Blender's importer drops a 3ds Max ShaderFX graph (`material link b'3dsMax\|HwShaderParams\|TEX_color_map' ignored`) — and the images it does create point at basenames the zip does not use | `--material-map` and `--material-surface`, below. `--material-colour` remains as the fallback for a pack with neither, and the shipped recipe no longer uses it |
 
 `tools/assets/tests/test_fbx_to_viewmodel.py` covers all of it against the
 `viewmodel.fbx` fixture in `build_fixtures.py`, which reproduces those breakages
 without a single licensed byte.
+
+### The surfaces, and the two kinds of answer (#65)
+
+The recipe used to repaint every material a flat palette colour on the note that
+"the packs reference textures they do not ship". Half of that is wrong in the
+half that matters, and the split is worth keeping because only one of the two
+sentences was ever true:
+
+- **The `Weapon pack` ships a complete PBR set for both rifles** — albedo,
+  normal, roughness, metallic and occlusion, for the L96's body, its scope and
+  its lens, and for the AKM. Two things kept it off the model: the FBX's
+  basenames are not the zip's (`T_S96_ALB.tga.png` against `L96_ALB.png`, which
+  is a vendor typo no normalisation bridges), and the ShaderFX graph above meant
+  nothing was wired even where a file *was* found. So
+  **`--material-map NAME=CHANNEL:FILE[,…]`** binds by path, in the recipe, and a
+  file that is not there is fatal naming the material, the channel and the path.
+  Channels are `albedo`, `normal`, `normal_dx`, `roughness`, `metallic`, `ao`.
+- **The arms have nothing to recover.** All three arm meshes reference
+  `fpArms_*` textures from a `FPS Generic Arms/` folder that is in neither pack —
+  there is not one such file and not one `.tga` in the whole quarantine — and the
+  RgsDev rig ships no maps at all. Those get
+  **`--material-surface NAME=ENTRY[,METRES_PER_TILE]`**, which dresses a material
+  in one of `dieselpunk_palette.json`'s own generated surfaces over world-scale
+  box-projected UVs (`machine_parts.box_project_uvs`, 7a's answer for the Build
+  Gun). It replaces the existing unwrap — the knife's has 8280x between its
+  tightest and loosest triangle, having never been meant to carry a map — and
+  **moves no vertex**.
+
+Four things are not obvious and were each caught by measurement rather than by
+looking at a render. They are argued in full in CLAUDE.md, "The surfaces are the
+packs' own where the packs have them"; in short:
+
+| Trap | What it does | The rule |
+|---|---|---|
+| `image.pixels` is **not** linear | It hands back the file's own sRGB bytes; the shader transforms at sample time. Multiplying there and letting the decode square it embedded a map at 57 sRGB where the palette asks for 86 | Linearise before multiplying a **colour** map; never touch a `Non-Color` mask |
+| `texture_tint` is a Machine's number | At it, the gloves measured 129 against a ground of 81 — #42's Wall a fourth time | Scale the map so its **mean linear value is `base_color`**: the texture carries the variation, `base_color` the level |
+| A relief *multiplier* is meaningless | The same number gives `riveted_steel_plate` five times the slope of `olive_drab_paint`; the first value tried gave **0.66°** on the arms, #42's invisible tilt exactly | The knob is the **mean slope in degrees**, solved by bisection. Shipped at 9°, against the pack's own maps at 11.8–12.5° |
+| Order matters | Levelling scales the gradients down with the map — 40% of the slope | Derive the normal from the map **as shipped**, before levelling |
+
+glTF has no metallic texture and no roughness texture, only
+`metallicRoughnessTexture` (green roughness, blue metallic), so the two shipped
+files are combined in pixels by `viewmodel_surface.combine_metallic_roughness`
+rather than through a node graph the exporter has to pattern-match. Occlusion is
+folded into the albedo, which is `prop_grade.py`'s precedent and avoids depending
+on the glTF addon's own node group. And the tint is baked into the texels because
+**Blender's exporter writes `baseColorFactor` [1,1,1,1] for a linked Base Color
+whatever node stands in front of it** — tried, measured, and the reason
+`level_albedo` exists.
+
+`--surface-max-texture` is 512 against `--max-texture`'s 1024, and that is a
+density measurement: a palette map *tiles*, so at the 0.12 m a glove is given a
+1024 map is 8,500 texels to the metre against roughly 1,500 the screen resolves,
+where a recovered map is one atlas over a 0.9 m rifle and 1024 is already under
+what the screen resolves. It is most of the file size — the Pneumatic Wrench went
+from 11.7 MB to 4.2 MB.
+
+`tools/assets/viewmodel_surface.py` holds the arithmetic and the palette lookup,
+split out for `prop_grade.py`'s reason: `test_viewmodel_surface.py` tests all of
+it on invented pixels with no licensed byte anywhere near it. It uses **no
+numpy** on purpose — the asset suite has never needed a third-party package and
+CI installs none, so a module that imported one would be the first asset test
+that could fail to *import* on a runner.
+
+**No render of any of this may be committed.** Every surface #65 changed belongs
+to a purchased pack, so a picture of it is as non-redistributable as the FBX —
+the rule `compose_swing_shot.gd` and `compose_tool_shot.gd`'s `compare` preset
+already carry. 7a's Build Gun pair is committable because that model is this
+project's own work.
 
 ## 7a. The Build Gun, which is the one held object this project authored
 

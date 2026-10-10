@@ -266,6 +266,17 @@ def fixture_viewmodel(out_dir):
     bpy.context.collection.objects.link(eye)
     eye.location = (0.0, 0.0, 1.7)
 
+    # A PBR set beside the model, under names the FBX does not reference — which
+    # is the shape the purchased packs are actually in. They ship the maps and
+    # the FBX points at the authoring machine's basenames, so the recipe binds a
+    # file to a channel by path rather than matching a name (#65).
+    textures = os.path.join(out_dir, "viewmodel_textures")
+    write_png(os.path.join(textures, "surface_albedo.png"), rgb=(180, 120, 60))
+    write_png(os.path.join(textures, "surface_roughness.png"), rgb=(90, 90, 90))
+    write_png(os.path.join(textures, "surface_metallic.png"), rgb=(230, 230, 230))
+    write_png(os.path.join(textures, "surface_normal.png"), rgb=(128, 128, 255))
+    write_png(os.path.join(textures, "surface_occlusion.png"), rgb=(160, 160, 160))
+
     # Actions live on the weapon part, not on the armature, and Blender's FBX
     # exporter broadcasts every action to every object — which is exactly the
     # shape the purchased packs arrive in, one take spread across the hands and

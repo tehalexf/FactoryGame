@@ -193,8 +193,20 @@ def groups(repo_root: Path) -> dict[str, Group]:
             name="weapons",
             converter=bundle["weapons"].converter,
             recipes=[
+                # The converter, and **every module it imports** — a recipe's
+                # imports are part of the recipe, and leaving one out is the same
+                # silence as leaving the recipe out: the output changes and
+                # nothing dates it. Two of these were missing before #65 and one
+                # of them is `fbx_to_gltf.py`, which every correction in the
+                # conversion comes from. `test_a_recipe_declares_the_modules_it
+                # _imports` derives this closure by parsing rather than trusting
+                # the list, so the next import cannot reopen the hole.
                 "tools/assets/convert_weapons.sh",
                 "tools/assets/fbx_to_viewmodel.py",
+                "tools/assets/fbx_to_gltf.py",
+                "tools/assets/machine_parts.py",
+                "tools/assets/viewmodel_surface.py",
+                "tools/assets/machine_materials.py",
                 "tools/assets/dieselpunk_palette.json",
             ],
             outputs=bundle["weapons"].files,
