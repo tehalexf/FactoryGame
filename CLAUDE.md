@@ -521,9 +521,10 @@ wearing, because the pack embeds one shared swatch sheet and a limb samples one 
 Eight to one between the skull and the boot, and one tint scales both by the same number.
 So whatever the tint is, a Crawler is a bright skull with a dark smudge under it; turning it
 down only moves the whole thing toward black, which is exactly what shipped. **Measured off
-the `swarm bare` render that opened the ticket, a Crawler's body rendered at a linear
-luminance of 0.007 against a ground at 0.046** — a seventh of the thing it is standing on,
-which is not a dark Enemy, it is a hole in the floor. And the hue was wrong in a direction no
+the `swarm bare` render that opened the ticket — over the Enemy pixels themselves rather
+than a window, because a box drawn round a Crawler is mostly ground — the median came to a
+linear luminance of 0.009 against a ground at 0.046**, a fifth of the thing it is standing
+on, which is not a dark Enemy, it is a hole in the floor. And the hue was wrong in a direction no
 multiply reaches: bone is a cold blue at about 200 degrees and **there is no blue anywhere in
 this palette**.
 
@@ -559,7 +560,7 @@ the Wave did not have, because before this everything was uniformly dark and **s
 carrying the entire distinction** (#49). It is still a multiply and it still cannot change a
 ratio, which is precisely why it is no longer asked to.
 
-#### Four things about the shader, three of them carried over from the ground
+#### Five things about the shader, three of them carried over from the ground
 
 - **It is sampled in the rest pose, not in world space.** The yard's noise is a function of
   where you are standing because the yard does not move; an Enemy does, and a world-space read

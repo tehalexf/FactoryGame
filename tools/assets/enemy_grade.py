@@ -49,7 +49,7 @@ red-browns stay oxide red because the palette has one, and the pack's turquoise
 and purple have no counterpart and become metal.
 
 The shoulder is what closes the ratio: it compresses the top and lifts nothing,
-so 8:1 becomes about 3.5:1 — enough that a skull still reads as the brightest
+so 8.2:1 becomes 3.6:1 — enough that a skull still reads as the brightest
 part of a Crawler and not enough that it reads as a separate object.
 
 **The ceilings are higher than `prop_grade`'s and that is deliberate.** A prop
@@ -179,9 +179,14 @@ def grade_colour(rgb: tuple[int, int, int], palette: dict[str, dict]) -> tuple[i
     threading a classifier through that function would make the props' rule
     read as a special case of something more general than it is.
     """
+    return _graded(rgb, _targets(palette))
+
+
+def _graded(rgb: tuple[int, int, int], targets: dict[str, dict]) -> tuple[int, int, int]:
+    """`grade_colour` with the families already resolved, for the atlas's hot loop."""
     red, green, blue = (channel / 255.0 for channel in rgb)
     hue, saturation, _ = colorsys.rgb_to_hsv(red, green, blue)
-    return _apply(rgb, _targets(palette)[_family_of(hue * 360.0, saturation)])
+    return _apply(rgb, targets[_family_of(hue * 360.0, saturation)])
 
 
 def _apply(rgb: tuple[int, int, int], spec: dict) -> tuple[int, int, int]:
@@ -217,7 +222,11 @@ def _apply(rgb: tuple[int, int, int], spec: dict) -> tuple[int, int, int]:
 def grade_atlas(data: bytes, palette: dict[str, dict]) -> bytes:
     """The character atlas, remapped onto the palette. PNG in, PNG out."""
     width, height, channels, pixels = prop_grade.read_png(data)
-    graded = prop_grade.grade_image(pixels, channels, lambda rgb: grade_colour(rgb, palette))
+    # Resolved once rather than per texel: `grade_image` already pays the artistic rule once
+    # per *distinct* colour, about twenty thousand times for this atlas, and rebuilding three
+    # dictionaries inside that is the whole of the run time.
+    targets = _targets(palette)
+    graded = prop_grade.grade_image(pixels, channels, lambda rgb: _graded(rgb, targets))
     return prop_grade.write_png(width, height, channels, graded)
 
 
