@@ -335,6 +335,75 @@ func test_a_chain_tag_clears_the_body_a_player_can_see_not_the_housing_underneat
 	view.free()
 
 
+# ── The roof cache, which is shared machinery ────────────────────────────────
+#
+# `_machine_roof` is read by five marks — the Ammunition gauge, the starved tag, its tether,
+# the three split tags and this ticket's own — and #68 made it a cache because it is now asked
+# per Machine per frame. A cache over shared machinery earns these two: the failure it could
+# produce is a mark that is right for the Machine that *used to be* on that tile, which is the
+# class of bug #41 and #50 each paid for.
+
+func test_the_roof_a_mark_hangs_off_follows_the_machine_and_not_the_index() -> void:
+	# The key is the Machine **id** rather than the index, because an index shifts the moment
+	# anything is destroyed — `_remove_machine` closes the gap. A Miner's derrick reaches about
+	# 8.2 m and a Turret draws a placeholder box at its declared 2.0, so if the cache were
+	# keyed on anything index-shaped the Turret would inherit the derrick.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("mg_turret_mk1"), Vector3i(8, 0, 8)
+		),
+	])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var derrick: float = view.machine_drawn_roof_metres(sim, 0)
+	var turret: float = view.machine_drawn_roof_metres(sim, 1)
+	if not assert_true(derrick > turret + 1.0, "the premise: the two differ, %.2f against %.2f"
+			% [derrick, turret]):
+		view.free()
+		return
+
+	sim.step([InputAction.demolish(0, Vector3i(0, 0, 0))])
+	view.sync(sim)
+	assert_eq(sim.query_machine_id(0), "mg_turret_mk1", "the Turret has slid down to index 0")
+	assert_true(
+		is_equal_approx(view.machine_drawn_roof_metres(sim, 0), turret),
+		"and it wears its own roof, not the dead Miner's: %.2f"
+			% view.machine_drawn_roof_metres(sim, 0)
+	)
+	view.free()
+
+
+func test_the_roof_cache_is_thrown_away_when_the_definitions_move() -> void:
+	# `height_metres` is hot-reloadable, so a cached roof is exactly the kind of thing that
+	# would go on answering with the number the Run stopped playing by. One view, two Runs whose
+	# content differs in that column alone — if the cache did not notice, the second would
+	# report the first's housing. A Turret because it draws a placeholder box, so its roof *is*
+	# its declaration and nothing else can be the thing that moved.
+	var view: WorldView = WorldView.new()
+	var heights: Array[float] = []
+	for height: String in ["2", "5.5"]:
+		var fixture: ContentFixture = ContentFixture.for_case(self)
+		fixture.machines = ContentFixture.shipped(Definitions.MACHINES_FILE).replace(
+			"mg_turret_mk1,MG Turret Mk1,turret,2,2,2,",
+			"mg_turret_mk1,MG Turret Mk1,turret,2,2,%s," % height
+		)
+		var sim: Simulation = Simulation.new(1, 1, fixture.definitions(), MapLayout.empty())
+		sim.step([
+			InputAction.build_machine(
+				0, sim.query_definitions().machine_index("mg_turret_mk1"), Vector3i(8, 0, 8)
+			)
+		])
+		view.sync(sim)
+		heights.append(view.machine_drawn_roof_metres(sim, 0))
+	assert_true(
+		is_equal_approx(heights[0], 2.0) and is_equal_approx(heights[1], 5.5),
+		"the roof follows the declaration across a content change: %s" % str(heights)
+	)
+	view.free()
+
+
 func test_the_brief_hud_says_the_line_is_running_only_while_the_signal_is_up() -> void:
 	var sim: Simulation = _sim_on_one_node()
 	_mining_line(sim)

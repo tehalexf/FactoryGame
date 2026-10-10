@@ -1441,6 +1441,153 @@ arrays, never as an object per Item.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
 
+### What is on the Belt, and that it is running
+
+#73, and the complaint is this file's own standard turned on the one system it had never been
+applied to. A Machine's **silhouette is a gameplay requirement, not polish** — the core skill in
+a factory game is reading your own production line at a glance, and `machine_silhouette.py`
+fails the asset suite if any two Machines converge. The **Items are the content of that line**,
+and `_sync_items` drew every one of them as the same `BoxMesh` painted
+`Color(0.62, 0.36, 0.20)` through one `material_override`: iron ore, coal, plate and Ammunition
+were one picture, so a player looking at two Belts could not tell which carried the Boiler's
+fuel and which the Press's plate. And the deck never moved, so the only motion on a working
+line was its cargo sliding along a surface that was scenery.
+
+**`game/item_appearance.gd` decides what an Item looks like, and it is not an Item table.** That
+is the whole design problem: the set of Items is exactly what `content/recipes.csv` mentions,
+interned in sorted order, and nothing in `sim/` names one — so a list of ids with colours
+against them would be the second content table the project refuses. What is derived instead is
+an Item's **standing**: what the Factory *does* with it.
+
+- **fired** — a weapon frame names it in `ammunition_item`. Brass-cased rounds.
+- **burned** — some `role=generator` Machine's Recipe eats it. A generator is a crafter that
+  makes nothing, so "a Boiler eats it" is the whole definition of fuel and it needs no column.
+- **dug** — every Recipe that yields it yields it out of nothing, because a Miner's input is the
+  ground under it. That *absence* is the definition; nothing reads the word "ore".
+- **made** — anything else.
+
+Four facts about the Recipes, the Machine roles and the Gear table, and
+`test_asking_what_an_item_looks_like_names_no_item_id` asserts the absence of an id in that file
+the way build mode's criterion is written as the absence of code. Add an Item to the Recipes and
+it is drawn correctly with no edit here and none in `world_view.gd`. It lives in `game/` for the
+reason `BuildChain` and `Objective` do, and asking any of it leaves the state hash alone.
+
+**The shipped four land one in each form**, which is what makes a Belt readable rather than
+merely painted, and `test_the_shipped_items_land_one_in_each_form` is that claim — a derivation
+that collapsed any pair would pass every other test in the file and fail that one. The
+precedence is load-bearing in both directions and each arm has its own test, because the shipped
+content exercises one of them *silently*: coal is both dug and burned, so one answer is right
+for two reasons, and the test that isolates it points the Boiler at iron ore instead.
+
+**A form wears one of the palette's own committed materials** — `DullBrass`, `Soot`, `OxideRed`,
+`WeldedSteel`, through the `assets/machines/materials/*.tres` the Walls and every Machine body
+already draw. Per-instance colour was the ticket's stated minimum and a material is strictly
+better: an instance colour multiplies **albedo** and says nothing else, and these surfaces are
+physically based and mostly metal — the lighting takes ambient and reflections off the sky
+precisely because a metal lit by an ambient colour renders as a dark smear whatever its albedo
+says. Brass has to be metallic and smooth and soot has to be matte and black, and only
+`metallic` and `roughness` can say so.
+
+**One MultiMesh a form, built eagerly on the first sync**, so the scene tree does not grow by a
+node for any amount of cargo — and that is the reason the look is keyed on a *form* rather than
+on an Item. The form set is **closed**, so this is `EnemyKind.KIND_NAMES`' bargain exactly:
+`test_cargo_is_never_a_node_however_much_of_it_there_is` asserts **zero** growth rather than "no
+more than one per form". A MultiMesh per Item **id** would have grown the scene tree with
+`content/recipes.csv`, which is the one thing the absence of an Item table exists to prevent.
+What it costs is four buffers and four draw calls where there was one. `_item_transforms` stays
+the flat array in the Simulation's own order, because that is what `item_instance_position` has
+always meant and what a MultiMesh buffer cannot be read back out of — the arrangement
+`_belt_transforms` already has.
+
+**The deck runs on `game/belt_deck.gdshader`, and its speed is the Belt's own.** Cleats advance
+**one Item slot every `ticks_per_item` ticks**, both read off the queries, so the surface moves
+at exactly the speed of the cargo on it for any rating — 0.5 m every 15 ticks on the shipped
+numbers, which is the Belt's 2 m/s — with no second number anywhere to disagree with
+`belt.items_per_second` and `belt.items_per_tile`. Counted in **ticks**, which is the hard rule
+the ore scanner's sweep and `WeaponViewmodel`'s clip time already obey, and
+`test_the_deck_scrolls_and_nothing_about_it_is_timed_by_a_clock` asserts it from both sides: a
+frame that stepped nothing draws the same deck, and one whole period on it is back.
+
+Three things about the shader worth knowing rather than rediscovering:
+
+- **The cleats are read in object space.** Every Belt body is modelled running along its own +Z
+  and placed by a yaw, so `VERTEX` is distance along the run whichever way the line points. A
+  world-space read would have made a north-south line and an east-west line scroll in unrelated
+  directions, and a UV read would have depended on an unwrap the mesh generator may change.
+  **Every tile is the same mesh instanced, so that coordinate restarts at every tile boundary**
+  — which means the pattern is continuous along a run only because the pitch divides the tile
+  exactly. It does by construction rather than by luck, since the pitch is `tile_size /
+  items_per_tile`; a pitch picked by eye would have put a visible seam at every tile join. That
+  is the second reason to derive it from the Belt's rating, beside matching the cargo's speed.
+- **It is a shader and not geometry**, because a Belt tile is one instance in one MultiMesh
+  shared by every Belt on the Map. Moving slats would be moving slats per tile, which is the one
+  thing this system's data layout exists to avoid.
+- **The deck surface is found by material name**, `BeltRubber`, which is what
+  `machine_recipes.py` calls the running surface — so "the deck" is a surface this can ask for
+  rather than an index to guess at, and the `BeltRubber` material's own albedo, texture, scale,
+  metallic and roughness are carried *into* the shader rather than painted over. Asserted rather
+  than assumed, because #49 is what an unchecked claim about a named surface costs: a branch
+  written against geometry nobody had looked at sat in these notes as a fact for a whole ticket.
+  `test_the_deck_that_scrolls_is_the_belts_own_rubber_and_not_its_frame` checks that the surface
+  resolves and that **exactly one** scrolls — the rubber, not the frame, the legs or the stripes.
+
+#### What the renders found, and the two plans they killed
+
+The pair is [`docs/images/belt_cargo_survey_before.png`](docs/images/belt_cargo_survey_before.png)
+against [`_after`](docs/images/belt_cargo_survey_after.png), and
+[`belt_cargo_eye_before.png`](docs/images/belt_cargo_eye_before.png) against
+[`_after`](docs/images/belt_cargo_eye_after.png), rebuilt with
+
+```bash
+tools/visual/shot.sh out.png survey
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "running bare"
+```
+
+**The first plan was to sample the Item's own committed icon, and measuring it is what killed
+it.** It is the elegant answer and the one the ticket points at — #59 committed a picture of
+every Item and `WorldView.icon_path_for_item` is the one authority on whether it resolves, so
+the cargo and the hotbar cell would have been the *same art* and could never disagree. Measured,
+the mean of the opaque pixels is **(81, 69, 70) for iron ore, (59, 59, 61) for coal, (76, 76, 78)
+for plate and (89, 90, 93) for Ammunition** — four near-identical greys, because the icons are
+monochrome industrial art. Ore against plate is eight parts in 255 summed over three channels.
+**The art cannot carry the signal**, and amplifying chroma from a near-neutral sample amplifies
+noise rather than hue. That is the third time this project has been wrong about a colour it had
+not measured, and the first time the measurement arrived before the render rather than after.
+
+**The second was the geometry, and the render caught it.** The first pass spanned about 0.7 of
+`ITEM_SIZE_METRES` against the solid box it replaced, which is half the screen area: from Survey
+View the colour was right and the cargo had got *quieter*, which is the opposite of the ticket.
+Worse, the forms straddled their own origin, so a stacked slab floated 9 cm over the surface a
+player walks on — exactly the "an Item riding above the deck reads as a bug" #30 warns about.
+Every form now **fills its envelope and stands on its own zero**, so it is *placed and never
+measured*, the rule every Machine body already obeys, and the test asserts the drawn origin is
+the deck to the centimetre rather than inside a band.
+
+Two things the pictures settle, and one they do not:
+
+- **From Survey View both halves land.** The deck reads as a cleated conveyor rather than a
+  plank, and the ore is unmistakable rust-red rubble where it used to be an orange box in very
+  nearly the port arrows' own colour — which is the same ambiguity #56 recorded for its red
+  posts, freight and marks sharing a palette.
+- **The cleats read brighter than their albedo, and that is the lighting working.** `WeldedSteel`
+  is 0.14 against `BeltRubber`'s 0.3, so on paper the cleats are the *darker* material; they
+  render as the lighter bands because they are `metallic = 1` at roughness 0.38 under a sky this
+  project deliberately takes its ambient and reflections from. A cleat picked on albedo alone
+  would have been picked on the wrong number.
+- **At eye level the deck is not the read, and the cargo is.** Standing beside a line at the
+  distance `running` frames, a Belt is seen edge-on: what fills the frame is its side trestle and
+  the wall of port arrows above it, and the deck is a few pixels of grazing surface. The colour
+  change carries that view on its own and the scroll does not reach it. That is honest rather
+  than a defect to fix — a player walking their own line looks down at it — but it does mean
+  **the scrolling deck is a Survey View and close-quarters read**, and nothing has watched a
+  person decide whether it reads as motion rather than as a texture.
+
+**What no still can settle** is the one thing the second half of this ticket is for: whether a
+deck that scrolls reads as a machine doing work. A strip, one frame per tick, would show the
+cleats advancing; it would not show whether the speed feels like the Belt's. The levers are
+`cleat_width` and the cleat material, and both are in the shader rather than in tuning, because
+the Simulation does not read either.
+
 ### Why a Belt will not dock, and the two answers
 
 #56, and it is the half #47 shipped without. #19 declared every port, #36 drew an arrow on
@@ -3322,9 +3469,11 @@ nothing marked it, and #41's gauge was unreadable because a mark with no owner s
 "No red posts" is not a signal; it is the lack of one.
 
 It is also the gap a live playtest walked into. The player built the opening line, the Smelter
-ran, and their words were *"the smelter works but idk what next"*. #71 is fixing the instruction
-that misled them; this is the half that would have told them, without words, that the thing they
-had just built was alive.
+ran, and their words were *"the smelter works but idk what next"*. **#71 fixed the instruction
+that misled them** — see "The last step of the opening loop", below — and this is the half that
+would have told them, without words, that the thing they had just built was alive. The two are
+deliberately different registers: that one is a sentence telling a player what to do next, and
+this one is the world acknowledging that they did it.
 
 **It fires on a change and then stops, which is the whole of why it is not another hedge.** #66
 landed an hour before this for exactly that failure on the port arrows — a mark that is always
@@ -3530,6 +3679,157 @@ a dozen lines being extended one at a time reads as encouragement or as flicker.
 is the lever and it is a constant in `game/` rather than a tuning key, for the reason
 `BuildGun.REACH_METRES` is: the Simulation does not read it, and a tuning key the Simulation does
 not read is a key `Definitions` warns about.
+### The last step of the opening loop told a player to do a thing the game cannot do
+
+**#71, and it is the worst class of defect this project has shipped: not a missing feature, but
+an instruction.** From a playtest of the Windows build, in the player's own words: *"its not
+clear how to carry ingots to the nest... the smelter works but idk what next"*. They had built
+the opening line, the Smelter was producing, and they were stuck at the step the game had just
+told them to take. The line said, verbatim:
+
+```
+Carry ingots to the Nest and press F — delivering is how a Run gets better
+```
+
+**There is no way to carry ingots.** Grep `sim/simulation.gd` for hand transfers and there are
+exactly two: `_apply_deliver_to_nest` spends out of a player's own pockets, and
+`_apply_withdraw_from_nest` fills them from the Nest's store. Nothing anywhere moves goods out
+of a Machine's output buffer into a player's hands — the only way a plate leaves a Smelter is a
+Belt. So the line named an **act for which no Input Action exists**, in step four of four of the
+only sequence this game ever teaches, and a player who cannot get past it has no route into
+Delivery, Depth, Gear or Stratagems.
+
+**And it was wrong about the goods as well as the verb, which is the half the report could not
+see and the half worth remembering.** The ticket reasoned that the trap was self-confirming —
+`player.starting_stock` is `iron_plate:110`, a Smelter makes `iron_plate`, so pressing `F` at the
+Nest *would* deliver out of the opening stock and confirm the wrong mental model. Checked against
+the content, it is worse than that: **`t01_munitions` wants `coal:20`**, and
+`_apply_deliver_to_nest` iterates the open tier's goods and nothing else. So `F` with a pocketful
+of plate is refused `NOTHING_TO_DELIVER` and does **nothing at all**. The line named an
+impossible act in aid of an Item the counter was not waiting for, and the feedback for obeying it
+exactly was silence.
+
+**Why every claim in it was individually assertable and none of it was asserted.** `Objective`
+is a pure function of the Run's state with nothing remembered, which is what makes it cheap to
+test — and the suite tested the steps *one at a time*, so each one was checked for the words it
+contained and never for whether obeying it got anywhere. `tests/cases/test_opening_loop.gd` is
+the durable half of this ticket and it is the other shape: it reads `Objective.pointed_at` for
+which cell the line is about and `Objective.line` for which act, does that, and asks again, until
+`query_completed_deliveries()` is non-empty. **Nothing in it knows the sequence of steps** — so a
+step naming an impossible act leaves the loop with nothing to do, and a step naming the wrong
+Machine builds the wrong Machine. The one seam it does not drive is the aim, deliberately:
+`test_recorded_session.gd` is the fixture that proves a mouse reaches a tile, and this one
+substitutes *the very query the step's own wording is derived from* —
+`query_nearest_workable_node` is where "on the iron ore 12 m behind you" comes from — so the tile
+a step is obeyed at is the tile the step named.
+
+**One step became two, because the fixes are two.**
+
+- **`Step.PRODUCE`** — the open tier wants an Item nothing in the Factory makes.
+  *"Place a Coal Miner Mk1 — key 5; the Nest wants 20 coal to pay for your first Delivery"*.
+- **`Step.DELIVER`** — something makes it and nothing is carrying it over.
+  *"Drag a Belt from an orange arrow into the Nest — it wants 20 coal"*, behind the Belt-tool
+  clause when the tool is not already out.
+
+A single step could only ever have named one of those, which is how it came to name an act that
+is neither.
+
+Four things worth knowing rather than rediscovering:
+
+- **The bill is read off `query_delivery_goods` and never written down.** A sentence naming a
+  good is a sentence that has to come out of the tier, or it is a second copy of
+  `content/deliveries.csv` in GDScript — which is exactly what "ingots" was. The count is what
+  is **outstanding** rather than what the tier asked for, so a bill half paid by a Belt already
+  running says so. The *first* outstanding good rather than all of them, because one line is one
+  act: a tier wanting plate and Ammunition is two Machines and two Belts, and the second arrives
+  by itself when the first is satisfied, which is how every other step here moves on.
+- **`BuildChain.first_unlocked_producer_of` is `first_unlocked_of_role`'s sibling, and a role
+  could not have answered this.** Coal and ore are both mined, plate and Ammunition are both
+  crafted, and what separates the Machine a player needs from the one beside it is the Item it
+  puts out. So this is the **one step that prints a display name** — read off `Definitions` for
+  the row the chain chose, exactly as a picker cell reads it, with no id spelled anywhere in
+  `objective.gd`. The lock is asked of the Simulation for `first_unlocked_of_role`'s reason: a
+  player must not be pointed at a cell a Delivery still has shut.
+- **The Nest has no arrow to aim at, so the sentence does not promise one.** The Nest is
+  deliberately not port-enforced (#47) — it is not a Machine, so a Belt docks anywhere on its 4x4
+  wall — and `Step.BELT`'s wording is *"drag from the orange arrow to the blue one"*. Reusing it
+  would have sent a player hunting a mark the renderer never draws, so the new sentence names the
+  orange arrow at the end that has one and says "into the Nest" at the end that does not. What
+  **is** reused is the machinery: `_with_the_belt_tool` took the drag sentence as an argument
+  (it was #67's, with the sentence baked in), because the two drags are different acts and the
+  key clause in front of them is the same fact about the same hand — and two copies of that
+  clause is how a tool comes to be named while it is already out.
+- **`query_belt_ends_at_the_nest` is one line over the clause `query_belt_end_is_connected`
+  already answers through**, the arrangement `query_node_yields_for` and
+  `query_node_is_within_depth_of` have: the rule stays the Simulation's and `game/` does not
+  learn it. Deliberately narrower than `query_belt_end_is_connected` — a Belt into a *Machine* is
+  connected and is not a Delivery. It exists because the step has to **stop asking** once a Belt
+  is in: the tier takes thirty seconds to fill, and a line still saying "run a Belt into the
+  Nest" for all of it is #67's defect in the step rather than in the wording.
+
+**What this ticket deliberately did not build, and the argument is filed rather than lost.** The
+mechanic the player reached for is real — they did not say "I did not know a Belt could do that",
+they said "I do not know how to carry" — and most of its shape already exists:
+`aimed_tile_at_height` is the wrench's aim at a Machine's *body*, `_within_wrench_reach` is the
+reach, `query_withdraw_refusal` is the shape of the refusal, and `_refund_machine` already moves
+an output buffer into a player's pockets on a demolish. It was still not built here, because a
+false instruction must not stay in the game while somebody debates whether to invent a verb — and
+because the mechanic **competes with the Belt as the answer to the same problem**. `t01_munitions`
+is twenty coal, which is three trips on foot, and `content/deliveries.csv`'s own comment says the
+first thing a player should do is *"run a Belt out of the coal Miner and into the Nest and watch
+the Factory pay for its own progression"*. A faucet that bypasses Belts for small amounts teaches
+a new player they do not need one yet, at the moment it is cheapest to learn. #72 is the decision,
+with both cases written out and a third option on the table — that the lever may be the **Nest's
+own legibility** rather than a new verb, since a player who has learnt to aim a Belt at an arrow
+has nothing to aim at when the target is the Nest.
+
+**And it turned up a live defect in the step above it, which is also filed rather than patched.**
+`Objective._anything_is_starved` asks `query_machine_is_starved`, which is "does not hold a whole
+Recipe's worth **right now**" — the right answer to the Simulation's question, because that is
+what the grid bills against and what the amber tag means. It is the wrong answer to this one: the
+shipped Smelter smelts two ore every 3.2 s and the shipped Miner makes one every 1.5 s, so a
+correctly belted opening line is saturated and still briefly short between crafts. `Step.UNSTARVE`
+is walked ahead of the step below it, so **a player who has built the line correctly is told
+"Something is starved — a Belt starts past an output arrow and ends at an input" on some ticks and
+what to do next on the others.** That is advice naming a fix already applied — the defect
+`_with_the_build_gun` and `_with_the_belt_tool` exist to prevent for keys, in the step rather than
+in the wording. It is pre-existing, it is a behaviour change to a shipped step with assertions on
+it, and it is not what #71 was opened about; #74 is the ticket, and the recommendation in it is a
+`query_machine_is_fed`-shaped projection, which is `query_machine_branch_count`'s shape pointed at
+inputs instead of outputs. What it cost here is a named fixture —
+`test_building_view._settle_until_nothing_is_starved` — which steps a Factory until the step above
+is satisfied and **fails if that never comes**, so a fixture about the last step stands on a tick
+where the one before it is quiet and says so rather than hoping.
+
+**The pair is committed and it is the argument.**
+[`docs/images/opening_delivery_before.png`](docs/images/opening_delivery_before.png) against
+[`_after`](docs/images/opening_delivery_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "delivering bare"
+```
+
+`delivering` is #71's preset and it exists for the reason `opening` is #55's: **none of the
+others can see the question.** `running` builds exactly the Factory the report describes and then
+holsters the Build Gun, because that preset is a picture of a Factory working — and worse, it
+cannot be trusted to show this step at all, because of the starved flicker above: the step before
+it wins on some ticks and not others, and a render of a coin flip is not a render of a step. So
+`delivering` frames `running`'s own Factory, keeps the gun out so the lit cell and the line
+naming the same thing is half the subject, and then **steps until the line is the step**, bounded,
+printing the line it is looking at if the budget runs out. That is the same closed loop over the
+real state that `_put_the_crosshair_on` already is, and it is what stops this picture being one a
+tool can no longer reproduce — which is the failure #53 caught in this very script.
+
+**And the first render of it found something about the shots that already exist.** `delivering`
+started as `running` plus a stop condition, and it ran its whole 600-tick budget and gave up —
+because `running` stands a Steam Boiler up to keep the grid off its baseline and **nothing ever
+feeds it coal**, so that Boiler is *permanently* starved and `Step.UNSTARVE` wins on every tick.
+The objective line in every committed building shot has therefore read "Something is starved"
+since the Boiler was added, about a Factory whose only fault is the one the shot put there. The
+way round it was not to fake state: a Miner and a Smelter alone draw exactly
+`power.baseline_supply_kw`, so `delivering` builds no Boiler, the line runs unthrottled, the
+Smelter's input buffer fills, and nothing is starved at all — which is the Factory the playtest
+report actually describes.
 
 ### The hotbar states the chain
 
