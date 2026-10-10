@@ -2375,3 +2375,170 @@ func test_the_scanner_does_not_grow_the_scene_tree() -> void:
 	assert_true(view.ore_scanner_ping_count() > 0, "still scanning")
 	assert_eq(view.get_child_count(), children, "every ping is one instance of one MultiMesh")
 	view.free()
+
+
+# ── What is riding the Belt, and reading it at a glance (#73) ─────────────────
+# Every Item used to be the same brown box, so a coal line and an ore line were the same
+# picture — which contradicts the standard this project holds Machine silhouettes to, and the
+# Items *are* the content of the line. Cargo is drawn as one MultiMesh per `ItemAppearance`
+# form, each wearing one of the palette's own materials, and the assertions below are the two
+# halves of that: a player can tell two lines apart, and it still costs no node.
+
+
+func _two_lines(sim: Simulation) -> void:
+	# An iron Miner and a Coal Miner, each belting into clear ground, so the two runs carry
+	# different Items and nothing consumes either. Ore lands on tick 90 and the Belt collects
+	# it on 91, so the caller runs past that.
+	var definitions: Definitions = sim.query_definitions()
+	var iron: Vector3i = sim.query_node_tile(0)
+	var coal: Vector3i = Vector3i.ZERO
+	for index: int in range(sim.query_node_count()):
+		if sim.query_node_resource(index) == "coal":
+			coal = sim.query_node_tile(index)
+			break
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), iron),
+		InputAction.build_machine(0, definitions.machine_index("coal_miner_mk1"), coal),
+	])
+	sim.step([
+		InputAction.build_belt(
+			0, Vector3i(iron.x + 2, iron.y, iron.z), Vector3i(iron.x + 7, iron.y, iron.z)
+		),
+		InputAction.build_belt(
+			0, Vector3i(coal.x + 2, coal.y, coal.z), Vector3i(coal.x + 7, coal.y, coal.z)
+		),
+	])
+
+
+func test_two_belts_carrying_different_items_are_drawn_differently() -> void:
+	# #73's whole acceptance criterion, as far as a headless test can carry it: the ore on one
+	# Belt and the coal on the other are drawn through different buffers wearing different
+	# palette materials. Whether that *reads* at thirty metres is a question for a render, and
+	# the pair in docs/images/ is where it is answered.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	_two_lines(sim)
+	_run(sim, 200)
+	view.sync(sim)
+
+	var forms: Dictionary = {}
+	for index: int in range(sim.query_belt_count()):
+		assert_true(sim.query_belt_item_count(index) > 0, "the premise: both Belts are loaded")
+		forms[view.cargo_form_of_belt_item(sim, index, 0)] = sim.query_belt_item_id(index, 0)
+	assert_eq(forms.size(), 2, "ore and coal must not share a form, got %s" % forms)
+
+	var materials: Dictionary = {}
+	for form: int in forms:
+		var drawn: int = view.cargo_instance_count(form)
+		assert_true(drawn > 0, "form %d carries Items and drew none" % form)
+		materials[view.cargo_material_name(form)] = form
+	assert_eq(materials.size(), 2, "two forms wearing one surface is one picture, %s" % materials)
+	view.free()
+
+
+func test_cargo_is_never_a_node_however_much_of_it_there_is() -> void:
+	# The rule Belt tiles, Walls and Enemies already obey, and the reason the form set is closed:
+	# the MultiMeshes are built on the first sync, before anything is on a Belt, so this asserts
+	# *zero* growth rather than "no more than one per form".
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	_two_lines(sim)
+	view.sync(sim)
+	var empty: int = view.get_child_count()
+	assert_eq(view.item_instance_count(), 0, "the premise: nothing has been mined yet")
+
+	_run(sim, 1200)
+	view.sync(sim)
+	assert_true(view.item_instance_count() >= 8, "the premise: a good deal of cargo is riding")
+	assert_eq(view.get_child_count(), empty, "cargo costs no node, however much of it rides")
+	view.free()
+
+
+func test_cargo_rides_on_the_deck_the_simulation_says_a_player_stands_on() -> void:
+	# #30 made a Belt solid at `belt.deck_height_metres`, so an Item floating above or sunk into
+	# the surface somebody walks along reads as a bug. Asserted against the query rather than
+	# against a constant, because the deck is hot-reloadable tuning.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	_two_lines(sim)
+	_run(sim, 200)
+	view.sync(sim)
+
+	# Every cargo mesh stands on its own zero, so the drawn origin *is* the deck — a body is
+	# placed and never measured, which is the rule the Machine bodies obey. Asserted to the
+	# centimetre rather than as a band, because "on the surface" is the whole claim.
+	var deck: float = Fixed.to_float(sim.query_belt_deck_height_metres())
+	for instance: int in range(view.item_instance_count()):
+		var at: Vector3 = view.item_instance_position(instance)
+		assert_true(
+			absf(at.y - deck) < 0.01,
+			"cargo %d sits at %f rather than on the %f m deck" % [instance, at.y, deck]
+		)
+	view.free()
+
+
+# ── A Belt that is running looks like it is running (#73) ─────────────────────
+# The deck was static, so the only motion on a line was its cargo sliding along a surface
+# that never moved — which reads as scenery with boxes on it rather than as a machine doing
+# work. The deck scrolls now, and the rule it obeys is the one the ore scanner's sweep and
+# `WeaponViewmodel`'s clip time already obey: it is a function of the **tick**, so two Runs
+# down the same script look the same. These are that claim from both sides.
+
+
+func test_the_deck_scrolls_and_nothing_about_it_is_timed_by_a_clock() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([InputAction.build_belt(0, Vector3i(0, 0, 0), Vector3i(5, 0, 0))])
+	view.sync(sim)
+	var opening: float = view.belt_deck_scroll()
+
+	# Syncing again on a tick that advanced nothing must draw the same deck. A scroll driven by
+	# `Time` or by a delta would have moved here, and nothing in the suite would have noticed.
+	view.sync(sim)
+	assert_eq(
+		view.belt_deck_scroll(), opening,
+		"a frame that stepped nothing draws the same deck: the renderer has no clock"
+	)
+
+	_run(sim, 1)
+	view.sync(sim)
+	assert_true(
+		view.belt_deck_scroll() != opening, "and a tick that did pass moves the surface along"
+	)
+
+	# Back where it started one whole period on, which is what makes it a loop rather than a
+	# number that grows for forty hours. The period is **asked of the Belt's own rating** rather
+	# than named here, because the deck advances one Item slot every `ticks_per_item` ticks —
+	# which is what makes it run at exactly the speed of its cargo whatever the rating is tuned
+	# to, with no second number to keep in step.
+	_run(sim, sim.query_belt_ticks_per_item() - 1)
+	view.sync(sim)
+	assert_eq(
+		view.belt_deck_scroll(), opening, "one whole period later the deck is back"
+	)
+	view.free()
+
+
+func test_the_deck_that_scrolls_is_the_belts_own_rubber_and_not_its_frame() -> void:
+	# The scroll is put on the surface the generated body names `BeltRubber` — the deck a player
+	# stands on — and not on the trestle, the legs or the hazard stripes, which do not move on a
+	# real conveyor. Found by name, and asserted because #49 is the ticket that cost: a branch
+	# written against a surface nobody had checked for sat in the docs as a false claim.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([InputAction.build_belt(0, Vector3i(0, 0, 0), Vector3i(5, 0, 0))])
+	view.sync(sim)
+
+	if not view.belt_has_a_generated_body():
+		assert_true(true, "no generated trestle in this checkout, so there is no deck to scroll")
+		view.free()
+		return
+	assert_true(
+		view.belt_deck_surface() >= 0,
+		"the premise: the generated Belt names a deck surface this can be put on"
+	)
+	assert_eq(
+		view.belt_surfaces_that_scroll(), 1,
+		"exactly one surface scrolls, and it is the rubber rather than the frame"
+	)
+	view.free()
