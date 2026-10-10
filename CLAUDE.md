@@ -1157,9 +1157,33 @@ Triangles a kind, which is "not too detailed" as a number:
 | Breaker | 724 | **824** |
 | Siege Hulk | 812 | **912** |
 
-About **+13%**, and #79's own figure is the one to read it against: that ticket bought
-**1.35 M primitives** back at 71 Enemies, of which a hundred triangles a body at a couple of
-primitives each spends on the order of **2%**. `TRIANGLE_BUDGET` is 1200 and is untouched.
+About **+13%**, and the frame figure says what that is worth. Measured with
+`tools/visual/frame_cost.sh` on the **same tip**, against a checkout of `61f041d` in a second
+worktree, because #79's own `18 / 71` column headings no longer describe what the harness
+produces — the default scenario yields **6** Enemies on this tip and `ENEMY_COUNT=71` yields
+**69**, so its primitive numbers are not comparable and a before had to be re-measured rather
+than read off:
+
+| | before, 6 | after, 6 | before, 69 | after, 69 |
+|---|---|---|---|---|
+| primitives in frame | 3,964,568 | **3,966,968** | 4,210,080 | **4,244,580** |
+| video memory | 258.9 MB | **259.0 MB** | 259.7 MB | **259.7 MB** |
+| `WorldView.sync` | 15.031 ms | 14.768 ms | 19.805 ms | 20.239 ms |
+
+**+34,500 primitives at 69 Enemies, against the 1.35 M #79 bought back — 2.6% of the saving
+spent**, and 0.8% of the frame's own total. Video memory does not move at all, because the
+glTF embeds no image and the palette's maps were resident for the Machines already. The sync
+column is **not a finding and should not be read as one**: it moves by a quarter of a
+millisecond in *both* directions on a 15-to-20 ms rebuild, which is inside the spread of the
+instrument — #79 recorded the same thing about the same column.
+
+`TRIANGLE_BUDGET` is 1200 and is untouched.
+
+**And the Simulation's tick is untouched by construction**, exactly as #79's was: this ticket
+changed no file under `sim/` at all, so a difference there would be a bug rather than a cost.
+`ENEMY_COUNT=2000 enemy_tick_cost.gd` measured **61.8 ms a step** here against #77's 29.3 ms;
+that gap is the machine rather than the change, and #77's figure on a quiet machine is the one
+to trust.
 
 (#79's note recorded the Breaker at **588** triangles and the rig at **19/15/19 bones**. Both
 figures are from its *first* pass and did not survive its own second look, which took the
