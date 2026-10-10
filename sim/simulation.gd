@@ -8355,8 +8355,8 @@ func _machine_seed_cells() -> PackedInt64Array:
 ## is what the Windows build's *"the skeletons phase into the base"* was a picture of.
 ##
 ## Painting it is the half of the fix that matters, because without it there is nothing for
-## `_move_enemy_against_the_factory` to refuse: the refusal reads this field and this field
-## said the Nest was a field. It also makes `query_tile_obstructs_enemies` tell the truth
+## `_move_enemy_against_the_factory` to refuse: the refusal reads this field, and this field
+## said the destination was open ground. It also makes `query_tile_obstructs_enemies` tell the truth
 ## about the 4x4 a player respawns on top of, and brings the Enemies' obstruction set into
 ## agreement with `_solid_height`, which has called the Nest solid for a player since #30.
 ## What it does *not* change is any route: the Nest is the destination, so no path ever needed

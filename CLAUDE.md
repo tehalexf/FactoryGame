@@ -2835,7 +2835,7 @@ to a seed is a body in contact, which bites and therefore never calls the walk a
 actually let a Wave in is one line further down. **`_mark_obstructions` painted the Machines
 and the Walls and did not paint the Nest**, so the Nest's sixteen tiles were *open ground* —
 there was nothing for a refusal to refuse, the sweep routed over the building, and separation,
-which has checked since #76, checked against a field that said the destination was a field.
+which has checked since #76, checked against a field that called the destination open ground.
 
 The note that stood above that function said the Nest could not be painted, because it is the
 destination and a sweep that treated its tiles as solid would have nowhere to start. **That is
