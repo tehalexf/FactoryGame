@@ -1283,6 +1283,120 @@ surface rather than about where the albedo came from. #79 changed one thing in t
   that has been outside" rather than "grey plastic", and it costs nothing — the field is
   already sampled for the albedo.
 
+#### A backlit Enemy is a ninth as bright as the ground, and nothing was changed
+
+**#83, and it is the second measured "leave it" in a row after #82 — but for a different and
+sharper reason: the number in the ticket is correct and does not mean what it was read to
+mean.** The complaint is real and reproduces exactly. On the `swarm bare` frame, masked to
+the Enemy pixels by a key pass, the median Enemy pixel is a linear luminance of **0.0035
+against a bare-ground box at 0.0408 — 0.09x**, which is a body a *ninth* as bright as the
+floor it is standing on and far below the 0.46x #75 left behind.
+
+**What the ticket asked, and what closed it, are two different questions, and the second one
+is the durable half.** An Enemy's brightness was measured against *the ground*, and at four
+of the five wave presets **the thing actually behind a backlit Enemy is the sky**, which this
+world renders at 0.066 to 0.109 — one and a half to two and a half times the ground. A body
+in front of a sky is read against the sky. So the measure that decides whether a player can
+see a Crawler is the **silhouette contrast**: the median just inside an outline against the
+median in a three-to-six-pixel band just outside it, which is background-agnostic where a
+bare-ground box is not, and which needs no judgement about what a frame happens to contain.
+
+| preset | Enemy median | ground box | **ratio, the ticket's measure** | what is actually behind it | **silhouette contrast** |
+|---|---|---|---|---|---|
+| `swarm` | 0.0035 | 0.0408 | **0.09x** | 0.0662 | **0.95** |
+| `pair` | 0.0236 | 0.0583 | 0.41x | 0.0788 | 0.70 |
+| `triage` | 0.0525 | 0.0521 | 1.01x | 0.1092 | 0.52 |
+| `boss` | 0.0302 | 0.0450 | 0.67x | 0.0587 | 0.49 |
+| `crush` | 0.0286 | 0.0428 | 0.67x | 0.0356 | **0.20** |
+
+**The two columns disagree about every row and they invert at the ends.** `swarm` is the
+ticket's worst frame by a factor of four and the project's **strongest** silhouette; `crush`
+is the ticket's joint-best and measures the weakest contrast in the set. A dark body in front
+of a bright sky is not an invisible body, it is a shape — which is what a backlit chitin bug
+*is* — and the one presentational rule this whole area of the file is a record of is that a
+silhouette is a gameplay requirement rather than a brightness target.
+
+**`crush`'s 0.20 is not a defect either, and the reason is a lesson about the statistic rather
+than about the frame.** Looked at, it is the most legible Enemy render in the set: cream and
+tan carapace plates, vivid oxide abdomens, blue-grey chitin and black legs against brown dirt.
+It measures 0.20 because a generated body is **bimodal** — plate at 0.08 and leg at 0.005 —
+so its median lands near the ground by arithmetic while nothing on it does. A median is the
+right statistic for #75's question, which was about a surface tinted uniformly too dark, and
+the wrong one for a body assembled out of several palette entries. #79 is what made it the
+wrong one, and nothing noticed.
+
+**Both candidates the ticket named were probed one term at a time and both are rejected, with
+the light rejected twice over.**
+
+- **`ambient_light_energy` is a dead number.** `_sync_scenery` sets
+  `ambient_light_sky_contribution = 1.0`, so the sky supplies all of the ambient and the
+  energy is read by nothing. Multiplied by 2.27 it changed **zero pixels** — not "no
+  measurable difference", an identical file. That is worth knowing on its own: it has sat in
+  that function looking like a lever since #25.
+- **The fill is the only light that reaches a backlit Enemy, and it is capped at 0.33x.**
+  Measured at 1.1, 2.5 and 5.0 the body rises as `0.0036 * energy` with an intercept of
+  **-0.0007**, zero within the measurement — nothing else lights it at all — while the ground
+  rises as `0.028 + 0.0111 * energy`, so the ratio asymptotes at **0.33x** however hard it is
+  driven.
+  The model was written down before the third render and then tested: predicted 0.208x at
+  energy 5.0, measured **0.21x**. At that energy the yard is midday overcast, so the cap is
+  not even reachable.
+- **Its aim buys 0.02x, and that null is the material rather than the geometry.** The fill is
+  *already* opposite the sun in yaw; the 46 degrees by which the two miss being opposed is
+  entirely their shared downward pitch — both come from above. Steepening it to -0.95 makes it
+  **worse** (0.05x) and flattening it to -0.10 gives 0.11x. An Enemy is `metallic = 1`, so
+  there is no diffuse term for an angle of incidence to act on and only the mirror direction
+  matters at all.
+- **Metallic is the one large lever, it costs the world nothing, and the silhouette measure
+  rejects it.** At 0.5 the `swarm` median goes 0.09x to 0.40x and at 0.0 it goes to 0.79x,
+  with the ground **pixel-identical at 0.0408** in every case — which is exactly what makes it
+  the tempting fix. Measured at the silhouette it moves four of the five presets the wrong
+  way: `pair` 0.70 to 0.13, `triage` 0.52 to 0.18, `boss` 0.49 to **0.03**. It does not
+  brighten a body *toward* its background, it carries it through and out the far side, and
+  0.03 is a Siege Hulk the same value as the sky behind it. At `pair`'s six metres it is also
+  #79's own rejected render arriving a second time — pale tan Crawler limbs and chalky cream
+  Breaker plate. **Rejected on the picture and on the number, independently.**
+
+**No emissive was built, and the argument against it is a design one rather than a
+measurement.** An additive floor is the one lever that is asymmetric by construction — it
+helps most where a body is darkest, so it would lift `swarm` without touching `triage` — and
+this project already owns that vocabulary twice, in the Siege Hulk's vent and in #70's wound
+cracks. That is the objection: a hurt Enemy is *a casting cracked open with something hot
+inside it*, and a body that glows faintly all over is the background that mark is read
+against. Spending the one emissive idiom in the game to fix a frame that measures 0.95
+contrast is a bad trade.
+
+**`test_enemy_silhouette` is untouched and could not have moved**, which is the expected
+answer rather than a lucky one: nothing about the geometry, the sizes or the materials
+changed, and that gate rasterises a posed, scaled outline into an occupancy grid.
+
+**What #83 found on the way and deliberately did not fix, because it is a brightness defect
+that points the other way.** `ENEMY_LIFT` is applied **twice** — every arm of `_enemy_tint`
+multiplies by it and `_enemy_albedo` then multiplies the linear colour by it again, the first
+of those in sRGB space, which is precisely the mistake `_enemy_albedo`'s own docstring was
+written to record. Worked through for `CastIron` at 0.520 and `WeldedSteel` at 0.600 — the
+carapace and the plate, between them most of the surface area of a body — **all three channels
+of all three kinds land over `ALBEDO_CEILING` and clamp to a flat neutral 0.800.** So #75's
+per-kind cast survives only on the `OxideRed`, `Soot` and `DullBrass` parts, and the warm
+Crawler and cold Breaker are the same colour on their main plate. The fix makes an Enemy
+*darker*, changes every committed Enemy render, and wants its own ticket and its own
+pictures. The other half of the same finding is what closed this one: **the albedo is already
+at the ceiling**, so no lift could ever have bought a backlit body back, and the ticket was
+right to forbid reaching for one — for a better reason than the one it gave.
+
+**No before-and-after pair is committed, because nothing changed.** That is #82's precedent
+rather than a gap: a measured "leave it" leaves the measurement and the reason where somebody
+about to reach for the same lever will read them, which here is next to the fill light, next
+to `_enemy_metallic` and next to `_enemy_tint`.
+
+**What no measurement here can settle** is whether a player tracking a Wave down a lane in
+motion reads nine dark shapes against an ochre sky as a swarm or as a smear. Every frame in
+this section is a still, and a silhouette is the one thing that gets *better* with movement —
+which is an argument for the result rather than a check on it, and is exactly the kind of
+claim that has been wrong before in this file. The lever if somebody watching it disagrees is
+**not** the fill, the ambient or `ENEMY_LIFT`, all three of which are now measured dead ends;
+it is the emissive rim above, with the wound-glow objection argued first.
+
 ### An Enemy that takes damage, and a death that leaves something behind
 
 **#70, and the first thing it found is that half of it was already there and did not work.** The

@@ -3316,6 +3316,23 @@ const ALBEDO_CEILING: float = 0.80
 
 
 ## What a kind's entry is cast toward — a hue, never a level. See `_enemy_albedo`.
+##
+## **It is a level as well, and on the two entries that matter the cast is clamped away
+## entirely. #83 found this and deliberately did not fix it.** Every arm below multiplies by
+## `ENEMY_LIFT`, and `_enemy_albedo` then multiplies the *linear* colour by `ENEMY_LIFT`
+## again — so the lift is applied twice, the first time in sRGB space, which is precisely the
+## mistake `_enemy_albedo`'s own docstring was written to record ("multiplying before it is
+## not multiplying"). Worked through for `CastIron` at 0.520 and `WeldedSteel` at 0.600 —
+## the carapace and the plate, which is most of the surface area of a body — all three
+## channels of all three kinds land over `ALBEDO_CEILING` and clamp to a flat neutral 0.800.
+## So a Crawler's warm cast and a Breaker's cold one survive only on their `OxideRed`, `Soot`
+## and `DullBrass` parts, and #75's readability cue is off the main plate of every kind.
+##
+## It is left standing because the fix makes an Enemy *darker*, which is the opposite of what
+## #83 was opened about, and because unclamping it changes every committed Enemy render and
+## wants the judgement and the pictures of its own ticket. The other half of the same finding
+## is the one that closed #83: the albedo is **already at the ceiling**, so no lift could ever
+## have bought a backlit body back, and the ticket was right to forbid reaching for one.
 func _enemy_tint(kind: int) -> Color:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
@@ -3349,6 +3366,19 @@ func _enemy_tint(kind: int) -> Color:
 ## actually shows is **this world's light is tuned for metal, so anything in it that is not
 ## metal reads as a smear**. The dielectric is the honest physical answer and the wrong
 ## rendering answer. The measurement is in CLAUDE.md beside the pictures that settled it.
+##
+## **#83 came at this number from the other side and rejected it a second time, on a measure
+## #79 did not have.** Metallic is by far the largest lever on how bright an Enemy renders and
+## it costs the world *nothing* — the ground is pixel-identical at 0.0408 whatever it is set
+## to — so it is the obvious fix for a body that reads too dark, and that is exactly the trap.
+## Cut to 0.5 it lifts the `swarm` median from 0.09x of the ground to 0.40x, and measured at
+## the **silhouette** — what is just inside an outline against what is just outside it, which
+## is background-agnostic where a bare-ground box is not — it moves four of the five wave
+## presets the wrong way: `pair` 0.70 to 0.13, `triage` 0.52 to 0.18, and `boss` 0.49 to
+## **0.03**, which is a Siege Hulk the same value as the sky behind it. It does not brighten a
+## body *toward* its background, it carries it through and out the far side. And at `pair`'s
+## six metres it is #79's own rejected render again — pale tan Crawler limbs and chalky cream
+## Breaker plate.
 func _enemy_metallic(_kind: int) -> float:
 	return 1.0
 
@@ -6609,6 +6639,26 @@ func _sync_scenery(sim: Simulation) -> void:
 	# turned away from it black. A Machine a player cannot read is a Machine they cannot
 	# diagnose, and silhouette is a gameplay requirement here (docs/ASSET_PIPELINE.md), so
 	# the far side of a boiler has to stay legible.
+	#
+	# **The fill is the only light that reaches a backlit Enemy, and it is capped at about a
+	# third of the ground however hard it is driven — #83 measured it rather than reasoning
+	# about it.** On the `swarm bare` frame, the Enemy median against a bare-ground box:
+	# 1.1 gives 0.09x, 2.5 gives 0.14x, 5.0 gives 0.21x. Fitted, the body rises as
+	# `0.0036 * energy` with an intercept of **-0.0007**, zero within the measurement — nothing
+	# else lights it at all — and the ground rises as `0.028 + 0.0111 * energy`, so the ratio
+	# asymptotes at **0.33x** and the frame is washed out to midday overcast long before it gets
+	# near. Predicted 0.208x at 5.0 and measured 0.21x, which makes that a model and not points.
+	#
+	# Two more terms were probed one at a time and neither is a lever.
+	# `ambient_light_energy` is **inert** — `ambient_light_sky_contribution` is 1.0 above, so
+	# the sky supplies all of it and the number is read by nothing; ×2.27 changed **zero
+	# pixels**. And the aim buys 0.02x: this is already opposite the sun in *yaw*, and the 46
+	# degrees by which the two miss being opposed is entirely their shared downward pitch, so
+	# steepening it to -0.95 makes it worse (0.05x) and flattening it to -0.10 gives 0.11x.
+	# That null is the material rather than the geometry — an Enemy is `metallic = 1`, so
+	# there is no diffuse term for an angle of incidence to act on and only the mirror
+	# direction matters. Do not reach for any of these three again without reading #83's
+	# section in CLAUDE.md first; the thing it actually found is that the question was wrong.
 	_fill = DirectionalLight3D.new()
 	_fill.rotation = Vector3(-0.41, -2.45, 0.0)
 	_fill.light_energy = 1.1
