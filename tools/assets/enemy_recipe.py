@@ -240,8 +240,11 @@ def tripod_phase(pair: int, side: int) -> float:
     the pair alone and both sides step in unison, which is a pace and reads as a
     pantomime horse.
 
-    With two pairs it degenerates to a diagonal trot, which is what a four-legged
-    body does, so the Breaker needs no case of its own.
+    Every kind walks on three pairs since #79's second look, so there is one gait
+    and no kind needs a case of its own. With two pairs it degenerates to a
+    diagonal trot, which is what a four-legged body does — correct, and the reason
+    the Breaker is no longer four-legged is that a diagonal trot under a body
+    carried high is a *quadruped*, and at thirty metres it read as a horse.
     """
     return 0.5 * float((pair + side) % 2)
 
@@ -354,13 +357,21 @@ def pose_at(insect: Insect, clip: str, phase: float) -> dict:
 # the risk the ticket named is real: three insects are far more alike than a
 # skeleton, a knight and a golem were. What separates them:
 #
-# * **leg count** — six, four, six, with the Breaker's four thick and the Hulk's
-#   six long. A four-legged body has gaps a six-legged one fills, which is most of
-#   the front-view difference.
-# * **how high the body is slung** — 0.40, 0.52, 0.66 of the Enemy's height. A
-#   Crawler scuttles under its own knees, a Hulk strides over them.
-# * **where the mass is** — the Crawler's is spread down a long thin body, the
+# * **how high the body is slung** — 0.30, 0.50, 0.58 of the Enemy's height, and
+#   this is now the strongest of the three. A Crawler scuttles with its back below
+#   its own knees, a Hulk strides over them.
+# * **how wide and how deep the body is** — 0.44 against 0.88 against 0.62. This
+#   is the one that has to be edited in *opposite directions*: widening both kinds
+#   to take the legs out of the silhouette took the binding pair to 0.385, below
+#   the floor, because a fat Crawler is a small Breaker.
+# * **where the mass is** — the Crawler's is spread down a long thin tail, the
 #   Breaker's is a shield at the front, the Hulk's is a raised tail at the back.
+#
+# **Leg count is deliberately not on that list any more.** It was six, four, six,
+# and it was carrying about 0.12 of the Crawler-against-Breaker separation — which
+# is exactly why it had to go: four legs under a body carried high is a quadruped
+# silhouette, and the gate cannot see that a horse is the wrong animal. The shipped
+# pairs are 0.538, 0.878 and 0.794 against an untouched 0.50.
 #
 # None of those is detailing and none of them is a texture, which is the lesson
 # #38's glowing eyes and #49's resizing both paid for.
@@ -382,7 +393,7 @@ def crawler() -> Insect:
     with no bodies behind it — which is a worse failure than the one it was
     solving, because the thing a player has to shoot was the thing that had gone
     missing. The body is now deeper and wider than its own legs are long, the
-    knees clear its back by four hundredths, and the legs are blades (see
+    knees clear its back by about a sixth of its height rather than a third, and the legs are blades (see
     `Leg.blade`) rather than square rods.
     """
     legs = tuple(

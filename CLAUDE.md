@@ -650,10 +650,13 @@ failure than the one it was solving: the thing a player has to shoot had gone mi
 
 Three changes, and the order they had to be made in is the finding:
 
-- **The knee comes down to just over the back.** 0.70 on the Crawler against a body that now
-  tops at a little under it, so the arch is a few hundredths rather than a third of the Enemy.
-  The arch is still there — a knee above the back is what reads as splayed rather than as a
-  quadruped — and it is no longer the subject.
+- **The knee comes down to just over the back.** Measured on the shipped bodies, a Crawler's
+  legs top out 0.161 of its height above its back against the first pass's 0.36 — so the arch
+  is still there, which is what reads as splayed rather than as a quadruped, and it is no
+  longer the subject. **The Breaker and the Siege Hulk are now crowned by their own bodies
+  instead** (−0.337 and −0.122), which is a separator in its own right and falls out of the
+  carapace rather than being tuned for: the kind a player ignores is the one whose legs you
+  see first, and the two that matter are a plate and a hull.
 - **The legs are blades and are much thinner.** `Leg.blade` is #79's one new field: a square
   section is the same width from every angle, so a leg thin enough not to be the mass is a thin
   dark rod from *every* angle too, which is the "flat planes" half of the complaint. 1.6 deep in
