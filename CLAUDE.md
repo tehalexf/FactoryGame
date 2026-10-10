@@ -1577,6 +1577,24 @@ necessary and was never going to be sufficient. Two more, earned here:
   is a structure nobody has checked** — and a brightness complaint is a *vantage-specific*
   measurement, so both vantages have to be read before deciding how much to take away.
 
+#### The contact sheet moved, and it is the one committed image this touched
+
+`tools/assets/render_machines.sh` globs every `.glb` in `assets/machines/`, so the Nest is on
+the committed sheets and all three were rebuilt:
+[`machines_lit.png`](docs/images/machines_lit.png) carries the change, and the two silhouette
+sheets moved by a few hundred pixels **in the caption band only** — measured, the changed
+bounding box is the label row — which is text rasterisation and not geometry. They are
+committed anyway rather than reverted, because #53 is what a committed image the tool can no
+longer reproduce costs.
+
+Worth knowing from that sheet: **under Blender's own lighting the olive Nest never looked
+wrong**, which is why four tickets of contact sheets did not catch this. The palette was tuned
+in those renders and `_sync_scenery`'s numbers are a second tuning that is explicitly not
+interchangeable with them — so a sheet is the instrument for *silhouette and surface*, and only
+a game render is the instrument for *value*. The sheet also says something the fix did not set
+out to buy: the Nest is now the one iron building in a row of olive Machines, so it is
+distinguished by material as well as by its steps.
+
 #### What no render here can settle
 
 Whether a Nest that no longer glows is still the first thing a player's eye goes to when they
