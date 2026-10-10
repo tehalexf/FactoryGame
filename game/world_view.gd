@@ -259,6 +259,17 @@ const SIEGE_HULK_VENT_OFFSET: float = 0.30
 ## texture and which tint — not how a vertex gets where it goes.
 const ENEMY_SKIN_SHADER: String = "res://game/enemy_skin.gdshader"
 
+## The one surface every Enemy wears, graded into `dieselpunk_palette.json` by
+## `tools/assets/enemy_grade.py` from the pack's own committed atlas.
+##
+## **It is a committed derived asset and a clone with no purchased packs has it**, like the
+## generated Machine meshes, the icons and the Build Gun and unlike the weapon viewmodels —
+## KayKit's characters are CC0, so a graded copy of their atlas is as redistributable as the
+## atlas. The six characters share one texture, so there is one file here and not six.
+const ENEMY_GRADED_ATLAS: String = (
+	"res://assets/characters/kaykit_skeletons/graded/skeleton_texture_A.png"
+)
+
 ## How big a Hive is, in metres, and what colour. A mound rather than a building: it is the
 ## Enemy's, not the players', so it reads as grown rather than welded.
 const HIVE_SIZE_METRES: float = 4.0
@@ -1106,6 +1117,41 @@ func enemy_mesh_id(kind: int) -> int:
 	if node.multimesh == null or node.multimesh.mesh == null:
 		return 0
 	return node.multimesh.mesh.get_instance_id()
+
+
+## Which texture a kind's surface is actually painted with, as a `res://` path, or "" for a
+## kind drawn through the procedural fallback. For the assertion that the *graded* atlas is
+## what reaches the shader: a grade nothing samples is `prop_grade.py`'s own opening defect,
+## and it is invisible from the grading side of the seam.
+func enemy_surface_texture_path(kind: int) -> String:
+	var material: ShaderMaterial = _enemy_surface_material(kind)
+	if material == null:
+		return ""
+	var texture: Texture2D = material.get_shader_parameter("albedo_texture") as Texture2D
+	if texture == null:
+		return ""
+	return texture.resource_path
+
+
+## How metallic a kind's surface is. For the assertion that an Enemy is metal, which is what
+## the light in this world is tuned for — see `_enemy_metallic`.
+func enemy_surface_metallic(kind: int) -> float:
+	var material: ShaderMaterial = _enemy_surface_material(kind)
+	if material == null:
+		return 0.0
+	return float(material.get_shader_parameter("metallic"))
+
+
+func _enemy_surface_material(kind: int) -> ShaderMaterial:
+	if not _swarm_meshes.has(kind):
+		return null
+	var node: MultiMeshInstance3D = _swarm_meshes[kind]
+	if node.multimesh == null or node.multimesh.mesh == null:
+		return null
+	var mesh: Mesh = node.multimesh.mesh
+	if mesh.get_surface_count() == 0:
+		return null
+	return mesh.surface_get_material(0) as ShaderMaterial
 
 
 ## How big one instance of a kind was drawn, as the uniform scale on its basis. The bodies are
@@ -2432,6 +2478,42 @@ func _ensure_swarm_mesh(kind: int) -> void:
 ## fantasy skeletons in a world of grimy cast iron, and a colour picked against a white
 ## background is a colour picked against the wrong thing (#32, measured on the Walls).
 ##
+## **#38 made that split with a tint per kind, and #75 is the user looking at the result:
+## *"the enemies look like shit honestly"*. They were right, and the reason is arithmetic
+## rather than taste — a multiply cannot change a ratio.** Measured off the committed atlas
+## through `Skeleton_Minion`'s own UVs, a Crawler's skull cell is a cold blue-white at linear
+## luminance 0.551 and its boot cell is 0.067: eight to one, and one tint scales both by the
+## same number, so whatever the tint is the Crawler is a bright skull with a dark smudge under
+## it. Turning it down only moves the whole thing toward black, which is what shipped —
+## measured off a `swarm bare` render, a Crawler's body sat at **0.007 against a ground at
+## 0.046**, which is not a dark Enemy, it is a hole in the floor. And the hue was wrong in a
+## direction no multiply reaches: there is no blue anywhere in this palette.
+##
+## So the surface is three things now, and none of them is a tint:
+##
+## * **A graded atlas** — `tools/assets/enemy_grade.py`, which is `prop_grade.grade_colour`'s
+##   rule with this atlas's families and a shoulder tuned for a subject seen against the
+##   *ground* rather than against a Machine. It closes the skull-to-boot ratio from 8:1 to
+##   about 3.5:1 and sends bone to iron. It is loaded here rather than taken off the
+##   material, which is deliberate: the pack embeds its image **inside the `.glb`**, so a
+##   graded file beside the model would be `prop_grade.py`'s own opening defect — a grade
+##   nothing samples — and `test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own`
+##   is what makes that unsayable.
+## * **Metal.** `_sync_scenery` takes ambient and reflections off the sky *because* the
+##   generated surfaces are mostly metal, and until #75 an Enemy was the one thing in the
+##   world that was not — 0.05 metallic at 0.88 roughness has nothing to reflect under a sky
+##   dome, which is most of why a backlit Crawler rendered as a silhouette.
+## * **Grime and relief the atlas cannot carry**, derived in the shader from the rest pose.
+##   See `game/enemy_skin.gdshader`; the short version is that these characters carry no
+##   `COLOR_0`, so `prop_grade.deepen_grime`'s free per-prop occlusion has no counterpart and
+##   #42's derived-relief answer is the one that transfers.
+##
+## **The per-kind tint survives and its job changed.** It no longer carries the *level* — the
+## grade does — so it is near white and carries only a cast, which is a readability cue the
+## kinds did not have before: everything used to be dark, so the only thing telling a Crawler
+## from a Breaker was size (#49). It is still a multiply and it still cannot change a ratio,
+## which is exactly why it is no longer asked to.
+##
 ## **There was a second branch here and #49 removed it. The note is the deliverable.** The
 ## pack splits each character into a body material and an 80-vertex `Glow` material for its
 ## eye sockets, and #38 painted that surface with an ember emission and recorded it as the
@@ -2461,14 +2543,17 @@ func _ensure_swarm_mesh(kind: int) -> void:
 ## it sits on, rather than hoped for in an asset.
 func _skinned_mesh(kind: int, body: EnemyBodies.Body) -> ArrayMesh:
 	for surface: int in range(body.mesh.get_surface_count()):
-		var source: Material = body.mesh.surface_get_material(surface)
 		var painted: ShaderMaterial = ShaderMaterial.new()
 		painted.shader = load(ENEMY_SKIN_SHADER)
 		painted.set_shader_parameter("pose", body.pose)
 		painted.set_shader_parameter("texels_per_bone", EnemyBodies.TEXELS_PER_BONE)
-		var texture: Texture2D = null
-		if source is BaseMaterial3D:
-			texture = (source as BaseMaterial3D).albedo_texture
+		# **The artist's material is no longer read at all, and that is the change.** It used
+		# to be asked for its `albedo_texture` so the pack's own atlas could be tinted; the
+		# graded copy goes on instead, whatever the `.glb` embedded, because a surface the
+		# grade did not cover would be the one thing in a Wave still wearing bone-white. The
+		# pack embeds its image *inside* the GLB rather than naming a file beside it, so there
+		# is nothing to recover and nothing to prefer.
+		var texture: Texture2D = load(ENEMY_GRADED_ATLAS) as Texture2D
 		if texture != null:
 			painted.set_shader_parameter("albedo_texture", texture)
 			painted.set_shader_parameter("has_albedo_texture", true)
@@ -2479,20 +2564,26 @@ func _skinned_mesh(kind: int, body: EnemyBodies.Body) -> ArrayMesh:
 	return body.mesh
 
 
-## What each kind's character texture is multiplied by.
+## What each kind's graded texture is multiplied by — a cast, not a level.
 ##
-## The committed skeletons are bone-white and this palette runs 0.055 to 0.14 albedo on its
-## Machines, so a character dropped in untinted would be the brightest object in frame. These
-## grade it down and apart: the Crawler to the dark warm chitin the procedural carapace wore,
-## the Breaker to cold hard steel so that the thing a player has to *answer* reads as armoured
-## rather than as a bigger Crawler, and the Hulk to the cast iron its hull already was.
+## Before #75 these were 0.17 to 0.25 and were doing the whole job: the atlas was bone-white
+## and this was what stood between it and a palette running 0.055 to 0.14. The grade owns the
+## level now, so these are near white and the only thing left in them is **which kind**, which
+## is a cue the Wave did not previously have — everything was dark, so size was carrying the
+## entire distinction (#49) and a Crawler and a Breaker at thirty metres were the same smudge
+## in two heights.
+##
+## Warm for the Crawler, because rust is what settles on something nobody maintains; cold for
+## the Breaker, because the thing a player has to *answer* should read as plated rather than
+## as a bigger Crawler; and the Siege Hulk keeps the cast iron its procedural hull wears, so
+## the body and the hull a kind with no character would draw agree.
 func _enemy_tint(kind: int) -> Color:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return Color(0.21, 0.22, 0.25)
+			return Color(0.91, 0.95, 1.0)
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return SIEGE_HULK_HULL
-	return Color(0.17, 0.11, 0.095)
+			return Color(0.92, 0.90, 0.88)
+	return Color(1.0, 0.88, 0.78)
 
 
 ## How metallic each kind reads. A Lambertian body beside a metal Machine renders twice as
@@ -2501,22 +2592,31 @@ func _enemy_tint(kind: int) -> Color:
 func _enemy_metallic(kind: int) -> float:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return 0.65
+			return 1.0
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return 0.8
-	return 0.05
+			return 1.0
+	return 0.8
 
 
-## And how rough. The Crawler is nearly matte, which is the other half of grading it down: at
-## 0.62 the skulls caught a hard specular off a low sun and read as glazed pottery, which was
-## the brightest thing in the first render of a Wave and the third defect an image caught here.
+## And how rough, against the palette's own figures: a Breaker is `WeldedSteel` at 0.45,
+## a Crawler and the boss are `CastIron` at 0.62.
+##
+## **The note that stood here is corrected rather than deleted.** It said the Crawler was
+## pushed to 0.88 because at 0.62 the skulls caught a hard specular off the low sun and read
+## as glazed pottery. That was a true observation about a **dielectric** at 0.17 albedo: a
+## rough-plastic highlight on a near-black body is a bright smear with nothing under it. At
+## metallic 1 the same highlight *is* the surface — a metal's reflection is coloured by its
+## own albedo rather than sitting white on top of it — so the fix was the material model and
+## not the number, and 0.88 on a metal is a grey felt Crawler. The shader then spreads this
+## either side of itself off the grime field, because one roughness over a whole body is one
+## highlight over a whole body.
 func _enemy_roughness(kind: int) -> float:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return 0.55
+			return 0.45
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return 0.55
-	return 0.88
+			return 0.62
+	return 0.62
 
 
 ## The glowing vent on the back of every Siege Hulk on the Map.

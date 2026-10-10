@@ -2375,3 +2375,38 @@ func test_the_scanner_does_not_grow_the_scene_tree() -> void:
 	assert_true(view.ore_scanner_ping_count() > 0, "still scanning")
 	assert_eq(view.get_child_count(), children, "every ping is one instance of one MultiMesh")
 	view.free()
+
+
+func test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own() -> void:
+	# #75. The committed KayKit atlas is a cold bone-white at eight times the luminance of the
+	# darkest cell a Crawler wears, and #38's answer was one dark tint per kind — which cannot
+	# change a ratio, so what shipped was a pale skull on a near-black body. The surface is
+	# `tools/assets/enemy_grade.py`'s graded copy now, and the assertion is that the graded
+	# file is what actually reaches the shader: a grade nothing samples is `prop_grade.py`'s
+	# own opening defect, and the only way to catch it is from this side of the seam.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
+		assert_eq(
+			view.enemy_surface_texture_path(kind),
+			WorldView.ENEMY_GRADED_ATLAS,
+			"kind %d is painted with %s" % [kind, view.enemy_surface_texture_path(kind)]
+		)
+	view.free()
+
+
+func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal() -> void:
+	# `_sync_scenery` takes ambient and reflections off the sky precisely because the generated
+	# surfaces are mostly metal and a metal lit by an ambient *colour* has nothing to reflect.
+	# Until #75 a Crawler was the one thing in the world that was not metal — 0.05 metallic at
+	# 0.88 roughness — so it had nothing to catch, and measured off a `swarm bare` render it sat
+	# at a seventh of the luminance of the ground it was standing on.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
+		assert_true(
+			view.enemy_surface_metallic(kind) >= 0.5,
+			"kind %d is %f metallic" % [kind, view.enemy_surface_metallic(kind)]
+		)
