@@ -1,0 +1,84 @@
+# DEEP FOUNDRY — Gear definitions.
+#
+# Gear is what you fight with, and your Factory is what made it. **Modular**: one
+# weapon frame accepts components — barrels, magazines, sights — each produced on a
+# different line, so power comes from *combination* and never from tiers (GLOSSARY.md).
+# There is no Rifle Mk2 in this file and there is nowhere to write one.
+#
+# Adding a fourth weapon is a row here. So is a fifth component, and so is a whole new
+# **slot**: the set of slots is exactly the set of `kind` values this table mentions
+# other than `weapon`, interned in sorted order — the same arrangement the Items have,
+# where the set of Items is exactly the set the Recipes mention and there is no Item
+# table. Nothing in `sim/` names a weapon, a component or a slot.
+#
+# Edit this file while the game is running and the change applies when you save it. That
+# is the point of it: first-person combat lives or dies on feel, and feel is found by
+# playing rather than by rebuilding. Every number below is a feel knob.
+#
+# Columns:
+#   id              Identifier. Lowercase letters, digits and _ only. Delivery tiers
+#                   name Gear by this in `unlocks_gear`, and save files record what a
+#                   player is holding by it, so renaming one is a breaking change.
+#   display_name    What the player sees.
+#   kind            `weapon` — a frame. Everything else names the slot a component
+#                   fits, and is interned as a slot by being written here.
+#   attack          `melee` or `ranged`. Required on a weapon, empty on a component.
+#                   A melee weapon swings at whatever is in front of the player inside
+#                   `range_metres` and spends no Ammunition; a ranged one is fired down
+#                   the line of aim and spends `ammunition_per_shot`.
+#   damage          What one hit takes off an Enemy, in whole hit points — the same
+#                   units a Turret's `damage` column is in. Must be 0 on a component.
+#   range_metres    How far the weapon carries. A melee weapon's reach. Must be 0 on a
+#                   component.
+#   spread_degrees  How far off the line of aim a shot may scatter, each shot drawing
+#                   from the Simulation's own seeded generator. 0 is exact. This is
+#                   what separates a precise weapon from a crowd-clearing one far more
+#                   than damage does. Must be 0 on a component.
+#   seconds_per_shot  How long between one shot and the next. Floored to whole ticks,
+#                   minimum one, so a rate is exact rather than emergent. Must be 0 on
+#                   a component.
+#   ammunition_item   The Item one shot spends. Required on a ranged weapon and must be
+#                   an Item some Recipe mentions — that is the only way an Item comes to
+#                   exist. Empty on a melee weapon and on a component.
+#   ammunition_per_shot  How many of it. At least 1 on a ranged weapon, 0 otherwise.
+#
+# The six modifier columns below are a **component's** whole reason to exist, and a
+# weapon row must leave every one of them at 0: a modifier on a frame would be a tier in
+# disguise. They are whole percentages, summed across every fitted component and applied
+# to the frame's own quoted figure — additive rather than multiplicative, so two
+# components can be reasoned about in either order and the arithmetic is one integer
+# multiply and one floor. A component with all six at 0 is refused by name: a component
+# that measurably changes nothing is a Delivery a player paid for and got nothing from.
+#
+#   damage_percent        Added to the frame's damage.
+#   range_percent         Added to the frame's range.
+#   spread_percent        Added to the frame's spread. Negative is tighter.
+#   interval_percent      Added to the frame's seconds_per_shot. Negative is faster.
+#   ammunition_percent    Added to the frame's ammunition_per_shot. Negative is cheaper.
+#   damage_taken_percent  Added to the damage the *player* takes. Negative is armour,
+#                         and it is the reason this table is Gear rather than Weapons:
+#                         GLOSSARY.md says Gear is "weapons and equipment".
+#
+# **A piece of Gear is locked because a Delivery tier names it** in `unlocks_gear`,
+# exactly as a Machine is locked because a tier names it in `unlocks_machines`. There is
+# no `locked` column here and there will not be one: the Gear a Run opens with is
+# exactly the Gear no tier mentions. Which is why all three weapons are open and all
+# four components are earned — a game that made a player deliver goods before it let
+# them hold a wrench would be a different game, and the components are exactly the
+# "build goal translates into a Factory goal" the pillar is for.
+#
+# Where the balance stands: the Bolt Rifle kills a 30 hp Crawler in one shot and a
+# 240 hp Breaker in six, at one round a shot and 0.8 s between them. The Drum Autocannon
+# needs three shots for a Crawler but puts out eight a second, and spends two rounds
+# each — so it empties a magazine sixteen times faster for a little over twice the
+# damage. That is the trade the Ammo Press pays for. Nobody has played this at length;
+# see CLAUDE.md.
+#
+id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+bolt_rifle,Bolt Rifle,weapon,ranged,30,60,0.4,0.8,ammunition,1,0,0,0,0,0,0
+drum_autocannon,Drum Autocannon,weapon,ranged,12,34,5,0.125,ammunition,2,0,0,0,0,0,0
+hardened_plating,Hardened Plating,plating,,0,0,0,0,,0,0,0,0,0,0,-30
+heavy_barrel,Heavy Barrel,barrel,,0,0,0,0,,0,40,30,-20,30,100,0
+mg_drum_magazine,Drum Magazine,magazine,,0,0,0,0,,0,0,0,35,-40,0,0
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,55,4,0,0.6,,0,0,0,0,0,0,0
+reflex_sight,Reflex Sight,sight,,0,0,0,0,,0,0,10,-50,0,0,0

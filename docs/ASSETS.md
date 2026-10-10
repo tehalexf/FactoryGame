@@ -7,8 +7,47 @@ committed.** Purchased assets (Synty, paid itch.io packs, ArtStation packs) and
 royalty-free-but-not-redistributable libraries (Sonniss) are licensed for *use
 in a shipped game*, not for republication in a public repo.
 
-Those live in `assets_licensed/`, which `.gitignore` excludes. The game reads
-that path; the repo never contains it. Keep a local backup — it is not in git.
+Those live in `assets_licensed/`, which `.gitignore` excludes. The repo never
+contains it. Keep a local backup — it is not in git. Because the files are not in
+git, **what they are** is: [LICENSED_ASSETS.md](LICENSED_ASSETS.md) inventories
+every quarantined pack, its layout, its formats and its integration notes.
+
+Godot does not scan that tree either: an empty `assets_licensed/.gdignore` keeps
+the importer out, and is the one path inside the quarantine that is committed.
+Without it the engine walks gigabytes of third-party Unity projects and raw WAV
+libraries and was observed to stop importing this repository's own assets
+part-way through.
+
+### No licensed asset ever goes near `tools/aigen/`
+
+Two of the licences below prohibit machine-learning use outright, and this
+project runs a local image-generation pipeline. **Never feed anything under
+`assets_licensed/` into `tools/aigen/` or any other model** — not as training
+data, not as an img2img, ControlNet or reference input, not as a render used to
+guide a generated texture. "Input to" is the licence wording, so it is wider than
+"trained on". See [LICENSED_ASSETS.md](LICENSED_ASSETS.md) for the exact clauses.
+
+**The rule is enforced, not merely stated.** `tools/assets/check_licensed_staged.py`
+fails loudly if anything licensed is staged or already committed. Install it as a
+pre-commit hook once per clone:
+
+```sh
+bash tools/git/install_hooks.sh
+```
+
+CI (`.github/workflows/ci.yml`) runs the same guard on every push, so
+forgetting the installer is caught rather than silently tolerated. See
+[ASSET_PIPELINE.md](ASSET_PIPELINE.md) for the whole mechanism.
+
+**If you commit through jj, that hook does not run.** jj executes no git hooks,
+has no hook system of its own, and refuses to let an alias shadow a built-in
+command, so the same installer also generates a `jj` wrapper on your PATH that
+runs `check_licensed_staged.py --jj` before `commit`, `describe`, `new`, `squash`,
+`split`, `absorb` and `git push`. Run the installer again if you install or move
+jj. The jj section of [CLAUDE.md](../CLAUDE.md) is the full account, including the
+one thing jj makes possible that git did not: jj snapshots the working copy by
+itself, so the moment `assets_licensed/` stops being ignored the whole quarantine
+is in a commit without anybody typing `add`.
 
 ## What may be committed
 
@@ -25,16 +64,103 @@ reconstructing provenance later is far harder than logging it now.
 
 | Asset | Source | Licence | Committed? |
 |---|---|---|---|
-| _(none yet)_ | | | |
+| `assets/characters/universal_animation_library/UAL1.glb` — Universal Animation Library, shared humanoid rig, 65 bones, **120 animations** | Quaternius, "Universal Animation Library" Source tier (paid), <https://quaternius.com/packs/universalanimationlibrary.html> | **CC0 1.0** — the paid Source tier is still CC0; `LICENSE.txt` ships alongside | Yes — the non-root-motion Godot/Unreal `.glb`. The `_RM` root-motion variant and the 36 MB `.blend` are not committed; re-extract from the source zip if needed. |
+| `assets_licensed/heyheythere/low-poly-industrial-facility/` — 213 industrial props, native Godot addon, 22 animated machines | heyheythere, <https://heyheythere.itch.io/low-poly-industrial-facility> (paid) | **Commercial use yes, redistribution NO** — "You may not sell, share or redistribute the models, textures or scripts themselves" | **Never.** Quarantined. The licence guard blocks it. |
+| `assets/characters/skeleton/` — Skeleton character, 5 animations (Attack, Death, Idle, Running, Spawn) | Quaternius, "LowPoly Animated Monsters" pack, <https://quaternius.itch.io/lowpoly-animated-monsters> (official itch.io release; <https://quaternius.com/packs/ultimatemonsters.html> hosts the same work) | **CC0 1.0** — public domain, no attribution required | Yes: intake `intake/Skeleton.fbx` and shipping `Skeleton.glb` |
+| `assets/characters/knight/` — Knight character, 12 animations (Idle, Walking, Run, Jump, Roll, Death, sword variants) | Quaternius, "LowPoly Animated Knight" pack, <https://quaternius.itch.io/lowpoly-animated-knight> | **CC0 1.0** | Yes: intake `intake/KnightCharacter.fbx` and shipping `KnightCharacter.glb` |
+| Reference humanoid rig — bone map only, no mesh committed | Quaternius, "Universal Base Characters" / "Universal Animation Library", <https://quaternius.itch.io/universal-base-characters> | **CC0 1.0** | Bone map only (`tools/assets/bone_maps/quaternius_universal_humanoid.json`); the 14 MB character itself is not committed |
+| `assets/machines/` — eleven Machine meshes: Miner, Coal Miner, Smelter, Press, Assembler, Steam Boiler, Generator, Ammo Press, Silo, Nest, Belt segment — and `assets/machines/materials/`, one `StandardMaterial3D` per palette entry | **Self-authored**, generated by `tools/assets/generate_machines.sh` from `content/machine_bodies.csv`, `content/machine_ports.csv` and `tools/assets/machine_recipes.py`. No third-party geometry, no scanned or purchased source, no AI-generated mesh data | **Our own work** — no third-party licence applies | Yes: the eleven `.glb` files, the material resources, the contact sheets in `docs/images/` *and* the generators that produce them |
+| `assets/generated/textures/` (8 tiling textures) | Generated locally, SDXL base 1.0 via `tools/aigen` | Authored for this project; model CreativeML Open RAIL++-M | Yes |
+| `assets/generated/icons/` (11 Item icons) | Generated locally, SDXL base 1.0 via `tools/aigen` | Authored for this project; model CreativeML Open RAIL++-M | Yes |
+| `assets/characters/insects/` — three Enemy bodies: Crawler, Breaker, Siege Hulk, each with its own armature and four clips | **Self-authored**, generated by `tools/assets/generate_enemies.sh` from `tools/assets/enemy_recipe.py` and `tools/assets/dieselpunk_palette.json`. No third-party geometry, no scanned or purchased source, no AI-generated mesh data | **Our own work** — no third-party licence applies | Yes: the three `.glb` files, their `.import` sidecars *and* the declaration and generator that produce them |
+| `assets/audio/kenney_impact_sounds/` — **130** impact and footstep SFX (`.ogg`) | Kenney, "Impact Sounds" 1.0, <https://kenney.nl/assets/impact-sounds> | **CC0 1.0** | Yes, all 130 plus `LICENSE.txt` |
+| `assets/audio/kenney_sci_fi_sounds/` — **73** sci-fi SFX (`.ogg`): computer noise, doors, engines, explosions, force fields, metal impacts, lasers, UI | Kenney, "Sci-Fi Sounds" 1.0, <https://kenney.nl/assets/sci-fi-sounds> | **CC0 1.0** | Yes, all 73 plus `LICENSE.txt` |
+| `assets_licensed/rgsdev/` — RgsDev "Low Poly FPS Starter Kit" v1.1: a Unity 2019.4 project with 5 rigged FP arms + weapons, 43 animation clips, 39 WAV, 14 C# scripts | RgsDev (paid) | **Commercial use yes, redistribution NO** | **Never.** Quarantined — [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
+| `assets_licensed/fps-weapon-pack-unknown-vendor/` — "Weapon pack" (6 animated weapons with FP arms, 41-bone rig with full fingers), "FPS Arms" (arms + 8 hand textures + `.blend`), "Animation UE FIX" (Unreal rework; do not use) | **Vendor not recorded in any of the three zips** — no licence file, no readme, no attribution. Logged as a gap | Purchased. **Redistribution NO** | **Never.** Quarantined — [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
+| `assets_licensed/shapita/` — Factory Line 86: 86 static low-poly factory models in GLB + FBX, two `.blend` libraries, an offline catalogue, and the companion 86 Godot static prefabs with collision | Shapita, <https://shapita.itch.io> (paid) | **Commercial use yes, redistribution NO** — "may not sell, redistribute, sublicense or give away the source models or modified models as standalone assets, asset packs, templates or downloadable libraries" | **Never.** Quarantined. Its 1 m grid, vertical datums and offset origins are written up in [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
+| `assets_licensed/lukami-ch/` — Lukami Ch. "Low Poly Industrial Pack": 60 industrial props in two shading styles, 122 FBX + 122 GLB + 61 OBJ, one shared texture atlas | Lukami Ch. (paid) | **Commercial use yes, redistribution NO.** Also prohibits ML/generative-AI training or input use, and NFT/blockchain registration | **Never.** Quarantined — [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
+| `assets_licensed/sonniss/` — Sonniss `#GameAudioGDC` GDC 2026 bundle: **347 WAV** across **122 supplier libraries**, 7.5 GB | Sonniss, <https://sonniss.com> (free GDC giveaway) | Royalty-free, perpetual, unlimited projects, no attribution. **NO AI TRAINING OR USAGE.** Redistribution NO | **Never.** Quarantined — [LICENSED_ASSETS.md](LICENSED_ASSETS.md) |
+| `assets_licensed/generated/audio/` — the game's hero sound cues, cut from the Sonniss bundle by `tools/assets/convert_audio.sh` | Derived from `assets_licensed/sonniss/` | Inherits Sonniss: use in a shipped game yes, **redistribution NO, AI use NO** | **Never.** A cut from a non-redistributable recording is a derivative of it and is exactly as forbidden as the WAV. Gitignored, outside the shipping tree, loaded at runtime, and every cue has a committed CC0 fallback so a clone without the bundle still makes a noise — `game/sound_bank.gd` |
+| SDXL base 1.0 weights | `stabilityai/stable-diffusion-xl-base-1.0` @ `4621659` | CreativeML Open RAIL++-M | **No** — gitignored under `tools/aigen/models/`, re-downloaded by `setup.sh` |
+
+Every committed character was converted with
+`tools/assets/rebuild_assets.sh`, which records the exact flags used. Each
+asset's intake FBX is committed alongside its `.glb` so the conversion can be
+re-derived rather than trusted.
+
+The KayKit pack is the first to keep its animation in separate files from its
+characters, which is what [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 4 asks
+for: the six characters ship no animation at all, and the four libraries beside
+them hold 35 clips on the same shared skeleton. The whole pack shares one scale
+factor rather than per-file height normalisation, so the Golem stays a giant and
+borrowed root and hips translation lands where it should; `rebuild_assets.sh`
+explains the factor. Its rig has no neck joint — `head` is a direct child of
+`chest` — so `verify_in_godot.sh` is told that explicitly rather than a joint
+being invented to satisfy the gate.
+
+The Machine meshes have no intake file, because there is nothing to intake: the
+generator *is* the source, it is committed, and re-running it reproduces every
+`.glb` byte for byte. `rebuild_assets.sh` runs it alongside the FBX conversions.
+See [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 6.
+
+Generated art carries its full provenance in a manifest beside it
+(`assets/generated/*/manifest.json`): model id and revision, licence, every
+sampler setting, the image hash and the versions used. `generate.py --check`
+re-verifies that record against the files on disk without needing a GPU.
+
+The model licence covers the *weights*, which are not redistributed here; the
+OpenRAIL++-M terms place no ownership claim on generated output. The images
+themselves are ours and are safe to commit to a public repo.
 
 ## Known licence constraints
 
 - **Sonniss GDC bundles** — royalty-free, no attribution, perpetual, unlimited
-  projects. **Prohibits AI/ML training use**: never feed these files to an audio
-  model. Not redistributable → `assets_licensed/`.
+  projects. The EULA has a clause headed **NO AI TRAINING OR USAGE**: the
+  licensee is "expressly prohibited from using any sound effects licensed under
+  this Agreement for the purpose of training artificial intelligence
+  technologies", and may not "use, reproduce, or otherwise leverage" them to
+  develop, train or enhance AI. Never feed these files to any model. Not
+  redistributable → `assets_licensed/`. **Wired in** by
+  `tools/assets/convert_audio.sh`, which cuts the game's hero cues into
+  `assets_licensed/generated/audio/` — quarantined output, loaded at runtime,
+  with a committed CC0 fallback per cue. See
+  [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 8.
+- **Lukami Ch.** — royalty-free commercial use, modify freely, sell finished
+  projects. May not resell or redistribute the assets or any subset in any
+  format; **may not be used "to train, fine-tune, or as input to machine-learning
+  or generative-AI models or datasets"**; may not be minted as NFTs or registered
+  on any blockchain. → `assets_licensed/`.
+- **Shapita (Factory Line)** — use and modify in unlimited personal and
+  commercial projects, attribution optional. "You may not sell, redistribute,
+  sublicense or give away the source models or modified models as standalone
+  assets, asset packs, templates or downloadable libraries", and a finished
+  project must not offer the source assets for extraction. → `assets_licensed/`.
+- **RgsDev, and the unattributed FPS weapon pack** — purchased, non-redistributable.
+  The FPS weapon pack records no vendor anywhere in its zips; that gap is logged
+  in [LICENSED_ASSETS.md](LICENSED_ASSETS.md) rather than guessed at.
+  → `assets_licensed/`. These two are the first-person arms, and they are **one of
+  the two** asset paths whose **output** is also quarantined — the other is the
+  audio above. `tools/assets/convert_weapons.sh` writes
+  `assets_licensed/generated/gear/*.glb` and the game loads it at runtime, because
+  a converted GLB is a derivative of a non-redistributable asset and is exactly as
+  forbidden as the FBX. A clone without the packs gets placeholder weapons and a
+  game that builds, tests and plays — see
+  [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 7.
+- **heyheythere, Shapita, Lukami Ch.** — the three industrial prop packs are the
+  *second* asset path whose **output** is quarantined, and for the same reason:
+  `tools/assets/convert_props.sh` writes `assets_licensed/generated/props/*.glb`
+  and `game/set_dressing.gd` loads it at runtime, because a converted GLB is a
+  derivative of a non-redistributable asset. A clone without the packs gets a
+  yard built out of self-authored stand-ins wearing the committed Machine
+  palette, and a game that builds, tests and looks like a place — see
+  [ASSET_PIPELINE.md](ASSET_PIPELINE.md) section 8. heyheythere is on a **2 m
+  grid at 1 unit to the metre**, which is `WorldGrid`'s, which is why it is the
+  one the yard is mostly made of.
 - **Synty** — no redistribution. Godot is officially unsupported; FBX source
   requires conversion. → `assets_licensed/`.
 - **Quaternius, KayKit, Kenney** — CC0. Safe to commit, no attribution required.
+  This holds for KayKit's paid EXTRA and SOURCE tiers too: paying for the source
+  files does not change the licence on the work.
 - **Mixamo** — royalty-free commercial use, but must be integrated into the
   project and never redistributed standalone. → `assets_licensed/`.
 - **Freesound** — per-file licences. Filter to CC0. **CC-BY-NC cannot ship in a
@@ -49,5 +175,10 @@ reconstructing provenance later is far harder than logging it now.
 import to Blender, clean the rig, export `.glb`. Godot 4.3+ has the `ufbx`
 importer so direct FBX works, but glTF behaves more predictably.
 
-Single shared humanoid skeleton for all characters: the Quaternius Universal
-Animation Library rig. Everything humanoid retargets onto it.
+Single shared humanoid skeleton for all characters: **Godot's
+`SkeletonProfileHumanoid` bone names**, with the Quaternius Universal Animation
+Library rig as the reference humanoid source mapped onto them. Everything
+humanoid retargets onto that naming, at conversion time.
+
+The conversion path, the bone maps, the retarget path and the verification
+commands are all in [ASSET_PIPELINE.md](ASSET_PIPELINE.md).

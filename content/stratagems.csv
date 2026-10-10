@@ -1,0 +1,90 @@
+# DEEP FOUNDRY — Stratagem definitions.
+#
+# A Stratagem is a player-called intervention from outside the Map, drawn from a
+# stockpile of Charges (GLOSSARY.md). A Silo assembles the Charges out of Belt-fed
+# inputs, so **more production means more artillery, full stop** (docs/DESIGN.md) —
+# this is the keystone loop in its most literal arithmetic.
+#
+# **Adding a Stratagem is a row here.** Nothing in `sim/` names one, exactly as
+# nothing names a Machine, a Recipe or a weapon. What the Simulation knows is the
+# three `effect` values below; a second Barrage with a wider radius and a longer
+# channel is a row and not a code change. Edit this file while the game is running
+# and the change applies when you save it.
+#
+# **A Charge is a multiplier.** The dial on a Silo chooses a shell type and a count,
+# and the count scales whichever magnitude the row quotes — `damage_per_charge` for a
+# Barrage, `goods_per_charge` for a Supply Drop or a Sentry's magazine. One rule for
+# all three, so four Charges mean the same thing whatever is in the tube.
+#
+# Columns:
+#   id              Identifier. Lowercase letters, digits and _ only. Delivery tiers
+#                   name Stratagems by this in `unlocks_stratagems` and save files
+#                   record a loaded Silo and a Painting in flight by it, so renaming
+#                   one is a breaking change.
+#   display_name    What the player sees.
+#   effect          barrage — shells the painted ground: `damage_per_charge` times the
+#                             Charges loaded, taken off every Enemy within
+#                             `radius_tiles`. The answer to a breakthrough.
+#                   supply  — drops `goods_per_charge` times the Charges loaded into
+#                             the painting player's own pockets — the same pockets the
+#                             Build Gun spends from and a weapon fires out of. The
+#                             answer to having run out.
+#                   sentry  — puts `sentry_machine` on the painted tile for
+#                             `sentry_seconds`, arriving with `goods_per_charge` times
+#                             the Charges loaded already in its input buffer, which is
+#                             the whole of what "needs no Belt" means. The answer to
+#                             ground you did not fortify.
+#   paint_seconds   How long a player must stand at the target and channel, exposed and
+#                   unable to act (GLOSSARY.md). The price of every Stratagem, and the
+#                   reason Painting is this design's best co-op moment: one player is
+#                   committed and helpless while the others cover them. Never 0 — a
+#                   Painting with no channel is not a Painting. Written in decimal and
+#                   floored to whole ticks, like every other duration.
+#   radius_tiles    How far a Barrage reaches from the painted tile, in tiles on the
+#                   2 m grid. At least 1 on a barrage, and must be 0 on anything else.
+#   damage_per_charge  What one Charge takes off every Enemy in that radius, in whole
+#                   hit points — the same units a Turret's `damage` column is in. At
+#                   least 1 on a barrage, and must be 0 on anything else.
+#   goods_per_charge  What one Charge delivers, as `item:count`, several separated by
+#                   `;` — the same form a Recipe's inputs and a Machine's `build_cost`
+#                   use. Every Item named must be one some Recipe mentions, because
+#                   that is the only way an Item comes to exist. Required on a supply
+#                   and on a sentry; must be empty on a barrage.
+#   sentry_machine  The Machine a sentry drops, by id. Must name a `turret` row in
+#                   machines.csv — a Sentry is an ordinary Machine in every respect a
+#                   player can observe, so a Sentry Drop that places a Cannon instead
+#                   is this column and nothing else. Must be empty on anything that is
+#                   not a sentry.
+#   sentry_seconds  How long it stands, in whole seconds. At least 1 on a sentry, and
+#                   must be 0 on anything else.
+#
+# **A Stratagem is locked because a Delivery tier names it** in `unlocks_stratagems`,
+# exactly as a Machine and a piece of Gear are. There is no `locked` column here and
+# there will not be one: the Stratagems a Run opens with are exactly the ones no tier
+# mentions.
+#
+# Where the chain stands: `sentry_drop` is open from tick 0, because the first thing a
+# Silo is for is covering ground, and a Run that had to deliver before it could use the
+# Silo it just built would have paid twice. `supply_drop` comes with the second tier and
+# `artillery_barrage` with the third — the heaviest thing in the game, behind the
+# deepest mine, which is the chain talking a player into being hunted.
+#
+# Where the balance stands: a Barrage Charge is 150 points against a Crawler's 30 and a
+# Breaker's 240, so one Charge clears Chaff out of a six tile radius and two Charges kill
+# a Breaker. The Silo's Recipe is 20 seconds of a plate and twenty rounds — deliberately
+# expensive in the very Item a Turret and a player both spend, so artillery competes with
+# the magazine rather than being free once the line is up. That competition is still the
+# number most likely to be wrong.
+#
+# #26 could not measure it, and the reason is a finding rather than an omission: a Silo
+# draws 400 kW, the documented opening Factory draws 660 of the 900 one Boiler and the
+# Nest's baseline plant supply, and the shipped Map has one coal Node — so a Milestone 1
+# Run cannot power a Silo and the Ammo Press that feeds it at the same time. The Power
+# grid refuses the Silo before the magazine has to argue with it. The nearest available
+# proxy is `rifle_picket` in `tests/balance_scenarios.gd`, which spends the same rounds
+# out of the same Press at 75 a minute and costs its Run 2m47s; a Silo asks for 60.
+#
+id,display_name,effect,paint_seconds,radius_tiles,damage_per_charge,goods_per_charge,sentry_machine,sentry_seconds
+artillery_barrage,Artillery Barrage,barrage,5,6,150,,,0
+sentry_drop,Sentry Drop,sentry,3,0,0,ammunition:60,mg_turret_mk1,45
+supply_drop,Supply Drop,supply,3,0,0,ammunition:40;iron_plate:20,,0

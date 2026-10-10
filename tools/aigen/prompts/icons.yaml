@@ -1,0 +1,135 @@
+# Item icons for the Recipe book, inventory and Build Gun menus.
+#
+# Icons are judged as a set, not individually: an inventory grid where one Item
+# fills its tile and the next floats in empty space looks broken even when both
+# images are fine. So the model is never asked to frame anything. It renders a
+# single subject on a flat backdrop at 1024, the backdrop is keyed out, and
+# `aigen.framing` then scales the subject's bounding box to a fixed fraction of
+# a fixed canvas and centres it. Consistency is arithmetic here, not luck.
+#
+# The item ids are GLOSSARY terms (Gear, Charge, Ammunition, Pneumatic Wrench)
+# or the raw and intermediate materials the Milestone 1 Machines consume.
+#
+# Regenerate: tools/aigen/.venv/bin/python tools/aigen/generate.py \
+#               --recipe tools/aigen/prompts/icons.yaml
+
+kind: icon
+description: Item icons at a single canvas size and framing.
+
+model:
+  id: stabilityai/stable-diffusion-xl-base-1.0
+  revision: 462165984030d82259a11f4367a4eed129e94a7b
+  variant: fp16
+  licence: CreativeML Open RAIL++-M
+
+defaults:
+  # Rendered large, then framed down. SDXL is trained at 1024 and degrades
+  # badly below it, so generating at 256 directly is not an option.
+  width: 1024
+  height: 1024
+  steps: 30
+  guidance: 7.0
+  scheduler: dpmpp_2m_karras
+  seamless: false
+  # Shipped icon size. Every icon is exactly this square.
+  canvas_px: 256
+  # Subject occupies 1 - 2*0.08 = 84% of the canvas, so icons in a grid never
+  # touch but still read at 32-64px.
+  margin_frac: 0.08
+  # How far a pixel may sit from the fitted backdrop surface, in mean levels
+  # per channel, and still be keyed out. SDXL never paints a genuinely flat
+  # backdrop, so `aigen.framing` fits a smooth surface to the border and
+  # measures against that; 20 covers the banding without eating the subject.
+  key_tolerance: 20
+
+# Kept short on purpose: item prompt + style must fit CLIP's 77 tokens or the
+# text encoder truncates it. `generate.py` refuses to run if it overflows.
+# The "flat uniform neutral grey background" clause is load-bearing -- it is
+# what `aigen.framing` keys out to find the subject's bounding box.
+style: >-
+  single object, centred, isolated on a flat uniform neutral grey background,
+  three-quarter orthographic view, even studio light, no cast shadow, game
+  inventory icon, interwar heavy industry dieselpunk, strong silhouette
+
+negative: >-
+  cast shadow, drop shadow, ground plane, table, gradient background, clutter,
+  scene, multiple objects, text, watermark, logo, border, frame, brass, copper,
+  bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry,
+  cropped
+
+items:
+  - id: iron_ore
+    seed: 20260201
+    prompt: >-
+      a rough chunk of raw iron ore, dark grey rock, rusty red streaks,
+      metallic flecks
+
+  - id: coal
+    seed: 20260202
+    prompt: >-
+      a lump of black anthracite coal, glossy angular fracture facets
+
+  # The one plate the shipped Recipes actually mention, and the Item every build cost in
+  # the game is denominated in: a Smelter's output, an Ammo Press's input, a plate a Belt
+  # tile and two a Wall. #53's hotbar draws what each Machine eats and what it makes, so
+  # with no picture here the Smelter's output slot and the Press's input slot — the two
+  # cells a player reads to learn the first production decision — were both blank (#59).
+  #
+  # **A stack, decided by looking rather than by reasoning.** Nine candidates were swept
+  # across three wordings and every single-plate one came back as a flat square seen face
+  # on — which is `steel_plate` below in a darker grey, and at 64px in a hotbar cell that
+  # is one icon drawn twice. A stack has thickness, a stepped outline and a three-quarter
+  # read, and it is the truer picture of the Item anyway: plate is bulk material, not one
+  # bolted part. `_contact_sheet.png` is where that is judged, because a set is judged as
+  # a set.
+  - id: iron_plate
+    seed: 20260212
+    prompt: >-
+      a stack of three cast iron plates, thick square slabs, rough sand-cast
+      surface, stacked flat
+
+  - id: iron_ingot
+    seed: 20260203
+    prompt: >-
+      a cast iron ingot, trapezoidal bar, rough sand-cast grey surface
+
+  - id: steel_ingot
+    seed: 20260204
+    prompt: >-
+      a steel billet, rectangular bar with bevelled ends, brushed grey steel
+
+  - id: steel_plate
+    seed: 20260205
+    prompt: >-
+      a stamped steel plate, flat rectangle, rounded corners, four bolt holes,
+      scuffed grey steel
+
+  - id: gear
+    seed: 20260206
+    prompt: >-
+      a machined steel spur gear, straight-cut teeth, keyed centre bore,
+      dark grey, faint oil sheen
+
+  - id: hydraulic_piston
+    seed: 20260207
+    prompt: >-
+      a hydraulic ram, polished steel shaft extended from an olive drab
+      cylinder, braided hose fitting
+
+  - id: ammunition
+    seed: 20260208
+    prompt: >-
+      a bundle of steel-cased autocannon cartridges, blunt steel tips,
+      dull grey cases, linked belt clips
+
+  - id: artillery_charge
+    seed: 20260209
+    prompt: >-
+      a stubby artillery propellant canister, olive drab, stencilled markings,
+      riveted steel base band
+
+  - id: pneumatic_wrench
+    seed: 20260210
+    prompt: >-
+      a heavy pneumatic impact wrench, cast steel body, olive drab housing,
+      air hose coupling, square drive

@@ -1,0 +1,35 @@
+# DEEP FOUNDRY — Recipe definitions.
+#
+# A Recipe is a declarative input→output transformation with a rate (GLOSSARY.md),
+# defined as data and never as code. Adding one means adding a row here.
+#
+# Columns:
+#   id              Identifier. Machines refer to Recipes by this.
+#   display_name    What the player sees.
+#   inputs          Items consumed per craft, as `item:count`, several separated
+#                   by `;`. Empty for a Miner's Recipe — a Node is its input.
+#   outputs         Items produced per craft, same form. Empty only for the Recipe of
+#                   a Machine whose product is not an Item: a generator makes Power,
+#                   an MG Turret makes damage, a Repair Pylon makes repair and a Silo
+#                   makes a Charge. Which
+#                   of these two columns a Recipe must
+#                   fill therefore depends on the role of the Machine that runs it,
+#                   and machines.csv is where the pairing is checked.
+#   seconds         How long one craft takes, in seconds of game time. Written in
+#                   decimal because that is how a human reasons about a rate;
+#                   parsed to an exact fixed-point quantity, never a float.
+#
+# Item ids are not declared anywhere else. The set of Items is exactly the set
+# mentioned in this file, interned in sorted order, so introducing an Item means
+# naming it in a Recipe and nothing more.
+#
+id,display_name,inputs,outputs,seconds
+assemble_charge,Assemble Charge,iron_plate:1;ammunition:20,,20
+burn_coal,Burn Coal,coal:1,,2
+fire_mg,Fire MG,ammunition:1,,0.25
+make_ammunition,Make Ammunition,iron_plate:1,ammunition:2,3
+mend_machinery,Mend Machinery,iron_plate:1,,1
+mine_coal,Mine Coal,,coal:1,1.5
+mine_iron_ore,Mine Iron Ore,,iron_ore:1,1.5
+mine_iron_ore_deep,Mine Deep Iron Ore,,iron_ore:3,1.5
+smelt_iron_plate,Smelt Iron Plate,iron_ore:2,iron_plate:1,3.2

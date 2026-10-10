@@ -1,0 +1,53 @@
+# DEEP FOUNDRY — the things a player builds that are not Machines.
+#
+# A Belt and a Wall are built, occupy tiles, are demolished and are mortal, and
+# **neither is a Machine** — DESIGN.md lists both alongside the Nest, outside the
+# eight Machines, and GLOSSARY.md keeps the words apart. So neither has a row in
+# `content/machines.csv`: no Recipe, no Power, no role, no buffers, and no ports the
+# Simulation enforces — `machine_ports.csv` names a Belt's own two ends for the mesh
+# generator's sake and `_hand_off` reaches the next Belt through a clause of its own.
+#
+# What they did not have until #47 is a price, and this file is where it lives.
+#
+# **Why a table of its own rather than `content/tuning.toml`.** A build cost names
+# an Item, and the Items that exist are exactly the ones the Recipes mention —
+# there is no Item table. So a cost has to be checked against the Recipes, and
+# `machines.csv` is where a cost already sits next to that check. Naming one in
+# tuning would couple the tuning file to the Recipe table from the other side of
+# the content directory, and it breaks every test that supplies its own Recipes:
+# such a test's Recipes do not mention `iron_plate`, so a tuning key that did
+# would make its whole definition set an error. This file is read after the
+# Recipes and checked against them by exactly the rule `machines.csv` obeys, and a
+# caller that supplies no structures at all gets structures that are free — which
+# is what an empty `build_cost` column already means for a Machine.
+#
+# Columns:
+#   id                   Which structure. The Simulation names these, so the set is
+#                        closed: `belt` and `wall` and nothing else. There is no
+#                        BUILD_* intent for a third, so a row for one would be a
+#                        number nothing reads. Both rows are required.
+#   display_name         What the player sees.
+#   build_cost_per_tile  What one tile costs, as `item:count`, several separated by
+#                        `;` — the same form a Recipe's inputs and a Machine's
+#                        `build_cost` use. Every Item named must be one some Recipe
+#                        mentions. **Per tile, not per structure**, because the
+#                        length of a Belt is the number a player actually decides
+#                        on and it is on screen before the drag is released: a
+#                        route that costs by the tile makes layout a question of
+#                        routing rather than of taste. A Wall is one tile per
+#                        intent, so for a Wall the two readings coincide.
+#                        Demolishing returns it in full, so iterating on a layout
+#                        still costs only the ticks (issue #1, user story 7). An
+#                        Enemy chewing one down returns nothing — the asymmetry
+#                        #11 argued for, applied to the cheapest thing a player
+#                        builds. Leave it empty for a structure that is free.
+#
+# Where the two figures come from: a Belt tile is one plate because a plate is the
+# one Item a Run opens able to spend and a tile is the unit a player counts, and a
+# Wall tile is two because a Wall's whole job is to be chewed through — it carries
+# more hit points per tile than anything else a player can lay down, and a Wall
+# cheaper than the Belt it protects would make a maze the default answer to every
+# Breach. `player.starting_stock` moved with them; see its note in tuning.toml.
+id,display_name,build_cost_per_tile
+belt,Belt,iron_plate:1
+wall,Wall,iron_plate:2

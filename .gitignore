@@ -2,12 +2,27 @@
 # Purchased and license-restricted assets prohibit redistribution. This repo
 # is public. Anything under here is pulled in locally; see docs/ASSETS.md.
 /assets_licensed/
+# ...except Godot's marker telling the engine not to scan it. It must be in git:
+# without it a fresh clone points the importer at gigabytes of third-party Unity
+# projects and WAV libraries. It is empty, and the licence guard allows it only
+# while it stays empty.
+!/assets_licensed/.gdignore
+
+# jj (Jujutsu) keeps its own state here. This repo is colocated — git and jj
+# both drive the same working copy — and jj's store must never reach the remote.
+# See the jj section of CLAUDE.md.
+/.jj/
 
 # Godot
 .godot/
 /android/
 *.translation
-export_presets.cfg
+
+# `export_presets.cfg` is deliberately NOT ignored, which is the opposite of
+# Godot's own template. Here it is not a developer's private preference: its
+# `include_filter` is the only thing that puts the runtime-loaded assets and the
+# whole of `content/` into the PCK, and `tools/release/build_windows.sh` cannot run
+# without it. See docs/RELEASING.md and the comments in the file itself.
 
 # Generated art pipeline output (regenerable; large)
 /tools/aigen/models/
@@ -35,3 +50,9 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# aigen venv (created by tools/aigen/setup.sh on top of the system torch)
+/tools/aigen/.venv/
+
+# Agent worktrees — never part of the repo
+.claude/worktrees/

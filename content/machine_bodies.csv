@@ -1,0 +1,78 @@
+# Machine bodies: which Machines have a procedurally generated mesh, and how big
+# that mesh is. Read by tools/assets/generate_machines.py and by nothing else.
+#
+# WHO OWNS A FOOTPRINT
+#
+# The SIMULATION is the authority on footprints, and it holds them in two files
+# for two reasons:
+#
+#   machines.csv       every Machine's footprint. The file the Simulation loads,
+#                      and where it names a Machine, its footprint wins.
+#   sim/map_layout.gd  the NEST's footprint, as MapLayout.NEST_FOOTPRINT_TILES.
+#                      The Nest is not a Machine and never will be (DESIGN.md
+#                      lists it alongside Belt and Wall), so it has no row there
+#                      to carry a column, and its size lives where its position
+#                      does: in the Map's geography. The generator reads the
+#                      constant (machine_specs.structure_footprints) rather than
+#                      restating it, which is what #61 closed — it was the one
+#                      footprint in the project with two authorities and no
+#                      cross-check, and it is the 4x4 a player respawns on top
+#                      of and every Belt in every scenario docks against.
+#
+# Either way the generator reads the footprint from there and this table's
+# columns are then only a cross-check, which the asset suite fails on any
+# disagreement, naming both files.
+#
+# Leave footprint_x, footprint_z and body_height_mm BLANK to say "the Simulation
+# owns this one", which is the end state for every row: as gameplay tickets add a
+# Machine with a real Recipe to machines.csv, that ticket blanks this row's
+# duplicated columns and the duplicate is gone. Until then a filled-in value lets
+# the art pipeline run ahead of the gameplay tables without inventing Recipes, at
+# the cost of a cross-check instead of a single source — and the cross-check is a
+# test, not a promise.
+#
+# A blank footprint or height that nothing in the Simulation declares is an
+# error, so a row can never resolve to no footprint and no height at all.
+#
+# miner_mk1, coal_miner_mk1, smelter_mk1, steam_boiler_mk1, ammo_press_mk1 and
+# silo_mk1 are all declared by machines.csv, so their footprints and their heights
+# are blank here and there is exactly one authority for each. The rest follow as
+# their Recipes arrive.
+#
+# Known gap: machines.csv also declares mg_turret_mk1, which has no body here and
+# so no generated mesh yet. The Simulation and the placeholder renderer are happy
+# without one; the art pass is what closes it.
+#
+# Not every body is a Machine. The Nest is the structure the Run is lost with
+# and a Belt is the logistics primitive; neither runs a Recipe, so neither
+# belongs in machines.csv. The Nest's footprint is declared in sim/map_layout.gd
+# and blank here; a Belt's 1x1 is the only footprint in this file with no
+# authority anywhere else, because one tile wide is what a Belt *is* (DESIGN.md)
+# and the Simulation holds no constant to disagree with.
+#
+# body            Which recipe in tools/assets/machine_recipes.py builds it.
+# footprint_x/z   Footprint in TILES on the 2 m grid, or blank (see above).
+# body_height_mm  Height of the main housing above the ground, in millimetres,
+#                 or blank (see above). **No longer art direction alone**: #30
+#                 made the Factory solid, so the Simulation collides a player
+#                 against this height and stands them on top of it — which is why
+#                 machines.csv's `height_metres` is the authority wherever it
+#                 declares the Machine and this column is a cross-check. Masts,
+#                 stacks and launch tubes rise above it and are NOT solid; it is
+#                 the housing, not the silhouette, and a thin mast that stopped a
+#                 player would read as a bug. Everything is sized against the
+#                 1800 mm player. For a Belt it is the deck height, which must
+#                 equal the Belt port height in machine_ports.csv and which
+#                 `belt.deck_height_metres` in tuning.toml has to match.
+machine_id,body,footprint_x,footprint_z,body_height_mm
+miner_mk1,miner,,,
+coal_miner_mk1,coal_miner,,,
+smelter_mk1,smelter,,,
+press_mk1,press,2,3,2400
+assembler_mk1,assembler,3,3,2200
+steam_boiler_mk1,boiler,,,
+generator_mk1,generator,2,2,2200
+ammo_press_mk1,ammo_press,,,
+silo_mk1,silo,,,
+nest,nest,,,4200
+belt_straight,belt,1,1,900

@@ -1,0 +1,55 @@
+## The roster of Enemy kinds, and the one place a kind's name and its integer agree.
+##
+## An Enemy is an index into parallel integer arrays and its kind is one of those
+## integers (ADR 0001), so the Simulation only ever handles the number. But
+## `content/waves.csv` has to name a kind in words — a table a designer edits cannot be
+## written in enum ordinals — so the name and the number meet exactly here, and nowhere
+## else. `Simulation.ENEMY_KIND_*` are aliases of these constants rather than a second
+## copy of them, which is what stops the table and the Simulation from drifting apart.
+##
+## Adding an Enemy kind is a constant and a name in `KIND_NAMES` at the matching index,
+## plus whatever behaviour the Simulation gives it. The Wave table then reaches it without
+## further change.
+class_name EnemyKind
+extends RefCounted
+
+## Chaff: the weakest Enemy, which swarms toward the Nest (GLOSSARY.md).
+const CRAWLER: int = 0
+
+## A full-fidelity Enemy that preferentially attacks Machines rather than players
+## (GLOSSARY.md) — the reason Machine mortality is felt rather than merely true. It
+## differs from a Crawler in what it walks towards and what it bites, not in its data
+## layout: a Breaker is an entry in the same arrays.
+const BREAKER: int = 1
+
+## The boss: a slow Enemy that bombards the Factory from beyond Turret range and cannot be
+## answered by defences (GLOSSARY.md). **One more entry in the same arrays**, which is the
+## claim ADR 0001 rests on: a boss is not an exception to the data layout, it is a kind
+## integer plus the one piece of state the other kinds do not have — which way it is facing —
+## carried as one more parallel array.
+const SIEGE_HULK: int = 2
+
+## Every kind's name, **indexed by the kind's own integer**. The order is therefore the
+## kind numbering and not a list that happens to be sorted; `index_of` is the only way
+## round that is read, and it is the inverse by construction.
+const KIND_NAMES: Array = ["crawler", "breaker", "siege_hulk"]
+
+
+## The kind a name means, or -1 for a name no kind answers to. -1 rather than a
+## plausible-looking 0, so a typo in the Wave table is an error naming the row instead of
+## a Wave quietly made of Crawlers.
+static func index_of(name: String) -> int:
+	return KIND_NAMES.find(name)
+
+
+## What a kind is called, or an empty string for a kind that does not exist.
+static func name_of(kind: int) -> String:
+	if kind < 0 or kind >= KIND_NAMES.size():
+		return ""
+	return KIND_NAMES[kind]
+
+
+## Every name a Wave row may use, in kind order. For an error message that tells the
+## reader what they could have written.
+static func every_name() -> String:
+	return ", ".join(PackedStringArray(KIND_NAMES))

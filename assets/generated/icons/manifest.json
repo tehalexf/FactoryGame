@@ -1,0 +1,511 @@
+{
+  "records": [
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "d88f8618ccc13f42",
+      "id": "ammunition",
+      "image_sha256": "aba0b978daeb7af0751173af0f7a875e60ece1b9148ba30b14a4282566465b33",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/ammunition.png",
+      "peak_vram_bytes": 11283208192,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 10.888,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a bundle of steel-cased autocannon cartridges, blunt steel tips, dull grey cases, linked belt clips, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260208,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "378bebb08a76244f",
+      "id": "artillery_charge",
+      "image_sha256": "a274a296de34dc15813079071c09128bbedd734e7f8fe52b806c8bcf613a5b8a",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/artillery_charge.png",
+      "peak_vram_bytes": 11282421760,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 10.149,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a stubby artillery propellant canister, olive drab, stencilled markings, riveted steel base band, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260209,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "bde899c0d6d29fab",
+      "id": "coal",
+      "image_sha256": "d58c89b83aa17d0453527d29301171fab0d388029b217b9ef9595dc68808566e",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/coal.png",
+      "peak_vram_bytes": 11282421760,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 7.385,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a lump of black anthracite coal, glossy angular fracture facets, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260202,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "af0d7d43fe9cbd1f",
+      "id": "gear",
+      "image_sha256": "68cb5028265486be026c86d5e3180960995ce4d76f27d87e4dc02a04cb252dd5",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/gear.png",
+      "peak_vram_bytes": 11283208192,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 10.664,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a machined steel spur gear, straight-cut teeth, keyed centre bore, dark grey, faint oil sheen, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260206,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "8bbff5a467c5763b",
+      "id": "hydraulic_piston",
+      "image_sha256": "34c0b98bcf4d433bf0741886e094a786769bf0271c8a5205b62d9ac3d5a4636e",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/hydraulic_piston.png",
+      "peak_vram_bytes": 11283208192,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 11.57,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a hydraulic ram, polished steel shaft extended from an olive drab cylinder, braided hose fitting, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260207,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "fb9d1501a72e739f",
+      "id": "iron_ingot",
+      "image_sha256": "20e426edf99f585fdd045d96a3fcb26f04c5dbbeb07fe2ac53b6a8198bc83531",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/iron_ingot.png",
+      "peak_vram_bytes": 11282421760,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 10.552,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a cast iron ingot, trapezoidal bar, rough sand-cast grey surface, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260203,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "c0630046d39e9332",
+      "id": "iron_ore",
+      "image_sha256": "590808c92b7914700ac08ba0a2c77001a8c4860096b25dafbb5f5abb32988872",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/iron_ore.png",
+      "peak_vram_bytes": 11282421760,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 9.959,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a rough chunk of raw iron ore, dark grey rock, rusty red streaks, metallic flecks, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260201,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "f23961bc1c13195c",
+      "id": "iron_plate",
+      "image_sha256": "68a3c09b1654b908892b5c2df2cb1c6e68a5a0c841532b9173fde6e9beaee2aa",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/iron_plate.png",
+      "peak_vram_bytes": 11282421760,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 8.562,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a stack of three cast iron plates, thick square slabs, rough sand-cast surface, stacked flat, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260212,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "4f80865fb70ef5ef",
+      "id": "pneumatic_wrench",
+      "image_sha256": "bae0d9b1dea632d54d6b6b8b2ca9c750b0c7c8177d9e96e0dc8fb8102e3982ec",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/pneumatic_wrench.png",
+      "peak_vram_bytes": 11282421760,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 9.573,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a heavy pneumatic impact wrench, cast steel body, olive drab housing, air hose coupling, square drive, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260210,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "cfa3f521c736dc31",
+      "id": "steel_ingot",
+      "image_sha256": "a0654fda042d64dbc248af48295c50a4c0d996c2381716f9874ba75ecc8e87f3",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/steel_ingot.png",
+      "peak_vram_bytes": 11282421760,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 9.332,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a steel billet, rectangular bar with bevelled ends, brushed grey steel, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260204,
+        "steps": 30,
+        "width": 1024
+      }
+    },
+    {
+      "environment": {
+        "diffusers": "0.41.0",
+        "dtype": "float16",
+        "gpu": "NVIDIA GeForce RTX 5090",
+        "torch": "2.12.1+cu130"
+      },
+      "fingerprint": "809093e317a59154",
+      "id": "steel_plate",
+      "image_sha256": "38b1f0940ff777d3ca5fae6fca9887c3c3dbcceeafad75fbf5bc519e008ee4db",
+      "image_size": [
+        256,
+        256
+      ],
+      "kind": "icon",
+      "model": {
+        "id": "stabilityai/stable-diffusion-xl-base-1.0",
+        "licence": "CreativeML Open RAIL++-M",
+        "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+        "variant": "fp16"
+      },
+      "path": "icons/steel_plate.png",
+      "peak_vram_bytes": 11283208192,
+      "recipe": "tools/aigen/prompts/icons.yaml",
+      "seconds": 9.926,
+      "settings": {
+        "canvas_px": 256,
+        "guidance": 7.0,
+        "height": 1024,
+        "key_tolerance": 20.0,
+        "kind": "icon",
+        "margin_frac": 0.08,
+        "model": {
+          "id": "stabilityai/stable-diffusion-xl-base-1.0",
+          "revision": "462165984030d82259a11f4367a4eed129e94a7b",
+          "variant": "fp16"
+        },
+        "negative": "cast shadow, drop shadow, ground plane, table, gradient background, clutter, scene, multiple objects, text, watermark, logo, border, frame, brass, copper, bronze, polished wood, victorian, steampunk, ornate, cute, cartoon, blurry, cropped",
+        "prompt": "a stamped steel plate, flat rectangle, rounded corners, four bolt holes, scuffed grey steel, single object, centred, isolated on a flat uniform neutral grey background, three-quarter orthographic view, even studio light, no cast shadow, game inventory icon, interwar heavy industry dieselpunk, strong silhouette",
+        "scheduler": "dpmpp_2m_karras",
+        "seamless": false,
+        "seed": 20260205,
+        "steps": 30,
+        "width": 1024
+      }
+    }
+  ],
+  "schema": 1
+}

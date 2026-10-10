@@ -1,0 +1,27 @@
+# The only skips a CI run is allowed to have.
+#
+# One substring per line, matched against the reason unittest printed. A skip
+# whose reason matches nothing here fails the job — see .github/ci/run_suite.sh
+# for why that is a failure rather than a note.
+#
+# The list is short on purpose. The CI jobs install Godot 4.7.2, Blender 5.2.2
+# and ffmpeg, which between them clear every conditional skip the three suites
+# have except the ones below. If you find yourself adding a line, the question
+# to answer first is whether CI could simply satisfy the dependency instead.
+
+# tools/release/tests reads a real exported Windows build, and building one
+# needs Godot's Windows export templates and a `butler` login — a release step,
+# not a per-push one (docs/RELEASING.md). Six tests. The code paths they cover
+# are also exercised against synthetic .pck fixtures by the tests either side of
+# them, so what is lost in CI is the end-to-end assertion, not the coverage.
+no build yet
+
+# Note what is deliberately NOT listed: the purchased packs. assets_licensed/ is
+# gitignored and no runner will ever have it, so the obvious expectation is a
+# row of skips for it — and there is not one. The converters' tests run on
+# fixtures they build themselves, the licence guard's tests build throwaway
+# repositories, and the game draws self-authored stand-ins when the packs are
+# absent, so all three suites run their full count against a checkout that has
+# only assets_licensed/.gdignore in it. If a licensed-asset skip ever starts
+# appearing, that is a test that quietly stopped covering anything on a clean
+# clone, and this file is right to fail the job over it.
