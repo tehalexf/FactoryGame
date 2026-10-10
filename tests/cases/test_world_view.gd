@@ -3187,3 +3187,4 @@ func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal()
 			view.enemy_surface_metallic(kind) >= 0.5,
 			"kind %d is %f metallic" % [kind, view.enemy_surface_metallic(kind)]
 		)
+	view.free()
