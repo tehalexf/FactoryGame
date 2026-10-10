@@ -6946,6 +6946,15 @@ func _enemies() -> void:
 	var nest_distance: PackedInt64Array = _flow_distance
 	var factory_distance: PackedInt64Array = _machine_flow_distance
 
+	# Which axis each Enemy marched along this tick, or `MARCHED_NOWHERE` for one that bit,
+	# held station or never moved. Per-tick scratch rather than state — zero at every point a
+	# hash is taken, in the same category as the `FIRE` flag — and read by exactly one thing:
+	# `_apply_separation`, which bounds what separation may take *away from a march* without
+	# bounding how far a body may step aside out of a crowd. See that function.
+	var marched: PackedInt64Array = PackedInt64Array()
+	marched.resize(query_enemy_count())
+	marched.fill(MARCHED_NOWHERE)
+
 	for index: int in range(query_enemy_count()):
 		# An Enemy does not act on the tick it came through its Breach, for the reason a
 		# Machine does not run on the tick it was built: it arrived *during* that tick, and
@@ -6972,7 +6981,371 @@ func _enemies() -> void:
 				field = factory_field
 		if _enemy_bites(index, kind, field, nest_field):
 			continue
-		_advance_enemy(index, field, nest_field, _enemy_step_metres(kind))
+		marched[index] = _advance_enemy(index, field, nest_field, _enemy_step_metres(kind))
+
+	# **Separation is a pass of its own, after every Enemy has moved**, for the reason
+	# `_load_the_ports` is: it is a decision *between* entities rather than about one, and
+	# deciding it inside the walking loop would decide it in the order the Enemies happen to
+	# be walked in. See `_separate_the_crowd`.
+	_separate_the_crowd(marched)
+
+
+# ── Separation: a crowd rather than a rank ────────────────────────────────────
+#
+# **#76 overturned a design note rather than filling a gap, and the note's reasoning was
+# sound.** It said Enemies do not collide with one another by design, because the
+# alternative is an O(n^2) separation pass the Chaff tier could not afford — and that is
+# true of the pass somebody would write first. The user looked at the result on screen — a
+# rank of bodies interpenetrating as they converge on one tile — and overruled it, which is
+# theirs to do. So the quadratic is what had to be answered, and it is answered by
+# bucketing rather than by giving the mechanic up.
+#
+# The thing to hold on to is that **separation is local and the flowfield is not.** Where a
+# swarm is *going* is one shared field swept over the whole Map and amortised across every
+# Enemy alive (ADR 0001, and #34's lane). Where one body stands relative to the body beside
+# it is a question about a couple of metres, and nothing here reads a field, a path or a
+# destination. The two halves do not interact and this pass deliberately cannot disturb the
+# other: it runs after every Enemy has taken its step, it moves nobody further than they
+# walked, and it latches nothing.
+
+## How many Enemy indices one cell key reserves below the cell number.
+##
+## The bucket array packs a cell and an Enemy index into one integer so that sorting it
+## groups the cells and leaves each cell's members in **index order**, which is the one
+## order every client agrees on. 2^20 is a million Enemies a cell, against a Chaff tier
+## sized in the thousands, so the stride cannot be reached by a Wave the Map can hold.
+const SEPARATION_CELL_STRIDE: int = 1 << 20
+
+## What `_advance_enemy` reports about the step it took, and all `_apply_separation` needs to
+## know about it. A march is always along one grid axis — the flowfield's directions are the
+## four of them — so "with the march" and "across it" is a choice between two numbers rather
+## than a projection onto a vector, which is what keeps the decomposition free of any
+## arithmetic at all.
+const MARCHED_NOWHERE: int = -1
+const MARCHED_ALONG_X: int = 0
+const MARCHED_ALONG_Z: int = 1
+
+
+## Whether an Enemy of a kind takes part in separation at all.
+##
+## **A Crawler and a Breaker do; a Siege Hulk does not**, and that is a design decision
+## rather than an optimisation. A Hulk halts the moment anything is inside
+## `siege_hulk.range_metres` and that stand-off *is* its reach — shoving it would be a
+## second opinion about where it comes to rest, and it would turn the one Enemy whose
+## facing carries a rule (the armoured front, `_armoured`) into something a crowd could
+## rotate. Two Siege Hulks are also not a crowd: the thing the user was complaining about is
+## Chaff interpenetrating, and the boss is the one kind a player meets alone.
+##
+## It is load-bearing for the cost as well, and `_separation_reach_cells` says how.
+func _kind_separates(kind: int) -> bool:
+	return kind == EnemyKind.CRAWLER or kind == EnemyKind.BREAKER
+
+
+## How many cells out of its own the neighbour search has to look, in whole tiles.
+##
+## **This is what makes the bucketing provably sufficient rather than hoped-for.** Two
+## bodies interfere when they are closer than the sum of their radii, so a search that looks
+## one cell out finds every neighbour it could possibly owe a push to exactly when that sum
+## fits inside a tile. On the shipped content it does: the widest separating pair is two
+## Breakers at 0.8 m each, which is 1.6 m against a 2 m tile, so this answers 1 and the
+## search is the nine cells the ticket describes.
+##
+## Derived rather than asserted, because the alternative is a rule that goes quietly wrong.
+## A later kind with a two-metre radius would make a nine-cell search miss the neighbour
+## standing two cells away — it would not fail, it would just stop separating, which is the
+## one failure mode that looks exactly like the old behaviour. Computed from the largest
+## radius any separating kind actually declares, so the content cannot outgrow it.
+func _separation_reach_cells() -> int:
+	var widest: int = 0
+	for kind: int in range(EnemyKind.KIND_NAMES.size()):
+		if _kind_separates(kind):
+			widest = maxi(widest, _enemy_hit_radius(kind))
+	var tile: int = Fixed.from_int(WorldGrid.TILE_SIZE_METRES)
+	return maxi(Fixed.ceil_to_int(Fixed.div(widest * 2, tile)), 1)
+
+
+## Pushes apart every pair of Enemies standing inside the room their own two bodies ask for.
+##
+## **The pass is bucketed and the buckets are a sorted array of packed keys.** Each
+## separating Enemy contributes one `cell * SEPARATION_CELL_STRIDE + index`; sorting that
+## groups the Map's occupied cells together and leaves each group in index order, and a
+## binary search then answers "who else is in this cell" without the array ever being walked
+## as a whole. So the work is a count of *neighbours* rather than a count of Enemies, which
+## is the whole of the answer to the note this replaced.
+##
+## The two structures that would have been reached for first are both refused, for reasons
+## worth keeping:
+##
+## - **A Dictionary of cell to occupants is exactly what the purity lint forbids**, and
+##   rightly — its iteration order is not a property two clients agree on. #76 took no new
+##   exemption, and a sorted array of integers needs none.
+## - **A head array over the field** — one entry per tile, chained through a `next` array —
+##   is the textbook spatial hash and is genuinely O(n). It is also 16,641 integers cleared
+##   on every tick of every Wave to serve twenty Crawlers, which is more work than the
+##   sorting it would save. The sort is over the Enemies that exist and nothing else.
+##
+## **Displacements are accumulated and applied afterwards, and that is the decision this
+## ticket turns on.** Honesty first: applying in place would *also* replay, because index
+## order is ascending spawn serial and every client walks it — so this is not the desync it
+## looks like. The argument is a design one. In place, an Enemy is pushed off the positions
+## earlier-indexed Enemies have *already been moved to* this tick, so the earliest spawn in
+## a pile is the only one that sees the pile as it really was and the whole crowd leans the
+## way the serials run. Accumulating makes the push a property of the configuration rather
+## than of arrival order, which is the same thing the Belts' downstream-first order and the
+## Machine port cursor's canonical order are each careful about. Integer addition is exact
+## and commutative, so the total a body receives does not depend on which pair was summed
+## first either.
+##
+## **It adds no state.** The two accumulators are per-tick scratch, zero at every point a
+## hash is taken, in the same category as `_player_repair_credit` and the `FIRE` flag — so
+## there is no new array to hash, nothing for `RunSave` to carry, and nothing a save could
+## restore inconsistently. The positions it writes were hashed already.
+func _separate_the_crowd(marched: PackedInt64Array) -> void:
+	var count: int = query_enemy_count()
+	if count < 2:
+		return
+
+	var buckets: PackedInt64Array = PackedInt64Array()
+	for index: int in range(count):
+		if not _kind_separates(_enemy_kind[index]):
+			continue
+		# An Enemy that arrived this tick is in the buckets, so the crowd standing on the
+		# Breach makes room for it — and is not moved itself, which the apply loop below is
+		# where that happens and says why.
+		var cell: int = _field_index(WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index]))
+		if cell == -1:
+			continue
+		buckets.append(cell * SEPARATION_CELL_STRIDE + index)
+	if buckets.size() < 2:
+		return
+	buckets.sort()
+
+	var push_x: PackedInt64Array = PackedInt64Array()
+	var push_z: PackedInt64Array = PackedInt64Array()
+	push_x.resize(count)
+	push_z.resize(count)
+	push_x.fill(0)
+	push_z.fill(0)
+
+	var reach: int = _separation_reach_cells()
+	for slot: int in range(buckets.size()):
+		var key: int = buckets[slot]
+		var a: int = key % SEPARATION_CELL_STRIDE
+		@warning_ignore("integer_division")
+		var cell: int = key / SEPARATION_CELL_STRIDE
+		var tile: Vector3i = _field_tile(cell)
+		# Break any exact tie before the pairs are summed, because a pair cannot break one.
+		_fan_out_of_coincidence(a, cell, buckets, push_x, push_z)
+		for dz: int in range(-reach, reach + 1):
+			for dx: int in range(-reach, reach + 1):
+				var neighbour: int = _field_index(
+					Vector3i(tile.x + dx, WorldGrid.GROUND_LAYER, tile.z + dz)
+				)
+				if neighbour == -1:
+					continue
+				_separate_against_cell(a, neighbour, buckets, push_x, push_z)
+
+	for index: int in range(count):
+		# **An Enemy that arrived this tick is not moved**, for the reason it does not walk
+		# and does not bite: it came through its Breach *during* this tick. It was in the
+		# buckets, so the crowd already standing there has made room for it and is out of its
+		# way by the time it takes its first step.
+		if _enemy_spawn_tick[index] == _tick:
+			continue
+		# Defensive rather than load-bearing: nothing in `_enemies` removes an Enemy today, so
+		# the scratch is exactly as long as the Enemy arrays. A later ticket that killed one
+		# inside that loop would otherwise land here as an index error rather than as the
+		# missing-clamp it would really be.
+		var axis: int = marched[index] if index < marched.size() else MARCHED_NOWHERE
+		_apply_separation(index, push_x[index], push_z[index], axis)
+
+
+## Pushes one Enemy apart from every member of one bucket cell.
+##
+## Walks only the run of the sorted bucket array that belongs to that cell, found by binary
+## search, so a cell nobody is standing in costs one search and nothing else. **Each
+## unordered pair is considered exactly once**, by taking only neighbours of a higher index
+## than the Enemy being pushed — which is what makes the push symmetric rather than applied
+## twice from two directions.
+func _separate_against_cell(
+	a: int,
+	cell: int,
+	buckets: PackedInt64Array,
+	push_x: PackedInt64Array,
+	push_z: PackedInt64Array
+) -> void:
+	var first: int = buckets.bsearch(cell * SEPARATION_CELL_STRIDE, true)
+	for slot: int in range(first, buckets.size()):
+		var key: int = buckets[slot]
+		@warning_ignore("integer_division")
+		var of_cell: int = key / SEPARATION_CELL_STRIDE
+		if of_cell != cell:
+			return
+		var b: int = key % SEPARATION_CELL_STRIDE
+		if b <= a:
+			continue
+		_separate_one_pair(a, b, push_x, push_z)
+
+
+## Nudges an Enemy out of a pile of bodies standing in exactly the same place.
+##
+## **The one case a pairwise rule cannot answer, and it is the case a Breach actually
+## produces** — Enemies are released at the centre of a Breach tile, so a Wave coming out of
+## one hole is a stack of bodies with identical coordinates. Two coincident bodies have no
+## gap direction to be pushed along, and the obvious fix of giving each *pair* an axis of its
+## own was written first and measured failing: over three coincident bodies the pair pushes
+## **cancel exactly**, and the pile sat there for the whole Run. Three Crawlers out of eight
+## were still standing in one place at (21.05, 3.00) when it was tried.
+##
+## So the tie is broken **per body rather than per pair**, by how many bodies it is stacked
+## behind: the first of a pile stays put, the next three take the four grid axes in turn, and
+## a deeper pile walks the same four axes again further out. Nothing can cancel, because no
+## two bodies in a pile are given the same nudge.
+##
+## **Rank is a count of lower-indexed bodies, which is a canonical order rather than an
+## incidental one.** Index order is ascending spawn serial by construction, so every client
+## ranks a pile identically — and a tie has to be broken by *something*, so it is broken by
+## the identity this project already uses for exactly this purpose: `game/enemy_animator.gd`
+## de-locksteps a crowd's animation off the serial, and it costs the Run no RNG draw either.
+##
+## The nudge goes into the same accumulators as every pairwise push rather than straight onto
+## the position, so it is bounded by one tick of walking and refused into an obstruction like
+## everything else. It only has to create a gap direction; the ordinary maths does the rest on
+## the next tick.
+func _fan_out_of_coincidence(
+	a: int,
+	cell: int,
+	buckets: PackedInt64Array,
+	push_x: PackedInt64Array,
+	push_z: PackedInt64Array
+) -> void:
+	var rank: int = 0
+	var first: int = buckets.bsearch(cell * SEPARATION_CELL_STRIDE, true)
+	for slot: int in range(first, buckets.size()):
+		var key: int = buckets[slot]
+		@warning_ignore("integer_division")
+		var of_cell: int = key / SEPARATION_CELL_STRIDE
+		if of_cell != cell:
+			break
+		var b: int = key % SEPARATION_CELL_STRIDE
+		if b >= a:
+			break
+		if _enemy_x[b] == _enemy_x[a] and _enemy_z[b] == _enemy_z[a]:
+			rank += 1
+	if rank == 0:
+		return
+	@warning_ignore("integer_division")
+	var ring: int = 1 + (rank - 1) / 4
+	var step: Vector3i = WorldGrid.direction_step((rank - 1) % 4)
+	var apart: int = _enemy_hit_radius(_enemy_kind[a]) * ring
+	push_x[a] += step.x * apart
+	push_z[a] += step.z * apart
+
+
+## Accumulates the equal and opposite push that takes one pair of Enemies off one another.
+##
+## Nothing happens unless they are actually inside the room their two radii ask for, and
+## that test is made **squared**, like a Turret's reach and a wrench's: `Fixed.sqrt` floors,
+## so two bodies exactly touching would be overlapping or not depending on a rounding rule,
+## where multiplying both sides is exact integer arithmetic. The square root is then taken
+## only for a pair that really does overlap, which on a walking crowd is a small minority of
+## the pairs examined.
+func _separate_one_pair(
+	a: int, b: int, push_x: PackedInt64Array, push_z: PackedInt64Array
+) -> void:
+	var gap_x: int = _enemy_x[b] - _enemy_x[a]
+	var gap_z: int = _enemy_z[b] - _enemy_z[a]
+	var room: int = _enemy_hit_radius(_enemy_kind[a]) + _enemy_hit_radius(_enemy_kind[b])
+	if room <= 0:
+		return
+	var span: int = Fixed.mul(gap_x, gap_x) + Fixed.mul(gap_z, gap_z)
+	if span >= Fixed.mul(room, room):
+		return
+
+	if gap_x == 0 and gap_z == 0:
+		# Exactly coincident, so there is no gap direction to push along at all. Handled by
+		# `_fan_out_of_coincidence` instead of here, and the comment on that function says
+		# why it could not be done pairwise.
+		return
+
+	var distance: int = Fixed.sqrt(span)
+	if distance <= 0:
+		return
+	# Half the overlap each, so a pair settles exactly touching rather than one of them
+	# carrying the whole correction.
+	#
+	# **Multiplied before it is divided, which is a contract rather than a preference.** The
+	# other order — normalise the gap, then scale it — makes a very nearly coincident pair
+	# produce a `scale` of some billions, and `Fixed.mul` documents both its operands as
+	# bounded by `MUL_OPERAND_LIMIT`. This way every operand stays the size of a gap and the
+	# one division lands at the end, which is also where it rounds least.
+	var half: int = (room - distance) >> 1
+	var apart_x: int = Fixed.div(Fixed.mul(gap_x, half), distance)
+	var apart_z: int = Fixed.div(Fixed.mul(gap_z, half), distance)
+	push_x[a] -= apart_x
+	push_z[a] -= apart_z
+	push_x[b] += apart_x
+	push_z[b] += apart_z
+
+
+## Moves one Enemy by the push the whole pass accumulated for it, bounded three ways.
+##
+## **Separation may not overcome a march, and it may step aside freely. That split is the
+## one real piece of engineering in this pass**, and both halves were measured rather than
+## reasoned about.
+##
+## 1. **With the march, half a tick of travel at most.** A pair that overlaps wants half the
+##    overlap each, which in a queue is more than a tick's travel for everybody in it. The
+##    first version bounded the whole displacement at one tick's travel and **deadlocked**:
+##    the rear of a queue was pushed backwards exactly as fast as it walked forwards, and
+##    four of eight Crawlers stood still for the whole Run — which on screen looks like a
+##    hang and not like crowding. At half, walking wins by a factor of two whatever the
+##    crowd is doing, so a body in the thickest part of a pile still makes net progress
+##    every tick.
+## 2. **Across the march, a whole tick of travel.** Bounding this as tightly was the second
+##    thing measured failing: a queue in a 2 m lane plateaued at 78% of the room its own
+##    bodies asked for and stayed there, because sideways was the one direction that could
+##    have resolved the overlap and it was rationed as if it were competing with the walk.
+##    It is not competing with anything — stepping out of a crowd costs a body no ground —
+##    so it gets the full budget and a crowd fans out as it comes on.
+## 3. **An Enemy that is not marching is not rationed at all.** `MARCHED_NOWHERE` is what a
+##    body that bit, held station or never moved reports, and it is the common case in the
+##    one place a crowd is thickest: a pile chewing on the Nest. Nothing is being taken away
+##    from a march that is not happening, so the pile spreads along the face it is eating
+##    instead of compressing into one half-metre of it.
+##
+## The decomposition is free, which is why it is affordable at all. A march is always along
+## one of the flowfield's four directions, so "with it" and "across it" is a choice between
+## `apart_x` and `apart_z` rather than a projection onto a vector.
+##
+## **And it never pushes anything into an obstruction**, resolved one axis at a time, x then
+## z, which is the convention and the written-down order `_move_against_the_factory` already
+## uses for a player — so being pushed against a Machine's wall slides along it rather than
+## stopping dead. A refused axis keeps the coordinate it had rather than snapping to the
+## face, for the same reason it does there: the face is a tile boundary minus a radius, and
+## getting it wrong puts a body inside a solid. Refusing costs at most one tick of travel.
+func _apply_separation(index: int, apart_x: int, apart_z: int, marched: int) -> void:
+	if apart_x == 0 and apart_z == 0:
+		return
+	var step_metres: int = _enemy_step_metres(_enemy_kind[index])
+	if step_metres <= 0:
+		return
+	if marched == MARCHED_ALONG_X:
+		apart_x = Fixed.clamp_fixed(apart_x, -(step_metres >> 1), step_metres >> 1)
+		apart_z = Fixed.clamp_fixed(apart_z, -step_metres, step_metres)
+	elif marched == MARCHED_ALONG_Z:
+		apart_x = Fixed.clamp_fixed(apart_x, -step_metres, step_metres)
+		apart_z = Fixed.clamp_fixed(apart_z, -(step_metres >> 1), step_metres >> 1)
+	else:
+		apart_x = Fixed.clamp_fixed(apart_x, -step_metres, step_metres)
+		apart_z = Fixed.clamp_fixed(apart_z, -step_metres, step_metres)
+
+	var moved_x: int = _enemy_x[index] + apart_x
+	if not _tile_is_blocked(WorldGrid.tile_at_metres(moved_x, _enemy_z[index])):
+		_enemy_x[index] = moved_x
+	var moved_z: int = _enemy_z[index] + apart_z
+	if not _tile_is_blocked(WorldGrid.tile_at_metres(_enemy_x[index], moved_z)):
+		_enemy_z[index] = moved_z
 
 
 ## Whether a Breaker is hunting the Factory yet, latching it the tick it starts.
@@ -7178,9 +7551,9 @@ func _structure_in_contact(tile: Vector3i) -> Vector2i:
 ## than a defence.
 func _advance_enemy(
 	index: int, field: PackedInt64Array, fallback: PackedInt64Array, step_metres: int
-) -> void:
+) -> int:
 	if step_metres <= 0:
-		return
+		return MARCHED_NOWHERE
 	var tile: Vector3i = WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
 	var direction: int = _enemy_direction(tile, field, fallback)
 
@@ -7190,19 +7563,67 @@ func _advance_enemy(
 	else:
 		step = WorldGrid.direction_step(direction)
 	if step == Vector3i.ZERO:
-		return
+		return MARCHED_NOWHERE
 
 	_enemy_x[index] += step.x * step_metres
 	_enemy_z[index] += step.z * step_metres
 
-	# Slide towards the middle of the lane, on the axis the Enemy is not travelling along.
+	# Gather back towards the middle of the lane, on the axis the Enemy is not travelling
+	# along — but only from outside a corridor the crowd is allowed to spread inside. See
+	# `_lane_corridor_metres`, which is #76's one change to how an Enemy walks.
 	var centre: FixedVec2 = WorldGrid.tile_centre_metres(
 		WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
 	)
+	var corridor: int = _lane_corridor_metres(_enemy_kind[index])
 	if step.x == 0:
-		_enemy_x[index] += Fixed.clamp_fixed(centre.x - _enemy_x[index], -step_metres, step_metres)
+		_enemy_x[index] += _gathered_towards(_enemy_x[index], centre.x, corridor, step_metres)
 	if step.z == 0:
-		_enemy_z[index] += Fixed.clamp_fixed(centre.z - _enemy_z[index], -step_metres, step_metres)
+		_enemy_z[index] += _gathered_towards(_enemy_z[index], centre.z, corridor, step_metres)
+
+	return MARCHED_ALONG_X if step.x != 0 else MARCHED_ALONG_Z
+
+
+## How far off the middle of its lane an Enemy is left alone, in fixed-point metres.
+##
+## **The lane-centring was the other half of "a swarm arrives as a rank", and this is #76's
+## one change to how an Enemy walks.** Separation was measurably working and being undone
+## every tick: the slide pressed every body onto the exact centre line of its lane by up to
+## a whole tick's travel, which is the same budget separation has, so a pair pushed apart
+## across the lane was pulled back together on the next tick and settled a few centimetres
+## apart for ever. Measured before the corridor: two Crawlers in equilibrium at 0.05 m,
+## against the 1.2 m their own two bodies ask for.
+##
+## So a **lane is a lane and not a line.** An Enemy is gathered back towards the middle only
+## once it is further out than two of its own bodies, which is the distance at which it has
+## stopped walking down the lane and started walking beside it. Inside that it is left where
+## it stands, so the crowd keeps whatever spacing separation gave it and the gathering still
+## does the job it was there for — nothing wanders off the lane, and a body flung wide by a
+## dense pile is still brought back.
+##
+## Derived from the kind's own `_enemy_hit_radius` and therefore **no new tuning key**: how
+## much room a crowd needs is how big its bodies are, which is the same authority
+## `_separation_reach_cells` and `WorldView`'s drawn body both read. A kind that does not
+## separate keeps the old behaviour exactly — a Siege Hulk is still centred on its lane to
+## the centimetre, which is what keeps #16's walk in and its stand-off where they were.
+func _lane_corridor_metres(kind: int) -> int:
+	if not _kind_separates(kind):
+		return 0
+	return _enemy_hit_radius(kind) * 2
+
+
+## How far to move a coordinate towards a lane's middle this tick: nothing at all while it is
+## inside the corridor, and otherwise the travel that closes the gap down to the corridor's
+## edge, bounded by one tick of walking.
+##
+## It closes to the **edge** rather than to the middle, which is what stops the gathering
+## from re-entering the fight it was taken out of: a body one centimetre outside the corridor
+## is moved one centimetre, not pressed all the way onto the line.
+func _gathered_towards(value: int, centre: int, corridor: int, step_metres: int) -> int:
+	var off: int = centre - value
+	if absi(off) <= corridor:
+		return 0
+	var inward: int = absi(off) - corridor
+	return signi(off) * mini(inward, step_metres)
 
 
 ## The one-tile step that closes the larger of the two gaps to the Nest's footprint. The

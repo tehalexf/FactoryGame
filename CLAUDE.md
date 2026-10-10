@@ -19,7 +19,8 @@ tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op wi
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
 tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|ground). Needs Xvfb.
 SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png routing
-                                 # the same, through the player's own camera (placing|routing|running)
+                                 # the same, through the player's own camera
+                                 # (opening|placing|routing|running|delivering|nest; + bare)
 SHOT_SCRIPT=tools/visual/compose_swing_shot.gd tools/visual/shot.sh out.png
                                  # a strip, one frame per tick, of the weapon in frame mid-swing
 SHOT_SCRIPT=tools/visual/compose_tool_shot.gd tools/visual/shot.sh out.png "tool bare"
@@ -27,9 +28,12 @@ SHOT_SCRIPT=tools/visual/compose_tool_shot.gd tools/visual/shot.sh out.png "tool
                                  # `compare` may NOT be committed: it renders the purchased arms
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
+ENEMY_COUNT=2000 godot --headless --path . --script res://tools/visual/enemy_tick_cost.gd
+                                 # what a Simulation *tick* costs with a crowd on it. The other
+                                 # half of frame_cost.sh, which times the renderer
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
-                                 # a Wave arriving (swarm|pair|triage|boss|distance|crush; + hud,
-                                 # + bare, + near). `crush` is a Wave that has been shot at (#70)
+                                 # a Wave arriving (swarm|pair|triage|boss|distance|crush|wounded;
+                                 # + hud, + bare, + near). `wounded` has been shot at (#70)
 SHOT_SCRIPT=tools/visual/compose_branch_shot.gd tools/visual/shot.sh out.png bare
                                  # a line that branches, one side blocked (+ bare)
 SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare
@@ -811,7 +815,7 @@ Every one of these was drawn, was the right colour, was in the right place and w
 [`_after`](docs/images/enemy_damage_after.png), rebuilt with
 
 ```bash
-SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "wounded bare"
 ```
 
 Both frames are the same Run at the same tick: a Breaker at **90 of its 240** hit points standing
@@ -827,7 +831,8 @@ acceptance criterion as a number rather than as an impression, and it is the rig
 difference — bright warm specks on a dark body, where the atlas's own `OxideRed` chest is dull
 and dark and cannot be confused with it.
 
-**`crush` is #70's preset and it exists because no other one can see the question**: every other
+**`wounded` is #70's preset and it exists because no other one can see the question** — the
+name is not `crush`, which #76 took in the same hour for the crowd pressed against the Nest —: every other
 preset renders a Wave that has never been shot at, and the Factory a composer builds has no
 Ammunition chain, so its Turret is dry from the first frame to the last. The player is the only
 gun on the Map that can be made to go off, so the shot is driven the way `test_world_view`'s
@@ -2489,10 +2494,21 @@ arrays rather than a class**. See the Siege Hulk section.
 - A **serial** is issued once and never reused. That is the handle to hold rather than
   an index, because indices shift as Enemies die — which is what a Turret needs to
   keep shooting at the thing it was shooting at.
-- Enemies do not collide with one another, by design. A swarm is a swarm, and the
-  alternative is an O(n²) separation pass the Chaff tier could not afford. Nothing in
-  an Enemy's tick reads another Enemy, so index order carries none of the bias Belts
-  have to avoid.
+- **Enemies push one another apart, and until #76 they did not.** This line used to read
+  *"Enemies do not collide with one another, by design. A swarm is a swarm, and the
+  alternative is an O(n²) separation pass the Chaff tier could not afford"* — and the
+  reasoning was sound about the pass somebody writes first. What it was wrong about is that
+  the quadratic is avoidable: bucket the Map and each Enemy consults a bounded handful of
+  neighbours however many are alive. The user looked at what the note produced on screen —
+  a rank of bodies interpenetrating as they converge on one tile — and overruled it, which
+  is theirs to do. See "Separation: a crowd rather than a rank", below.
+- **An Enemy's tick now reads other Enemies, and that is the one invariant #76 had to buy
+  back rather than inherit.** It was free while nothing did: index order carried none of the
+  bias Belts have to avoid, because no Enemy's step depended on another's. Separation is
+  paid for three ways instead — displacements are accumulated into per-tick scratch and
+  applied after the pass, each unordered pair is visited exactly once, and the buckets hold
+  each cell's members in index order — so what a body ends a tick holding is a property of
+  where the crowd *was* rather than of which members of it were walked first.
 - An Enemy does not act on the tick it came through its Breach, for the reason a
   Machine does not run on the tick it was built.
 
@@ -2568,6 +2584,153 @@ anything moves — and every Enemy converges on the same destination.
   answer: it chews what is in contact (see Mortality below), because a beeline there would
   send a swarm drifting through solid Walls.
 - Measured: 0.10 ms a tick at 20 Enemies and 0.84 ms at 200, against a 16.67 ms frame.
+
+### Separation: a crowd rather than a rank
+
+#76, and it is the first ticket in this file to **overturn a design note rather than fill a
+gap**. The note said Enemies do not collide with one another by design, because the
+alternative is an O(n²) separation pass the Chaff tier could not afford. The user looked at
+what that produced — *"dont have proper AI or collission"* — and overruled it. The reasoning
+was right about the pass somebody writes first and wrong that there is no other kind, so what
+had to be answered was the quadratic and not the mechanic.
+
+**Separation is local and the flowfield is not, and nothing here touched the flowfield.**
+Where a swarm is *going* is one shared field swept over the whole Map and amortised across
+every Enemy alive, plus #34's second field and the lane a Breaker marches down under fire —
+measured as worth two minutes of Run, and untouched. Where one body stands relative to the
+body beside it is a question about a couple of metres, and `_separate_the_crowd` reads no
+field, no path and no destination. It runs **after every Enemy has taken its step**, for the
+reason `_load_the_ports` is a pass of its own: it is a decision *between* entities, and
+deciding it inside the walking loop would decide it in the order the Enemies happen to be
+walked in.
+
+- **The buckets are a sorted array of packed keys, and both obvious structures were refused.**
+  Each separating Enemy contributes one `cell * SEPARATION_CELL_STRIDE + index`, over the
+  flowfield's own cell index space; sorting that groups the occupied cells and leaves each
+  group in **index order**, and a `bsearch` then answers "who else is in this cell" without
+  the array ever being walked as a whole. A **Dictionary** of cell to occupants is exactly
+  what the purity lint forbids, and rightly — its iteration order is not a property two
+  clients agree on, and #76 took **no new exemption**. A **head array over the field**, chained
+  through a `next` array, is the textbook spatial hash and is genuinely O(n); it is also
+  16,641 integers cleared on every tick of every Wave to serve twenty Crawlers, which is more
+  work than the sorting it saves. The sort is over the Enemies that exist and nothing else.
+- **How far the neighbour search looks is derived, not written down.** Two bodies interfere
+  when they are closer than the sum of their radii, so looking one cell out finds every
+  neighbour a body could owe a push to exactly when that sum fits inside a tile. On the
+  shipped content it does — the widest separating pair is two Breakers at 0.8 m, which is
+  1.6 m against a 2 m tile — so `_separation_reach_cells` answers 1 and the search is the nine
+  cells the ticket described. It is computed from the largest radius any separating kind
+  declares because the alternative goes **quietly** wrong: a later kind with a two-metre
+  radius would make a nine-cell search miss the neighbour two cells away, and that does not
+  fail, it just stops separating, which looks exactly like the old behaviour.
+- **Displacements are accumulated and applied afterwards, and the honest argument for that is
+  not determinism.** Applying in place would *also* replay — index order is ascending spawn
+  serial and every client walks it — so this is not the desync it looks like. The argument is
+  a design one. In place, a body is pushed off the positions earlier-indexed bodies have
+  *already been moved to* this tick, so the earliest spawn in a pile is the only one that sees
+  the pile as it really was and the whole crowd leans the way the serials run. Accumulating
+  makes the push a property of the configuration rather than of arrival order, which is what
+  the Belts' downstream-first order and the Machine port cursor's canonical order are each
+  careful about. Integer addition is exact and commutative, so the total a body receives does
+  not depend on which pair was summed first either.
+- **It adds no state at all.** The two accumulators are per-tick scratch, zero at every point
+  a hash is taken, in the same category as `_player_repair_credit` and the `FIRE` flag — so
+  there is no new array to hash, nothing for `RunSave` to carry, no Enemy class, no node and
+  no allocation per Enemy. The positions it writes were hashed already.
+- **And no new tuning key.** The room a pair needs is `_enemy_hit_radius`, which is the one
+  authority on how big a kind is and the very number `WorldView` scales the drawn body by — so
+  **the Enemies a player sees not overlapping are the Enemies that do not overlap**, and a
+  kind's size cannot be tuned for the look without moving what it collides with. That coupling
+  is #49's and it is deliberate.
+- **A Siege Hulk does not take part, and that is a design decision rather than an
+  optimisation.** It halts the moment anything is inside `siege_hulk.range_metres` and that
+  stand-off *is* its reach, so shoving it would be a second opinion about where it comes to
+  rest — and it would let a crowd rotate the one Enemy whose facing carries a rule, the
+  armoured front `_armoured` reads. Two Hulks are also not a crowd: what the user was
+  complaining about is Chaff interpenetrating, and the boss is the kind a player meets alone.
+  A Crawler walking through one is the price, and it is cheap.
+- **An Enemy that arrived this tick is in the buckets and is not moved**, so the crowd already
+  standing on the Breach gets out of its way before it takes its first step — the rule that it
+  does not act on the tick it came through, kept rather than excepted.
+
+#### Three things the measurements contradicted
+
+Every one of these was reasoned out first, shipped into a probe, and found wrong by reading
+numbers. They are the ticket's real content.
+
+1. **"No further than it walks" is the obvious bound and it deadlocks.** A pair that overlaps
+   wants half the overlap each, which in a queue is more than a tick's travel for everybody in
+   it — so the clamp handed every body a full step of push and **the rear of a queue was pushed
+   backwards exactly as fast as it walked forwards**. Four of eight Crawlers stood still for
+   the whole Run, which on screen reads as a hang and not as crowding. Separation has to be
+   *weaker* than walking, and it is: half a tick's travel, so walking wins by a factor of two
+   whatever the crowd is doing.
+2. **Rationing the sideways step is the same mistake pointed the other way.** With the whole
+   displacement bounded at half a step, a queue in a 2 m lane plateaued at **78%** of the room
+   its own bodies asked for and stayed there — because sideways was the one direction that
+   could have resolved the overlap, and it was being rationed as if it competed with the walk.
+   It competes with nothing: stepping out of a crowd costs a body no ground. So the push is
+   **decomposed** — with the march, half a step; across it, a whole one; and an Enemy that is
+   not marching at all is not rationed, which is the common case in the one place a crowd is
+   thickest. The decomposition is free, which is what makes it affordable: a march is always
+   along one of the flowfield's four directions, so "with it" and "across it" is a choice
+   between two numbers rather than a projection onto a vector.
+3. **The lane-centring was itself the other half of "arrives as a rank".** `_advance_enemy`
+   pressed every body onto the exact centre line of its lane by up to a whole tick's travel —
+   the same budget separation has — so a pair pushed apart across the lane was pulled back
+   together on the next tick and settled **5 cm apart against the 1.2 m their two bodies ask
+   for**. Separation was working and being undone, and nothing in the old behaviour made that
+   visible because there was nothing to undo. So **a lane is a lane and not a line**: a body is
+   gathered back towards the middle only once it is further out than two of its own bodies,
+   which is the distance at which it has stopped walking down the lane and started walking
+   beside it. Derived from the radius again, so still no new key — and a kind that does not
+   separate keeps the old centimetre-exact behaviour, which is what leaves the Siege Hulk's
+   walk in and #16's stand-off where they were.
+
+#### What it actually does, measured
+
+A crowd with road ahead of it converges to **exactly tangency — two fixed-point units, about
+30 µm, inside touching — and holds there** rather than oscillating, from about four seconds
+after a stacked release. A crowd pressed against the Nest settles at **0.82** of the room it
+would like, and that is correct rather than a shortfall: eight bodies 1.2 m wide cannot stand
+abreast on one lane, a bottleneck compresses, and a crowd that stopped pressing would be a
+crowd that had given up on the Nest. What never happens in either regime is two Enemies at one
+coordinate, which is the user's complaint stated exactly, and
+`tests/cases/test_enemy_separation.gd` asserts it on **every tick** of a Wave rather than at
+the end of one.
+
+Two of that file's nine tests are the locality claim, because the algorithm is not visible
+through the façade and must not be: a Crawler with nobody inside its own width advances by
+exactly one tick of walking to the fixed-point unit, and a pair held at touching distance
+**across a tile boundary** is found — which is the bug the bucketing could silently
+reintroduce, since a search that looked only inside one cell would separate a crowd that
+happened to share a tile and quietly stop separating one that did not.
+
+**The pair is committed and it is the argument**, and getting a picture of it at all took a
+preset that did not exist.
+[`docs/images/swarm_separation_before.png`](docs/images/swarm_separation_before.png) against
+[`_after`](docs/images/swarm_separation_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+```
+
+In the before, six Crawlers at the Nest's corner render as **one body** — what looks like a
+single Crawler is the whole Chaff tier standing at one coordinate, which is the user's
+complaint exactly and is the strongest statement of it anybody has produced. In the after they
+are six, pressed into a ragged arc around the corner they are eating, touching and none inside
+another.
+
+**`swarm` could not have shown it, and that was checked rather than assumed** — the existing
+preset renders *identically* with the pass on and off. The reason is worth keeping, because it
+is also a fact about the game: a Wave trickles out of a Breach half a second apart, so a
+Crawler at 3 m/s is already 1.5 m behind the one in front before anybody pushes anything, and
+**a lane contains no crowd**. The crowd exists where the lane stops. So `crush` waits forty
+seconds instead of seven, frames the press at the Nest, and looks **down** at it rather than
+along — the first attempt stood on the lane at eye height and could not tell the two builds
+apart, because separation is a fact about the plan and a camera at head height reads a crowd
+as one silhouette behind another whether or not they are inside each other. That is #48's
+fourth finding and #49's `triage` a third time: a vantage that cannot see its subject.
 
 ### Both facts about the Nest's box have one authority each, and #61 closed the second
 
@@ -4386,10 +4549,10 @@ because the mechanic **competes with the Belt as the answer to the same problem*
 is twenty coal, which is three trips on foot, and `content/deliveries.csv`'s own comment says the
 first thing a player should do is *"run a Belt out of the coal Miner and into the Nest and watch
 the Factory pay for its own progression"*. A faucet that bypasses Belts for small amounts teaches
-a new player they do not need one yet, at the moment it is cheapest to learn. #72 is the decision,
-with both cases written out and a third option on the table — that the lever may be the **Nest's
-own legibility** rather than a new verb, since a player who has learnt to aim a Belt at an arrow
-has nothing to aim at when the target is the Nest.
+a new player they do not need one yet, at the moment it is cheapest to learn. **#72 took that decision and the answer was no**, with the
+Nest's own legibility built in its place — since a player who has learnt to aim a Belt at an arrow
+had nothing to aim at when the target is the Nest. See "No hand hauling, and the Nest says where
+goods go instead", below.
 
 **And it turned up a live defect in the step above it, which was filed rather than patched and
 is now fixed.** `Objective._anything_is_starved` asked `query_machine_is_starved`, so a player who
@@ -4504,6 +4667,154 @@ Four things worth knowing rather than rediscovering:
   The assertion that replaces it is over a **window** of six hundred ticks rather than at one of
   them, because a single-tick assertion on an intermittent fault is a coin toss and is exactly how
   this shipped.
+
+### No hand hauling, and the Nest says where goods go instead
+
+**#72, and it is a decision before it is a mark.** #71 corrected a false instruction — the
+objective line told a player to carry ingots to the Nest and there is no way to carry anything —
+and left the evidence standing: the player's *mental model* was hand hauling and they reached
+for it unprompted. *"its not clear how to carry ingots to the nest"* is not "I did not know a
+Belt could do that". The ticket asked whether this game wants the verb, and the answer is **no**,
+with the Nest's own legibility built in its place.
+
+#### Why the verb is refused, in this project's own terms
+
+The mechanic's shape was never in question — `aimed_tile_at_height` is the wrench's aim at a
+Machine's body, `_within_wrench_reach` is the reach, `query_withdraw_refusal` is the shape of the
+refusal, and `_refund_machine` already moves an output buffer into a player's pockets on a
+demolish. It would have cost a `Kind`, a `Refusal` or two and, very likely, no new hashed state
+at all. It is refused on four grounds and the first two are the load-bearing ones.
+
+- **It is a second way to do a thing, and this project has consistently refused those.** There is
+  no inserter entity (DESIGN.md). There is no build mode — `_player_build_mode` is a hand and the
+  criterion is written as the absence of code. There is one Power grid and no topology. **A
+  Machine's output leaves by a Belt** is the same kind of rule, and the cost of a second answer is
+  not the code: it is that every later question about moving goods then has two answers that have
+  to be kept in agreement, which is the disagreement `query_build_refusal` and `_dock_refusal`
+  each exist to prevent one of.
+- **It makes `t01_munitions` payable without a Factory.** The first tier is twenty coal, which is
+  three trips on foot, and `content/deliveries.csv`'s own comment says the first thing a player
+  should do is *"run a Belt out of the coal Miner and into the Nest and watch the Factory pay for
+  its own progression"*. A faucet that bypasses Belts for small amounts teaches a new player they
+  do not need one yet — **at the one moment in a Run when learning it is cheapest**, because the
+  line is two Machines long and nothing is shooting at them. It is #60's `second_press` as a
+  teaching problem rather than a balance one: the build that looks sensible is the one that
+  quietly costs you the lesson.
+- **Its own failure mode is the thing IRON NEST is most criticised for.** DESIGN.md is explicit
+  that the line between satisfying friction and tedium is whether the machine answers you, and
+  hauling twenty coal by hand is four round trips of nothing. The Silo's dial is the diegetic
+  control this game wants: an irreversible commitment made once, under pressure. A hauling trip is
+  transcription.
+- **And the one thing it would genuinely have bought is bought more cheaply.** The honest case for
+  it was that the opening is brittle — a Belt that will not dock is the commonest mistake there is
+  (#47, #56) and a pickup is a way through that does not need the ports right first. But that is
+  an argument about the Belt being hard to aim, and the answer to a hard-to-aim Belt is to make
+  the target legible, not to add a route around it.
+
+**What is being given up is real and is recorded rather than waved off.** A player reached for
+this unprompted, in a playtest, and nothing here makes them right. There is no wrench-and-pockets
+playstyle in the opening five minutes and there will not be one; a Factory that cannot run a Belt
+produces nothing a player can hold. If a second playtest reaches for hauling again *after* the
+mark below, that is evidence the decision is wrong rather than evidence the mark needs to be
+bigger — and the thing to reach for then is #71's own filed argument, which is still intact.
+
+#### The mark: four bands, one a wall, saying "anywhere along here"
+
+**The Nest is deliberately not port-enforced (#47)** — it is not a Machine (GLOSSARY.md), so
+`_hand_off` reaches it through a clause of its own and a Belt docks anywhere on its 4x4 wall. So
+it carries no row anything draws and, until #72, **nothing marked it at all**. Every Machine in
+the Factory wears arrows on every declared port; the one target the opening loop ends at wore
+nothing, and a player who has learnt to aim a Belt at an arrow had nothing to aim at.
+
+`WorldView._sync_nest_delivery_marks` is the whole of it: four bands, one a wall, each a
+continuous run of chevrons pointing inward, at `PORT_MARKER_HEIGHT_METRES` — the Belt deck height
+the port arrows already use, because a Belt really will end there.
+
+- **Continuous, not one arrow a dock tile, and that is the entire design rather than a styling
+  choice.** #47 declared the ports table tile by tile precisely so that *which tile a player aimed
+  at* could never be the difference between a line that works and one that does not — so an arrow
+  is a promise about **that tile**. The Nest's rule is weaker: any tile of any wall. A mark that
+  claimed the stronger promise would be the renderer telling a player a rule the Simulation does
+  not keep, which is #47's own complaint about the three tickets before it, inverted. Sixteen
+  chevrons on sixteen dock tiles was the easy reuse and is exactly that mark.
+- **The teeth are coprime with the footprint.** Five across a four-tile face, so no chevron lands
+  on a tile boundary and no tile has one to itself — the geometry says "along here" rather than
+  "here" even before the shape does.
+- **It is drawn with the Build Gun in hand and nowhere else**, through
+  `_ports_are_advice_right_now` — #66's one home for "is this player in a position to build", so
+  the hologram, the HUD panel, the port arrows and this cannot disagree about what is in a
+  player's hands. And it goes when the Run is over, because a fallen Nest is not a counter
+  (`_nest_store_room` is zero and a withdrawal is refused) and a mark promising a hand-over there
+  is a promise nobody can keep.
+- **Placed off `query_nest_tile` and `query_nest_footprint`, never off a constant.**
+  `MapLayout.NEST_FOOTPRINT_TILES` is the one authority on that square (#61) and a mark measured
+  against a second copy of 4x4 is exactly the disagreement that cross-check exists to catch.
+- **It is presentation and the Simulation never hears about it.** No new query, no new state, and
+  `test_asking_where_goods_enter_the_nest_leaves_the_run_exactly_where_it_was` says so. One
+  MultiMesh for all four bands, so the scene tree does not grow —
+  `test_the_nests_delivery_marks_are_never_nodes_however_often_the_view_is_synced`.
+
+#### The one rule that departs from the port arrows, and why
+
+**`PORT_ARROW_RANGE_TILES` is deliberately not applied here.** #66's range is a **count**
+argument: eight of the ten shipped Machines declare every tile of every face, so a Factory wearing
+all of them at once is a hedge, and the fix is to draw the ring around the one Machine being asked
+about. The Nest's count is **one**, for ever — four bands on a square that cannot multiply however
+big the Factory gets — so the hedge this mark could form is four bands, which is not a hedge.
+
+And filtering on the aim would answer the wrong player. **The mark exists for somebody who does
+not know where to send their Belt**, and a mark that appears only once the gun is already pointed
+at the right place is a mark only the player who already knew will ever see. It was implemented
+with the range first, which is how that came out: it is invisible in exactly the frame #71's
+playtest got stuck in. `test_the_nest_keeps_its_mark_wherever_the_build_gun_is_pointing` is the
+rule, with the reason written next to it so nobody tidies it back into consistency.
+
+#### What the renders found, and the candidate they threw away
+
+The pair is [`docs/images/nest_delivery_before.png`](docs/images/nest_delivery_before.png) against
+[`_after`](docs/images/nest_delivery_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "nest bare"
+```
+
+**`nest` is #72's preset and it exists for the reason `triage`, `opening` and `delivering` do:
+none of the others can see the subject.** Every building shot frames the opening line, which
+stands twenty-odd metres east of the Nest — `delivering` renders #71's own step and **the Nest is
+not in the frame at all**, which was checked rather than assumed. This one puts the crosshair on
+the Nest's eastern dock ring with a route in flight anchored at the Smelter's output, which is
+literally the drag the objective line asks for.
+
+1. **A row of separate chevrons reads as sixteen arrows, however few of them there are.** The
+   first implementation spaced five discrete arrowheads along each wall, and from Survey View the
+   gaps between them were as wide as the teeth: what came out was a ring of discrete arrows round
+   a square, which is a picture of a tile-by-tile declaration — the one thing this mark must not
+   claim. **Continuity has to be in the geometry and not in the count.** The teeth share their
+   edges now: one solid strip with a serrated leading edge, which reads as an apron.
+2. **The colour was checked against what the frame guarantees, which is #48's and #52's finding
+   both times.** It is the input ports' own cool blue, because it means the input ports' own thing
+   and a player who learnt that off a Smelter has learnt it here; what says "not a declared port"
+   is the shape. The frame this mark exists for is a Belt drag ending at the Nest, so what it is
+   certainly beside is the route in flight (green, or red when refused), the cream flow arrows on
+   it, and the warm orange output arrow at the far end. Rendered, it is the only cool thing in the
+   picture and nothing in it reads alike. **A third colour was not taken**, for #67's reason: this
+   game teaches as few colours as it can, and a new one to answer a question the existing pair
+   already answers is a new thing to learn.
+3. **It reads at both distances and differently at each**, which was checked by rendering the
+   preset at eye level as well. From the lift the apron is a blue ring round a square and is what
+   finds the Nest; standing at the wall it is a wide band at deck height on the face in front of
+   you and is what says *this* wall will take it. Neither vantage carries the other, which is the
+   argument for a band on every face rather than one mark.
+
+#### What no render can settle
+
+Whether a player who has never laid a Belt reads an inward chevron as "goods go in" rather than as
+decoration — and whether four bands worn permanently by the Nest, for as long as the Build Gun is
+out, read as a target or become wallpaper over a forty-hour Run. That second one is #66's own
+question asked about a structure whose count is one, and the honest answer is that the count
+argument makes a hedge impossible and says nothing about whether a player stops seeing it. The
+lever if it does is the range this section argues against, and the argument against it should be
+read again before anybody reaches for it.
 
 ### The hotbar states the chain
 
@@ -7220,6 +7531,69 @@ reconciled with it: the Turrets section said `competent`'s Ammunition stockpile 
 rounds around minute twenty-four". It peaks at **446, at minute twenty-three**. The 96 rounds
 still in the Factory when the Nest falls is exact.
 
+### What separation cost the table
+
+**#76 made Enemies push one another apart, and fifteen of the seventeen rows moved by at most
+three seconds.** The two that moved further are the two that fire a *scattering* weapon at a
+crowd, which is the one thing spreading a crowd could be expected to change. Measured on all
+three seeds, on the tip, with nothing in `content/` touched.
+
+| Scenario | #62 | **#76** | moved by |
+|---|---|---|---|
+| `bare` | 3m22s | **3m22s** | — |
+| `opening_line` | 3m12s | **3m12s** | — |
+| `competent` | 28m48s | **28m51s** | +3s |
+| `over_producer` | 20m21s | **20m22s** | +1s |
+| `fortified` | 28m45s | **28m48s** | +3s |
+| `deep_digger` | 12m27s | **12m28s** | +1s |
+| `hive_sortie` | 32m05s | **32m07s** | +2s |
+| `rifle_picket` | 27m18s | **25m03s** | **−2m15s** |
+| `artillery` | 16m40s | **16m41s** | +1s |
+| `second_press` | 24m14s | **24m16s** | +2s |
+| `walled_lane` | 28m45s | **28m48s** | +3s |
+| `sealed_breach` | 26m42s | **26m41s** | −1s |
+| `branched_artillery` | 13m57s | **13m58s** | +1s |
+| `deep_silo` | 12m59s | **13m00s** | +1s |
+| `coal_haul` | 15m41s | **15m42s** | +1s |
+| `armed_player` | 24m14s | **24m14s** | — |
+| `armed_second_press` | 14m43s | **14m26s** | −17s |
+
+**The ±3 seconds is the mechanic and not noise.** A crowd that spreads takes marginally longer
+to put its damage on the thing it came to eat — the bodies at the back of a press are further
+back than they used to be, by about a body's width each — so a Factory that was going to lose
+loses a little later. It is the right sign and it is almost nothing, which is the result this
+change wanted: separation is a rule about where bodies stand and not about how hard they bite.
+
+**`rifle_picket` lost 2m15s, and the mechanism is worth keeping because it is a general fact
+about this game rather than about that row.** An interpenetrating stack was several Crawlers at
+*one coordinate*, so a round that missed the one it was aimed at very often hit a neighbour
+standing inside it — a `gear.scatter_degrees` of 0.4 on a Bolt Rifle was being paid back by the
+pile. Spread them out and a miss is a miss. So **separation makes a crowd a worse target for
+anything that scatters**, and that is a real combat consequence of a change made for the look.
+Its peak Heat fell with it, 6051 to 5599, which says the same thing from the other end: fewer
+kills, more Enemies at the gate, a shorter Run.
+
+**`competent` did not move for the same reason `competent` never moves on this axis:** a
+Turret acquires on an Enemy's *point* against `range_tiles` and resolves against no hit volume
+at all (see "What a bigger Breaker cost the table"), so the thing that does nearly all of the
+killing in fifteen of these rows cannot tell a spread crowd from a stacked one. Only a
+**player's** weapon reads the capsule, and only three rows have one.
+
+**`SAME_LENGTH_SECONDS` widened from 150 to 300**, and it is the first time that constant has
+moved for a reason other than phase: 25m03s against 28m51s is 228 seconds. The claim it guards
+is deliberately unchanged — a rifleman at the Nest is **neither free nor ruinous** — because
+nothing here makes the rifle pay for itself or makes standing there fatal. **No value in
+`content/` was changed**, which was the ticket's own instruction and is also the honest
+reading: this is a measurement of a mechanic, not an argument that a number is wrong.
+
+**And the seed invariance sharpened rather than broke.** Fifteen rows are bit-identical on all
+three seeds. `rifle_picket` still spreads — 25m03s, 24m40s and 25m08s, a 28-second band against
+#47's 39 — and **`armed_second_press` now spreads where it did not**, 14m26s against 14m35s.
+That is #62's own qualification arriving as a measurement: a row spreads when it fires *enough
+to matter*, and separation is precisely what makes each of its 133 shots matter more, because a
+scatter-miss into a spread crowd now misses. `armed_player` fires 374 shots and is identical on
+all three, which is the counter-example that keeps the rule honest.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
@@ -7481,6 +7855,24 @@ Honest residue, so the next ticket does not have to rediscover it:
   the Run in Power deficit is 30% less peak Heat. See finding 5. What that opens is a question
   nobody asked for: **whether deliberately under-powering a Factory is a strategy**, which is
   about `heat.decay_per_minute` against what a working Factory makes and wants a human.
+- **Whether a crowd that presses in rather than interpenetrating reads as a crowd**, which is
+  #76's residue and is the half a harness has no opinion about. The geometry is measured — a
+  crowd with road ahead settles at exactly tangency and holds, a crowd at the Nest crushes to
+  0.82 of the room it wants — and `docs/images/swarm_separation_{before,after}.png` is the
+  argument that it looks right in one frame. What no still image settles is whether a Wave
+  *arriving* now reads as a crowd in motion or as a looser rank, which is the same category as
+  #49's "does the size difference read in motion". The two numbers to reach for if it reads as
+  mush are both derived rather than tuned — a kind's `hit_radius`, which is also how big it
+  looks, and `_lane_corridor_metres`' two-bodies allowance — so neither can be moved for the
+  look without moving what a player shoots at.
+- **What the pass costs past a few hundred Enemies, and this is a gap in the instrument rather
+  than a measurement.** `tools/visual/enemy_tick_cost.gd` reaches the Chaff tier's numbers by
+  removing the Factory, which means nothing kills anything and the whole Wave ends up crushed
+  against one Nest — the single worst case the rule has, because a crush is where every pair
+  overlaps on every tick and none of them can resolve. No shipped scenario produces it: the
+  balance rows end with 15 to 32 Enemies at the gate, not two hundred. A scale figure that is
+  honest about a *playable* Factory wants Turrets in it, and then the Turrets decide the
+  population rather than the harness.
 - **Co-op.** Every scenario is one player. Four players on one Ammo Press is a different
   economy, and the Simulation already supports measuring it.
 

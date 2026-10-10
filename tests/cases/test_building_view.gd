@@ -2097,3 +2097,170 @@ func test_taking_the_belt_out_from_under_a_crafter_brings_the_step_back() -> voi
 	assert_true(
 		Objective.line(sim, 0).to_lower().contains("starved"), Objective.line(sim, 0)
 	)
+
+
+# ── The Nest's own legibility ─────────────────────────────────────────────────
+#
+# **#72, and it is the half of #71 that is not a sentence.** The Nest is deliberately not
+# port-enforced (#47) — it is not a Machine, so a Belt docks anywhere on its 4x4 wall — so
+# it carries no row anything draws and had **no mark on it at all**. A player who has learnt
+# to aim a Belt at an arrow has nothing to aim at when the target is the Nest, which is the
+# last step of the opening loop.
+
+func test_the_nest_wears_a_mark_on_every_wall_so_a_belt_has_something_to_aim_at() -> void:
+	# A Run opens aimed at (0, 0, -8), two tiles off the Nest's eastern dock ring, so the
+	# opening pose is inside the range the port arrows use.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(
+		view.nest_delivery_marker_count(),
+		4,
+		"one per wall: the Nest is square and goods go in any of them"
+	)
+	view.free()
+
+
+func test_the_nest_mark_is_a_band_per_wall_and_not_a_declaration_tile_by_tile() -> void:
+	# The whole of why this is not a port arrow. #47's arrows are declared **tile by tile**
+	# and promise *this* tile; the Nest's rule is weaker — any tile of any wall — so the mark
+	# is continuous along a face rather than one per dock tile. A mark per dock tile would be
+	# sixteen arrows claiming a promise the Simulation does not keep.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var footprint: Vector2i = sim.query_nest_footprint()
+	assert_eq(footprint.x, 4, "the premise: a 4x4 Nest has sixteen dock tiles")
+	assert_eq(
+		view.nest_delivery_marker_count(),
+		4,
+		"four bands rather than %d tiles of arrow" % [4 * footprint.x]
+	)
+	view.free()
+
+
+func test_each_band_spans_its_whole_wall_and_stands_on_the_ground_outside_it() -> void:
+	# Placed off `query_nest_tile` and `query_nest_footprint`, never off a constant: the one
+	# authority on the Nest's footprint is `MapLayout.NEST_FOOTPRINT_TILES` (#61), and a mark
+	# measured against a second copy of 4x4 is the disagreement that check exists to catch.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	var centre: Vector3 = view.nest_position()
+	var half: float = float(sim.query_nest_footprint().x) * tile_size * 0.5
+	for index: int in range(view.nest_delivery_marker_count()):
+		var at: Vector3 = view.nest_delivery_marker_position(index)
+		var out_x: float = absf(at.x - centre.x)
+		var out_z: float = absf(at.z - centre.z)
+		assert_true(
+			maxf(out_x, out_z) > half,
+			"a band standing inside the footprint is a band inside the Nest, got %s" % at
+		)
+		assert_true(
+			maxf(out_x, out_z) < half + tile_size,
+			"and it stands on the dock ring a Belt would end on, got %s" % at
+		)
+		assert_true(
+			minf(out_x, out_z) < 0.001,
+			"squarely on its own wall rather than at a corner, got %s" % at
+		)
+	view.free()
+
+
+func test_a_holstered_build_gun_draws_no_mark_on_the_nest_either() -> void:
+	# #66's rule, and the same one home for it: `BuildGun.hand_refusal`. A mark saying where
+	# to put a Belt is advice a player holding a rifle cannot act on, and the Nest is in frame
+	# for most of a Run.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.nest_delivery_marker_count(), 0, "the Build Gun is holstered")
+
+	sim.step([InputAction.set_build_mode(0, true)])
+	view.sync(sim)
+	assert_true(view.nest_delivery_marker_count() > 0, "and drawn once it is drawn")
+	view.free()
+
+
+func test_the_nest_keeps_its_mark_wherever_the_build_gun_is_pointing() -> void:
+	# **The one rule here that departs from the port arrows rather than copying them.** #66's
+	# `PORT_ARROW_RANGE_TILES` is a count argument — eight of the ten shipped Machines declare
+	# every tile of every face, so a Factory wearing all of them is a hedge. The Nest's count
+	# is one, for ever. And a mark drawn only around the aim would answer the wrong player:
+	# this exists for somebody who does not know where to send their Belt, and a mark that
+	# appears once you point at the right place is a mark only the player who already knew
+	# will ever see.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var beside: int = view.nest_delivery_marker_count()
+	assert_true(beside > 0, "the opening aim is beside the Nest")
+
+	_aim_far_from_the_nest(sim)
+	view.sync(sim)
+	assert_eq(
+		view.nest_delivery_marker_count(),
+		beside,
+		"and the Nest is still the place goods go from the far side of the yard"
+	)
+	view.free()
+
+
+func test_a_fallen_nest_is_not_a_place_to_deliver_to() -> void:
+	# A Nest that has fallen is not a counter — `_nest_store_room` is zero once the Run is
+	# over and a withdrawal is refused — so a mark promising a hand-over there is a promise
+	# nobody can keep. A Nest of ten hit points and a Wave called early, which is how
+	# `test_world_view` ends a Run inside a test.
+	var definitions: Definitions = (
+		ContentFixture
+		. for_case(self)
+		. tune([
+			["telegraph_seconds = 12", "telegraph_seconds = 0.5"],
+			["health = 6000", "health = 10"],
+		])
+		. definitions()
+	)
+	var sim: Simulation = Simulation.new(1, 1, definitions)
+	sim.step([InputAction.set_build_mode(0, true), InputAction.call_wave_early(0)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.nest_delivery_marker_count() > 0, "the premise")
+
+	while not sim.query_run_is_over():
+		sim.step([])
+	view.sync(sim)
+	assert_eq(view.nest_delivery_marker_count(), 0)
+	view.free()
+
+
+func test_asking_where_goods_enter_the_nest_leaves_the_run_exactly_where_it_was() -> void:
+	# The mark is presentation, and the whole of what that means: it is derived in `game/`
+	# out of projections the Simulation never reads back, so a frame that drew it and one
+	# that did not leave the same Run.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var before: int = sim.hash()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(view.nest_delivery_marker_count() > 0, "the premise: there was a mark to draw")
+	assert_eq(sim.hash(), before, "drawing it moved the state hash")
+	view.free()
+
+
+## Walks the player away until the Build Gun is asking about ground nowhere near the Nest.
+## Bounded, and it asserts it got there rather than hoping.
+func _aim_far_from_the_nest(sim: Simulation) -> void:
+	var anchor: Vector3i = sim.query_nest_tile()
+	var walked: int = 0
+	while walked < 600:
+		var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+		if maxi(absi(aimed.x - anchor.x), absi(aimed.z - anchor.z)) > 20:
+			return
+		sim.step([InputAction.move(0, Fixed.ONE, 0)])
+		walked += 1
+	assert_true(false, "the player never reached ground away from the Nest")
