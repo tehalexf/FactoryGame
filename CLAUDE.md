@@ -2745,7 +2745,7 @@ coordinate, which is the user's complaint stated exactly, and
 `tests/cases/test_enemy_separation.gd` asserts it on **every tick** of a Wave rather than at
 the end of one.
 
-Two of that file's nine tests are the locality claim, because the algorithm is not visible
+Two of that file's thirteen tests are the locality claim, because the algorithm is not visible
 through the façade and must not be: a Crawler with nobody inside its own width advances by
 exactly one tick of walking to the fixed-point unit, and a pair held at touching distance
 **across a tile boundary** is found — which is the bug the bucketing could silently
@@ -2785,13 +2785,15 @@ twice per pair, and the rejection test inlines `Fixed.mul` as a shift, which is 
 integer because every product in it is a square or a product of two lengths and `floor_div`
 differs from `>>` only for a negative numerator. 1000 Enemies went from 192.7 ms to 94.2 ms and
 **every hash over a 4000-tick crush was unchanged**, which is what let the balance table above
-stand rather than needing re-measuring. What would bound the crush properly is a cap on how
-many neighbours one body is pushed by — the displacement is clamped to half a step whatever
-contributed to it, so past a handful the extra pairs buy only direction — and that is a design
-decision with a real cost to argue about rather than a tidy-up. **It is #77**, with the three
-rows above, the two things that have to be decided (which neighbours, and what N is derived
-from) and the warning that unlike the pass above it is **not** bit-identical, so it moves the
-hash and the balance table has to be re-run.
+stand rather than needing re-measuring.
+
+**The shape was then taken by #77, and the three rows above are its before column.** What
+bounds a crush is a cap on how many neighbours one body is pushed by, which rests on an
+argument already true of the code: the displacement is clamped whatever contributed to it, so
+past a handful the extra pairs buy only direction. That is a design decision rather than a
+tidy-up, because it decides *which* neighbours and *how many*, and unlike the pass above it is
+not bit-identical in principle. See "Bounding the crush", below — including the one thing it
+did not cost, which is that every figure in the balance table came back unchanged anyway.
 
 **The pair is committed and it is the argument**, and getting a picture of it at all took a
 preset that did not exist.
@@ -2818,6 +2820,228 @@ along — the first attempt stood on the lane at eye height and could not tell t
 apart, because separation is a fact about the plan and a camera at head height reads a crowd
 as one silhouette behind another whether or not they are inside each other. That is #48's
 fourth finding and #49's `triage` a third time: a vantage that cannot see its subject.
+
+#### Bounding the crush: how many neighbours push one body
+
+**#77, and it is the half #76 deliberately left — with the result that the thing everybody
+expected it to cost, it did not cost.** The pass above is linear in the number of Enemies and
+quadratic in the *density* of a crush, because the bucketing is O(1) neighbours only at bounded
+density: when a whole Wave presses onto one 4x4 Nest the bodies genuinely are all one another's
+neighbours, a cell holds O(n) of them, and the search found every one. The three rows above are
+the measurement, 95.7 ms at a thousand Enemies against a 16.67 ms frame.
+
+**The cap rests on something that was already true of the code rather than on a new idea.**
+`_apply_separation` clamps the displacement to half a tick's travel — a whole one across the
+march — **whatever contributed to it**, so past a handful of contributors the extra pairs cannot
+change how far a body moves. They refine the direction and nothing else. Paying O(n) per body to
+refine a direction that is already clamped is the trade this stops making, and it is why
+sampling a direction is a cheap thing to do here and would not be somewhere the magnitude
+depended on the sample.
+
+##### Which neighbours, and why not the nearest
+
+**"The nearest N" is the honest answer to the bias objection and it is the one answer that
+cannot be afforded.** Ranking a body's neighbours by distance means examining all of them, and
+the examination *is* the cost — a partial sort does not give back some of the saving, it gives
+back the whole of it. That settles the decision rather than merely arguing one side of it: the
+pass can want the nearest and can never ask for it.
+
+So a body takes **a contiguous window of a cell's own index order**. Index order is ascending
+spawn serial by construction, so every client takes the same window and the determinism is not
+in question. What *would* have been wrong is taking the window from a fixed start, and in two
+separate ways, both of which a measurement would have been slow to show and neither of which is
+subtle once stated:
+
+- **A fixed start within the cell** makes a body's partners the same bodies every tick, so one
+  whose index-neighbours happen to lie on one side of it is pushed off true in that direction
+  for as long as the crowd holds its shape. That is a standing artefact rather than one that
+  averages out.
+- **A fixed start to the nine-cell walk** is worse, because it is spatial: the budget would be
+  spent on the north-west of every body's neighbourhood and the south-east would never be
+  consulted at all.
+
+Both are rotated, and **`_machine_port_cursor` is the precedent for the whole shape**: a share
+that cannot be given to everybody at once is made fair over time rather than decided by order.
+The cursor here is `_tick + _enemy_serial[a]` — the tick **and the body's own serial**, because
+a rotation on the tick alone would privilege the same corner of *every* body's neighbourhood on
+the same tick, which is a crowd-wide shimmy with the period of the walk. The serial is the
+identity this project already uses to de-lockstep a crowd (`game/enemy_animator.gd`), it is
+issued once and never reused where an index shifts the moment anything dies, and it costs the
+Run no RNG draw and the Simulation no state.
+
+**What that buys is worth stating exactly rather than overclaiming.** One tick's **direction**
+is a sample of the configuration rather than the whole of it, and the direction averaged over
+the ticks the rotation covers is the configuration. The **magnitude** was never a function of
+the sample at all. And nothing in it is a function of the order the Enemies were *walked* in,
+which is the order #76 went to the trouble of accumulating the displacements to escape — every
+push is still computed off the positions the crowd held before the pass began.
+
+##### What the cap is derived from, which is not a tuning key
+
+No number in this pass is written down: the reach comes from the largest radius any separating
+kind declares, the lane corridor from two body widths, the room a pair needs from
+`_enemy_hit_radius` — the one authority on how big a kind is and the very number `WorldView`
+scales the drawn body by. A tuning key was the obvious alternative and is refused for the reason
+`[enemy] speed_variation_percent` was refused in #76: **this is not a feel number, it is a count
+of bodies, and the geometry knows it.**
+
+So the cap is the **kissing number** — six equal discs can touch a seventh and a seventh will
+not fit, which is a fact of plane geometry and is exactly the quantity wanted, because it is the
+most contributors a body can have at the configuration separation is driving *towards*. A body
+wider than its neighbours has proportionally more room around it, so it is scaled by the ratio
+of the room this content's widest-and-narrowest pair asks for to the room an equal pair of the
+narrowest asks for. Two integer divisions, no transcendental — which matters, because the exact
+count is `PI / asin(r / (R + r))` and this Simulation has neither a PI nor an arc-sine, by the
+same rule that puts yaw in turns rather than radians.
+
+**It is not an approximation anybody has to take on trust.** Against that arc-sine it is exact
+to the integer at every size this content could plausibly carry:
+
+| pair | exact `PI / asin(r / (R + r))` | derived |
+|---|---|---|
+| two Crawlers, 0.6 m | 6.00 | **6** |
+| Breaker and Crawler, 0.8 and 0.6 m | 7.09 | **7** |
+| a hypothetical 2.0 m kind and a Crawler | 13.55 | **13** |
+
+Seven on the shipped content. It errs low, which is the safe direction for a cost ceiling and
+the direction the clamp makes cheap. **Per body rather than per cell**, measured: a per-cell cap
+is nine caps' worth of pairs for a body in a crowded neighbourhood, which is 63 pairs against
+the ~6 the sparse case pays, and it took a thousand Enemies only from 95.7 ms to 68.0 ms. Per
+body it is 7, and the walk leaves the moment the budget is gone.
+
+##### The exact tie-break moved to the end of the pass, and that was two fixes in one
+
+**The cap cost the invariant and it was measured costing it**, which is the ticket's real
+discovery and not something either the issue or the plan anticipated. A crush **saturates the
+clamp**, so two bodies whose displacements both come out at exactly one tick of travel in the
+same axes end the tick exactly as far apart as they began — and for a pair one step apart that
+is nowhere apart at all. While every overlapping pair was visited this could not happen, because
+the pair that would merge was always pushed apart first; a cap is precisely what stops
+guaranteeing that. Measured on the first capped build: **a twenty-four-body release pile ended
+one tick in twelve hundred with two Crawlers at one coordinate, where #76 ended none.** That is
+the user's own complaint, so it was not available to be accepted.
+
+`_break_coincidence` is the fix, and it is #76's own per-body fan-out **moved from before the
+pairwise pass to after it**:
+
+- **It can now see what the pass itself creates.** Run before, it compared the positions the
+  crowd had walked into and was therefore a tick behind its own cause.
+- **It is no longer the one part of the pass that walks a cell as a whole.** The old version
+  searched its own bucket cell for lower-indexed bodies at the same coordinate, which is
+  O(members) per body — a second quadratic hiding behind the one the ticket was about, and 2.5 ms
+  of the ninety-five at a thousand Enemies. Coincidence does not care about cells, so it keys on
+  the **x coordinate** instead: one sorted array of `(x, index)`, a binary search, and a walk of
+  the bodies sharing that exact x, which is the set a Breach released together rather than the
+  crowd.
+
+Two things about it were found by measuring and would not have been reasoned:
+
+- **The first nudge must not be a whole step.** A saturated crowd moves by whole steps, so its
+  coordinates lie on a lattice of them — and a nudge of exactly one step from a lattice point
+  lands on another lattice point, which is to say on top of somebody. Taking a fixed-point unit
+  off per rank *starting at one* rather than at zero is worth about a factor of three in how many
+  rounds a crush needs: one, where starting at zero needed three at the same counts.
+- **A nudge has to fall through to an axis that is not into a wall.** A pile pressed against the
+  Nest is standing on an obstruction, and a nudge refused for being blocked leaves the body
+  exactly where it was and the pile exactly as it was. Distinctness survives the fall-through
+  because the magnitude carries it and not the direction.
+
+**And it goes round up to `SEPARATION_TIE_BREAK_ROUNDS`, which is a stop and not a proof.** A
+round can create the pile the next round takes apart, because a nudged body can land on a body
+that was standing somewhere else entirely. Measured: a sixty-Crawler crush is clean in one
+round; at a hundred and at two hundred, one tick a minute needs a third; at four it is clean
+through **five hundred Crawlers with a hundred and eighty-two on one tile and a thousand with
+two hundred and eleven**, which is six times the thickest crowd any shipped Wave produces. A
+bound cannot promise, so what `tests/cases/test_enemy_separation.gd` does instead is assert the
+outcome **on every tick** of a crush three times the size of the one #76 watched. The cost of
+the bound on an ordinary tick is nothing: the loop leaves the moment a round finds no pile.
+
+##### What it costs, measured back to back
+
+`ENEMY_COUNT=<n> godot --headless --path . --script res://tools/visual/enemy_tick_cost.gd`, each
+pair of builds run one after the other on the same machine, with the pre-#76 Simulation as the
+baseline column.
+
+| Enemies | step, no separation | step, #76 | step, **#77** | separation alone, #76 → #77 |
+|---|---|---|---|---|
+| 24 | 0.220 ms | 0.411 ms | **0.429 ms** | 0.19 ms → 0.21 ms |
+| 200 | 2.139 ms | 8.621 ms | **5.711 ms** | 6.5 ms → 3.6 ms |
+| 1000 | 10.773 ms | 95.962 ms | **29.302 ms** | 85.2 ms → 18.5 ms |
+
+**The crush is bounded rather than merely cheaper, and that is the claim to read rather than any
+one figure.** Per-body work is now a constant — the cap, plus a constant number of binary
+searches — so no density can exceed it. The arithmetic says so: separation alone went from 13.1x
+to **5.2x** across a 5x change in the crowd, and the whole step from 11.1x to **5.1x**, which is
+the baseline's own 5.0x. The 1000-Enemy figure is 5.1 times the 200-Enemy one, which is the
+acceptance criterion as a number.
+
+**What it is not is under frame at a thousand Enemies**, and it is honest about which half that
+is: 10.8 ms of the 29.3 is the Enemy tick *without* separation, which this ticket did not touch
+and which is itself linear. A Chaff tier at those numbers wants that half looked at too, and
+that is a different ticket.
+
+**At the shipped count it is a wash and the honest reading is "unchanged".** 0.429 ms against
+0.411, which is inside the spread of the instrument on a contended machine (the after build
+measured between 0.403 and 0.524 over five runs). The two binary searches a cell replace a short
+walk, and at twenty-four Enemies a cell holds one or two candidates so the cap never binds and
+the search is paid for nothing. It is 0.02 ms of a 16.67 ms frame and it was not worth a special
+case.
+
+##### What it cost the balance table: nothing, and the reason is worth knowing
+
+**Every one of the seventeen rows reproduced #76's figure exactly**, on all three seeds, in the
+Run length, the Wave, the peak Heat and the list of Machines lost in the order they were lost —
+including `rifle_picket`'s and `armed_second_press`'s own seed spreads (25m03s / 25m08s / 24m40s
+and 14m26s / 14m35s / 14m26s). So the table under "What separation cost the table" stands as
+written and no column was added, which is the fifth time it has been independently re-derived.
+
+That is a stronger result than the ticket expected — it warned that the change is not
+bit-identical and the table would have to be re-run — so the reason was checked rather than
+assumed, by comparing `Simulation.hash()` tick by tick between the two builds:
+
+- **`competent` is bit-identical for the whole of its 103,869-tick Run.** Fifty-one hash samples
+  and the final hash, all equal. On the row of record the cap **never binds and the tie-break
+  never fires**: a shipped Wave ends with 15 to 32 Enemies at the gate, which is four or five to
+  a tile against a cap of seven.
+- **`rifle_picket` and `armed_player` diverge only in their last sample** — tick 90,000 of 90,184
+  and 86,000 of 87,291. Both are rows with a player firing a weapon, which is the one thing that
+  resolves against an Enemy's *position*; the divergence is in the dying seconds, when the crowd
+  at the Nest is at its thickest and the cap finally binds. `rifle_picket` ends one tick earlier
+  and both print the same clock.
+
+So the right statement is not "it moved nothing" but **"the only configuration it can reach is
+one no shipped Run spends more than its last three seconds in"** — which is the ticket's own
+framing (a ceiling for a tier that does not exist yet) arriving as a measurement.
+
+##### The look is unchanged, and no image was committed
+
+`SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"` is
+#76's own preset for exactly this subject, and the two builds render **byte-identical PNGs** —
+same MD5, nine Enemies. A committed before-and-after pair that shows no difference is worse than
+none, so there is none. The reason is the same as the hash finding: `crush` frames nine bodies
+spread over several tiles, so no cell holds more than the cap and nothing about the picture can
+differ. **A frame in which it could differ needs a Wave bigger than the content can produce**,
+which is a statement about where this ticket's effect lives rather than about the instrument.
+
+##### What is still unmeasured
+
+- **Whether a sampled direction looks like the true one, in motion.** The geometry is measured —
+  a crowd with road ahead still settles at tangency, a crush still has a floor, nothing ever
+  shares a coordinate up to a thousand bodies with two hundred and eleven on one tile — and the
+  frame that would show the difference is a frame no shipped Wave can produce. So **nobody has
+  watched a capped crowd of a thousand**, and the thing to look for when the Chaff tier arrives
+  is whether the rotation reads as bodies jostling or as a crowd twitching with the period of the
+  walk. The lever is the cap, and it is derived, so raising it means arguing with the kissing
+  number rather than turning a knob.
+- **What the other half of the tick costs at that tier.** 10.8 ms of the 29.3 at a thousand
+  Enemies is the Enemy loop without separation — the flowfield reads, the bites, the walk — and
+  nothing here touched it.
+- **Whether four rounds of tie-break is enough at a crowd nobody has built.** It is clean to a
+  thousand and it is a stop rather than a proof, and the only honest way to find the number that
+  is not enough is to measure a thicker crowd than that.
+- **Per-individual speed variation**, which #76 recorded as deliberately not built and this
+  ticket did not build either. Its argument is unchanged and the shape it would take is still in
+  #76's own notes.
 
 ### Both facts about the Nest's box have one authority each, and #61 closed the second
 
@@ -7673,6 +7897,12 @@ at all (see "What a bigger Breaker cost the table"), so the thing that does near
 killing in fifteen of these rows cannot tell a spread crowd from a stacked one. Only a
 **player's** weapon reads the capsule, and only three rows have one.
 
+**#77 re-measured every one of these rows and reproduced them exactly**, on all three seeds and
+in every figure the probe prints — the fifth independent re-derivation of this table, and a
+closer thing than it sounds: that ticket caps how many neighbours push one body, so it was
+expected to move the figures and does not, because the cap cannot bind until a crowd is thicker
+than a shipped Wave ever gets. See "Bounding the crush" for the hash comparison that says so.
+
 **`SAME_LENGTH_SECONDS` widened from 150 to 300**, and it is the first time that constant has
 moved for a reason other than phase: 25m03s against 28m51s is 228 seconds. **Widening a guard
 until it stops failing is exactly the wrong move and is worth saying out loud**, because #47
@@ -7974,7 +8204,10 @@ Honest residue, so the next ticket does not have to rediscover it:
   overlaps on every tick and none of them can resolve. No shipped scenario produces it: the
   balance rows end with 15 to 32 Enemies at the gate, not two hundred. A scale figure that is
   honest about a *playable* Factory wants Turrets in it, and then the Turrets decide the
-  population rather than the harness.
+  population rather than the harness. **#77 bounded that worst case rather than closing this
+  item**: a thousand Enemies went from 95.9 ms a tick to 29.3 and the growth is linear, of which
+  10.8 ms is the Enemy loop *without* separation and is the half nobody has looked at. See
+  "Bounding the crush".
 - **Co-op.** Every scenario is one player. Four players on one Ammo Press is a different
   economy, and the Simulation already supports measuring it.
 
