@@ -10943,19 +10943,52 @@ func query_belt_tile_refusal(tile: Vector3i) -> int:
 ## frame and remembering nothing, because there is no stored connection to go stale: Belts
 ## connect by adjacency and nothing else, so demolishing what a Belt fed makes it dangle on
 ## the next frame with no bookkeeping anywhere.
+## **It is literally the disjunction of the three projections below** (#68), which is what
+## keeps "connected" one answer rather than four. It used to spell `_hand_off`'s three
+## branches out a second time; now the three say *which* of them, and this says *whether*.
 func query_belt_end_is_connected(index: int) -> bool:
+	return (
+		query_belt_feeds_machine(index) != -1
+		or query_belt_feeds_the_nest(index)
+		or query_belt_feeds_belt(index) != -1
+	)
+
+
+## The Machine a Belt's far end hands goods to, or -1.
+##
+## **One line over `_machine_a_belt_feeds`, which is the function `_hand_off` itself asks**, so
+## the declared port rather than the footprint decides it (#47) — a Belt ending against a
+## Machine's blank wall feeds nothing, which is what it does.
+##
+## It is `query_machine_branch_belt`'s mirror: that one answers "which Belts does this Machine
+## load", per Machine, and this one answers "which Machine does this Belt reach", per Belt. Both
+## are needed to walk a chain, and neither is a second opinion about docking — `_dock_refusal`
+## is the one home for that and both go through it.
+func query_belt_feeds_machine(index: int) -> int:
+	if not _is_belt(index):
+		return -1
+	return _machine_a_belt_feeds(index)
+
+
+## The Belt a Belt hands its Items on to, or -1. One line over `_belt_downstream`, which is the
+## same function the downstream-first update order is chased down.
+func query_belt_feeds_belt(index: int) -> int:
+	if not _is_belt(index):
+		return -1
+	return _belt_downstream(index)
+
+
+## Whether a Belt's far end points into the Nest's footprint.
+##
+## The Nest is deliberately not a Machine and `_hand_off` reaches it through a clause of its
+## own, so a Belt docks anywhere on its 4x4 wall — which is why this is its own question rather
+## than a case of the one above.
+func query_belt_feeds_the_nest(index: int) -> bool:
 	if not _is_belt(index):
 		return false
-	var beyond: Vector3i = (
+	return _nest_covers(
 		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
 	)
-	# The declared port rather than the footprint, since #47, so a Belt that ends against a
-	# Machine's blank wall is marked as going nowhere — which it does.
-	if _machine_a_belt_feeds(index) != -1:
-		return true
-	if _nest_covers(beyond):
-		return true
-	return _belt_entered_at(beyond) != -1
 
 
 ## Whether anything is loading a Belt at its entry: a Machine output port behind it, or

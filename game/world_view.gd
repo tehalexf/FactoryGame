@@ -656,6 +656,25 @@ var _belt_flow_transforms: PackedFloat32Array = PackedFloat32Array()
 ## goods are moving, a **banking** tag in its place means both branches are stopped and the
 ## buffer is growing, and at each branch's entry a post says whether that one is the blocked
 ## one. Every one of them is `query_*` asked this frame and nothing is remembered.
+## The one positive mark in this file: the lights running down a line that has just started
+## working, and a tag over each Machine in it (#68).
+##
+## `_line_works_since` is the only memory in `WorldView` and it is the same category of thing
+## as `AudioDirector`'s snapshot and `TickPump`'s leftover frame time — **a reading on its way
+## in, not a fact about the world.** It has to exist because a chain completing is a *change*
+## and every projection behind it reports a *condition*; what it holds is a chain's geographic
+## signature against the tick it was first seen whole, so nothing in it is authoritative and
+## nothing in it is saved. A chain that stops being whole is forgotten, so mending a broken
+## line is acknowledged again.
+var _line_works_pulses: MultiMeshInstance3D = null
+var _line_works_tags: MultiMeshInstance3D = null
+var _line_works_tethers: MultiMeshInstance3D = null
+var _line_works_pulse_transforms: PackedFloat32Array = PackedFloat32Array()
+var _line_works_tag_transforms: PackedFloat32Array = PackedFloat32Array()
+var _line_works_tether_transforms: PackedFloat32Array = PackedFloat32Array()
+var _line_works_since: Dictionary = {}
+var _line_works_running: int = 0
+
 var _split_marks: MultiMeshInstance3D = null
 var _banking_marks: MultiMeshInstance3D = null
 var _branch_marks: MultiMeshInstance3D = null
@@ -747,6 +766,69 @@ const DANGLING_AT_A_WALL_HEIGHT_METRES: float = 2.25
 const SPLIT_COLOUR: Color = Color(0.32, 0.80, 0.78, 0.85)
 const BANKING_COLOUR: Color = Color(0.93, 0.74, 0.16, 0.9)
 const BLOCKED_BRANCH_COLOUR: Color = Color(0.95, 0.27, 0.22, 0.9)
+
+## What a line that works is drawn in (#68), and the one mark in this file that is good news.
+##
+## **Green, and the collision was checked rather than assumed**, which is #52's lesson: the
+## colours to check a mark against are the ones it is *guaranteed* to be seen beside. Those are
+## the Belt deck it stands over, the cream flow arrows on it and the warm-orange port arrows at
+## either end of it — none of them green. The one green in the project is `HOLOGRAM_ALLOWED`,
+## and it is translucent, flat on the ground, and only on screen with the Machine tool out,
+## where this mark is opaque, head-high and fires on the frame a *drag* has just paid off.
+##
+## Bright and near-white rather than the hologram's muted green, because the thing it has to
+## win against is a yard of grimy cast iron under a bright ochre sky.
+const LINE_WORKS_COLOUR: Color = Color(0.58, 1.0, 0.72, 0.95)
+
+## How long the signal runs for, in **ticks**, from the frame a chain first reads whole.
+##
+## A count of ticks rather than seconds, which is the rule the ore scanner and the audio
+## director already keep: two Runs down the same script look the same, and a frame that stepped
+## nothing draws the same thing twice. Five seconds is long enough to look up at and short
+## enough that it is a moment rather than a condition — a mark that is always on everything is
+## the hedge #66 took off the port arrows.
+const LINE_WORKS_TICKS: int = 300
+
+## How fast a light runs down the line and how far apart the lights are.
+##
+## **Faster than the goods, deliberately.** A Belt carries four Items a second at four to the
+## tile, which is one tile every fifteen ticks; a light crosses a tile in six. So the lights
+## overtake the freight and read as a signal travelling the line rather than as more cargo —
+## the same reason the ore scanner's pings are a sweep rather than a dotted path.
+const LINE_WORKS_PULSE_TICKS_PER_TILE: int = 6
+const LINE_WORKS_PULSE_GAP_TILES: int = 3
+
+## How big a light is and how far over the Belt's deck it floats.
+##
+## Clear of the deck, the cream flow arrow at 0.08 m over it, and an Item riding at deck
+## height — all three of which are on the very tiles this is drawn along, so this is the one
+## mark in the file guaranteed to share its tile with three others.
+const LINE_WORKS_PULSE_SIZE_METRES: float = 0.75
+const LINE_WORKS_PULSE_LIFT_METRES: float = 0.55
+
+## How high the chain's tag floats over each of its Machines, and how big it is.
+##
+## Two clearances for the reason the split tag has two: one off the body a player can see and
+## one off the housing the Simulation collides against, whichever is higher (#41, #48, #50).
+## Both are a step above the split tag's, which keeps the mark order Ammunition gauge → starved
+## tag → split tag → this. It cannot collide with the **starved** tag by construction — a chain
+## is not whole while any Machine in it is starved — but a branch can be whole and splitting, so
+## the split tag is a real neighbour and this stands over it.
+const LINE_WORKS_TAG_CLEARS_THE_BODY_METRES: float = 1.5
+const LINE_WORKS_TAG_CLEARS_THE_ROOF_METRES: float = 2.9
+const LINE_WORKS_TAG_SIZE_METRES: float = 1.4
+
+## How wide the line is that joins a chain tag to the body it is about.
+##
+## **#66's answer, taken on sight rather than rediscovered.** The first render of this put a
+## tag 1.5 m over a Miner's derrick and a Smelter's flue, and both read as a mark floating in
+## the sky — which is #41's rule biting for the fifth time, and for #66's specific reason: a
+## tag rests a tag's height over a *wide* cap and hangs over a *tapering* one. The lift is not
+## what is wrong with it, so it was not moved; what the mark needed was an owner. Same
+## thickness as the starved tag's tether, because it is the same punctuation doing the same
+## job — wide enough to survive a pixel at thirty metres, narrow enough that a Factory full of
+## working lines is not a forest of columns.
+const LINE_WORKS_TETHER_THICKNESS_TILES: float = 0.06
 
 ## How high a split's tag floats, in metres, and how big it is drawn.
 ##
@@ -1031,6 +1113,9 @@ func sync(sim: Simulation) -> void:
 	_sync_ports(sim)
 	_sync_connection_marks(sim)
 	_sync_split_marks(sim)
+	# After both, because it is the one mark that says a line is *right* and it has to stand
+	# clear of the two that say it is wrong.
+	_sync_line_works(sim)
 	_sync_hud(sim)
 	_place_camera(sim)
 	# After the camera, because the weapon hangs off it.
@@ -3702,6 +3787,17 @@ func _brief_lines(sim: Simulation) -> PackedStringArray:
 	if not objective.is_empty():
 		lines.append(objective)
 
+	# The acknowledgement the opening minutes never had (#68). It sits beside the objective
+	# line on purpose — that one says what to do next and this one says the last thing you
+	# were told to do is now running — and it is on screen only while the marks in the world
+	# are, because the mark says *where* and the line says *how many*. Counted off
+	# `line_works_running_count` rather than worked out a second way, which is the arrangement
+	# the dangling-ends and split clauses already have.
+	if line_works_running_count() > 1:
+		lines.append("LINE RUNNING — %d lines" % line_works_running_count())
+	elif line_works_running_count() == 1:
+		lines.append("LINE RUNNING")
+
 	lines.append(
 		"nest %d/%d — wave %d — next in %ds — crawlers %d"
 		% [
@@ -5660,6 +5756,218 @@ func _sync_split_marks(sim: Simulation) -> void:
 	_upload(_banking_marks, banking)
 	_upload(_branch_marks, branch)
 	_upload(_blocked_branch_marks, blocked)
+
+
+## The one thing drawn in this file that is good news: a line that has just started working.
+##
+## **Everything else here is a complaint**, and a player who had just laid their first chain had
+## to infer success from the absence of marks — which is exactly what #52's invisible ore and
+## #41's ownerless gauge both proved a player cannot read. So when a chain first reads whole, a
+## train of lights runs down its Belts and a tag stands over each of its Machines, for
+## `LINE_WORKS_TICKS`, and then it stops.
+##
+## **It fires on a change, which is the whole of why it is not another hedge.** `LineWorks`
+## answers a *condition* — this chain is connected and carrying — and the thing worth drawing is
+## the *moment* it became true, which is the distinction `AudioDirector` is built on. So
+## `_line_works_since` remembers, per chain signature, the tick it was first seen whole, and the
+## marks are a function of the tick minus that. A chain that breaks is forgotten, so mending it
+## is acknowledged again; a chain that gains a Machine has a new signature, so extending a line
+## is acknowledged too.
+##
+## **Nothing here is a second opinion about connectedness.** Every fact comes out of `LineWorks`,
+## which asks only the projections `_hand_off` and `_load_from_port` themselves go through — so
+## a line cannot be drawn as working and starve.
+func _sync_line_works(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _line_works_pulses == null:
+		_line_works_pulses = _unshaded_tags(
+			Vector3(
+				LINE_WORKS_PULSE_SIZE_METRES,
+				LINE_WORKS_PULSE_SIZE_METRES,
+				LINE_WORKS_PULSE_SIZE_METRES
+			),
+			LINE_WORKS_COLOUR
+		)
+		_line_works_tags = _unshaded_tags(
+			Vector3(
+				LINE_WORKS_TAG_SIZE_METRES,
+				LINE_WORKS_TAG_SIZE_METRES * 0.3,
+				LINE_WORKS_TAG_SIZE_METRES
+			),
+			LINE_WORKS_COLOUR
+		)
+		# A metre tall, so one mesh serves every Machine and the instance's own y scale is
+		# the gap. The starved tag's tether can be a fixed box because its gap is always its
+		# one lift; a chain tag's gap is whichever of two clearances won, which differs per
+		# Machine — a Miner's derrick takes the body clearance and a Turret's box takes the
+		# housing one.
+		_line_works_tethers = _unshaded_tags(
+			Vector3(
+				tile_size * LINE_WORKS_TETHER_THICKNESS_TILES,
+				1.0,
+				tile_size * LINE_WORKS_TETHER_THICKNESS_TILES
+			),
+			LINE_WORKS_COLOUR
+		)
+
+	var tick: int = sim.query_tick()
+	var pulses: PackedFloat32Array = PackedFloat32Array()
+	var tags: PackedFloat32Array = PackedFloat32Array()
+	var tethers: PackedFloat32Array = PackedFloat32Array()
+	var running: int = 0
+	var seen: Dictionary = {}
+
+	for chain: LineWorks.Chain in LineWorks.chains(sim):
+		if not chain.is_whole:
+			continue
+		var signature: String = chain.signature()
+		seen[signature] = true
+		if not _line_works_since.has(signature):
+			_line_works_since[signature] = tick
+		var elapsed: int = tick - int(_line_works_since[signature])
+		if elapsed >= LINE_WORKS_TICKS:
+			continue
+
+		running += 1
+		for machine: int in chain.machines:
+			var centre: Vector3 = _machine_centre(sim, machine)
+			var roof: float = _machine_roof(sim, machine)
+			var lift: float = maxf(
+				roof + LINE_WORKS_TAG_CLEARS_THE_BODY_METRES,
+				Fixed.to_float(sim.query_machine_height_metres(machine))
+					+ LINE_WORKS_TAG_CLEARS_THE_ROOF_METRES
+			)
+			tags.resize(tags.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_instance(
+				tags,
+				tags.size() / FLOATS_PER_INSTANCE - 1,
+				Vector3(centre.x, centre.y + lift, centre.z),
+				0.0
+			)
+			# And the line that says whose tag it is, from the top of the body a player can
+			# see up to the tag resting over it.
+			tethers.resize(tethers.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_tether(
+				tethers,
+				tethers.size() / FLOATS_PER_INSTANCE - 1,
+				Vector3(centre.x, centre.y + (roof + lift) * 0.5, centre.z),
+				lift - roof
+			)
+		for link: PackedInt64Array in chain.links:
+			_light_a_link(sim, pulses, link, elapsed, tile_size)
+
+	# A chain nobody saw whole this frame is forgotten rather than left to expire, which is
+	# what makes mending a broken line a change worth drawing again.
+	for signature: String in _line_works_since.keys():
+		if not seen.has(signature):
+			_line_works_since.erase(signature)
+
+	_line_works_running = running
+	_line_works_pulse_transforms = pulses
+	_line_works_tag_transforms = tags
+	_line_works_tether_transforms = tethers
+	_upload(_line_works_pulses, pulses)
+	_upload(_line_works_tags, tags)
+	_upload(_line_works_tethers, tethers)
+
+
+## Writes one tether: a metre-tall mesh stretched along Y alone to the gap it has to fill.
+##
+## Non-uniform, so it cannot go through `_write_scaled_instance`, which scales all three axes
+## together — a tether three metres long must not be three times as thick.
+static func _write_tether(
+	buffer: PackedFloat32Array, instance: int, where: Vector3, length: float
+) -> void:
+	var base: int = instance * FLOATS_PER_INSTANCE
+	buffer[base + 0] = 1.0
+	buffer[base + 1] = 0.0
+	buffer[base + 2] = 0.0
+	buffer[base + 3] = where.x
+	buffer[base + 4] = 0.0
+	buffer[base + 5] = length
+	buffer[base + 6] = 0.0
+	buffer[base + 7] = where.y
+	buffer[base + 8] = 0.0
+	buffer[base + 9] = 0.0
+	buffer[base + 10] = 1.0
+	buffer[base + 11] = where.z
+
+
+## Writes the lights that are lit on one link this frame, along its Belts in flow order.
+##
+## **Only the lit ones are drawn**, and the train starts at the producer and runs out past the
+## far end — which is the ore scanner's shape and for its reason: a full line of marks standing
+## on a Belt is scenery, where a thing that *sweeps* reads as a signal. The arithmetic is whole
+## integers over the tick, so nothing is timed by a clock and nothing is drawn at random.
+func _light_a_link(
+	sim: Simulation,
+	into: PackedFloat32Array,
+	link: PackedInt64Array,
+	elapsed: int,
+	tile_size: float
+) -> void:
+	@warning_ignore("integer_division")
+	var head: int = elapsed / LINE_WORKS_PULSE_TICKS_PER_TILE
+	var along: int = 0
+	for belt: int in link:
+		var yaw: float = _yaw_for_direction(sim.query_belt_direction(belt))
+		for step: int in range(sim.query_belt_length_tiles(belt)):
+			var behind: int = head - along
+			along += 1
+			if behind < 0 or behind % LINE_WORKS_PULSE_GAP_TILES != 0:
+				continue
+			_mark_at(
+				sim,
+				into,
+				sim.query_belt_tile(belt, step),
+				Fixed.to_float(sim.query_belt_deck_height_metres())
+					+ LINE_WORKS_PULSE_LIFT_METRES,
+				yaw
+			)
+
+
+## How many lights are running down lines that have just started working. For the smoke test.
+func line_works_pulse_count() -> int:
+	@warning_ignore("integer_division")
+	return _line_works_pulse_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where one of them is, so a test can check the train is driven by the tick and nothing else.
+func line_works_pulse_position(which: int) -> Vector3:
+	return _instance_position(_line_works_pulse_transforms, which)
+
+
+## How many Machines wear the chain tag. For the smoke test, and the number the HUD reports.
+func line_works_tag_count() -> int:
+	@warning_ignore("integer_division")
+	return _line_works_tag_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where one of those tags is drawn, so a test can check it hangs off its own Machine's roof.
+func line_works_tag_position(which: int) -> Vector3:
+	return _instance_position(_line_works_tag_transforms, which)
+
+
+## How many tags are joined to the body they are about. One per tag, asserted as a count
+## rather than as a position, so a tag that ever gets drawn without one fails rather than
+## floats — the arrangement #66 gave the starved tag.
+func line_works_tether_count() -> int:
+	@warning_ignore("integer_division")
+	return _line_works_tether_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## The middle of one of those tethers, so a test can check it spans the gap it is filling.
+func line_works_tether_position(which: int) -> Vector3:
+	return _instance_position(_line_works_tether_transforms, which)
+
+
+## How many lines are being acknowledged this frame. What the HUD line counts off the marks
+## rather than working out a second way, which is the arrangement every other count in the
+## brief panel has.
+func line_works_running_count() -> int:
+	return _line_works_running
 
 
 ## Writes one tag over a Machine's own roof, at `SPLIT_MARK_LIFT_METRES`.
