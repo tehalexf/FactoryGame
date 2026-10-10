@@ -3503,6 +3503,158 @@ behaviour change to three shipped marks with assertions pinning them, which is e
 standing #48 gave the starved tag before #50 picked it up, and it wants the same treatment in
 its own ticket.
 
+### The last step of the opening loop told a player to do a thing the game cannot do
+
+**#71, and it is the worst class of defect this project has shipped: not a missing feature, but
+an instruction.** From a playtest of the Windows build, in the player's own words: *"its not
+clear how to carry ingots to the nest... the smelter works but idk what next"*. They had built
+the opening line, the Smelter was producing, and they were stuck at the step the game had just
+told them to take. The line said, verbatim:
+
+```
+Carry ingots to the Nest and press F — delivering is how a Run gets better
+```
+
+**There is no way to carry ingots.** Grep `sim/simulation.gd` for hand transfers and there are
+exactly two: `_apply_deliver_to_nest` spends out of a player's own pockets, and
+`_apply_withdraw_from_nest` fills them from the Nest's store. Nothing anywhere moves goods out
+of a Machine's output buffer into a player's hands — the only way a plate leaves a Smelter is a
+Belt. So the line named an **act for which no Input Action exists**, in step four of four of the
+only sequence this game ever teaches, and a player who cannot get past it has no route into
+Delivery, Depth, Gear or Stratagems.
+
+**And it was wrong about the goods as well as the verb, which is the half the report could not
+see and the half worth remembering.** The ticket reasoned that the trap was self-confirming —
+`player.starting_stock` is `iron_plate:110`, a Smelter makes `iron_plate`, so pressing `F` at the
+Nest *would* deliver out of the opening stock and confirm the wrong mental model. Checked against
+the content, it is worse than that: **`t01_munitions` wants `coal:20`**, and
+`_apply_deliver_to_nest` iterates the open tier's goods and nothing else. So `F` with a pocketful
+of plate is refused `NOTHING_TO_DELIVER` and does **nothing at all**. The line named an
+impossible act in aid of an Item the counter was not waiting for, and the feedback for obeying it
+exactly was silence.
+
+**Why every claim in it was individually assertable and none of it was asserted.** `Objective`
+is a pure function of the Run's state with nothing remembered, which is what makes it cheap to
+test — and the suite tested the steps *one at a time*, so each one was checked for the words it
+contained and never for whether obeying it got anywhere. `tests/cases/test_opening_loop.gd` is
+the durable half of this ticket and it is the other shape: it reads `Objective.pointed_at` for
+which cell the line is about and `Objective.line` for which act, does that, and asks again, until
+`query_completed_deliveries()` is non-empty. **Nothing in it knows the sequence of steps** — so a
+step naming an impossible act leaves the loop with nothing to do, and a step naming the wrong
+Machine builds the wrong Machine. The one seam it does not drive is the aim, deliberately:
+`test_recorded_session.gd` is the fixture that proves a mouse reaches a tile, and this one
+substitutes *the very query the step's own wording is derived from* —
+`query_nearest_workable_node` is where "on the iron ore 12 m behind you" comes from — so the tile
+a step is obeyed at is the tile the step named.
+
+**One step became two, because the fixes are two.**
+
+- **`Step.PRODUCE`** — the open tier wants an Item nothing in the Factory makes.
+  *"Place a Coal Miner Mk1 — key 5; the Nest wants 20 coal to pay for your first Delivery"*.
+- **`Step.DELIVER`** — something makes it and nothing is carrying it over.
+  *"Drag a Belt from an orange arrow into the Nest — it wants 20 coal"*, behind the Belt-tool
+  clause when the tool is not already out.
+
+A single step could only ever have named one of those, which is how it came to name an act that
+is neither.
+
+Four things worth knowing rather than rediscovering:
+
+- **The bill is read off `query_delivery_goods` and never written down.** A sentence naming a
+  good is a sentence that has to come out of the tier, or it is a second copy of
+  `content/deliveries.csv` in GDScript — which is exactly what "ingots" was. The count is what
+  is **outstanding** rather than what the tier asked for, so a bill half paid by a Belt already
+  running says so. The *first* outstanding good rather than all of them, because one line is one
+  act: a tier wanting plate and Ammunition is two Machines and two Belts, and the second arrives
+  by itself when the first is satisfied, which is how every other step here moves on.
+- **`BuildChain.first_unlocked_producer_of` is `first_unlocked_of_role`'s sibling, and a role
+  could not have answered this.** Coal and ore are both mined, plate and Ammunition are both
+  crafted, and what separates the Machine a player needs from the one beside it is the Item it
+  puts out. So this is the **one step that prints a display name** — read off `Definitions` for
+  the row the chain chose, exactly as a picker cell reads it, with no id spelled anywhere in
+  `objective.gd`. The lock is asked of the Simulation for `first_unlocked_of_role`'s reason: a
+  player must not be pointed at a cell a Delivery still has shut.
+- **The Nest has no arrow to aim at, so the sentence does not promise one.** The Nest is
+  deliberately not port-enforced (#47) — it is not a Machine, so a Belt docks anywhere on its 4x4
+  wall — and `Step.BELT`'s wording is *"drag from the orange arrow to the blue one"*. Reusing it
+  would have sent a player hunting a mark the renderer never draws, so the new sentence names the
+  orange arrow at the end that has one and says "into the Nest" at the end that does not. What
+  **is** reused is the machinery: `_with_the_belt_tool` took the drag sentence as an argument
+  (it was #67's, with the sentence baked in), because the two drags are different acts and the
+  key clause in front of them is the same fact about the same hand — and two copies of that
+  clause is how a tool comes to be named while it is already out.
+- **`query_belt_ends_at_the_nest` is one line over the clause `query_belt_end_is_connected`
+  already answers through**, the arrangement `query_node_yields_for` and
+  `query_node_is_within_depth_of` have: the rule stays the Simulation's and `game/` does not
+  learn it. Deliberately narrower than `query_belt_end_is_connected` — a Belt into a *Machine* is
+  connected and is not a Delivery. It exists because the step has to **stop asking** once a Belt
+  is in: the tier takes thirty seconds to fill, and a line still saying "run a Belt into the
+  Nest" for all of it is #67's defect in the step rather than in the wording.
+
+**What this ticket deliberately did not build, and the argument is filed rather than lost.** The
+mechanic the player reached for is real — they did not say "I did not know a Belt could do that",
+they said "I do not know how to carry" — and most of its shape already exists:
+`aimed_tile_at_height` is the wrench's aim at a Machine's *body*, `_within_wrench_reach` is the
+reach, `query_withdraw_refusal` is the shape of the refusal, and `_refund_machine` already moves
+an output buffer into a player's pockets on a demolish. It was still not built here, because a
+false instruction must not stay in the game while somebody debates whether to invent a verb — and
+because the mechanic **competes with the Belt as the answer to the same problem**. `t01_munitions`
+is twenty coal, which is three trips on foot, and `content/deliveries.csv`'s own comment says the
+first thing a player should do is *"run a Belt out of the coal Miner and into the Nest and watch
+the Factory pay for its own progression"*. A faucet that bypasses Belts for small amounts teaches
+a new player they do not need one yet, at the moment it is cheapest to learn. #72 is the decision,
+with both cases written out and a third option on the table — that the lever may be the **Nest's
+own legibility** rather than a new verb, since a player who has learnt to aim a Belt at an arrow
+has nothing to aim at when the target is the Nest.
+
+**And it turned up a live defect in the step above it, which is also filed rather than patched.**
+`Objective._anything_is_starved` asks `query_machine_is_starved`, which is "does not hold a whole
+Recipe's worth **right now**" — the right answer to the Simulation's question, because that is
+what the grid bills against and what the amber tag means. It is the wrong answer to this one: the
+shipped Smelter smelts two ore every 3.2 s and the shipped Miner makes one every 1.5 s, so a
+correctly belted opening line is saturated and still briefly short between crafts. `Step.UNSTARVE`
+is walked ahead of the step below it, so **a player who has built the line correctly is told
+"Something is starved — a Belt starts past an output arrow and ends at an input" on some ticks and
+what to do next on the others.** That is advice naming a fix already applied — the defect
+`_with_the_build_gun` and `_with_the_belt_tool` exist to prevent for keys, in the step rather than
+in the wording. It is pre-existing, it is a behaviour change to a shipped step with assertions on
+it, and it is not what #71 was opened about; #74 is the ticket, and the recommendation in it is a
+`query_machine_is_fed`-shaped projection, which is `query_machine_branch_count`'s shape pointed at
+inputs instead of outputs. What it cost here is a named fixture —
+`test_building_view._settle_until_nothing_is_starved` — which steps a Factory until the step above
+is satisfied and **fails if that never comes**, so a fixture about the last step stands on a tick
+where the one before it is quiet and says so rather than hoping.
+
+**The pair is committed and it is the argument.**
+[`docs/images/opening_delivery_before.png`](docs/images/opening_delivery_before.png) against
+[`_after`](docs/images/opening_delivery_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "delivering bare"
+```
+
+`delivering` is #71's preset and it exists for the reason `opening` is #55's: **none of the
+others can see the question.** `running` builds exactly the Factory the report describes and then
+holsters the Build Gun, because that preset is a picture of a Factory working — and worse, it
+cannot be trusted to show this step at all, because of the starved flicker above: the step before
+it wins on some ticks and not others, and a render of a coin flip is not a render of a step. So
+`delivering` frames `running`'s own Factory, keeps the gun out so the lit cell and the line
+naming the same thing is half the subject, and then **steps until the line is the step**, bounded,
+printing the line it is looking at if the budget runs out. That is the same closed loop over the
+real state that `_put_the_crosshair_on` already is, and it is what stops this picture being one a
+tool can no longer reproduce — which is the failure #53 caught in this very script.
+
+**And the first render of it found something about the shots that already exist.** `delivering`
+started as `running` plus a stop condition, and it ran its whole 600-tick budget and gave up —
+because `running` stands a Steam Boiler up to keep the grid off its baseline and **nothing ever
+feeds it coal**, so that Boiler is *permanently* starved and `Step.UNSTARVE` wins on every tick.
+The objective line in every committed building shot has therefore read "Something is starved"
+since the Boiler was added, about a Factory whose only fault is the one the shot put there. The
+way round it was not to fake state: a Miner and a Smelter alone draw exactly
+`power.baseline_supply_kw`, so `delivering` builds no Boiler, the line runs unthrottled, the
+Smelter's input buffer fills, and nothing is starved at all — which is the Factory the playtest
+report actually describes.
+
 ### The hotbar states the chain
 
 #53, and the complaint was the standing direction in one sentence: *"please simplify the

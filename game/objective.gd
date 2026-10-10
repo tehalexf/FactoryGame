@@ -17,8 +17,15 @@
 ## **The steps are read off roles and states rather than off ids.** Nothing here names
 ## `smelter_mk1`, because the set of Machines is `content/machines.csv`'s business and a line
 ## that named a row would be a second content table written in GDScript. What it names are
-## the three things the opening loop is made of — something that mines, something that
-## crafts, and a Belt between them — and the keys that do them.
+## the things the opening loop is made of — something that mines, something that crafts, a
+## Belt between them, and a Belt into the Nest — and the keys that do them.
+##
+## **The one exception is #71's last step, and it is an exception to the wording and not to
+## the rule.** The step that pays for a Run is about the Item the open Delivery tier is
+## waiting for, and a *role* cannot name the Machine that makes it: coal and ore are both
+## mined, plate and Ammunition are both crafted. So that step prints a display name — read
+## off `Definitions` for the row `BuildChain` chose, exactly as a picker cell reads it, and
+## still with no id written down anywhere in this file.
 class_name Objective
 extends RefCounted
 
@@ -54,12 +61,18 @@ static func line(sim: Simulation, player_id: int) -> String:
 			)
 		Step.BELT:
 			return _with_the_build_gun(
-				sim, player_id, _with_the_belt_tool(sim, player_id)
+				sim,
+				player_id,
+				_with_the_belt_tool(
+					sim, player_id, "Drag from the orange arrow to the blue one"
+				)
 			)
 		Step.UNSTARVE:
 			return "Something is starved — a Belt starts past an output arrow and ends at an input"
+		Step.PRODUCE:
+			return _with_the_build_gun(sim, player_id, _the_thing_that_makes_it(sim, player_id))
 		Step.DELIVER:
-			return "Carry ingots to the Nest and press F — delivering is how a Run gets better"
+			return _with_the_build_gun(sim, player_id, _the_belt_into_the_nest(sim, player_id))
 	return ""
 
 
@@ -82,10 +95,12 @@ static func pointed_at(sim: Simulation, player_id: int) -> int:
 			return BuildChain.first_unlocked_of_role(sim, MachineDefinition.Role.MINER)
 		Step.CRAFT:
 			return BuildChain.first_unlocked_of_role(sim, MachineDefinition.Role.CRAFTER)
-		Step.BELT:
+		Step.BELT, Step.DELIVER:
 			# The Belt is not a Machine, so it has no definition index — and the cell past
 			# the end of the Machine list is exactly how the picker already names it.
 			return sim.query_definitions().machine_count()
+		Step.PRODUCE:
+			return BuildChain.first_unlocked_producer_of(sim, _what_the_nest_wants(sim))
 	return -1
 
 
@@ -103,7 +118,9 @@ enum Step {
 	BELT,
 	## Something is standing idle for want of a connection.
 	UNSTARVE,
-	## The line runs and has never been paid for.
+	## Nothing in the Factory makes what the open Delivery tier is waiting for.
+	PRODUCE,
+	## Something makes it, and nothing is carrying it to the Nest.
 	DELIVER,
 	## The opening has taught itself, or the Run is over.
 	NOTHING,
@@ -128,7 +145,18 @@ static func _step(sim: Simulation, player_id: int) -> Step:
 		return Step.BELT
 	if _anything_is_starved(sim):
 		return Step.UNSTARVE
-	return Step.DELIVER
+	# **#71's two steps, and they are two because the fixes are two.** The open tier wants a
+	# particular Item, and either the Factory does not make it yet or it does and nothing is
+	# carrying it over. A single step could only have named one of those, which is how the
+	# line came to name an act — carrying — that neither of them is.
+	var wanted: int = _what_the_nest_wants(sim)
+	if wanted == -1:
+		return Step.NOTHING
+	if not _something_produces(sim, wanted):
+		return Step.PRODUCE
+	if not _anything_feeds_the_nest(sim):
+		return Step.DELIVER
+	return Step.NOTHING
 
 
 ## The key that reaches the cell this step is about, as a clause for the middle of a
@@ -175,11 +203,127 @@ static func _with_the_build_gun(sim: Simulation, player_id: int, step: String) -
 ## The two clauses compose rather than racing, because they are about two different things:
 ## a player holding a rifle is told about the Build Gun first whatever tool is on it, and
 ## the capital is left to `_with_the_build_gun` to take back down.
-static func _with_the_belt_tool(sim: Simulation, player_id: int) -> String:
-	var drag: String = "Drag from the orange arrow to the blue one"
+##
+## **`drag` is an argument since #71**, which gave this file a second step that is also a
+## drag: the Nest is not port-enforced, so "into the Nest" is a different sentence from "to
+## the blue one" and the two must not be one wording — but the *key* clause in front of them
+## is the same fact about the same hand, and two copies of it is how a tool comes to be named
+## while it is already out.
+static func _with_the_belt_tool(sim: Simulation, player_id: int, drag: String) -> String:
 	if sim.query_player_is_laying_belt(player_id):
 		return drag
 	return "Press C for the Belt tool, then %s" % (drag[0].to_lower() + drag.substr(1))
+
+
+## What the open Delivery tier is still waiting for, as an Item index, or -1 when there is
+## nothing to be waiting for.
+##
+## **Read off the tier rather than written down, and #71 is the whole argument for that.**
+## The step used to say `Carry ingots to the Nest and press F`, and the shipped chain opens
+## on **twenty coal** — so the line named one Item while the counter waited for another, and
+## a player who did exactly what it said was refused `NOTHING_TO_DELIVER` and shown nothing.
+## A sentence naming a good is a sentence that has to come out of `query_delivery_goods`, or
+## it is a second copy of `content/deliveries.csv` written in GDScript.
+##
+## The **first** outstanding good rather than all of them, because one line is one act: a
+## tier wanting plate and Ammunition is two Machines and two Belts, and naming both at once
+## is the wall of text the brief HUD exists to avoid. The next one arrives by itself when
+## the first is satisfied, which is how every other step here moves on.
+static func _what_the_nest_wants(sim: Simulation) -> int:
+	var tier: int = sim.query_next_delivery()
+	if tier == -1:
+		return -1
+	for item_id: String in sim.query_delivery_goods(tier):
+		var outstanding: int = (
+			sim.query_delivery_goods_required(tier, item_id)
+			- sim.query_delivery_goods_delivered(item_id)
+		)
+		if outstanding > 0:
+			return sim.query_definitions().item_index(item_id)
+	return -1
+
+
+## Whether anything standing in the Factory puts that Item out. Not "could be built": a
+## Machine a player has not placed yet makes nothing, and the step is about placing it.
+static func _something_produces(sim: Simulation, item_index: int) -> bool:
+	var definitions: Definitions = sim.query_definitions()
+	for index: int in range(sim.query_machine_count()):
+		var machine: MachineDefinition = definitions.machine(sim.query_machine_id(index))
+		if machine == null:
+			continue
+		var recipe: RecipeDefinition = definitions.recipe_at(machine.recipe_index)
+		if recipe == null:
+			continue
+		for slot: int in range(recipe.output_count()):
+			if recipe.output_item(slot) == item_index:
+				return true
+	return false
+
+
+## Whether any Belt is handing goods to the Nest.
+##
+## `query_belt_ends_at_the_nest` and not `query_belt_end_is_connected`, which is the whole
+## distinction this step turns on: a Belt into a Machine is connected and is not a Delivery.
+## The rule stays in the Simulation for the reason every other geometry question here does —
+## working it out from a Belt's tiles and the Nest's footprint would be a second copy of
+## `_hand_off`'s own clause.
+static func _anything_feeds_the_nest(sim: Simulation) -> bool:
+	for index: int in range(sim.query_belt_count()):
+		if sim.query_belt_ends_at_the_nest(index):
+			return true
+	return false
+
+
+## The step that builds what the Nest is waiting for.
+##
+## **It names a Machine the chain chose, which is not the same thing as naming a row.** Every
+## other step here names a role — "a Miner", "a Smelter" — and a role cannot answer this one:
+## coal and ore are both mined, plate and Ammunition are both crafted, and what separates the
+## Machine a player needs from the one beside it is the Item it puts out.
+## `BuildChain.first_unlocked_producer_of` is that question asked of the content, so a Map
+## whose chain opens differently points at a different cell, nothing here spells an id, and
+## the display name is read off `Definitions` exactly as the picker cell reads it.
+##
+## Falls back to naming the goods alone when no unlocked Machine makes them — a chain asking
+## for something this Run cannot yet produce at all. Pointing at nothing is better than
+## pointing at a cell that is not there.
+static func _the_thing_that_makes_it(sim: Simulation, player_id: int) -> String:
+	var bill: String = _the_bill(sim)
+	var producer: int = BuildChain.first_unlocked_producer_of(sim, _what_the_nest_wants(sim))
+	if producer == -1:
+		return "The Nest wants %s — nothing you can build makes it yet" % bill
+	var machine: MachineDefinition = sim.query_definitions().machine_at(producer)
+	return "Place a %s%s; the Nest wants %s to pay for your first Delivery" % [
+		machine.display_name, _the_key_for_this_step(sim, player_id), bill
+	]
+
+
+## The step that carries it over: a Belt, because a Belt is the only thing that can.
+##
+## **The Nest is deliberately not port-enforced (#47)** — it is not a Machine, so a Belt docks
+## anywhere on its 4x4 wall and there is no input arrow on it to aim at. So the sentence names
+## the orange arrow at the end that has one and says "into the Nest" at the end that does not,
+## rather than reusing `Step.BELT`'s "to the blue one" and sending a player after a mark the
+## renderer never draws.
+static func _the_belt_into_the_nest(sim: Simulation, player_id: int) -> String:
+	return _with_the_belt_tool(
+		sim,
+		player_id,
+		"Drag a Belt from an orange arrow into the Nest — it wants %s" % _the_bill(sim)
+	)
+
+
+## What the Nest is still short of, as a phrase — "20 coal". The count is what is outstanding
+## rather than what the tier asked for, so a bill half paid by a Belt already running says so.
+static func _the_bill(sim: Simulation) -> String:
+	var wanted: int = _what_the_nest_wants(sim)
+	var item_id: String = sim.query_definitions().item_id(wanted)
+	var tier: int = sim.query_next_delivery()
+	var outstanding: int = (
+		sim.query_delivery_goods_required(tier, item_id)
+		- sim.query_delivery_goods_delivered(item_id)
+	)
+	return "%d %s" % [outstanding, item_id.replace("_", " ")]
 
 
 ## Whether a Miner is standing on ground it can actually work. Not "is a Miner built": a
