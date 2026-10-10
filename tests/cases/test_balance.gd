@@ -243,7 +243,21 @@ func test_a_run_length_is_a_function_of_the_factory_and_not_of_the_seed() -> voi
 ## the old boundary. The claim is unchanged and is still the one the figures support — a
 ## rifleman is neither free nor ruinous — and a later Ammunition change that made the rifle
 ## genuinely cheap or genuinely fatal still fails here.
-const SAME_LENGTH_SECONDS: int = 150
+##
+## **Widened again to 300 by #76, and this is the first move with a mechanism behind it rather
+## than phase.** Separation spreads a crowd, and a spread crowd is a worse target for a
+## *scattering* weapon: an interpenetrating stack was several Crawlers at one coordinate, so a
+## round that missed the one it was aimed at very often hit a neighbour standing inside it. The
+## row measured **25m03s against `competent`'s 28m51s**, which is 228 seconds. Both rows moved
+## in the same direction for the same reason and the picket moved further, because it is the
+## one row that fires a scattering weapon at all — `competent`'s Turret resolves on an Enemy's
+## *point* and never on its hit volume, so the spread costs it nothing.
+##
+## The claim is still the one the figures support and is deliberately not restated: a rifleman
+## is **neither free nor ruinous**, now within five minutes of a twenty-nine-minute Run rather
+## than within two and a half. What would still fail here is the thing this guards — a change
+## that made the rifle pay for itself, or one that made standing at the Nest with it fatal.
+const SAME_LENGTH_SECONDS: int = 300
 
 
 func test_the_rifle_at_the_nest_is_a_fourth_claimant_on_one_ammo_press() -> void:

@@ -27,8 +27,11 @@ SHOT_SCRIPT=tools/visual/compose_tool_shot.gd tools/visual/shot.sh out.png "tool
                                  # `compare` may NOT be committed: it renders the purchased arms
 tools/visual/frame_cost.sh       # what the yard costs, with a full Factory and a Wave
 ENEMY_COUNT=200 tools/visual/frame_cost.sh   # the same, with a Wave big enough to be a scale claim
+ENEMY_COUNT=2000 godot --headless --path . --script res://tools/visual/enemy_tick_cost.gd
+                                 # what a Simulation *tick* costs with a crowd on it. The other
+                                 # half of frame_cost.sh, which times the renderer
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
-                                 # a Wave arriving (swarm|pair|triage|boss|distance; + hud, + bare)
+                                 # a Wave arriving (swarm|pair|triage|boss|distance|crush; + hud, + bare)
 SHOT_SCRIPT=tools/visual/compose_branch_shot.gd tools/visual/shot.sh out.png bare
                                  # a line that branches, one side blocked (+ bare)
 SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare
@@ -2339,10 +2342,21 @@ arrays rather than a class**. See the Siege Hulk section.
 - A **serial** is issued once and never reused. That is the handle to hold rather than
   an index, because indices shift as Enemies die — which is what a Turret needs to
   keep shooting at the thing it was shooting at.
-- Enemies do not collide with one another, by design. A swarm is a swarm, and the
-  alternative is an O(n²) separation pass the Chaff tier could not afford. Nothing in
-  an Enemy's tick reads another Enemy, so index order carries none of the bias Belts
-  have to avoid.
+- **Enemies push one another apart, and until #76 they did not.** This line used to read
+  *"Enemies do not collide with one another, by design. A swarm is a swarm, and the
+  alternative is an O(n²) separation pass the Chaff tier could not afford"* — and the
+  reasoning was sound about the pass somebody writes first. What it was wrong about is that
+  the quadratic is avoidable: bucket the Map and each Enemy consults a bounded handful of
+  neighbours however many are alive. The user looked at what the note produced on screen —
+  a rank of bodies interpenetrating as they converge on one tile — and overruled it, which
+  is theirs to do. See "Separation: a crowd rather than a rank", below.
+- **An Enemy's tick now reads other Enemies, and that is the one invariant #76 had to buy
+  back rather than inherit.** It was free while nothing did: index order carried none of the
+  bias Belts have to avoid, because no Enemy's step depended on another's. Separation is
+  paid for three ways instead — displacements are accumulated into per-tick scratch and
+  applied after the pass, each unordered pair is visited exactly once, and the buckets hold
+  each cell's members in index order — so what a body ends a tick holding is a property of
+  where the crowd *was* rather than of which members of it were walked first.
 - An Enemy does not act on the tick it came through its Breach, for the reason a
   Machine does not run on the tick it was built.
 
@@ -2418,6 +2432,153 @@ anything moves — and every Enemy converges on the same destination.
   answer: it chews what is in contact (see Mortality below), because a beeline there would
   send a swarm drifting through solid Walls.
 - Measured: 0.10 ms a tick at 20 Enemies and 0.84 ms at 200, against a 16.67 ms frame.
+
+### Separation: a crowd rather than a rank
+
+#76, and it is the first ticket in this file to **overturn a design note rather than fill a
+gap**. The note said Enemies do not collide with one another by design, because the
+alternative is an O(n²) separation pass the Chaff tier could not afford. The user looked at
+what that produced — *"dont have proper AI or collission"* — and overruled it. The reasoning
+was right about the pass somebody writes first and wrong that there is no other kind, so what
+had to be answered was the quadratic and not the mechanic.
+
+**Separation is local and the flowfield is not, and nothing here touched the flowfield.**
+Where a swarm is *going* is one shared field swept over the whole Map and amortised across
+every Enemy alive, plus #34's second field and the lane a Breaker marches down under fire —
+measured as worth two minutes of Run, and untouched. Where one body stands relative to the
+body beside it is a question about a couple of metres, and `_separate_the_crowd` reads no
+field, no path and no destination. It runs **after every Enemy has taken its step**, for the
+reason `_load_the_ports` is a pass of its own: it is a decision *between* entities, and
+deciding it inside the walking loop would decide it in the order the Enemies happen to be
+walked in.
+
+- **The buckets are a sorted array of packed keys, and both obvious structures were refused.**
+  Each separating Enemy contributes one `cell * SEPARATION_CELL_STRIDE + index`, over the
+  flowfield's own cell index space; sorting that groups the occupied cells and leaves each
+  group in **index order**, and a `bsearch` then answers "who else is in this cell" without
+  the array ever being walked as a whole. A **Dictionary** of cell to occupants is exactly
+  what the purity lint forbids, and rightly — its iteration order is not a property two
+  clients agree on, and #76 took **no new exemption**. A **head array over the field**, chained
+  through a `next` array, is the textbook spatial hash and is genuinely O(n); it is also
+  16,641 integers cleared on every tick of every Wave to serve twenty Crawlers, which is more
+  work than the sorting it saves. The sort is over the Enemies that exist and nothing else.
+- **How far the neighbour search looks is derived, not written down.** Two bodies interfere
+  when they are closer than the sum of their radii, so looking one cell out finds every
+  neighbour a body could owe a push to exactly when that sum fits inside a tile. On the
+  shipped content it does — the widest separating pair is two Breakers at 0.8 m, which is
+  1.6 m against a 2 m tile — so `_separation_reach_cells` answers 1 and the search is the nine
+  cells the ticket described. It is computed from the largest radius any separating kind
+  declares because the alternative goes **quietly** wrong: a later kind with a two-metre
+  radius would make a nine-cell search miss the neighbour two cells away, and that does not
+  fail, it just stops separating, which looks exactly like the old behaviour.
+- **Displacements are accumulated and applied afterwards, and the honest argument for that is
+  not determinism.** Applying in place would *also* replay — index order is ascending spawn
+  serial and every client walks it — so this is not the desync it looks like. The argument is
+  a design one. In place, a body is pushed off the positions earlier-indexed bodies have
+  *already been moved to* this tick, so the earliest spawn in a pile is the only one that sees
+  the pile as it really was and the whole crowd leans the way the serials run. Accumulating
+  makes the push a property of the configuration rather than of arrival order, which is what
+  the Belts' downstream-first order and the Machine port cursor's canonical order are each
+  careful about. Integer addition is exact and commutative, so the total a body receives does
+  not depend on which pair was summed first either.
+- **It adds no state at all.** The two accumulators are per-tick scratch, zero at every point
+  a hash is taken, in the same category as `_player_repair_credit` and the `FIRE` flag — so
+  there is no new array to hash, nothing for `RunSave` to carry, no Enemy class, no node and
+  no allocation per Enemy. The positions it writes were hashed already.
+- **And no new tuning key.** The room a pair needs is `_enemy_hit_radius`, which is the one
+  authority on how big a kind is and the very number `WorldView` scales the drawn body by — so
+  **the Enemies a player sees not overlapping are the Enemies that do not overlap**, and a
+  kind's size cannot be tuned for the look without moving what it collides with. That coupling
+  is #49's and it is deliberate.
+- **A Siege Hulk does not take part, and that is a design decision rather than an
+  optimisation.** It halts the moment anything is inside `siege_hulk.range_metres` and that
+  stand-off *is* its reach, so shoving it would be a second opinion about where it comes to
+  rest — and it would let a crowd rotate the one Enemy whose facing carries a rule, the
+  armoured front `_armoured` reads. Two Hulks are also not a crowd: what the user was
+  complaining about is Chaff interpenetrating, and the boss is the kind a player meets alone.
+  A Crawler walking through one is the price, and it is cheap.
+- **An Enemy that arrived this tick is in the buckets and is not moved**, so the crowd already
+  standing on the Breach gets out of its way before it takes its first step — the rule that it
+  does not act on the tick it came through, kept rather than excepted.
+
+#### Three things the measurements contradicted
+
+Every one of these was reasoned out first, shipped into a probe, and found wrong by reading
+numbers. They are the ticket's real content.
+
+1. **"No further than it walks" is the obvious bound and it deadlocks.** A pair that overlaps
+   wants half the overlap each, which in a queue is more than a tick's travel for everybody in
+   it — so the clamp handed every body a full step of push and **the rear of a queue was pushed
+   backwards exactly as fast as it walked forwards**. Four of eight Crawlers stood still for
+   the whole Run, which on screen reads as a hang and not as crowding. Separation has to be
+   *weaker* than walking, and it is: half a tick's travel, so walking wins by a factor of two
+   whatever the crowd is doing.
+2. **Rationing the sideways step is the same mistake pointed the other way.** With the whole
+   displacement bounded at half a step, a queue in a 2 m lane plateaued at **78%** of the room
+   its own bodies asked for and stayed there — because sideways was the one direction that
+   could have resolved the overlap, and it was being rationed as if it competed with the walk.
+   It competes with nothing: stepping out of a crowd costs a body no ground. So the push is
+   **decomposed** — with the march, half a step; across it, a whole one; and an Enemy that is
+   not marching at all is not rationed, which is the common case in the one place a crowd is
+   thickest. The decomposition is free, which is what makes it affordable: a march is always
+   along one of the flowfield's four directions, so "with it" and "across it" is a choice
+   between two numbers rather than a projection onto a vector.
+3. **The lane-centring was itself the other half of "arrives as a rank".** `_advance_enemy`
+   pressed every body onto the exact centre line of its lane by up to a whole tick's travel —
+   the same budget separation has — so a pair pushed apart across the lane was pulled back
+   together on the next tick and settled **5 cm apart against the 1.2 m their two bodies ask
+   for**. Separation was working and being undone, and nothing in the old behaviour made that
+   visible because there was nothing to undo. So **a lane is a lane and not a line**: a body is
+   gathered back towards the middle only once it is further out than two of its own bodies,
+   which is the distance at which it has stopped walking down the lane and started walking
+   beside it. Derived from the radius again, so still no new key — and a kind that does not
+   separate keeps the old centimetre-exact behaviour, which is what leaves the Siege Hulk's
+   walk in and #16's stand-off where they were.
+
+#### What it actually does, measured
+
+A crowd with road ahead of it converges to **exactly tangency — two fixed-point units, about
+30 µm, inside touching — and holds there** rather than oscillating, from about four seconds
+after a stacked release. A crowd pressed against the Nest settles at **0.82** of the room it
+would like, and that is correct rather than a shortfall: eight bodies 1.2 m wide cannot stand
+abreast on one lane, a bottleneck compresses, and a crowd that stopped pressing would be a
+crowd that had given up on the Nest. What never happens in either regime is two Enemies at one
+coordinate, which is the user's complaint stated exactly, and
+`tests/cases/test_enemy_separation.gd` asserts it on **every tick** of a Wave rather than at
+the end of one.
+
+Two of that file's nine tests are the locality claim, because the algorithm is not visible
+through the façade and must not be: a Crawler with nobody inside its own width advances by
+exactly one tick of walking to the fixed-point unit, and a pair held at touching distance
+**across a tile boundary** is found — which is the bug the bucketing could silently
+reintroduce, since a search that looked only inside one cell would separate a crowd that
+happened to share a tile and quietly stop separating one that did not.
+
+**The pair is committed and it is the argument**, and getting a picture of it at all took a
+preset that did not exist.
+[`docs/images/swarm_separation_before.png`](docs/images/swarm_separation_before.png) against
+[`_after`](docs/images/swarm_separation_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+```
+
+In the before, six Crawlers at the Nest's corner render as **one body** — what looks like a
+single Crawler is the whole Chaff tier standing at one coordinate, which is the user's
+complaint exactly and is the strongest statement of it anybody has produced. In the after they
+are six, pressed into a ragged arc around the corner they are eating, touching and none inside
+another.
+
+**`swarm` could not have shown it, and that was checked rather than assumed** — the existing
+preset renders *identically* with the pass on and off. The reason is worth keeping, because it
+is also a fact about the game: a Wave trickles out of a Breach half a second apart, so a
+Crawler at 3 m/s is already 1.5 m behind the one in front before anybody pushes anything, and
+**a lane contains no crowd**. The crowd exists where the lane stops. So `crush` waits forty
+seconds instead of seven, frames the press at the Nest, and looks **down** at it rather than
+along — the first attempt stood on the lane at eye height and could not tell the two builds
+apart, because separation is a fact about the plan and a camera at head height reads a crowd
+as one silhouette behind another whether or not they are inside each other. That is #48's
+fourth finding and #49's `triage` a third time: a vantage that cannot see its subject.
 
 ### Both facts about the Nest's box have one authority each, and #61 closed the second
 
@@ -7070,6 +7231,69 @@ reconciled with it: the Turrets section said `competent`'s Ammunition stockpile 
 rounds around minute twenty-four". It peaks at **446, at minute twenty-three**. The 96 rounds
 still in the Factory when the Nest falls is exact.
 
+### What separation cost the table
+
+**#76 made Enemies push one another apart, and fifteen of the seventeen rows moved by at most
+three seconds.** The two that moved further are the two that fire a *scattering* weapon at a
+crowd, which is the one thing spreading a crowd could be expected to change. Measured on all
+three seeds, on the tip, with nothing in `content/` touched.
+
+| Scenario | #62 | **#76** | moved by |
+|---|---|---|---|
+| `bare` | 3m22s | **3m22s** | — |
+| `opening_line` | 3m12s | **3m12s** | — |
+| `competent` | 28m48s | **28m51s** | +3s |
+| `over_producer` | 20m21s | **20m22s** | +1s |
+| `fortified` | 28m45s | **28m48s** | +3s |
+| `deep_digger` | 12m27s | **12m28s** | +1s |
+| `hive_sortie` | 32m05s | **32m07s** | +2s |
+| `rifle_picket` | 27m18s | **25m03s** | **−2m15s** |
+| `artillery` | 16m40s | **16m41s** | +1s |
+| `second_press` | 24m14s | **24m16s** | +2s |
+| `walled_lane` | 28m45s | **28m48s** | +3s |
+| `sealed_breach` | 26m42s | **26m41s** | −1s |
+| `branched_artillery` | 13m57s | **13m58s** | +1s |
+| `deep_silo` | 12m59s | **13m00s** | +1s |
+| `coal_haul` | 15m41s | **15m42s** | +1s |
+| `armed_player` | 24m14s | **24m14s** | — |
+| `armed_second_press` | 14m43s | **14m26s** | −17s |
+
+**The ±3 seconds is the mechanic and not noise.** A crowd that spreads takes marginally longer
+to put its damage on the thing it came to eat — the bodies at the back of a press are further
+back than they used to be, by about a body's width each — so a Factory that was going to lose
+loses a little later. It is the right sign and it is almost nothing, which is the result this
+change wanted: separation is a rule about where bodies stand and not about how hard they bite.
+
+**`rifle_picket` lost 2m15s, and the mechanism is worth keeping because it is a general fact
+about this game rather than about that row.** An interpenetrating stack was several Crawlers at
+*one coordinate*, so a round that missed the one it was aimed at very often hit a neighbour
+standing inside it — a `gear.scatter_degrees` of 0.4 on a Bolt Rifle was being paid back by the
+pile. Spread them out and a miss is a miss. So **separation makes a crowd a worse target for
+anything that scatters**, and that is a real combat consequence of a change made for the look.
+Its peak Heat fell with it, 6051 to 5599, which says the same thing from the other end: fewer
+kills, more Enemies at the gate, a shorter Run.
+
+**`competent` did not move for the same reason `competent` never moves on this axis:** a
+Turret acquires on an Enemy's *point* against `range_tiles` and resolves against no hit volume
+at all (see "What a bigger Breaker cost the table"), so the thing that does nearly all of the
+killing in fifteen of these rows cannot tell a spread crowd from a stacked one. Only a
+**player's** weapon reads the capsule, and only three rows have one.
+
+**`SAME_LENGTH_SECONDS` widened from 150 to 300**, and it is the first time that constant has
+moved for a reason other than phase: 25m03s against 28m51s is 228 seconds. The claim it guards
+is deliberately unchanged — a rifleman at the Nest is **neither free nor ruinous** — because
+nothing here makes the rifle pay for itself or makes standing there fatal. **No value in
+`content/` was changed**, which was the ticket's own instruction and is also the honest
+reading: this is a measurement of a mechanic, not an argument that a number is wrong.
+
+**And the seed invariance sharpened rather than broke.** Fifteen rows are bit-identical on all
+three seeds. `rifle_picket` still spreads — 25m03s, 24m40s and 25m08s, a 28-second band against
+#47's 39 — and **`armed_second_press` now spreads where it did not**, 14m26s against 14m35s.
+That is #62's own qualification arriving as a measurement: a row spreads when it fires *enough
+to matter*, and separation is precisely what makes each of its 133 shots matter more, because a
+scatter-miss into a spread crowd now misses. `armed_player` fires 374 shots and is identical on
+all three, which is the counter-example that keeps the rule honest.
+
 ### What the seed can reach
 
 **A Run length here is a function of the Factory and not of the seed, and that is a property of
@@ -7331,6 +7555,24 @@ Honest residue, so the next ticket does not have to rediscover it:
   the Run in Power deficit is 30% less peak Heat. See finding 5. What that opens is a question
   nobody asked for: **whether deliberately under-powering a Factory is a strategy**, which is
   about `heat.decay_per_minute` against what a working Factory makes and wants a human.
+- **Whether a crowd that presses in rather than interpenetrating reads as a crowd**, which is
+  #76's residue and is the half a harness has no opinion about. The geometry is measured — a
+  crowd with road ahead settles at exactly tangency and holds, a crowd at the Nest crushes to
+  0.82 of the room it wants — and `docs/images/swarm_separation_{before,after}.png` is the
+  argument that it looks right in one frame. What no still image settles is whether a Wave
+  *arriving* now reads as a crowd in motion or as a looser rank, which is the same category as
+  #49's "does the size difference read in motion". The two numbers to reach for if it reads as
+  mush are both derived rather than tuned — a kind's `hit_radius`, which is also how big it
+  looks, and `_lane_corridor_metres`' two-bodies allowance — so neither can be moved for the
+  look without moving what a player shoots at.
+- **What the pass costs past a few hundred Enemies, and this is a gap in the instrument rather
+  than a measurement.** `tools/visual/enemy_tick_cost.gd` reaches the Chaff tier's numbers by
+  removing the Factory, which means nothing kills anything and the whole Wave ends up crushed
+  against one Nest — the single worst case the rule has, because a crush is where every pair
+  overlaps on every tick and none of them can resolve. No shipped scenario produces it: the
+  balance rows end with 15 to 32 Enemies at the gate, not two hundred. A scale figure that is
+  honest about a *playable* Factory wants Turrets in it, and then the Turrets decide the
+  population rather than the harness.
 - **Co-op.** Every scenario is one player. Four players on one Ammo Press is a different
   economy, and the Simulation already supports measuring it.
 
