@@ -9407,6 +9407,20 @@ chain from a mouse to a state hash is.
 - **A method cut off by a runtime error fails, however far it got.** See the
   runtime-error guard below. A test that triggers one deliberately must claim it
   with `engine_log.drain()`, which is also the assertion that it happened.
+- **A ticket that changes its mind mid-flight updates its prose and forgets its
+  tables, and this file is mostly tables.** That is a rule about writing *here*
+  rather than about code, and it is worth stating because the failure is invisible
+  to its own author: somebody who has just rewritten a paragraph knows the old
+  figures are dead, so they do not re-read the table that still carries them. The
+  worked example is #79. Its second look took the Breaker from four legs to six
+  and is written up at length — and **two paragraphs below that account, the cost
+  table still said 588 triangles and 15 bones**, which were the four-legged body's
+  numbers. Both were wrong for a whole ticket, nothing marked them superseded, and
+  #81 found them only by re-deriving them. So: when a ticket reverses a decision,
+  **grep its own section for every number that decision produced** before closing
+  it, and say in the prose that a figure is a *revised* one. A measured number is
+  only worth having because somebody can re-derive it, and a stale one spends that
+  credit without anybody noticing.
 
 ## Test runner
 
