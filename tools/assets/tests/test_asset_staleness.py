@@ -312,6 +312,55 @@ class TheDeclarationsPointAtRealFiles(unittest.TestCase):
                         f"{relative} is declared a recipe of {name} and is not there",
                     )
 
+    def test_a_recipe_declares_the_modules_it_imports(self):
+        """A recipe's imports are part of the recipe, and leaving one out is the
+        same silence as leaving the recipe out — the output changes and nothing
+        dates it.
+
+        This is #57's hole one level down and it was open: `fbx_to_viewmodel.py`
+        was declared and the three modules it imports were not, so editing
+        `fbx_to_gltf.py` — which every correction in the conversion comes from —
+        changed every viewmodel with nothing noticing. #65 widened it by adding
+        a fourth, which is what turned it up.
+
+        Derived by parsing rather than listed, so the next import cannot
+        reopen it. Only modules that sit beside the recipe in `tools/assets/`
+        count: the standard library and `bpy` are not things a developer edits.
+        """
+        import ast
+
+        here = REPO / "tools" / "assets"
+
+        def imports_of(relative: str) -> set[str]:
+            found: set[str] = set()
+            tree = ast.parse((REPO / relative).read_text())
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    found.update(alias.name.split(".")[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    found.add(node.module.split(".")[0])
+            return {f"tools/assets/{name}.py" for name in found
+                    if (here / f"{name}.py").is_file()}
+
+        for name, group in asset_staleness.groups(REPO).items():
+            declared = set(group.recipes)
+            pending = [r for r in group.recipes if r.endswith(".py")]
+            seen: set[str] = set()
+            while pending:
+                relative = pending.pop()
+                if relative in seen:
+                    continue
+                seen.add(relative)
+                for imported in sorted(imports_of(relative)):
+                    with self.subTest(group=name, recipe=relative, imports=imported):
+                        self.assertIn(
+                            imported, declared,
+                            f"{relative} imports {imported}, which {name} does not "
+                            f"declare — so editing it would change the output and "
+                            f"asset_staleness.py would not notice",
+                        )
+                    pending.append(imported)
+
     def test_every_group_declares_a_converter_command_and_some_recipes(self):
         groups = asset_staleness.groups(REPO)
         self.assertEqual(sorted(groups), ["audio", "props", "weapons"])
