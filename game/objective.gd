@@ -366,9 +366,37 @@ static func _anything_is_belted(sim: Simulation) -> bool:
 	return false
 
 
+## Whether anything is stuck for want of a connection — which is **not** the same question
+## as `query_machine_is_starved`, and #74 is the whole of the difference.
+##
+## That query is "does not hold a whole Recipe's worth right now", and it is exactly right
+## for the Simulation: it is what the Power grid bills against, what stops a Machine banking
+## progress, and what the amber tag over a Machine means. Read here on its own it was wrong,
+## because **a line that is working is intermittently short**: the shipped Smelter smelts two
+## ore every 3.2 s and the shipped Miner makes one every 1.5 s, so a saturated Smelter is
+## empty-handed for the ticks between consuming one craft's ore and holding the next craft's.
+## `Step.UNSTARVE` is walked ahead of the step below it, so a player who had built the line
+## correctly was told, every few seconds, to apply a fix they had already applied — and the
+## step that pays for their Run was hidden underneath it.
+##
+## So the step is about a Machine that is starved **and has nothing docked into a declared
+## input port**, which is the population the sentence is actually about and the permanent case
+## rather than the momentary one. `query_machine_is_fed` is the second half, and it is one
+## clause of `_hand_off`'s own geometry read from the Machine's side — the shape
+## `query_machine_branch_count` already took for outputs — so nothing here learns a new rule.
+##
+## **A Miner is why the pair is read rather than the feed alone.** A Miner's input is the
+## ground, so it declares no input port and is never fed: one on bare rock, one over the
+## wrong Resource and one on a seam deeper than its `max_depth` are all starved for ever
+## with nothing to connect, and telling a player about *that* is this step earning its place.
+## A predicate that required a missing Belt would have thrown all three away.
+##
+## **Counting ticks was the other candidate and is refused.** "Starved for N ticks running"
+## would answer the same question and would need state in a file whose entire premise is that
+## it has none — nothing remembered, nothing to skip, a pure function of the Run.
 static func _anything_is_starved(sim: Simulation) -> bool:
 	for index: int in range(sim.query_machine_count()):
-		if sim.query_machine_is_starved(index):
+		if sim.query_machine_is_starved(index) and not sim.query_machine_is_fed(index):
 			return true
 	return false
 

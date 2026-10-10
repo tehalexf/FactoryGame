@@ -3558,23 +3558,15 @@ with both cases written out and a third option on the table — that the lever m
 own legibility** rather than a new verb, since a player who has learnt to aim a Belt at an arrow
 has nothing to aim at when the target is the Nest.
 
-**And it turned up a live defect in the step above it, which is also filed rather than patched.**
-`Objective._anything_is_starved` asks `query_machine_is_starved`, which is "does not hold a whole
-Recipe's worth **right now**" — the right answer to the Simulation's question, because that is
-what the grid bills against and what the amber tag means. It is the wrong answer to this one: the
-shipped Smelter smelts two ore every 3.2 s and the shipped Miner makes one every 1.5 s, so a
-correctly belted opening line is saturated and still briefly short between crafts. `Step.UNSTARVE`
-is walked ahead of the step below it, so **a player who has built the line correctly is told
-"Something is starved — a Belt starts past an output arrow and ends at an input" on some ticks and
-what to do next on the others.** That is advice naming a fix already applied — the defect
-`_with_the_build_gun` and `_with_the_belt_tool` exist to prevent for keys, in the step rather than
-in the wording. It is pre-existing, it is a behaviour change to a shipped step with assertions on
-it, and it is not what #71 was opened about; #74 is the ticket, and the recommendation in it is a
-`query_machine_is_fed`-shaped projection, which is `query_machine_branch_count`'s shape pointed at
-inputs instead of outputs. What it cost here is a named fixture —
-`test_building_view._settle_until_nothing_is_starved` — which steps a Factory until the step above
-is satisfied and **fails if that never comes**, so a fixture about the last step stands on a tick
-where the one before it is quiet and says so rather than hoping.
+**And it turned up a live defect in the step above it, which was filed rather than patched and
+is now fixed.** `Objective._anything_is_starved` asked `query_machine_is_starved`, so a player who
+had built the line correctly was told "Something is starved" on some ticks and what to do next on
+the others — advice naming a fix already applied, which is the defect `_with_the_build_gun` and
+`_with_the_belt_tool` exist to prevent for keys, in the step rather than in the wording. It was
+pre-existing and it was not what #71 was opened about, so what it cost *here* was a named fixture,
+`test_building_view._settle_until_nothing_is_starved`, which stepped a Factory until the step above
+was satisfied and failed if that never came. **#74 is the fix and that fixture is gone**; see
+"Why the right answer to one question is the wrong answer to another", below.
 
 **The pair is committed and it is the argument.**
 [`docs/images/opening_delivery_before.png`](docs/images/opening_delivery_before.png) against
@@ -3591,7 +3583,9 @@ cannot be trusted to show this step at all, because of the starved flicker above
 it wins on some ticks and not others, and a render of a coin flip is not a render of a step. So
 `delivering` frames `running`'s own Factory, keeps the gun out so the lit cell and the line
 naming the same thing is half the subject, and then **steps until the line is the step**, bounded,
-printing the line it is looking at if the budget runs out. That is the same closed loop over the
+printing the line it is looking at if the budget runs out. The stop condition is kept after #74
+rather than being taken out as redundant: what it waits for is a *step*, and the Factory in front
+of it still has to get there. That is the same closed loop over the
 real state that `_put_the_crosshair_on` already is, and it is what stops this picture being one a
 tool can no longer reproduce — which is the failure #53 caught in this very script.
 
@@ -3605,6 +3599,78 @@ way round it was not to fake state: a Miner and a Smelter alone draw exactly
 `power.baseline_supply_kw`, so `delivering` builds no Boiler, the line runs unthrottled, the
 Smelter's input buffer fills, and nothing is starved at all — which is the Factory the playtest
 report actually describes.
+
+**#74 did not make that render's problem go away, and that is the right outcome.** A Boiler
+nothing feeds coal is starved *and* has nothing docked into a declared input port, so it raises
+the step after the fix exactly as it did before — which is the step telling the truth rather than
+flickering. The two faults in that paragraph were always separable: one was a working line
+reported as broken, and the other is a Factory with a genuinely unfed Machine in it. `delivering`
+builds no Boiler for the second reason, which is unchanged.
+
+### Why the right answer to one question is the wrong answer to another
+
+#74, and the durable half of it is not about this step. `query_machine_is_starved` is **correct**
+and was not touched: it is `not _machine_has_its_inputs`, it is what `_machine_would_work` consults
+so the Power grid bills nothing for a Machine that cannot work, and it is what the amber tag over a
+Machine means. Several suites assert it. The defect was that `Objective` asked it a question it
+does not answer.
+
+The question the Simulation asks is **"would this Machine advance on this tick"**, which is a
+fact about *now* and has to be, because the grid is read every tick. The question the objective
+line asks is **"is something stuck"**, which is a fact about a *condition*. Those come apart on
+exactly the Factory a player has built correctly: the shipped Smelter smelts two ore every 3.2 s
+and the shipped Miner makes one every 1.5 s, so a saturated Smelter is empty-handed for the ticks
+between consuming one craft's ore and holding the next craft's. `Step.UNSTARVE` is walked ahead of
+the step below it, so the line alternated between "Something is starved — a Belt starts past an
+output arrow and ends at an input" and what to do next, **about a line whose Belt starts past an
+output arrow and ends at an input** — and the step it outranked is #71's, the one that pays for the
+Run.
+
+**The general shape, which is worth more than the fix:** a projection is a sentence about a
+condition and the Simulation's own predicates are statements about a tick, so a `game/` file that
+reads one as the other gets an answer that is true and useless. `AudioDirector` is the same
+distinction already solved from the other side — "a sound is a *change* and a query reports a
+*condition*", so it diffs query results against what they said last frame. `Objective` cannot diff,
+because it is a pure function of the Run with nothing remembered; so it has to narrow the
+*population* instead of widening the window.
+
+**So the step fires for a Machine that is starved and has nothing docked into a declared input
+port.** `Simulation.query_machine_is_fed` is the second half, and it is `_machine_a_belt_feeds` read
+from the Machine's side — the exact shape `query_machine_branch_count` took for outputs in #48, one
+clause of `_hand_off`'s own geometry asked per Machine rather than per Belt. So `game/` learns no
+new rule, a Belt standing against a wall whose port runs the other way is **not a feed at all**
+rather than a feed that delivers nothing (#47), and nothing behind the façade changed its
+behaviour — which is why #74 left no new determinism fixture.
+
+Four things worth knowing rather than rediscovering:
+
+- **A Miner is why the *pair* is read and not the feed alone.** A Miner's input is the ground, so
+  it declares no input port and `query_machine_is_fed` is false for one working its own Node and
+  one on bare rock alike. Telling a player about a Miner on bare rock, over the wrong Resource, or
+  on a seam deeper than its `max_depth` is this step earning its place — #52's three cases, all of
+  them permanent — and any predicate that required a *missing Belt* would have thrown all three
+  away. Read alone, either half is wrong about something; read together they are right about both.
+- **Counting ticks was the other candidate and is refused by name.** "Starved for N ticks running"
+  answers the same question and needs state in a file whose entire premise is that it has none:
+  nothing entered, nothing skipped, nothing remembered, so a player who demolishes their Miner an
+  hour in gets the first line back because the first thing is true again. A step that had to be
+  *observed* for a second before it could be believed would be the first thing in `Objective` that
+  a single frame could not answer.
+- **The wording was left alone, and it is the one thing recorded rather than fixed.** The sentence
+  names a Belt, which is the fix for a crafter and is not the fix for a Miner on bare rock — and
+  the Miner is the case the step exists for. The ticket's own argument is that the wording matches
+  this population exactly, which is true of the crafter half and not of the Miner half, so a
+  second sentence split on the same `query_machine_is_fed` reading is the obvious next step. That
+  is `Refusal`'s two-reasons-two-fixes shape (#56) pointed at a step, and it is a wording ticket.
+- **The workaround it existed to force is gone.**
+  `test_building_view._settle_until_nothing_is_starved` stepped a Factory until nothing was starved
+  so that a fixture about the *last* step could stand on a tick where the one before it was quiet.
+  Three fixtures called it and all three now stand on an ordinary tick. **A helper that exists to
+  step past a flicker is evidence about the code and not about the test**, which is why #74's
+  acceptance criteria named its deletion: a fix that left it necessary would not have been a fix.
+  The assertion that replaces it is over a **window** of six hundred ticks rather than at one of
+  them, because a single-tick assertion on an intermittent fault is a coin toss and is exactly how
+  this shipped.
 
 ### The hotbar states the chain
 

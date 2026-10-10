@@ -1883,32 +1883,7 @@ func _at_the_step_that_pays_for_the_run() -> Simulation:
 	])
 	sim.step([InputAction.build_belt(0, Vector3i(1, 0, 2), Vector3i(1, 0, 4))])
 	_run(sim, 300)
-	_settle_until_nothing_is_starved(sim)
 	return sim
-
-
-## Steps until no Machine is starved, and fails if that never comes.
-##
-## **Not padding, and the reason is a finding this ticket turned up rather than fixed.**
-## `query_machine_is_starved` is "does not hold a whole Recipe's worth", so a Smelter is
-## starved for the seconds between consuming one craft's ore and holding the next craft's —
-## which it is, intermittently, on a line that is working perfectly. `Step.UNSTARVE` is
-## walked ahead of the step below it, so on a Factory the player has built correctly the line
-## really does alternate between "Something is starved" and what to do next. That is a
-## separate defect in a step that shipped long before #71 and it is filed as its own ticket;
-## what it means here is that a fixture about the *last* step has to stand on a tick where
-## the one before it is satisfied, and say so rather than hope.
-func _settle_until_nothing_is_starved(sim: Simulation) -> void:
-	for tick: int in range(600):
-		var starved: bool = false
-		for index: int in range(sim.query_machine_count()):
-			if sim.query_machine_is_starved(index):
-				starved = true
-				break
-		if not starved:
-			return
-		sim.step([])
-	assert_true(false, "the opening line never came off starved, so the premise is wrong")
 
 
 func test_the_line_never_tells_a_player_to_carry_goods_out_of_a_machine() -> void:
@@ -1956,7 +1931,6 @@ func test_once_something_makes_it_the_step_is_the_belt_into_the_nest() -> void:
 		)
 	])
 	_run(sim, 200)
-	_settle_until_nothing_is_starved(sim)
 	var line: String = Objective.line(sim, 0)
 	assert_true(line.contains("Belt"), line)
 	assert_true(line.contains("Nest"), line)
@@ -1986,7 +1960,6 @@ func test_the_step_stops_asking_for_a_belt_once_one_lands_in_the_nest() -> void:
 	])
 	sim.step([InputAction.build_belt(0, Vector3i(-1, 0, -6), Vector3i(-2, 0, -6))])
 	_run(sim, 60)
-	_settle_until_nothing_is_starved(sim)
 	assert_true(
 		sim.query_belt_ends_at_the_nest(1),
 		"the premise: the second Belt runs into the Nest's wall"
@@ -2002,3 +1975,125 @@ func test_asking_whether_a_belt_feeds_the_nest_leaves_the_run_where_it_was() -> 
 	for index: int in range(sim.query_belt_count()):
 		sim.query_belt_ends_at_the_nest(index)
 	assert_eq(sim.hash(), before, "a projection the Simulation never reads back")
+
+
+# ── The starved step is about a Machine nothing feeds (#74) ───────────────────
+# `query_machine_is_starved` is "does not hold a whole Recipe's worth right now", which is
+# the right answer to the Simulation's question — it is what the grid bills against and what
+# the amber tag means — and the wrong answer to this one. A correctly belted opening line is
+# saturated and still briefly short between consuming one craft's ore and holding the next,
+# so the step used to alternate with the step underneath it and tell a player to apply a fix
+# they had already applied. It now fires for a Machine that is starved **and** has nothing
+# docked into a declared input port, which is the population the sentence is about.
+
+## The opening line as a player who did it right would leave it: something mining, a Belt,
+## something crafting, and nothing wrong with any of it. Deliberately *not* settled onto a
+## tick where nothing happens to be starved — standing on a chosen tick is how the defect
+## survived, so the fixture hands back a Run that is mid-cycle like any other.
+func _a_working_opening_line() -> Simulation:
+	return _at_the_step_that_pays_for_the_run()
+
+
+func test_a_line_that_is_working_is_never_reported_as_starved() -> void:
+	# Over a window rather than at one tick, because the defect was intermittent: the
+	# Smelter's cycle is 3.2 s and the Miner's 1.5 s, so any single tick is a coin toss and
+	# a single-tick assertion is exactly what let this ship.
+	var sim: Simulation = _a_working_opening_line()
+	var offending: int = -1
+	var said: String = ""
+	for tick: int in range(600):
+		var line: String = Objective.line(sim, 0)
+		if line.to_lower().contains("starved"):
+			offending = tick
+			said = line
+			break
+		sim.step([])
+	assert_eq(
+		offending, -1, "ten seconds in, on a Factory that works: %s" % said
+	)
+
+
+func test_a_miner_on_bare_rock_is_still_reported_as_starved() -> void:
+	# The case the step earns its place for, and the one any reading that merely required a
+	# missing Belt would have broken: a Miner's input is the ground, so it declares no input
+	# port at all and can never be fed. One on bare rock is starved for ever.
+	var sim: Simulation = _a_working_opening_line()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(8, 0, 8))
+	])
+	var placed: int = sim.query_machine_at_tile(Vector3i(8, 0, 8))
+	assert_true(placed != -1, "the premise: a second Miner stands on bare rock")
+	assert_true(sim.query_machine_is_starved(placed), "and it is starved")
+	assert_false(sim.query_machine_is_fed(placed), "and nothing feeds it, nor ever could")
+	assert_true(
+		Objective.line(sim, 0).to_lower().contains("starved"), Objective.line(sim, 0)
+	)
+
+
+func test_a_miner_over_the_wrong_resource_is_still_reported_as_starved() -> void:
+	# #52's distinction, which this step has to keep: covering a Node is not working one. An
+	# iron Miner over the coal seam covers a Node, accumulates nothing, and is exactly as
+	# stuck as one on bare rock — so the line has to say so.
+	var sim: Simulation = _a_working_opening_line()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, -6))
+	])
+	var placed: int = sim.query_machine_at_tile(Vector3i(0, 0, -6))
+	assert_true(placed != -1, "the premise: an iron Miner stands over the coal")
+	assert_true(sim.query_machine_is_starved(placed), "it covers a Node and mines nothing")
+	assert_true(
+		Objective.line(sim, 0).to_lower().contains("starved"), Objective.line(sim, 0)
+	)
+
+
+func test_a_crafter_with_no_belt_into_it_is_still_reported_as_starved() -> void:
+	var sim: Simulation = _a_working_opening_line()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(8, 0, 8))
+	])
+	var placed: int = sim.query_machine_at_tile(Vector3i(8, 0, 8))
+	assert_true(placed != -1, "the premise: a second Smelter stands with nothing coming in")
+	assert_false(sim.query_machine_is_fed(placed), "and no Belt docks into it")
+	assert_true(
+		Objective.line(sim, 0).to_lower().contains("starved"), Objective.line(sim, 0)
+	)
+
+
+func test_taking_the_belt_out_from_under_a_crafter_brings_the_step_back() -> void:
+	# `Objective` is a pure function of the Run's state and stays one: nothing is remembered
+	# about having passed this step, so it comes back the moment the feed goes.
+	#
+	# A second line is standing while the first is cut, and that is the premise rather than
+	# decoration: `Step.BELT` is walked ahead of this one and asks for a Belt whenever *no*
+	# Belt is both fed and landing somewhere, which on a one-line Factory is the better
+	# answer anyway. What this is about is a Factory with Belts in it, one of whose Machines
+	# has had its own feed taken away.
+	var sim: Simulation = _a_working_opening_line()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(
+			0, definitions.machine_index("coal_miner_mk1"), Vector3i(0, 0, -6)
+		)
+	])
+	sim.step([InputAction.build_belt(0, Vector3i(-1, 0, -6), Vector3i(-2, 0, -6))])
+	_run(sim, 60)
+	assert_true(sim.query_belt_ends_at_the_nest(1), "the premise: a second line is working")
+	assert_false(
+		Objective.line(sim, 0).to_lower().contains("starved"),
+		"and nothing is complained about: %s" % Objective.line(sim, 0)
+	)
+
+	var smelter: int = sim.query_machine_at_tile(Vector3i(0, 0, 5))
+	sim.step([InputAction.demolish(0, Vector3i(1, 0, 2))])
+	assert_eq(sim.query_belt_count(), 1, "the ore line is gone and the coal line is not")
+	# The Smelter has to be given time to spend what it was holding when the Belt went; what
+	# is asserted is that the step returns, not how many ticks of buffer it had.
+	_run(sim, 400)
+	assert_true(sim.query_machine_is_starved(smelter), "the Smelter has run out")
+	assert_false(sim.query_machine_is_fed(smelter), "and nothing docks into it any more")
+	assert_true(
+		Objective.line(sim, 0).to_lower().contains("starved"), Objective.line(sim, 0)
+	)

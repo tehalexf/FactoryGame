@@ -1169,3 +1169,60 @@ func test_asking_about_a_branch_leaves_the_run_exactly_where_it_was() -> void:
 			if belt != -1:
 				sim.query_belt_is_stalled(belt)
 	assert_eq(sim.hash(), before, "asking moved the hash, so it is not a projection")
+
+
+# ── A Machine nothing feeds ───────────────────────────────────────────────────
+# The same clause read from the Machine's side, pointed at its *inputs* rather than its
+# outputs. #74 is what wanted it: "nothing is docked into this Machine" is the permanent
+# half of what the objective line's starved step is about, where "does not hold a whole
+# Recipe's worth" is also true of a saturated Smelter between two crafts.
+
+func test_a_machine_says_whether_a_belt_docks_into_one_of_its_inputs() -> void:
+	# A Smelter takes ore on its northern face and gives ingots back on the south, so a Belt
+	# arriving from the north docks and the Machine is fed.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([InputAction.build_machine(0, _smelter_index(sim), Vector3i(10, 0, 10))])
+	assert_false(sim.query_machine_is_fed(0), "nothing is docked into it yet")
+	sim.step([InputAction.build_belt(0, Vector3i(10, 0, 6), Vector3i(10, 0, 9))])
+	assert_eq(sim.query_belt_count(), 1, "the Belt was laid")
+	assert_true(sim.query_machine_is_fed(0), "and its far end docks against a declared input")
+
+
+func test_a_belt_landing_on_an_output_face_does_not_feed_a_machine() -> void:
+	# #47's rule from this side, and it is the same distinction `query_machine_branch_count`
+	# makes: a Belt against a wall whose port runs the other way is not a feed that delivers
+	# nothing, it is not a feed. The Smelter's southern face declares outputs only.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([
+		InputAction.build_machine(0, _smelter_index(sim), Vector3i(10, 0, 10)),
+		InputAction.build_belt(0, Vector3i(10, 0, 16), Vector3i(10, 0, 13)),
+	])
+	assert_eq(sim.query_belt_count(), 1, "the Belt was laid")
+	assert_false(
+		sim.query_machine_is_fed(0), "that port runs the other way, so nothing feeds through it"
+	)
+
+
+func test_a_miner_is_never_fed_by_a_belt_because_its_input_is_the_ground() -> void:
+	# The case #74 turns on: a Miner declares no input port at all, so this is false for one
+	# standing on its own ore and for one on bare rock alike. It is not an answer about
+	# whether a Machine is working — `query_machine_is_starved` is that — and nothing may
+	# read it as one.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(5, 0, 0)),
+	])
+	_run(sim, 200)
+	assert_false(sim.query_machine_is_starved(0), "the premise: it is working its own Node")
+	assert_eq(sim.query_machine_branch_count(0), 1, "and carrying ore away")
+	assert_false(sim.query_machine_is_fed(0), "and nothing is docked into it, nor ever can be")
+
+
+func test_asking_whether_a_machine_is_fed_leaves_the_run_exactly_where_it_was() -> void:
+	var sim: Simulation = _blocked_branch_sim()
+	_run(sim, 200)
+	var before: int = sim.hash()
+	for index: int in range(sim.query_machine_count()):
+		sim.query_machine_is_fed(index)
+	assert_eq(sim.hash(), before, "asking moved the hash, so it is not a projection")
