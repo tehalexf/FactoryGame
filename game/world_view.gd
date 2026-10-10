@@ -333,6 +333,38 @@ const CHARGE_EMPTY: Color = Color(0.45, 0.07, 0.07)
 ## at which a player still has time to go and look at the Belt.
 const AMMUNITION_LOW_FRACTION: float = 0.5
 
+
+# ── A shot you can see ────────────────────────────────────────────────────────
+# #69. `query_turret_last_shot_tick` had existed since #10 and nothing read it, so a Turret
+# killing Crawlers four rounds a second was, on screen, a static box standing next to Enemies
+# that stopped existing — the one mechanic DESIGN.md's whole thesis rests on, and a player
+# could not watch it work.
+#
+# **Every duration here is a count of ticks and nothing is drawn at random**, the rule
+# `SCANNER_PERIOD_TICKS` states and `WeaponViewmodel` already keeps for animation: a mark's
+# age is `query_tick` minus the tick the shot happened on, so a frame that stepped nothing
+# draws the same thing twice and two Runs down the same script look the same.
+
+## How long a muzzle flash is lit. Four ticks is 67 ms — shorter than the 15-tick interval the
+## shipped MG fires on, so four rounds a second read as four flashes rather than as a glow,
+## and long enough that a frame cannot fall between two of them.
+const MUZZLE_FLASH_TICKS: int = 4
+const MUZZLE_FLASH_SIZE_METRES: float = 0.55
+
+## Where up the gun the flash sits, as a fraction of the body a player can see. A fraction of
+## `_machine_roof` rather than a constant, for #41's reason: a mark measured off a number that
+## is not this Machine's is a mark that ends up inside the body or floating over it.
+const MUZZLE_FLASH_HEIGHT_FRACTION: float = 0.7
+
+## How far out from the footprint centre, towards what is being shot at, the flash stands. A
+## muzzle rather than a middle, so the flash and the tracer leaving it read as one thing.
+const MUZZLE_FLASH_REACH_METRES: float = 1.1
+
+## Hot white-yellow, unshaded. Unshaded for the Ammunition gauge's reason: a flash a
+## directional light can darken is a flash a player misses at thirty metres, which is the
+## distance this whole mark exists for.
+const MUZZLE_FLASH_COLOUR: Color = Color(1.0, 0.86, 0.45, 0.95)
+
 ## One node per Machine, pooled: a Machine arriving takes the next free instance and a
 ## Machine demolished hands one back, so a Factory of fifty costs fifty nodes rather than
 ## fifty rebuilt every frame.
@@ -355,6 +387,19 @@ var _ore_beacon_colours: Array[Color] = []
 var _ore_marking_transforms: Array[Vector3] = []
 var _ore_marking_colours: Array[Color] = []
 var _scanner_pings: MultiMeshInstance3D = null
+
+## Every mark a shot leaves, through **one** MultiMesh: the flash at the gun, the tracer
+## between, and the burst where the round landed. One buffer rather than three, because a
+## unit box carries all three — a flash and a burst are small cubes and a tracer is the same
+## cube stretched along its own flight — and because ADR 0001's case is exactly this one:
+## fifty Turrets at four rounds a second plus a swarm of impacts is not fifty nodes a second.
+var _shot_marks: MultiMeshInstance3D = null
+
+## The readable record of what was drawn, because a MultiMesh keeps its buffer on the
+## rendering server where a headless test cannot see it. One entry per mark, in the order they
+## were laid: flashes, then tracers, then impacts.
+var _muzzle_flash_positions: Array[Vector3] = []
+var _muzzle_flash_colours: Array[Color] = []
 var _scanner_transforms: Array[Vector3] = []
 var _scanner_colours: Array[Color] = []
 
@@ -982,6 +1027,9 @@ func sync(sim: Simulation) -> void:
 	_sync_enemies(sim)
 	_sync_siege_hulk_vents(sim)
 	_sync_hives(sim)
+	# After the Machines, because a muzzle flash is measured off the body a player can see
+	# (`_machine_roof`) rather than off the housing the Simulation collides against.
+	_sync_shots(sim)
 	_sync_shell_markers(sim)
 	_sync_belts(sim)
 	_sync_walls(sim)
@@ -2969,6 +3017,138 @@ func _sync_items(sim: Simulation) -> void:
 
 ## The one number this ticket exists to make visible: what the Factory has extracted.
 ## Read out of the buffers every frame, so it cannot be stale or invented.
+## The three marks a shot leaves, all of them through one MultiMesh.
+##
+## **A tick number is already an event, which is why most of this needs no diff at all.**
+## `query_turret_last_shot_tick` reports *when* a Turret last fired rather than *that* it is
+## firing, so "did this gun go off within the last few ticks" is a subtraction against
+## `query_tick` and nothing has to be remembered between frames. That is the cheap half and it
+## is most of what a player at thirty metres needs.
+func _sync_shots(sim: Simulation) -> void:
+	if _shot_marks == null:
+		_shot_marks = _unshaded_instances()
+		add_child(_shot_marks)
+
+	_muzzle_flash_positions.clear()
+	_muzzle_flash_colours.clear()
+
+	_lay_the_muzzle_flashes(sim)
+
+	_shot_marks.multimesh.instance_count = _muzzle_flash_positions.size()
+	var flash: Vector3 = Vector3.ONE * MUZZLE_FLASH_SIZE_METRES
+	for instance: int in range(_muzzle_flash_positions.size()):
+		_shot_marks.multimesh.set_instance_transform(
+			instance,
+			Transform3D(Basis.IDENTITY.scaled(flash), _muzzle_flash_positions[instance])
+		)
+		_shot_marks.multimesh.set_instance_color(instance, _muzzle_flash_colours[instance])
+
+
+## A flash at the muzzle of every gun that has gone off within the last `MUZZLE_FLASH_TICKS`.
+##
+## **Turrets that shoot, not Turrets that mend.** `_mend` stamps the very same
+## `_turret_last_shot_tick` a Turret's `_fire` does — GLOSSARY.md calls a Repair Pylon a
+## Turret-class Machine whose output is repair rather than damage — so a Pylon pulsing a plate
+## into a Smelter would otherwise flash as though it were shooting at something.
+func _lay_the_muzzle_flashes(sim: Simulation) -> void:
+	var tick: int = sim.query_tick()
+	for index: int in range(sim.query_machine_count()):
+		if not sim.query_machine_is_turret(index):
+			continue
+		if sim.query_machine_is_repair_pylon(index):
+			continue
+		var fired: int = sim.query_turret_last_shot_tick(index)
+		# -1 is "has never fired", and it is worth a clause of its own rather than falling out
+		# of the arithmetic: a Turret standing on tick 2 of a Run would otherwise be two ticks
+		# past a shot that never happened, and flash for having been built.
+		if fired < 0:
+			continue
+		var age: int = tick - fired
+		if age < 0 or age >= MUZZLE_FLASH_TICKS:
+			continue
+		var lit: Color = MUZZLE_FLASH_COLOUR
+		lit.a = MUZZLE_FLASH_COLOUR.a * _fading(age, MUZZLE_FLASH_TICKS)
+		_muzzle_flash_positions.append(_muzzle_of(sim, index))
+		_muzzle_flash_colours.append(lit)
+
+
+## Where a Turret's muzzle is: up the body a player can see, and out towards whatever it is
+## shooting at. The offset is what makes a flash read as leaving a barrel rather than as a
+## lamp sitting on a roof; a Turret with nothing in its sights flashes over its own middle,
+## which is the right answer for the one tick a target dies on.
+func _muzzle_of(sim: Simulation, index: int) -> Vector3:
+	var at: Vector3 = _machine_centre(sim, index)
+	at.y = _machine_roof(sim, index) * MUZZLE_FLASH_HEIGHT_FRACTION
+	var target: int = sim.query_enemy_index_of_serial(sim.query_turret_target_serial(index))
+	if target == -1:
+		return at
+	var towards: Vector3 = _enemy_centre(sim, target) - at
+	towards.y = 0.0
+	if towards.length() < 0.001:
+		return at
+	return at + towards.normalized() * MUZZLE_FLASH_REACH_METRES
+
+
+## Where an Enemy's body is, at the middle of the height a round is resolved against — so a
+## mark about a hit stands on the thing that was hit rather than at its feet.
+func _enemy_centre(sim: Simulation, index: int) -> Vector3:
+	var at: FixedVec2 = sim.query_enemy_position_metres(index)
+	return Vector3(
+		Fixed.to_float(at.x),
+		Fixed.to_float(sim.query_enemy_hit_height_metres(index)) * 0.5,
+		Fixed.to_float(at.z)
+	)
+
+
+## How bright a mark of a given age is, as a fraction: full on the tick it happened and
+## nothing by the tick it expires. Integer arithmetic over two tick counts, which is what
+## keeps it a function of the Simulation rather than of how many frames were drawn.
+func _fading(age: int, span: int) -> float:
+	if span <= 0:
+		return 0.0
+	return 1.0 - float(age) / float(span)
+
+
+## One MultiMesh of unit boxes, unshaded and alpha-blended, with per-instance colour. The
+## arrangement `_sync_ore_scanner` already uses: one mesh, one material, and the size and
+## colour of every mark carried per instance.
+func _unshaded_instances() -> MultiMeshInstance3D:
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	instanced.use_colors = true
+	var unit: BoxMesh = BoxMesh.new()
+	unit.size = Vector3.ONE
+	instanced.mesh = unit
+	var marks: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	marks.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.vertex_color_use_as_albedo = true
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	marks.material_override = skin
+	return marks
+
+
+## How many guns are flashing. Zero on a tick nothing fired, which is what the smoke test
+## reads it for.
+func muzzle_flash_count() -> int:
+	return _muzzle_flash_positions.size()
+
+
+## Where one flash is. The readable record of what was drawn.
+func muzzle_flash_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= _muzzle_flash_positions.size():
+		return Vector3.ZERO
+	return _muzzle_flash_positions[instance]
+
+
+## What one flash is painted, faded by its age in ticks.
+func muzzle_flash_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _muzzle_flash_colours.size():
+		return Color.BLACK
+	return _muzzle_flash_colours[instance]
+
+
 func _sync_hud(sim: Simulation) -> void:
 	if _hud == null:
 		_hud_layer = CanvasLayer.new()
