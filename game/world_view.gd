@@ -207,6 +207,17 @@ const NEST_BODY: String = "nest"
 ## output south — so a tile is turned by the direction its run goes in.
 const BELT_BODY: String = "belt_straight"
 
+## The material the mesh generator gives a Belt's running surface, and the one the scrolling
+## deck shader replaces. The generator's own name for it — see `_make_the_deck_run`.
+const BELT_DECK_MATERIAL: String = "BeltRubber"
+
+const BELT_DECK_SHADER: String = "res://game/belt_deck.gdshader"
+
+## What a Belt's cleats are made of. The palette's own plate — the same file the Walls wear,
+## named separately here because "the Wall's material" is the wrong sentence to read at the
+## place a conveyor's slats are being coloured.
+const BELT_CLEAT_MATERIAL: String = "res://assets/machines/materials/WeldedSteel.tres"
+
 ## How many cells the Telegraph's gauge is drawn with. A rising bar of text, because there
 ## is no audio yet and a countdown alone does not read as a klaxon.
 const TELEGRAPH_GAUGE_CELLS: int = 20
@@ -258,6 +269,17 @@ const SIEGE_HULK_VENT_OFFSET: float = 0.30
 ## every kind and every surface, because what differs between a Crawler and a Breaker is which
 ## texture and which tint — not how a vertex gets where it goes.
 const ENEMY_SKIN_SHADER: String = "res://game/enemy_skin.gdshader"
+
+## The one surface every Enemy wears, graded into `dieselpunk_palette.json` by
+## `tools/assets/enemy_grade.py` from the pack's own committed atlas.
+##
+## **It is a committed derived asset and a clone with no purchased packs has it**, like the
+## generated Machine meshes, the icons and the Build Gun and unlike the weapon viewmodels —
+## KayKit's characters are CC0, so a graded copy of their atlas is as redistributable as the
+## atlas. The six characters share one texture, so there is one file here and not six.
+const ENEMY_GRADED_ATLAS: String = (
+	"res://assets/characters/kaykit_skeletons/graded/skeleton_texture_A.png"
+)
 
 ## How big a Hive is, in metres, and what colour. A mound rather than a building: it is the
 ## Enemy's, not the players', so it reads as grown rather than welded.
@@ -333,6 +355,113 @@ const CHARGE_EMPTY: Color = Color(0.45, 0.07, 0.07)
 ## at which a player still has time to go and look at the Belt.
 const AMMUNITION_LOW_FRACTION: float = 0.5
 
+
+# ── A shot you can see ────────────────────────────────────────────────────────
+# #69. `query_turret_last_shot_tick` had existed since #10 and nothing read it, so a Turret
+# killing Crawlers four rounds a second was, on screen, a static box standing next to Enemies
+# that stopped existing — the one mechanic DESIGN.md's whole thesis rests on, and a player
+# could not watch it work.
+#
+# **Every duration here is a count of ticks and nothing is drawn at random**, the rule
+# `SCANNER_PERIOD_TICKS` states and `WeaponViewmodel` already keeps for animation: a mark's
+# age is `query_tick` minus the tick the shot happened on, so a frame that stepped nothing
+# draws the same thing twice and two Runs down the same script look the same.
+
+## How long a muzzle flash is lit. Four ticks is 67 ms — shorter than the 15-tick interval the
+## shipped MG fires on, so four rounds a second read as four flashes rather than as a glow,
+## and long enough that a frame cannot fall between two of them.
+const MUZZLE_FLASH_TICKS: int = 4
+
+## How big the flash is. Over half the width of a Belt deck, which sounds large written down
+## and is what the render settled: at 0.55 m it was the same size and very nearly the same
+## colour as the tracer leaving it, so it read as the line's end rather than as a gun going
+## off. A flash has to be the brightest and roundest thing in its corner of the frame.
+const MUZZLE_FLASH_SIZE_METRES: float = 0.9
+
+## Where up the gun the flash sits, as a fraction of the body a player can see — `_machine_roof`
+## rather than a constant, for #41's reason: a mark measured off a number that is not this
+## Machine's ends up inside the body or floating over it.
+##
+## **At the roofline, and the two thirds that was tried first is what a render rejected.** A
+## Turret's footprint is four metres across and its clearance is 35 cm, so a flash at 1.4 m was
+## 35 cm clear of a body two metres tall — which, from a camera forty degrees round from the
+## line of fire, is behind it. On the roofline the cube straddles the edge: half of it stands
+## above the silhouette from any angle, and the half that overlaps the body is what gives the
+## mark an owner, which is #52's rule about a bright mark with nothing under it.
+const MUZZLE_FLASH_HEIGHT_FRACTION: float = 1.0
+
+## How far **clear of the footprint** the flash stands, towards what is being shot at. A muzzle
+## rather than a middle, so the flash and the tracer leaving it read as one thing.
+##
+## A clearance rather than a reach, and that is #41's rule arriving from the horizontal
+## direction: a constant 1.1 m was tried and it put the flash *inside* a 2x2 Turret, whose
+## footprint is four metres across. The mark was drawn, was the right colour, was at the right
+## height and was invisible — the third time this project has paid for a mark measured off a
+## number that is not this Machine's, and the second time only a render found it.
+const MUZZLE_FLASH_CLEARANCE_METRES: float = 0.35
+
+## Hot white-yellow, unshaded. Unshaded for the Ammunition gauge's reason: a flash a
+## directional light can darken is a flash a player misses at thirty metres, which is the
+## distance this whole mark exists for.
+const MUZZLE_FLASH_COLOUR: Color = Color(1.0, 0.95, 0.76, 1.0)
+
+## How long the round itself is in frame. Three ticks — a round crosses sixteen metres rather
+## faster than that, so this is a streak left behind rather than a projectile with a speed, and
+## giving it one would be the renderer inventing a flight time the Simulation does not have.
+const TRACER_TICKS: int = 3
+
+## How thick the round is. Seven centimetres was the first guess and is **sub-pixel at thirty
+## metres** — about two pixels of a 1600-wide frame, at half alpha, which the render showed as
+## nothing at all. Sixteen is a round a player can see crossing a gap and is still well under
+## half the Item riding the Belt underneath it.
+const TRACER_WIDTH_METRES: float = 0.16
+
+## Hot, and a little cooler than the flash, so the two read as one thing with a direction.
+const TRACER_COLOUR: Color = Color(1.0, 0.76, 0.34, 0.95)
+
+## How far out in front of the eye a player's own round leaves from, and how far under it. The
+## weapon is held below and ahead of the camera, so a tracer that started exactly at the eye
+## would be a line emerging from the middle of the crosshair and would hide the thing it is
+## about.
+## And it begins a few metres out rather than at the barrel, and is thinner. **One width cannot
+## serve both kinds of tracer**, which is the sharpest thing the renders found: a Turret's round
+## is seen from outside at tens of metres, where sixteen centimetres is a thin bright line, and
+## a player's own is seen down its own axis from arm's length, where the same rod is a slab a
+## metre and a half across the middle of the frame, hiding the very thing it is about.
+##
+## The sideways offset matters as much as the thickness and only a render found it: ahead-and-
+## below alone leaves the round travelling almost exactly along the line of sight, and a rod
+## seen down its own axis is not a line. Offset to the weapon's own side it converges on the
+## target from the lower right, which is what reads as a round going out — and starting a few
+## metres out is what a real tracer looks like anyway, since nobody sees one leave a barrel.
+const PLAYER_TRACER_REACH_METRES: float = 3.5
+const PLAYER_TRACER_DROP_METRES: float = 0.35
+const PLAYER_TRACER_ASIDE_METRES: float = 0.55
+const PLAYER_TRACER_WIDTH_METRES: float = 0.05
+
+## How long the burst where a round landed stays. Longer than the tracer, because the tracer
+## says *that* a round went and the burst says *where it arrived*, which is the half a player
+## is actually reading — and it is the one mark that survives being looked at a frame late.
+const IMPACT_TICKS: int = 9
+
+## How big the burst is. Three quarters of a metre was the first guess and read, in the render,
+## as a **cream crate standing among the Crawlers** — #56's finding about a red post that was
+## the same size and nearly the same colour as the freight riding past it, in a different
+## colour. Half a metre and hotter reads as a flash on a body rather than as an object.
+const IMPACT_SIZE_METRES: float = 0.5
+
+## Pale and hot at the centre of the body it landed on. Deliberately **not** red: red is
+## load-bearing in this file — a ruined Wall, a dry magazine, a Belt end that leads nowhere —
+## and a cloud of red sparks over a Wave would drown all three.
+const IMPACT_COLOUR: Color = Color(1.0, 0.88, 0.58, 0.9)
+
+## How long the crosshair wears a mark after the player's own round connects. A fifth of a
+## second: long enough to register at sixteen rounds a magazine, short enough that a held
+## trigger reads as a flicker rather than as a permanent change to the reticle.
+const HIT_MARK_TICKS: int = 12
+const HIT_MARK_COLOUR: Color = Color(1.0, 0.93, 0.70, 0.9)
+const HIT_MARK_SIZE_PIXELS: float = 18.0
+
 ## One node per Machine, pooled: a Machine arriving takes the next free instance and a
 ## Machine demolished hands one back, so a Factory of fifty costs fifty nodes rather than
 ## fifty rebuilt every frame.
@@ -345,6 +474,15 @@ var _machine_meshes: Array[MeshInstance3D] = []
 ## and nothing reads it to decide anything about the Run.
 var _machine_dressing: PackedStringArray = PackedStringArray()
 
+## How high the drawn body of each Machine id reaches, cached because `_machine_roof` is now
+## asked per Machine per frame (#68) and `Mesh.get_aabb()` walks the body to answer.
+##
+## Thrown away whenever the definition digest moves, because `height_metres` is one of the
+## numbers a hot-reload may change and a cached roof is the kind of thing that would quietly
+## go on being the old answer for the rest of the Run.
+var _machine_roofs: Dictionary = {}
+var _machine_roofs_digest: int = 0
+
 var _node_meshes: Array[MeshInstance3D] = []
 
 ## The marks over the Map's ore, and the readable record of where they went and what colour
@@ -355,6 +493,34 @@ var _ore_beacon_colours: Array[Color] = []
 var _ore_marking_transforms: Array[Vector3] = []
 var _ore_marking_colours: Array[Color] = []
 var _scanner_pings: MultiMeshInstance3D = null
+
+## Every mark a shot leaves, through **one** MultiMesh: the flash at the gun, the tracer
+## between, and the burst where the round landed. One buffer rather than three, because a
+## unit box carries all three — a flash and a burst are small cubes and a tracer is the same
+## cube stretched along its own flight — and because ADR 0001's case is exactly this one:
+## fifty Turrets at four rounds a second plus a swarm of impacts is not fifty nodes a second.
+var _shot_marks: MultiMeshInstance3D = null
+
+## The readable record of what was drawn, because a MultiMesh keeps its buffer on the
+## rendering server where a headless test cannot see it. One entry per mark, in the order they
+## were laid: flashes, then tracers, then impacts.
+var _muzzle_flash_positions: Array[Vector3] = []
+var _muzzle_flash_colours: Array[Color] = []
+var _tracer_starts: Array[Vector3] = []
+var _tracer_ends: Array[Vector3] = []
+var _tracer_colours: Array[Color] = []
+var _tracer_widths: Array[float] = []
+var _impact_positions: Array[Vector3] = []
+var _impact_colours: Array[Color] = []
+
+## What has happened in the fight since the last frame. See `game/combat_events.gd`: the
+## snapshot it holds is the same category of thing as `AudioDirector`'s and `TickPump`'s
+## leftover frame time — a reading on its way through, never a fact about the world.
+var _combat: CombatEvents = CombatEvents.new()
+
+## A mark that appears on the crosshair when the player's own round connects. One node, built
+## once and shown or hidden, which is the rule every other thing in this file obeys.
+var _hit_mark: Control = null
 var _scanner_transforms: Array[Vector3] = []
 var _scanner_colours: Array[Color] = []
 
@@ -375,14 +541,68 @@ var _belt_meshes: MultiMeshInstance3D = null
 ## the Items use, with a yaw in the basis because a tile of Belt points somewhere.
 var _belt_transforms: PackedFloat32Array = PackedFloat32Array()
 
-## Every Item on every Belt, as instances of one mesh.
+## The shader painting the generated Belt's deck, or null where this checkout has no trestle.
+##
+## Held so the scroll can be handed to it every sync. It is the one piece of renderer state in
+## the Belt drawing, and it is the same category of thing as the cached bodies: a property of
+## the *asset*, resolved once, rather than anything about the Run.
+var _belt_deck_material: ShaderMaterial = null
+
+## Which surface of the generated Belt body the deck shader replaced, or -1 for none.
+var _belt_deck_surface: int = -1
+
+## How far along one cleat pitch the deck has travelled, 0 to 1. A function of the tick.
+var _belt_deck_scroll: float = 0.0
+
+## Every Item on every Belt, as instances of one mesh **per `ItemAppearance` form**.
 ##
 ## Deliberately a MultiMesh rather than a node each. ADR 0002 makes Items derived state
 ## that is recomputed rather than replicated, and ADR 0001 keeps Godot a renderer: an
 ## Item must therefore never be a node, and at the scale this system reaches — the
 ## genre's reference implementation spends most of a late-game frame on Belts and their
 ## Items — one node per Item would be the first thing to fall over.
-var _item_meshes: MultiMeshInstance3D = null
+##
+## **One a form rather than one in total, which is #73.** Until then there was a single
+## buffer drawing a single brown box, so iron ore, coal, plate and Ammunition were the same
+## picture — and a player looking at two Belts could not tell which carried the Boiler's fuel
+## and which the Press's plate. That contradicts the standard this project holds Machine
+## silhouettes to (`machine_silhouette.py` fails the asset suite if any two converge) on the
+## argument that reading your own production line at a glance is the core skill in a factory
+## game. The **Items are the content of that line** and had none of that care.
+##
+## **What it costs is four buffers and four draw calls instead of one**, and the count is a
+## constant rather than a function of the content — which is the whole reason the look is keyed
+## on a *form* rather than on an Item. `ItemAppearance.FORM_COUNT` is closed (fired, burned,
+## dug, made), so this is `EnemyKind.KIND_NAMES`' bargain exactly: built eagerly on the first
+## sync, before a Belt has anything on it, so `test_cargo_is_never_a_node_however_much_of_it_there_is`
+## asserts **zero** node growth rather than "no more than one per form". A MultiMesh per *Item
+## id* would have grown the scene tree with `content/recipes.csv`, which is the one thing the
+## absence of an Item table is there to prevent.
+##
+## Per-instance colour was #73's stated minimum and a material per form is strictly better
+## here — see `ItemAppearance.FORM_MATERIALS` for why albedo alone cannot say what brass is.
+var _cargo_meshes: Array[MultiMeshInstance3D] = []
+
+## The instance transforms handed to each form's MultiMesh, in the flat twelve-floats layout.
+##
+## Parallel to `_cargo_meshes`, so index is form. Rebuilt every sync like every other buffer in
+## this file; a MultiMesh keeps its own copy on the rendering server where a headless test
+## cannot read it back, which is why `_item_transforms` below exists as well.
+var _cargo_transforms: Array[PackedFloat32Array] = []
+
+## Every Item's form, indexed by the definition set's own Item index, resolved once per
+## content change rather than per Item per frame. See `_resolve_cargo_forms`.
+var _cargo_forms: PackedInt64Array = PackedInt64Array()
+
+## The definition digest `_cargo_forms` was resolved against, so a hot-reload re-derives it.
+var _cargo_forms_digest: int = 0
+
+## Which form each Item was drawn as, in the Simulation's own order.
+##
+## Parallel to `_item_transforms` — one entry per Item, Belt by Belt and slot by slot — so a
+## test can ask what the renderer decided about the Item the Simulation calls *this* one,
+## rather than inferring it from which buffer happens to hold it.
+var _item_forms: PackedInt64Array = PackedInt64Array()
 
 ## Every Enemy on the Map, as instances of one mesh **per kind**.
 ##
@@ -656,6 +876,25 @@ var _belt_flow_transforms: PackedFloat32Array = PackedFloat32Array()
 ## goods are moving, a **banking** tag in its place means both branches are stopped and the
 ## buffer is growing, and at each branch's entry a post says whether that one is the blocked
 ## one. Every one of them is `query_*` asked this frame and nothing is remembered.
+## The one positive mark in this file: the lights running down a line that has just started
+## working, and a tag over each Machine in it (#68).
+##
+## `_line_works_since` is the only memory in `WorldView` and it is the same category of thing
+## as `AudioDirector`'s snapshot and `TickPump`'s leftover frame time — **a reading on its way
+## in, not a fact about the world.** It has to exist because a chain completing is a *change*
+## and every projection behind it reports a *condition*; what it holds is a chain's geographic
+## signature against the tick it was first seen whole, so nothing in it is authoritative and
+## nothing in it is saved. A chain that stops being whole is forgotten, so mending a broken
+## line is acknowledged again.
+var _line_works_pulses: MultiMeshInstance3D = null
+var _line_works_tags: MultiMeshInstance3D = null
+var _line_works_tethers: MultiMeshInstance3D = null
+var _line_works_pulse_transforms: PackedFloat32Array = PackedFloat32Array()
+var _line_works_tag_transforms: PackedFloat32Array = PackedFloat32Array()
+var _line_works_tether_transforms: PackedFloat32Array = PackedFloat32Array()
+var _line_works_since: Dictionary = {}
+var _line_works_running: int = 0
+
 var _split_marks: MultiMeshInstance3D = null
 var _banking_marks: MultiMeshInstance3D = null
 var _branch_marks: MultiMeshInstance3D = null
@@ -747,6 +986,84 @@ const DANGLING_AT_A_WALL_HEIGHT_METRES: float = 2.25
 const SPLIT_COLOUR: Color = Color(0.32, 0.80, 0.78, 0.85)
 const BANKING_COLOUR: Color = Color(0.93, 0.74, 0.16, 0.9)
 const BLOCKED_BRANCH_COLOUR: Color = Color(0.95, 0.27, 0.22, 0.9)
+
+## What a line that works is drawn in (#68), and the one mark in this file that is good news.
+##
+## **Green, and the collision was checked rather than assumed**, which is #52's lesson: the
+## colours to check a mark against are the ones it is *guaranteed* to be seen beside. Those are
+## the Belt deck it stands over, the cream flow arrows on it and the warm-orange port arrows at
+## either end of it — none of them green. The one green in the project is `HOLOGRAM_ALLOWED`,
+## and it is translucent, flat on the ground, and only on screen with the Machine tool out,
+## where this mark is opaque, head-high and fires on the frame a *drag* has just paid off.
+##
+## **And it was measured rather than picked, which #73 is why.** That ticket found the four Item
+## icons were four near-identical greys when somebody finally put a number on them, and it then
+## gave cargo four palette *materials* — so the lights in this mark now run directly over
+## `OxideRed`, `Soot`, `DullBrass` and `WeldedSteel`, and a tag over a branching Machine is
+## stacked a metre above a **teal** split tag every time that Machine is both whole and
+## splitting. The first value here was a pale mint, `Color(0.58, 1.0, 0.72)`, and measured in
+## CIE Lab it sat **ΔE 19.3 from that split teal and 17.4 from the hologram** — under the 21.4
+## that separates #73's own closest accepted pair of cargo forms, which is to say the signal was
+## nearer to the marks beside it than the four cargo colours are to each other.
+##
+## This green clears every colour it can be seen beside by more than that gate: 63 from the split
+## teal, 34 from the hologram, 42 from the cream flow arrow, and 44 at worst from any cargo form.
+## The sweep's actual maximum was a saturated `(0.2, 1.0, 0.0)` at ΔE 73, and it was **not**
+## taken: the palette runs 0.055 to 0.14 albedo and a neon slab in it reads as an overlay laid on
+## the game rather than as something in the world — which is #42's Wall, #52's ore and #64's
+## brightened tool, three tickets this project has already paid for choosing a colour against the
+## wrong background. Separation is a floor to clear, not a thing to maximise.
+const LINE_WORKS_COLOUR: Color = Color(0.36, 1.0, 0.22, 0.95)
+
+## How long the signal runs for, in **ticks**, from the frame a chain first reads whole.
+##
+## A count of ticks rather than seconds, which is the rule the ore scanner and the audio
+## director already keep: two Runs down the same script look the same, and a frame that stepped
+## nothing draws the same thing twice. Five seconds is long enough to look up at and short
+## enough that it is a moment rather than a condition — a mark that is always on everything is
+## the hedge #66 took off the port arrows.
+const LINE_WORKS_TICKS: int = 300
+
+## How fast a light runs down the line and how far apart the lights are.
+##
+## **Faster than the goods, deliberately.** A Belt carries four Items a second at four to the
+## tile, which is one tile every fifteen ticks; a light crosses a tile in six. So the lights
+## overtake the freight and read as a signal travelling the line rather than as more cargo —
+## the same reason the ore scanner's pings are a sweep rather than a dotted path.
+const LINE_WORKS_PULSE_TICKS_PER_TILE: int = 6
+const LINE_WORKS_PULSE_GAP_TILES: int = 3
+
+## How big a light is and how far over the Belt's deck it floats.
+##
+## Clear of the deck, the cream flow arrow at 0.08 m over it, and an Item riding at deck
+## height — all three of which are on the very tiles this is drawn along, so this is the one
+## mark in the file guaranteed to share its tile with three others.
+const LINE_WORKS_PULSE_SIZE_METRES: float = 0.75  # bracketed at 0.5 and 0.75 by rendering
+const LINE_WORKS_PULSE_LIFT_METRES: float = 0.55
+
+## How high the chain's tag floats over each of its Machines, and how big it is.
+##
+## Two clearances for the reason the split tag has two: one off the body a player can see and
+## one off the housing the Simulation collides against, whichever is higher (#41, #48, #50).
+## Both are a step above the split tag's, which keeps the mark order Ammunition gauge → starved
+## tag → split tag → this. It cannot collide with the **starved** tag by construction — a chain
+## is not whole while any Machine in it is starved — but a branch can be whole and splitting, so
+## the split tag is a real neighbour and this stands over it.
+const LINE_WORKS_TAG_CLEARS_THE_BODY_METRES: float = 1.5
+const LINE_WORKS_TAG_CLEARS_THE_ROOF_METRES: float = 2.9
+const LINE_WORKS_TAG_SIZE_METRES: float = 1.4
+
+## How wide the line is that joins a chain tag to the body it is about.
+##
+## **#66's answer, taken on sight rather than rediscovered.** The first render of this put a
+## tag 1.5 m over a Miner's derrick and a Smelter's flue, and both read as a mark floating in
+## the sky — which is #41's rule biting for the fifth time, and for #66's specific reason: a
+## tag rests a tag's height over a *wide* cap and hangs over a *tapering* one. The lift is not
+## what is wrong with it, so it was not moved; what the mark needed was an owner. Same
+## thickness as the starved tag's tether, because it is the same punctuation doing the same
+## job — wide enough to survive a pixel at thirty metres, narrow enough that a Factory full of
+## working lines is not a forest of columns.
+const LINE_WORKS_TETHER_THICKNESS_TILES: float = 0.06
 
 ## How high a split's tag floats, in metres, and how big it is drawn.
 ##
@@ -1009,6 +1326,12 @@ func sync(sim: Simulation) -> void:
 	if sim == null:
 		return
 
+	# A hot-reload may have moved `height_metres`, and the roof cache below would otherwise go
+	# on answering with the number the Run stopped playing by.
+	if sim.query_definition_digest() != _machine_roofs_digest:
+		_machine_roofs_digest = sim.query_definition_digest()
+		_machine_roofs.clear()
+
 	_sync_scenery(sim)
 	_sync_nodes(sim)
 	_sync_nest(sim)
@@ -1020,6 +1343,9 @@ func sync(sim: Simulation) -> void:
 	_sync_enemies(sim)
 	_sync_siege_hulk_vents(sim)
 	_sync_hives(sim)
+	# After the Machines, because a muzzle flash is measured off the body a player can see
+	# (`_machine_roof`) rather than off the housing the Simulation collides against.
+	_sync_shots(sim)
 	_sync_shell_markers(sim)
 	_sync_belts(sim)
 	_sync_walls(sim)
@@ -1031,7 +1357,13 @@ func sync(sim: Simulation) -> void:
 	_sync_ports(sim)
 	_sync_connection_marks(sim)
 	_sync_split_marks(sim)
+	# After both, because it is the one mark that says a line is *right* and it has to stand
+	# clear of the two that say it is wrong.
+	_sync_line_works(sim)
 	_sync_hud(sim)
+	# After the HUD, because the mark hangs off the crosshair the HUD builds — and after
+	# `_sync_shots`, because what it is about is in that frame's events.
+	_sync_hit_mark(sim)
 	_place_camera(sim)
 	# After the camera, because the weapon hangs off it.
 	_sync_weapon(sim)
@@ -1106,6 +1438,41 @@ func enemy_mesh_id(kind: int) -> int:
 	if node.multimesh == null or node.multimesh.mesh == null:
 		return 0
 	return node.multimesh.mesh.get_instance_id()
+
+
+## Which texture a kind's surface is actually painted with, as a `res://` path, or "" for a
+## kind drawn through the procedural fallback. For the assertion that the *graded* atlas is
+## what reaches the shader: a grade nothing samples is `prop_grade.py`'s own opening defect,
+## and it is invisible from the grading side of the seam.
+func enemy_surface_texture_path(kind: int) -> String:
+	var material: ShaderMaterial = _enemy_surface_material(kind)
+	if material == null:
+		return ""
+	var texture: Texture2D = material.get_shader_parameter("albedo_texture") as Texture2D
+	if texture == null:
+		return ""
+	return texture.resource_path
+
+
+## How metallic a kind's surface is. For the assertion that an Enemy is metal, which is what
+## the light in this world is tuned for — see `_enemy_metallic`.
+func enemy_surface_metallic(kind: int) -> float:
+	var material: ShaderMaterial = _enemy_surface_material(kind)
+	if material == null:
+		return 0.0
+	return float(material.get_shader_parameter("metallic"))
+
+
+func _enemy_surface_material(kind: int) -> ShaderMaterial:
+	if not _swarm_meshes.has(kind):
+		return null
+	var node: MultiMeshInstance3D = _swarm_meshes[kind]
+	if node.multimesh == null or node.multimesh.mesh == null:
+		return null
+	var mesh: Mesh = node.multimesh.mesh
+	if mesh.get_surface_count() == 0:
+		return null
+	return mesh.surface_get_material(0) as ShaderMaterial
 
 
 ## How big one instance of a kind was drawn, as the uniform scale on its basis. The bodies are
@@ -1191,6 +1558,81 @@ func item_instance_count() -> int:
 ## later that needs to point at a specific Item.
 func item_instance_position(instance: int) -> Vector3:
 	return _instance_position(_item_transforms, instance)
+
+
+## How far along one cleat pitch the Belt deck has travelled, 0 to 1 (#73).
+##
+## Reported whether or not this checkout has a generated trestle to put it on, because the
+## claim it exists for — that the deck is a function of the tick and of nothing else — is about
+## the arithmetic rather than about the asset.
+func belt_deck_scroll() -> float:
+	return _belt_deck_scroll
+
+
+## Whether the generated Belt trestle resolved, as against the placeholder slab.
+func belt_has_a_generated_body() -> bool:
+	return _body(BELT_BODY) != null
+
+
+## Which surface of that body the scrolling deck was put on, or -1 if none was found.
+func belt_deck_surface() -> int:
+	return _belt_deck_surface
+
+
+## How many of the Belt body's surfaces scroll. One — the rubber, and not the frame.
+func belt_surfaces_that_scroll() -> int:
+	var body: Mesh = _body(BELT_BODY)
+	if body == null:
+		return 0
+	var scrolling: int = 0
+	for surface: int in range(body.get_surface_count()):
+		if body.surface_get_material(surface) is ShaderMaterial:
+			scrolling += 1
+	return scrolling
+
+
+## How many Items of one form were drawn. One per form's own MultiMesh (#73).
+func cargo_instance_count(form: int) -> int:
+	if form < 0 or form >= _cargo_transforms.size():
+		return 0
+	return _cargo_meshes[form].multimesh.instance_count
+
+
+## Where one instance of a form's cargo was actually written into that form's own buffer.
+##
+## The read-back that makes the per-form drawing assertable rather than inferred: the buffer a
+## MultiMesh is handed lives on the rendering server, so without this a test could only check
+## that the *count* was right and would miss cargo written to the wrong place — or to a copy.
+func cargo_instance_position(form: int, instance: int) -> Vector3:
+	if form < 0 or form >= _cargo_transforms.size():
+		return Vector3.ZERO
+	return _instance_position(_cargo_transforms[form], instance)
+
+
+## The palette material one form's cargo is wearing, by name, as the renderer actually
+## resolved it — so a test reads what was drawn rather than what was asked for.
+func cargo_material_name(form: int) -> String:
+	if form < 0 or form >= _cargo_meshes.size():
+		return ""
+	var mesh: Mesh = _cargo_meshes[form].multimesh.mesh
+	if mesh == null or mesh.get_surface_count() == 0:
+		return ""
+	var skin: Material = mesh.surface_get_material(0)
+	return "" if skin == null else skin.resource_name
+
+
+## Which form the renderer drew the Item the Simulation calls this Belt's `slot`th.
+##
+## Keyed by the Simulation's own coordinates rather than by a flat index, because that is the
+## question a caller actually has — "what did you make of the thing on *this* Belt" — and
+## because the flat order is this file's business and not a contract.
+func cargo_form_of_belt_item(sim: Simulation, belt: int, slot: int) -> int:
+	var flat: int = slot
+	for index: int in range(belt):
+		flat += sim.query_belt_item_count(index)
+	if flat < 0 or flat >= _item_forms.size():
+		return -1
+	return _item_forms[flat]
 
 
 ## Where a Machine's placeholder stands, in metres. For the smoke test, and for
@@ -1477,6 +1919,13 @@ static func _write_scaled_instance(
 ## the Walls did before #32: four of them in a heap at the world origin with an engine error
 ## a frame. The custom data carries the animation frame and the Enemy's remaining health, and
 ## nothing else: there is no per-Crawler object anywhere for anything else to live in.
+##
+## **The last two floats are written as zero and read by nothing, and that is deliberate
+## headroom rather than slack.** `INSTANCE_CUSTOM.z` and `.w` cost nothing to carry — the
+## stride is sixteen whatever is in them — so the next thing that wants to say something per
+## Enemy has two channels without widening anything. Turning on `use_colors` instead would
+## take the stride to twenty and with it this function, `_stride_for` and every accessor that
+## divides by one.
 static func _write_skinned_instance(
 	buffer: PackedFloat32Array,
 	instance: int,
@@ -2432,6 +2881,42 @@ func _ensure_swarm_mesh(kind: int) -> void:
 ## fantasy skeletons in a world of grimy cast iron, and a colour picked against a white
 ## background is a colour picked against the wrong thing (#32, measured on the Walls).
 ##
+## **#38 made that split with a tint per kind, and #75 is the user looking at the result:
+## *"the enemies look like shit honestly"*. They were right, and the reason is arithmetic
+## rather than taste — a multiply cannot change a ratio.** Measured off the committed atlas
+## through `Skeleton_Minion`'s own UVs, a Crawler's skull cell is a cold blue-white at linear
+## luminance 0.551 and its boot cell is 0.067: eight to one, and one tint scales both by the
+## same number, so whatever the tint is the Crawler is a bright skull with a dark smudge under
+## it. Turning it down only moves the whole thing toward black, which is what shipped —
+## measured off a `swarm bare` render, a Crawler's body sat at **0.007 against a ground at
+## 0.046**, which is not a dark Enemy, it is a hole in the floor. And the hue was wrong in a
+## direction no multiply reaches: there is no blue anywhere in this palette.
+##
+## So the surface is three things now, and none of them is a tint:
+##
+## * **A graded atlas** — `tools/assets/enemy_grade.py`, which is `prop_grade.grade_colour`'s
+##   rule with this atlas's families and a shoulder tuned for a subject seen against the
+##   *ground* rather than against a Machine. It closes the skull-to-boot ratio from 8:1 to
+##   about 3.5:1 and sends bone to iron. It is loaded here rather than taken off the
+##   material, which is deliberate: the pack embeds its image **inside the `.glb`**, so a
+##   graded file beside the model would be `prop_grade.py`'s own opening defect — a grade
+##   nothing samples — and `test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own`
+##   is what makes that unsayable.
+## * **Metal.** `_sync_scenery` takes ambient and reflections off the sky *because* the
+##   generated surfaces are mostly metal, and until #75 an Enemy was the one thing in the
+##   world that was not — 0.05 metallic at 0.88 roughness has nothing to reflect under a sky
+##   dome, which is most of why a backlit Crawler rendered as a silhouette.
+## * **Grime and relief the atlas cannot carry**, derived in the shader from the rest pose.
+##   See `game/enemy_skin.gdshader`; the short version is that these characters carry no
+##   `COLOR_0`, so `prop_grade.deepen_grime`'s free per-prop occlusion has no counterpart and
+##   #42's derived-relief answer is the one that transfers.
+##
+## **The per-kind tint survives and its job changed.** It no longer carries the *level* — the
+## grade does — so it is near white and carries only a cast, which is a readability cue the
+## kinds did not have before: everything used to be dark, so the only thing telling a Crawler
+## from a Breaker was size (#49). It is still a multiply and it still cannot change a ratio,
+## which is exactly why it is no longer asked to.
+##
 ## **There was a second branch here and #49 removed it. The note is the deliverable.** The
 ## pack splits each character into a body material and an 80-vertex `Glow` material for its
 ## eye sockets, and #38 painted that surface with an ember emission and recorded it as the
@@ -2461,14 +2946,17 @@ func _ensure_swarm_mesh(kind: int) -> void:
 ## it sits on, rather than hoped for in an asset.
 func _skinned_mesh(kind: int, body: EnemyBodies.Body) -> ArrayMesh:
 	for surface: int in range(body.mesh.get_surface_count()):
-		var source: Material = body.mesh.surface_get_material(surface)
 		var painted: ShaderMaterial = ShaderMaterial.new()
 		painted.shader = load(ENEMY_SKIN_SHADER)
 		painted.set_shader_parameter("pose", body.pose)
 		painted.set_shader_parameter("texels_per_bone", EnemyBodies.TEXELS_PER_BONE)
-		var texture: Texture2D = null
-		if source is BaseMaterial3D:
-			texture = (source as BaseMaterial3D).albedo_texture
+		# **The artist's material is no longer read at all, and that is the change.** It used
+		# to be asked for its `albedo_texture` so the pack's own atlas could be tinted; the
+		# graded copy goes on instead, whatever the `.glb` embedded, because a surface the
+		# grade did not cover would be the one thing in a Wave still wearing bone-white. The
+		# pack embeds its image *inside* the GLB rather than naming a file beside it, so there
+		# is nothing to recover and nothing to prefer.
+		var texture: Texture2D = load(ENEMY_GRADED_ATLAS) as Texture2D
 		if texture != null:
 			painted.set_shader_parameter("albedo_texture", texture)
 			painted.set_shader_parameter("has_albedo_texture", true)
@@ -2479,20 +2967,26 @@ func _skinned_mesh(kind: int, body: EnemyBodies.Body) -> ArrayMesh:
 	return body.mesh
 
 
-## What each kind's character texture is multiplied by.
+## What each kind's graded texture is multiplied by — a cast, not a level.
 ##
-## The committed skeletons are bone-white and this palette runs 0.055 to 0.14 albedo on its
-## Machines, so a character dropped in untinted would be the brightest object in frame. These
-## grade it down and apart: the Crawler to the dark warm chitin the procedural carapace wore,
-## the Breaker to cold hard steel so that the thing a player has to *answer* reads as armoured
-## rather than as a bigger Crawler, and the Hulk to the cast iron its hull already was.
+## Before #75 these were 0.17 to 0.25 and were doing the whole job: the atlas was bone-white
+## and this was what stood between it and a palette running 0.055 to 0.14. The grade owns the
+## level now, so these are near white and the only thing left in them is **which kind**, which
+## is a cue the Wave did not previously have — everything was dark, so size was carrying the
+## entire distinction (#49) and a Crawler and a Breaker at thirty metres were the same smudge
+## in two heights.
+##
+## Warm for the Crawler, because rust is what settles on something nobody maintains; cold for
+## the Breaker, because the thing a player has to *answer* should read as plated rather than
+## as a bigger Crawler; and the Siege Hulk keeps the cast iron its procedural hull wears, so
+## the body and the hull a kind with no character would draw agree.
 func _enemy_tint(kind: int) -> Color:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return Color(0.21, 0.22, 0.25)
+			return Color(0.91, 0.95, 1.0)
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return SIEGE_HULK_HULL
-	return Color(0.17, 0.11, 0.095)
+			return Color(0.92, 0.90, 0.88)
+	return Color(1.0, 0.88, 0.78)
 
 
 ## How metallic each kind reads. A Lambertian body beside a metal Machine renders twice as
@@ -2501,22 +2995,31 @@ func _enemy_tint(kind: int) -> Color:
 func _enemy_metallic(kind: int) -> float:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return 0.65
+			return 1.0
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return 0.8
-	return 0.05
+			return 1.0
+	return 0.8
 
 
-## And how rough. The Crawler is nearly matte, which is the other half of grading it down: at
-## 0.62 the skulls caught a hard specular off a low sun and read as glazed pottery, which was
-## the brightest thing in the first render of a Wave and the third defect an image caught here.
+## And how rough, against the palette's own figures: a Breaker is `WeldedSteel` at 0.45,
+## a Crawler and the boss are `CastIron` at 0.62.
+##
+## **The note that stood here is corrected rather than deleted.** It said the Crawler was
+## pushed to 0.88 because at 0.62 the skulls caught a hard specular off the low sun and read
+## as glazed pottery. That was a true observation about a **dielectric** at 0.17 albedo: a
+## rough-plastic highlight on a near-black body is a bright smear with nothing under it. At
+## metallic 1 the same highlight *is* the surface — a metal's reflection is coloured by its
+## own albedo rather than sitting white on top of it — so the fix was the material model and
+## not the number, and 0.88 on a metal is a grey felt Crawler. The shader then spreads this
+## either side of itself off the grime field, because one roughness over a whole body is one
+## highlight over a whole body.
 func _enemy_roughness(kind: int) -> float:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return 0.55
+			return 0.45
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return 0.55
-	return 0.88
+			return 0.62
+	return 0.62
 
 
 ## The glowing vent on the back of every Siege Hulk on the Map.
@@ -2837,6 +3340,26 @@ func _sync_belts(sim: Simulation) -> void:
 			_belt_meshes.material_override = skin
 		_belt_meshes.multimesh = instanced
 		add_child(_belt_meshes)
+		_make_the_deck_run(instanced.mesh)
+
+	# **How far the cleats have travelled, and it is a function of the tick.** The deck advances
+	# one cleat pitch every `ticks_per_item` ticks, and a pitch is one Item slot wide — so the
+	# surface runs at *exactly* the speed of the cargo on it, for any Belt rating, without a
+	# second number anywhere to disagree with `belt.items_per_second` and `belt.items_per_tile`.
+	# On the shipped rating that is 0.5 m every 15 ticks, which is the Belt's own 2 m/s.
+	#
+	# Counted in ticks rather than seconds for `SCANNER_PERIOD_TICKS`' reason, which is a hard
+	# rule here and not a preference: two Runs down the same script have to look the same, and
+	# `test_the_deck_scrolls_and_nothing_about_it_is_timed_by_a_clock` asserts it from both
+	# sides — a frame that stepped nothing draws the same deck, and one whole period on it is
+	# back where it was.
+	var period: int = maxi(sim.query_belt_ticks_per_item(), 1)
+	_belt_deck_scroll = float(posmod(sim.query_tick(), period)) / float(period)
+	if _belt_deck_material != null:
+		_belt_deck_material.set_shader_parameter("scroll", _belt_deck_scroll)
+		_belt_deck_material.set_shader_parameter(
+			"cleat_pitch_metres", tile_size / float(maxi(sim.query_belt_items_per_tile(), 1))
+		)
 
 	# A placeholder slab is modelled about its own centre, so it alone has to be lifted
 	# onto its feet; a generated tile of trestle already stands on the ground.
@@ -2874,6 +3397,55 @@ func _sync_belts(sim: Simulation) -> void:
 	_belt_meshes.multimesh.instance_count = tiles
 	if tiles > 0:
 		_belt_meshes.multimesh.buffer = _belt_transforms
+
+
+## Puts the scrolling shader on the generated Belt body's own deck surface.
+##
+## **Found by material name, and the name is the generator's.** `tools/assets/machine_recipes.py`
+## adds the running surface as `BeltRubber` and the frame, legs, rollers and hazard stripes as
+## other palette materials, and `_merged_body` keeps one surface per material — so "the deck" is
+## a surface this can ask for by name rather than a guess at an index. Checked rather than
+## assumed: `test_the_deck_that_scrolls_is_the_belts_own_rubber_and_not_its_frame` asserts the
+## surface is found and that **exactly one** scrolls, because #49 is what an unchecked claim
+## about a named surface costs — a branch written against geometry nobody had looked at sat in
+## the docs as a fact for a whole ticket.
+##
+## The `BeltRubber` material's own albedo, texture, scale, metallic and roughness are carried
+## across into the shader rather than replaced, so the deck keeps the generated surface it had
+## and gains cleats. A shader that painted its own colour would be a second authority on what
+## rubber looks like, with the palette as the first.
+##
+## A checkout with no generated trestle draws the placeholder slab and gets no deck and no
+## scroll, which is the ordinary state a missing body already has everywhere else in this file.
+func _make_the_deck_run(body: Mesh) -> void:
+	if body == null:
+		return
+	for surface: int in range(body.get_surface_count()):
+		var skin: StandardMaterial3D = body.surface_get_material(surface) as StandardMaterial3D
+		if skin == null or skin.resource_name != BELT_DECK_MATERIAL:
+			continue
+		var running: ShaderMaterial = ShaderMaterial.new()
+		running.shader = load(BELT_DECK_SHADER)
+		if running.shader == null:
+			return
+		running.set_shader_parameter("deck_colour", skin.albedo_color)
+		running.set_shader_parameter("deck_metallic", skin.metallic)
+		running.set_shader_parameter("deck_roughness", skin.roughness)
+		running.set_shader_parameter(
+			"deck_map_scale", Vector2(skin.uv1_scale.x, skin.uv1_scale.y)
+		)
+		if skin.albedo_texture != null:
+			running.set_shader_parameter("deck_map", skin.albedo_texture)
+		# The palette's own plate for the cleats, so the one bright thing on a Belt is a colour
+		# the Factory already wears — #42's lesson about a colour picked against the wrong
+		# background, which this project has now paid for five times.
+		var plate: StandardMaterial3D = load(BELT_CLEAT_MATERIAL) as StandardMaterial3D
+		if plate != null:
+			running.set_shader_parameter("cleat_colour", plate.albedo_color)
+		body.surface_set_material(surface, running)
+		_belt_deck_material = running
+		_belt_deck_surface = surface
+		return
 
 
 ## Every Wall on the Map, as one block a tile.
@@ -2957,22 +3529,9 @@ func _sync_walls(sim: Simulation) -> void:
 ## -up line diagnosable by looking at it — the queue of Items on screen is the queue in
 ## the state, down to the sub-unit.
 func _sync_items(sim: Simulation) -> void:
-	if _item_meshes == null:
-		_item_meshes = MultiMeshInstance3D.new()
-		var instanced: MultiMesh = MultiMesh.new()
-		instanced.transform_format = MultiMesh.TRANSFORM_3D
-		var box: BoxMesh = BoxMesh.new()
-		box.size = Vector3(ITEM_SIZE_METRES, ITEM_SIZE_METRES, ITEM_SIZE_METRES)
-		instanced.mesh = box
-		_item_meshes.multimesh = instanced
-		var material: StandardMaterial3D = StandardMaterial3D.new()
-		material.albedo_color = Color(0.62, 0.36, 0.20)
-		_item_meshes.material_override = material
-		add_child(_item_meshes)
-
-	var total: int = 0
-	for index: int in range(sim.query_belt_count()):
-		total += sim.query_belt_item_count(index)
+	var definitions: Definitions = sim.query_definitions()
+	_build_cargo_meshes()
+	_resolve_cargo_forms(sim, definitions)
 
 	# How high the deck is comes from the Simulation, because #30 made a Belt solid and
 	# `belt.deck_height_metres` is what a player stands on — an Item riding 10 cm above or
@@ -2983,30 +3542,579 @@ func _sync_items(sim: Simulation) -> void:
 		if _body(BELT_BODY) != null
 		else BELT_HEIGHT_METRES
 	)
+
+	var total: int = 0
+	for index: int in range(sim.query_belt_count()):
+		total += sim.query_belt_item_count(index)
+
+	# `_item_transforms` stays the flat array in the Simulation's own order — every Item, Belt
+	# by Belt and slot by slot — because that is what `item_instance_count` and
+	# `item_instance_position` have always meant and what a MultiMesh buffer cannot be read
+	# back out of. The per-form buffers below are what is actually drawn. The same arrangement
+	# `_belt_transforms` has, one system down.
 	_item_transforms.resize(total * FLOATS_PER_INSTANCE)
+	_item_forms.resize(total)
+	var drawn: PackedInt64Array = PackedInt64Array()
+	drawn.resize(ItemAppearance.FORM_COUNT)
+	# **Grown and never shrunk**, because a form's share of the cargo is not known until the
+	# walk is done and this is the hottest loop in the project: sizing each buffer to the whole
+	# Map every frame and back down again would reallocate four arrays a frame for a Factory
+	# whose Item count barely moves. What is handed to the MultiMesh is a slice of exactly the
+	# length it carries, which is the one allocation this has to make.
+	for form: int in range(ItemAppearance.FORM_COUNT):
+		if _cargo_transforms[form].size() < total * FLOATS_PER_INSTANCE:
+			_cargo_transforms[form].resize(total * FLOATS_PER_INSTANCE)
+
 	var instance: int = 0
 	for index: int in range(sim.query_belt_count()):
 		var layer: int = sim.query_belt_tile(index, 0).y
-		var height: float = (
-			Fixed.to_float(sim.query_layer_height_metres(layer)) + deck + ITEM_SIZE_METRES * 0.5
-		)
+		# On the deck exactly, because every cargo mesh is modelled standing on its own
+		# zero — `_cargo_mesh`'s note. Lifting by half a box is what the single cube needed
+		# and would now bury the tall forms' feet or float the flat ones.
+		var height: float = Fixed.to_float(sim.query_layer_height_metres(layer)) + deck
 		for slot: int in range(sim.query_belt_item_count(index)):
 			var where: FixedVec2 = sim.query_belt_item_position_metres(index, slot)
-			_write_instance(
-				_item_transforms,
-				instance,
-				Vector3(Fixed.to_float(where.x), height, Fixed.to_float(where.z)),
-				0.0
+			var at: Vector3 = Vector3(
+				Fixed.to_float(where.x), height, Fixed.to_float(where.z)
 			)
+			# **What it is decides which buffer it goes in**, read off the table resolved at
+			# the top of this sync rather than derived here — see `_resolve_cargo_forms`.
+			var form: int = _cargo_form_of(definitions, sim.query_belt_item_id(index, slot))
+			_write_instance(_item_transforms, instance, at, 0.0)
+			_item_forms[instance] = form
+			_write_instance(_cargo_transforms[form], drawn[form], at, 0.0)
+			drawn[form] += 1
 			instance += 1
 
-	_item_meshes.multimesh.instance_count = total
-	if total > 0:
-		_item_meshes.multimesh.buffer = _item_transforms
+	for form: int in range(ItemAppearance.FORM_COUNT):
+		var node: MultiMeshInstance3D = _cargo_meshes[form]
+		node.multimesh.instance_count = drawn[form]
+		if drawn[form] > 0:
+			# A MultiMesh refuses a buffer longer than its instance count, so what crosses is
+			# a slice of the working array rather than the array.
+			node.multimesh.buffer = _cargo_transforms[form].slice(
+				0, drawn[form] * FLOATS_PER_INSTANCE
+			)
+
+
+## Resolves every Item's form once a sync, and only when the content could have changed.
+##
+## **This is a performance decision and it is not a small one.** `ItemAppearance.form_of` walks
+## the Recipes and the Machines to answer, which is the right shape for a question asked about
+## the definition set — and asking it per Item per frame would make the hottest loop in the
+## project O(Items x (Recipes + Machines)), on the one system whose scale this whole data layout
+## exists to protect. The answer is a property of the **content** rather than of the Run, so it
+## is resolved once for every Item the Recipes mention — four, on the shipped set — and read
+## back per Item as an array index.
+##
+## Keyed on `query_definition_digest`, which is the number that moves when a hot-reload changes
+## what the Run is playing by, so an Item interned by an edit mid-Run is picked up on the next
+## frame rather than drawn as whatever happened to sort there before.
+func _resolve_cargo_forms(sim: Simulation, definitions: Definitions) -> void:
+	var digest: int = sim.query_definition_digest()
+	if digest == _cargo_forms_digest and _cargo_forms.size() == definitions.item_count():
+		return
+	_cargo_forms_digest = digest
+	_cargo_forms.resize(definitions.item_count())
+	for item: int in range(definitions.item_count()):
+		_cargo_forms[item] = ItemAppearance.form_of(definitions, item)
+
+
+## The form of one Item by id, off that table.
+func _cargo_form_of(definitions: Definitions, item_id: String) -> int:
+	var item: int = definitions.item_index(item_id)
+	if item < 0 or item >= _cargo_forms.size():
+		return ItemAppearance.FORM_ORE
+	return _cargo_forms[item]
+
+
+## One MultiMesh per form, built once, on the first sync.
+##
+## Eagerly rather than on the first Item of a kind, for `_build_swarm_meshes`' reason: it is
+## what lets the node-count assertion be *zero growth* rather than a bound, and it pays the
+## mesh building at load rather than on the frame a line starts running.
+func _build_cargo_meshes() -> void:
+	if not _cargo_meshes.is_empty():
+		return
+	for form: int in range(ItemAppearance.FORM_COUNT):
+		var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+		var instanced: MultiMesh = MultiMesh.new()
+		instanced.transform_format = MultiMesh.TRANSFORM_3D
+		instanced.mesh = _cargo_mesh(form)
+		node.multimesh = instanced
+		_cargo_meshes.append(node)
+		_cargo_transforms.append(PackedFloat32Array())
+		add_child(node)
+
+
+## The mesh one form of cargo is drawn as, wearing that form's palette material.
+##
+## **Shape as well as colour**, because colour alone is the weaker half of the claim: #52
+## settled that nothing wins a contrast fight on brightness alone, and a silhouette survives
+## distance where a hue does not. A slab, a bundle of rounds and a cluster of rubble read apart
+## at the thirty metres a player triages a Factory from; so the two mineral forms, which share
+## a build, are separated by the strongest colour pair in the set instead — `OxideRed` rust
+## against near-black `Soot`.
+##
+## Built here rather than generated, for the reason the Crawler's carapace is: this is the one
+## category of mesh that has to go in a MultiMesh in the thousands, so it is a handful of boxes
+## and stays a handful of boxes. No material is set per *instance* and none is overridden on the
+## node — the surface carries it, which is what lets brass be metallic and soot be matte.
+func _cargo_mesh(form: int) -> Mesh:
+	var built: SurfaceTool = SurfaceTool.new()
+	built.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var size: float = ITEM_SIZE_METRES
+	var block: BoxMesh = BoxMesh.new()
+	block.size = Vector3.ONE
+
+	# **Modelled with its feet on the deck and filling its envelope**, and both halves of that
+	# were a render finding rather than a plan. A body is *placed, never measured* here — the
+	# rule every Machine body obeys — so a form whose geometry straddled the origin would have
+	# floated a stacked slab 9 cm over the surface a player walks on, which is exactly the "an
+	# Item riding above the deck reads as a bug" #30 warns about. And the first pass spanned
+	# about 0.7 of `ITEM_SIZE_METRES` against the solid box it replaced, which measured as half
+	# the screen area from Survey View: the colour was right and the cargo had got *quieter*,
+	# which is the opposite of the ticket. Every form now spans the full width and stands on 0.
+	var parts: Array = []
+	match form:
+		ItemAppearance.FORM_STOCK:
+			# Finished stock: a flat stack, wide and thin, lying the way plate is stacked. The
+			# one form whose outline is unmistakable from above, which is what Survey View sees.
+			for layer: int in range(3):
+				parts.append([
+					Vector3(1.00, 0.16, 0.80), Vector3(0.0, 0.08 + float(layer) * 0.17, 0.0), 0.0
+				])
+		ItemAppearance.FORM_MUNITION:
+			# Rounds, stood on end in a row: a vertical, regular, man-made silhouette against
+			# the irregular mineral forms, and the one thing in the set that is *tall*.
+			for round_index: int in range(3):
+				parts.append([
+					Vector3(0.22, 0.92, 0.22),
+					Vector3((float(round_index) - 1.0) * 0.30, 0.46, 0.0),
+					0.0
+				])
+		ItemAppearance.FORM_FUEL:
+			# Fuel: a low, broad scatter of broken flakes, flatter than ore, because coal breaks
+			# into flakes and because the two mineral forms want different outlines as well as
+			# the strongest colour pair in the set.
+			parts = [
+				[Vector3(0.70, 0.30, 0.58), Vector3(-0.16, 0.15, 0.10), 0.07],
+				[Vector3(0.50, 0.26, 0.46), Vector3(0.26, 0.13, -0.20), 0.07],
+				[Vector3(0.38, 0.20, 0.34), Vector3(-0.04, 0.32, -0.24), 0.07],
+				[Vector3(0.30, 0.16, 0.30), Vector3(0.22, 0.30, 0.26), 0.07],
+			]
+		_:
+			# Ore, and anything a later form has not been drawn for: a chunky three-lump
+			# cluster. The fallback is the raw one deliberately — an Item the Factory cannot
+			# make is one that arrived from outside it, which is what `FORM_ORE` already means.
+			parts = [
+				[Vector3(0.72, 0.60, 0.64), Vector3(-0.12, 0.30, 0.07), 0.12],
+				[Vector3(0.52, 0.46, 0.50), Vector3(0.26, 0.23, -0.16), 0.12],
+				[Vector3(0.34, 0.32, 0.36), Vector3(-0.20, 0.58, -0.23), 0.12],
+			]
+
+	for part: Array in parts:
+		built.append_from(block, 0, Transform3D(
+			Basis.from_euler(Vector3(0.0, TAU * float(part[2]), 0.0)).scaled(
+				(part[0] as Vector3) * size
+			),
+			(part[1] as Vector3) * size
+		))
+
+	built.index()
+	var merged: ArrayMesh = built.commit()
+	var skin: Material = load(ItemAppearance.material_path_of(form)) as Material
+	if skin != null:
+		merged.surface_set_material(0, skin)
+	return merged
 
 
 ## The one number this ticket exists to make visible: what the Factory has extracted.
 ## Read out of the buffers every frame, so it cannot be stale or invented.
+## The three marks a shot leaves, all of them through one MultiMesh.
+##
+## **A tick number is already an event, which is why most of this needs no diff at all.**
+## `query_turret_last_shot_tick` reports *when* a Turret last fired rather than *that* it is
+## firing, so "did this gun go off within the last few ticks" is a subtraction against
+## `query_tick` and nothing has to be remembered between frames. That is the cheap half and it
+## is most of what a player at thirty metres needs.
+func _sync_shots(sim: Simulation) -> void:
+	if _shot_marks == null:
+		_shot_marks = _unshaded_instances()
+		add_child(_shot_marks)
+
+	_combat.observe(sim)
+
+	_muzzle_flash_positions.clear()
+	_muzzle_flash_colours.clear()
+	_tracer_starts.clear()
+	_tracer_ends.clear()
+	_tracer_colours.clear()
+	_tracer_widths.clear()
+	_impact_positions.clear()
+	_impact_colours.clear()
+
+	_lay_the_muzzle_flashes(sim)
+	_lay_the_rounds_that_landed(sim)
+	_upload_the_shot_marks()
+
+
+## A flash at the muzzle of every gun that has gone off within the last `MUZZLE_FLASH_TICKS`.
+##
+## **Turrets that shoot, not Turrets that mend.** `_mend` stamps the very same
+## `_turret_last_shot_tick` a Turret's `_fire` does — GLOSSARY.md calls a Repair Pylon a
+## Turret-class Machine whose output is repair rather than damage — so a Pylon pulsing a plate
+## into a Smelter would otherwise flash as though it were shooting at something.
+func _lay_the_muzzle_flashes(sim: Simulation) -> void:
+	var tick: int = sim.query_tick()
+	for index: int in range(sim.query_machine_count()):
+		if not sim.query_machine_is_turret(index):
+			continue
+		if sim.query_machine_is_repair_pylon(index):
+			continue
+		var fired: int = sim.query_turret_last_shot_tick(index)
+		# -1 is "has never fired", and it is worth a clause of its own rather than falling out
+		# of the arithmetic: a Turret standing on tick 2 of a Run would otherwise be two ticks
+		# past a shot that never happened, and flash for having been built.
+		if fired < 0:
+			continue
+		var age: int = tick - fired
+		if age < 0 or age >= MUZZLE_FLASH_TICKS:
+			continue
+		var lit: Color = MUZZLE_FLASH_COLOUR
+		lit.a = MUZZLE_FLASH_COLOUR.a * _fading(age, MUZZLE_FLASH_TICKS)
+		_muzzle_flash_positions.append(_muzzle_of(sim, index))
+		_muzzle_flash_colours.append(lit)
+
+
+## Where a Turret's muzzle is: up the body a player can see, and out towards whatever it is
+## shooting at. The offset is what makes a flash read as leaving a barrel rather than as a
+## lamp sitting on a roof; a Turret with nothing in its sights flashes over its own middle,
+## which is the right answer for the one tick a target dies on.
+func _muzzle_of(sim: Simulation, index: int) -> Vector3:
+	var at: Vector3 = _machine_centre(sim, index)
+	at.y = _machine_roof(sim, index) * MUZZLE_FLASH_HEIGHT_FRACTION
+	var target: int = sim.query_enemy_index_of_serial(sim.query_turret_target_serial(index))
+	if target == -1:
+		return at
+	var towards: Vector3 = _enemy_centre(sim, target) - at
+	towards.y = 0.0
+	if towards.length() < 0.001:
+		return at
+	return at + towards.normalized() * _muzzle_clearance(sim, index)
+
+
+## How far from a Machine's own centre its muzzle has to stand to be outside it: the radius of
+## the circle its footprint fits inside, plus a clearance. Derived from the footprint for
+## `_machine_roof`'s reason — the alternative is a constant that is right for one Machine and
+## buries the mark inside every Machine bigger than that one.
+func _muzzle_clearance(sim: Simulation, index: int) -> float:
+	var footprint: Vector2i = sim.query_machine_footprint(index)
+	var across: float = float(maxi(footprint.x, footprint.y) * WorldGrid.TILE_SIZE_METRES)
+	return across * 0.5 + MUZZLE_FLASH_CLEARANCE_METRES
+
+
+## Where an Enemy's body is, at the middle of the height a round is resolved against — so a
+## mark about a hit stands on the thing that was hit rather than at its feet.
+func _enemy_centre(sim: Simulation, index: int) -> Vector3:
+	var at: FixedVec2 = sim.query_enemy_position_metres(index)
+	return Vector3(
+		Fixed.to_float(at.x),
+		Fixed.to_float(sim.query_enemy_hit_height_metres(index)) * 0.5,
+		Fixed.to_float(at.z)
+	)
+
+
+## How bright a mark of a given age is, as a fraction: full on the tick it happened and
+## nothing by the tick it expires. Integer arithmetic over two tick counts, which is what
+## keeps it a function of the Simulation rather than of how many frames were drawn.
+func _fading(age: int, span: int) -> float:
+	if span <= 0:
+		return 0.0
+	return 1.0 - float(age) / float(span)
+
+
+## One MultiMesh of unit boxes, unshaded and alpha-blended, with per-instance colour. The
+## arrangement `_sync_ore_scanner` already uses: one mesh, one material, and the size and
+## colour of every mark carried per instance.
+func _unshaded_instances() -> MultiMeshInstance3D:
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	instanced.use_colors = true
+	var unit: BoxMesh = BoxMesh.new()
+	unit.size = Vector3.ONE
+	instanced.mesh = unit
+	var marks: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	marks.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.vertex_color_use_as_albedo = true
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	marks.material_override = skin
+	return marks
+
+
+## Four short diagonals around the crosshair: the mark a player's own round leaving a mark on
+## something puts there.
+##
+## Diagonal rather than another cross, so it cannot be mistaken for the reticle growing, and
+## built once like the reticle itself — shown, hidden and recoloured, never rebuilt.
+func _hit_marker() -> Control:
+	var mark: Control = Control.new()
+	mark.set_anchors_preset(Control.PRESET_CENTER)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.visible = false
+	for corner: Vector2 in [
+		Vector2(-1.0, -1.0), Vector2(1.0, -1.0), Vector2(-1.0, 1.0), Vector2(1.0, 1.0)
+	]:
+		var tick: ColorRect = ColorRect.new()
+		tick.color = HIT_MARK_COLOUR
+		tick.size = Vector2(HIT_MARK_SIZE_PIXELS * 0.5, 2.0)
+		tick.rotation = corner.x * corner.y * PI * 0.25
+		tick.position = corner * HIT_MARK_SIZE_PIXELS * 0.5
+		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.add_child(tick)
+	return mark
+
+
+## Whether the crosshair is wearing its hit mark. The readable record of what was drawn, for
+## the smoke test.
+func hit_mark_is_showing() -> bool:
+	return _hit_mark != null and _hit_mark.visible
+
+
+## Shows the crosshair's hit mark while the player's own round has recently connected.
+##
+## **The player's own and nobody else's.** `CombatEvents` reports a Turret's hits and a
+## player's through the one list, and a mark keyed on "something was hit" would congratulate a
+## player for standing still next to a working Turret — which is worse than no mark, because
+## it is a mark that says something false about their aim.
+func _sync_hit_mark(sim: Simulation) -> void:
+	if _hit_mark == null:
+		return
+	var tick: int = sim.query_tick()
+	var connected: bool = false
+	for event: CombatEvents.Event in _combat.events():
+		if event.from != CombatEvents.From.PLAYER or event.from_index != VIEWED_PLAYER:
+			continue
+		var age: int = tick - event.tick
+		if age >= 0 and age < HIT_MARK_TICKS:
+			connected = true
+			break
+	_hit_mark.visible = connected and sim.query_player_is_alive(VIEWED_PLAYER)
+
+
+## A tracer and a burst for every round `CombatEvents` says arrived.
+##
+## **The tracer is only drawn for a round somebody can be shown to have fired**, and the burst
+## for every hit whoever caused it. That split is the honest one: a line of flight from a gun
+## to a body is a claim about a trajectory, and a swing of a wrench, an Artillery Barrage and a
+## Breaker's own bite have no trajectory to draw. A burst says only that this body was hit
+## there, which is true of all of them.
+##
+## **A missed round draws nothing out in the world, and that is deliberate rather than
+## unfinished.** `_shoot` scatters the aim by an RNG draw before it resolves anything, so the
+## direction a round actually took is not a quantity anything outside the façade holds — and a
+## tracer drawn down the player's nominal aim would be a confident line along a path the round
+## did not take, which is the same defect as a green hologram over a click that does nothing.
+## The lever, if misses ever want tracers, is the Simulation recording the scattered aim, and
+## that is new hashed state and its own ticket.
+func _lay_the_rounds_that_landed(sim: Simulation) -> void:
+	var tick: int = sim.query_tick()
+	for event: CombatEvents.Event in _combat.events():
+		var age: int = tick - event.tick
+		if age < 0:
+			continue
+		if age < TRACER_TICKS:
+			var from: Vector3 = _where_it_was_fired_from(sim, event)
+			if from != Vector3.ZERO:
+				var lit: Color = TRACER_COLOUR
+				lit.a = TRACER_COLOUR.a * _fading(age, TRACER_TICKS)
+				_tracer_starts.append(from)
+				_tracer_ends.append(event.at)
+				_tracer_colours.append(lit)
+				_tracer_widths.append(
+					PLAYER_TRACER_WIDTH_METRES
+					if event.from == CombatEvents.From.PLAYER
+					else TRACER_WIDTH_METRES
+				)
+		if age < IMPACT_TICKS:
+			var spark: Color = IMPACT_COLOUR
+			spark.a = IMPACT_COLOUR.a * _fading(age, IMPACT_TICKS)
+			_impact_positions.append(event.at)
+			_impact_colours.append(spark)
+
+
+## Where the round that caused an event left from, or `Vector3.ZERO` for one that cannot be
+## traced back to a gun at all.
+##
+## **A Turret is checked against its own stamp rather than trusted by index**, which is the one
+## subtle thing here: `_remove_machine` closes the gap when a Machine is destroyed, so an index
+## recorded three ticks ago could by now name a different Machine. Asking whether the Machine
+## standing at that index is a gun that fired on that very tick makes a misattribution very
+## nearly impossible and costs two array reads.
+func _where_it_was_fired_from(sim: Simulation, event: CombatEvents.Event) -> Vector3:
+	if event.from == CombatEvents.From.TURRET:
+		var index: int = event.from_index
+		if index < 0 or index >= sim.query_machine_count():
+			return Vector3.ZERO
+		if not sim.query_machine_is_turret(index) or sim.query_machine_is_repair_pylon(index):
+			return Vector3.ZERO
+		if sim.query_turret_last_shot_tick(index) != event.tick:
+			return Vector3.ZERO
+		return _muzzle_of(sim, index)
+	if event.from == CombatEvents.From.PLAYER and event.from_index == VIEWED_PLAYER:
+		return _where_the_player_fires_from(sim, VIEWED_PLAYER)
+	return Vector3.ZERO
+
+
+## The muzzle of the weapon in the player's own hands: in front of the eye and below it, along
+## the facing the Simulation is holding.
+##
+## `query_player_facing` rather than a yaw turned into a vector here, so the renderer does not
+## own a second copy of the convention `_wanted_velocity` walks a player by. And the *eye*
+## rather than the camera, for `_shoot`'s own reason: Survey View lifts the camera to
+## twenty-six metres and a player who raised it to read their Factory is not firing from a
+## helicopter.
+func _where_the_player_fires_from(sim: Simulation, player_id: int) -> Vector3:
+	var at: FixedVec2 = sim.query_player_position(player_id)
+	var facing: FixedVec2 = sim.query_player_facing(player_id)
+	var eye: Vector3 = Vector3(
+		Fixed.to_float(at.x),
+		Fixed.to_float(sim.query_player_eye_height_metres(player_id)),
+		Fixed.to_float(at.z)
+	)
+	var along: Vector3 = Vector3(
+		Fixed.to_float(facing.x), 0.0, Fixed.to_float(facing.z)
+	).normalized()
+	return (
+		eye
+		+ along * PLAYER_TRACER_REACH_METRES
+		+ Vector3.DOWN * PLAYER_TRACER_DROP_METRES
+		+ along.cross(Vector3.UP).normalized() * PLAYER_TRACER_ASIDE_METRES
+	)
+
+
+## Hands every mark to the one MultiMesh: the flashes, then the tracers, then the bursts.
+##
+## A flash and a burst are the unit box scaled evenly; a tracer is the same box stretched along
+## its own flight, which is what lets all three share one buffer and one material. The basis is
+## built by hand rather than with `looking_at`, because a round fired straight up or straight
+## down would make that degenerate and a player can look straight up.
+func _upload_the_shot_marks() -> void:
+	var marks: MultiMesh = _shot_marks.multimesh
+	marks.instance_count = (
+		_muzzle_flash_positions.size() + _tracer_starts.size() + _impact_positions.size()
+	)
+	var instance: int = 0
+	var flash: Basis = Basis.IDENTITY.scaled(Vector3.ONE * MUZZLE_FLASH_SIZE_METRES)
+	for mark: int in range(_muzzle_flash_positions.size()):
+		marks.set_instance_transform(
+			instance, Transform3D(flash, _muzzle_flash_positions[mark])
+		)
+		marks.set_instance_color(instance, _muzzle_flash_colours[mark])
+		instance += 1
+
+	for mark: int in range(_tracer_starts.size()):
+		marks.set_instance_transform(
+			instance,
+			_stretched_between(
+				_tracer_starts[mark], _tracer_ends[mark], _tracer_widths[mark]
+			)
+		)
+		marks.set_instance_color(instance, _tracer_colours[mark])
+		instance += 1
+
+	var spark: Basis = Basis.IDENTITY.scaled(Vector3.ONE * IMPACT_SIZE_METRES)
+	for mark: int in range(_impact_positions.size()):
+		marks.set_instance_transform(instance, Transform3D(spark, _impact_positions[mark]))
+		marks.set_instance_color(instance, _impact_colours[mark])
+		instance += 1
+
+
+## The unit box stretched into a thin rod from one point to another, centred on the midpoint.
+func _stretched_between(from: Vector3, to: Vector3, width: float) -> Transform3D:
+	var along: Vector3 = to - from
+	var span: float = along.length()
+	if span < 0.001:
+		return Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * width), from)
+	var forward: Vector3 = along / span
+	var up: Vector3 = Vector3.UP
+	if absf(forward.dot(up)) > 0.99:
+		up = Vector3.FORWARD
+	var right: Vector3 = up.cross(forward).normalized()
+	return Transform3D(
+		Basis(right * width, forward.cross(right).normalized() * width, forward * span),
+		from + along * 0.5
+	)
+
+
+## How many rounds are in frame. The readable record of what was drawn.
+func tracer_count() -> int:
+	return _tracer_starts.size()
+
+
+## Where one round left from — the muzzle of the gun that fired it.
+func tracer_start(instance: int) -> Vector3:
+	if instance < 0 or instance >= _tracer_starts.size():
+		return Vector3.ZERO
+	return _tracer_starts[instance]
+
+
+## Where one round arrived — the body `CombatEvents` says lost health.
+func tracer_end(instance: int) -> Vector3:
+	if instance < 0 or instance >= _tracer_ends.size():
+		return Vector3.ZERO
+	return _tracer_ends[instance]
+
+
+## What one tracer is painted, faded by its age in ticks.
+func tracer_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _tracer_colours.size():
+		return Color.BLACK
+	return _tracer_colours[instance]
+
+
+## How many bursts are in frame: one per hit, whoever caused it.
+func impact_count() -> int:
+	return _impact_positions.size()
+
+
+## Where one burst is — on the body that was hit, at the middle of the height a round is
+## resolved against.
+func impact_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= _impact_positions.size():
+		return Vector3.ZERO
+	return _impact_positions[instance]
+
+
+## What one burst is painted, faded by its age in ticks.
+func impact_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _impact_colours.size():
+		return Color.BLACK
+	return _impact_colours[instance]
+
+
+## How many guns are flashing. Zero on a tick nothing fired, which is what the smoke test
+## reads it for.
+func muzzle_flash_count() -> int:
+	return _muzzle_flash_positions.size()
+
+
+## Where one flash is. The readable record of what was drawn.
+func muzzle_flash_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= _muzzle_flash_positions.size():
+		return Vector3.ZERO
+	return _muzzle_flash_positions[instance]
+
+
+## What one flash is painted, faded by its age in ticks.
+func muzzle_flash_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _muzzle_flash_colours.size():
+		return Color.BLACK
+	return _muzzle_flash_colours[instance]
+
+
 func _sync_hud(sim: Simulation) -> void:
 	if _hud == null:
 		_hud_layer = CanvasLayer.new()
@@ -3020,6 +4128,8 @@ func _sync_hud(sim: Simulation) -> void:
 		_hud_layer.add_child(_mortality_detail)
 		_crosshair_mark = _crosshair()
 		_hud_layer.add_child(_crosshair_mark)
+		_hit_mark = _hit_marker()
+		_hud_layer.add_child(_hit_mark)
 		add_child(_hud_layer)
 
 	_sync_mortality_overlay(sim)
@@ -3701,6 +4811,17 @@ func _brief_lines(sim: Simulation) -> PackedStringArray:
 	var objective: String = Objective.line(sim, VIEWED_PLAYER)
 	if not objective.is_empty():
 		lines.append(objective)
+
+	# The acknowledgement the opening minutes never had (#68). It sits beside the objective
+	# line on purpose — that one says what to do next and this one says the last thing you
+	# were told to do is now running — and it is on screen only while the marks in the world
+	# are, because the mark says *where* and the line says *how many*. Counted off
+	# `line_works_running_count` rather than worked out a second way, which is the arrangement
+	# the dangling-ends and split clauses already have.
+	if line_works_running_count() > 1:
+		lines.append("LINE RUNNING — %d lines" % line_works_running_count())
+	elif line_works_running_count() == 1:
+		lines.append("LINE RUNNING")
 
 	lines.append(
 		"nest %d/%d — wave %d — next in %ds — crawlers %d"
@@ -4515,6 +5636,10 @@ func _sync_mortality_overlay(sim: Simulation) -> void:
 	# comes back on the tick they are upright, off the same number as everything else here.
 	if _crosshair_mark != null:
 		_crosshair_mark.visible = not showing
+	if showing and _hit_mark != null:
+		# A dead player's reticle goes, so what hangs off it goes too. `_sync_shots` puts it
+		# back on the tick they are upright, off the same events.
+		_hit_mark.visible = false
 
 	_mortality_tint.visible = showing
 	_mortality_caption.visible = showing
@@ -5662,6 +6787,218 @@ func _sync_split_marks(sim: Simulation) -> void:
 	_upload(_blocked_branch_marks, blocked)
 
 
+## The one thing drawn in this file that is good news: a line that has just started working.
+##
+## **Everything else here is a complaint**, and a player who had just laid their first chain had
+## to infer success from the absence of marks — which is exactly what #52's invisible ore and
+## #41's ownerless gauge both proved a player cannot read. So when a chain first reads whole, a
+## train of lights runs down its Belts and a tag stands over each of its Machines, for
+## `LINE_WORKS_TICKS`, and then it stops.
+##
+## **It fires on a change, which is the whole of why it is not another hedge.** `LineWorks`
+## answers a *condition* — this chain is connected and carrying — and the thing worth drawing is
+## the *moment* it became true, which is the distinction `AudioDirector` is built on. So
+## `_line_works_since` remembers, per chain signature, the tick it was first seen whole, and the
+## marks are a function of the tick minus that. A chain that breaks is forgotten, so mending it
+## is acknowledged again; a chain that gains a Machine has a new signature, so extending a line
+## is acknowledged too.
+##
+## **Nothing here is a second opinion about connectedness.** Every fact comes out of `LineWorks`,
+## which asks only the projections `_hand_off` and `_load_from_port` themselves go through — so
+## a line cannot be drawn as working and starve.
+func _sync_line_works(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	if _line_works_pulses == null:
+		_line_works_pulses = _unshaded_tags(
+			Vector3(
+				LINE_WORKS_PULSE_SIZE_METRES,
+				LINE_WORKS_PULSE_SIZE_METRES,
+				LINE_WORKS_PULSE_SIZE_METRES
+			),
+			LINE_WORKS_COLOUR
+		)
+		_line_works_tags = _unshaded_tags(
+			Vector3(
+				LINE_WORKS_TAG_SIZE_METRES,
+				LINE_WORKS_TAG_SIZE_METRES * 0.3,
+				LINE_WORKS_TAG_SIZE_METRES
+			),
+			LINE_WORKS_COLOUR
+		)
+		# A metre tall, so one mesh serves every Machine and the instance's own y scale is
+		# the gap. The starved tag's tether can be a fixed box because its gap is always its
+		# one lift; a chain tag's gap is whichever of two clearances won, which differs per
+		# Machine — a Miner's derrick takes the body clearance and a Turret's box takes the
+		# housing one.
+		_line_works_tethers = _unshaded_tags(
+			Vector3(
+				tile_size * LINE_WORKS_TETHER_THICKNESS_TILES,
+				1.0,
+				tile_size * LINE_WORKS_TETHER_THICKNESS_TILES
+			),
+			LINE_WORKS_COLOUR
+		)
+
+	var tick: int = sim.query_tick()
+	var pulses: PackedFloat32Array = PackedFloat32Array()
+	var tags: PackedFloat32Array = PackedFloat32Array()
+	var tethers: PackedFloat32Array = PackedFloat32Array()
+	var running: int = 0
+	var seen: Dictionary = {}
+
+	for chain: LineWorks.Chain in LineWorks.chains(sim):
+		if not chain.is_whole:
+			continue
+		var signature: String = chain.signature()
+		seen[signature] = true
+		if not _line_works_since.has(signature):
+			_line_works_since[signature] = tick
+		var elapsed: int = tick - int(_line_works_since[signature])
+		if elapsed >= LINE_WORKS_TICKS:
+			continue
+
+		running += 1
+		for machine: int in chain.machines:
+			var centre: Vector3 = _machine_centre(sim, machine)
+			var roof: float = _machine_roof(sim, machine)
+			var lift: float = maxf(
+				roof + LINE_WORKS_TAG_CLEARS_THE_BODY_METRES,
+				Fixed.to_float(sim.query_machine_height_metres(machine))
+					+ LINE_WORKS_TAG_CLEARS_THE_ROOF_METRES
+			)
+			tags.resize(tags.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_instance(
+				tags,
+				tags.size() / FLOATS_PER_INSTANCE - 1,
+				Vector3(centre.x, centre.y + lift, centre.z),
+				0.0
+			)
+			# And the line that says whose tag it is, from the top of the body a player can
+			# see up to the tag resting over it.
+			tethers.resize(tethers.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_tether(
+				tethers,
+				tethers.size() / FLOATS_PER_INSTANCE - 1,
+				Vector3(centre.x, centre.y + (roof + lift) * 0.5, centre.z),
+				lift - roof
+			)
+		for link: PackedInt64Array in chain.links:
+			_light_a_link(sim, pulses, link, elapsed, tile_size)
+
+	# A chain nobody saw whole this frame is forgotten rather than left to expire, which is
+	# what makes mending a broken line a change worth drawing again.
+	for signature: String in _line_works_since.keys():
+		if not seen.has(signature):
+			_line_works_since.erase(signature)
+
+	_line_works_running = running
+	_line_works_pulse_transforms = pulses
+	_line_works_tag_transforms = tags
+	_line_works_tether_transforms = tethers
+	_upload(_line_works_pulses, pulses)
+	_upload(_line_works_tags, tags)
+	_upload(_line_works_tethers, tethers)
+
+
+## Writes one tether: a metre-tall mesh stretched along Y alone to the gap it has to fill.
+##
+## Non-uniform, so it cannot go through `_write_scaled_instance`, which scales all three axes
+## together — a tether three metres long must not be three times as thick.
+static func _write_tether(
+	buffer: PackedFloat32Array, instance: int, where: Vector3, length: float
+) -> void:
+	var base: int = instance * FLOATS_PER_INSTANCE
+	buffer[base + 0] = 1.0
+	buffer[base + 1] = 0.0
+	buffer[base + 2] = 0.0
+	buffer[base + 3] = where.x
+	buffer[base + 4] = 0.0
+	buffer[base + 5] = length
+	buffer[base + 6] = 0.0
+	buffer[base + 7] = where.y
+	buffer[base + 8] = 0.0
+	buffer[base + 9] = 0.0
+	buffer[base + 10] = 1.0
+	buffer[base + 11] = where.z
+
+
+## Writes the lights that are lit on one link this frame, along its Belts in flow order.
+##
+## **Only the lit ones are drawn**, and the train starts at the producer and runs out past the
+## far end — which is the ore scanner's shape and for its reason: a full line of marks standing
+## on a Belt is scenery, where a thing that *sweeps* reads as a signal. The arithmetic is whole
+## integers over the tick, so nothing is timed by a clock and nothing is drawn at random.
+func _light_a_link(
+	sim: Simulation,
+	into: PackedFloat32Array,
+	link: PackedInt64Array,
+	elapsed: int,
+	tile_size: float
+) -> void:
+	@warning_ignore("integer_division")
+	var head: int = elapsed / LINE_WORKS_PULSE_TICKS_PER_TILE
+	var along: int = 0
+	for belt: int in link:
+		var yaw: float = _yaw_for_direction(sim.query_belt_direction(belt))
+		for step: int in range(sim.query_belt_length_tiles(belt)):
+			var behind: int = head - along
+			along += 1
+			if behind < 0 or behind % LINE_WORKS_PULSE_GAP_TILES != 0:
+				continue
+			_mark_at(
+				sim,
+				into,
+				sim.query_belt_tile(belt, step),
+				Fixed.to_float(sim.query_belt_deck_height_metres())
+					+ LINE_WORKS_PULSE_LIFT_METRES,
+				yaw
+			)
+
+
+## How many lights are running down lines that have just started working. For the smoke test.
+func line_works_pulse_count() -> int:
+	@warning_ignore("integer_division")
+	return _line_works_pulse_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where one of them is, so a test can check the train is driven by the tick and nothing else.
+func line_works_pulse_position(which: int) -> Vector3:
+	return _instance_position(_line_works_pulse_transforms, which)
+
+
+## How many Machines wear the chain tag. For the smoke test, and the number the HUD reports.
+func line_works_tag_count() -> int:
+	@warning_ignore("integer_division")
+	return _line_works_tag_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where one of those tags is drawn, so a test can check it hangs off its own Machine's roof.
+func line_works_tag_position(which: int) -> Vector3:
+	return _instance_position(_line_works_tag_transforms, which)
+
+
+## How many tags are joined to the body they are about. One per tag, asserted as a count
+## rather than as a position, so a tag that ever gets drawn without one fails rather than
+## floats — the arrangement #66 gave the starved tag.
+func line_works_tether_count() -> int:
+	@warning_ignore("integer_division")
+	return _line_works_tether_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## The middle of one of those tethers, so a test can check it spans the gap it is filling.
+func line_works_tether_position(which: int) -> Vector3:
+	return _instance_position(_line_works_tether_transforms, which)
+
+
+## How many lines are being acknowledged this frame. What the HUD line counts off the marks
+## rather than working out a second way, which is the arrangement every other count in the
+## brief panel has.
+func line_works_running_count() -> int:
+	return _line_works_running
+
+
 ## Writes one tag over a Machine's own roof, at `SPLIT_MARK_LIFT_METRES`.
 ##
 ## The position comes from `_machine_centre`, which is what `_sync_machines` seats the body
@@ -5713,12 +7050,25 @@ func _machine_roof(sim: Simulation, index: int) -> float:
 	var mesh: Mesh = _machine_meshes[index].mesh
 	if mesh == null:
 		return housing
+	# **Cached by Machine id, which is what both halves of the answer are a property of** —
+	# the housing comes out of that Machine's row and the body out of the one `.glb` every
+	# Machine of that id shares, so two Smelters cannot have different roofs. It is a cache
+	# rather than a tidy-up: `Mesh.get_aabb()` walks the merged body, and #68 draws a mark
+	# over **every** Machine of a working chain every frame where #48 and #50 only ever drew
+	# one over a Machine serving a split. Measured on the 33-Machine Factory
+	# `tools/visual/frame_cost.sh` builds, asking per Machine per frame cost 2.2 ms of a
+	# 16.67 ms frame and this takes nearly all of it back.
+	var id: String = sim.query_machine_id(index)
+	if _machine_roofs.has(id):
+		return _machine_roofs[id]
 	# A body is modelled about the centre of its footprint with its feet on the ground, so its
 	# own AABB already runs from zero to its full height. A placeholder box is modelled about
 	# its centre and lifted, which is why that case falls back to the declared figure.
-	if not machine_body_path(index).begins_with("res://"):
-		return housing
-	return maxf(housing, mesh.get_aabb().end.y)
+	var roof: float = housing
+	if machine_body_path(index).begins_with("res://"):
+		roof = maxf(housing, mesh.get_aabb().end.y)
+	_machine_roofs[id] = roof
+	return roof
 
 
 ## How high the top of the body drawn for a Machine is, in metres. For the smoke test, which

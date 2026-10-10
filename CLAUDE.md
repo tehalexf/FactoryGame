@@ -13,6 +13,7 @@ tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion
 python3 tools/assets/asset_staleness.py  # is any generated asset older than its recipe?
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/generate_build_gun.sh # regenerate the Build Gun viewmodel. Committed, unlike the weapons
+python3 tools/assets/enemy_grade.py  # regrade the Enemy atlas into the palette. Committed, like the meshes
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
@@ -37,6 +38,12 @@ SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare
                                  # the marks a starved Machine wears, over bodies of three heights (+ bare)
 SHOT_SCRIPT=tools/visual/compose_dock_shot.gd tools/visual/shot.sh out.png bare
                                  # two Belts that will not dock, for the two different reasons (+ bare)
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "eye bare"
+                                 # a line that has just started working (eye|survey; + before, + bare)
+SHOT_SCRIPT=tools/visual/compose_gunfire_shot.gd tools/visual/shot.sh out.png "turret bare"
+                                 # a round actually being fired (turret|hit; + hud, + bare, + plain).
+                                 # `hit` is through the player's own camera; `plain` hides the
+                                 # purchased arms, which a committed image must do
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -475,6 +482,12 @@ hoped for in an asset.
 Wave spread down a lane rather than posed. The gait difference is deliberate — the Crawler
 runs where the Breaker walks — and no render has an opinion about it.
 
+**What #38 and #49 both left alone was the *surface*, and #75 is that.** Both tickets are
+about shape — the animation, then the per-kind size that makes two kinds readable — and the
+thing a Crawler is actually painted with stayed a flat per-kind multiply over the pack's own
+bone-white atlas for the whole of both. See "What an Enemy is made of, and why the tint was
+never going to do it", below.
+
 Full pipeline, the casting table, why `UAL1.glb` is still unused and what three renders
 caught are in [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 11. The before and
 after are `docs/images/enemies_{pair,wave,boss,triage}_{before,after}.png`, rebuilt with
@@ -494,6 +507,216 @@ same scenario with and without the renderer half: `WorldView.sync` goes from 3.1
 16.67 ms frame**, plus 1.4 M primitives and 17 MB of video memory. That is the CPU rebuild only — the skinning is
 in a vertex shader and Xvfb is llvmpipe, so **the GPU half of this is unmeasured here** and
 wants a machine with a real card.
+
+### What an Enemy is made of, and why the tint was never going to do it
+
+**#75, and it is the user looking at what #38 and #49 left: *"the enemies look like shit
+honestly"*.** They were right, and the file already carried the diagnosis without having
+acted on it — `WorldView._skinned_mesh`'s own comment said *clean fantasy skeletons in a
+world of grimy cast iron* and then named **one dark tint per kind** as the answer to that.
+It is `prop_grade.py`'s first attempt arriving a second time, and it fails the same way for
+a reason that is arithmetic rather than taste.
+
+**A multiply cannot change a ratio.** Measured off the committed atlas by sampling
+`Skeleton_Minion`'s own UVs — which is the only honest way to ask what a Crawler is actually
+wearing, because the pack embeds one shared swatch sheet and a limb samples one cell of it:
+
+| what | cell | linear albedo |
+|---|---|---|
+| skull, limbs | (174, 200, 212), a cold blue-white | **0.551** |
+| ribs, pelvis | (161, 95, 72), a warm red-brown | 0.162 |
+| boots | (83, 71, 65) | **0.067** |
+
+Eight to one between the skull and the boot, and one tint scales both by the same number.
+So whatever the tint is, a Crawler is a bright skull with a dark smudge under it; turning it
+down only moves the whole thing toward black, which is exactly what shipped. **Measured off
+the `swarm bare` render that opened the ticket — over the Enemy pixels themselves rather
+than a window, because a box drawn round a Crawler is mostly ground — the median came to a
+linear luminance of 0.009 against a ground at 0.046**, a fifth of the thing it is standing
+on, which is not a dark Enemy, it is a hole in the floor. And the hue was wrong in a direction no
+multiply reaches: bone is a cold blue at about 200 degrees and **there is no blue anywhere in
+this palette**.
+
+Three things replaced it and none of them is a tint.
+
+- **A graded atlas, committed.** `tools/assets/enemy_grade.py` is `prop_grade.grade_colour`'s
+  rule — family by hue and saturation, pulled toward that family's palette material, luminance
+  through a `ceiling * L / (L + knee)` shoulder — with this atlas's arcs and a shoulder tuned
+  for this subject. Bone, steel and the pack's purples and turquoises become iron, because the
+  palette has no cold hue to send them to; the red-browns stay oxide, because it has one. The
+  shoulder is what closes the ratio: **8.2:1 becomes 3.6:1**, enough that a skull still reads
+  as the brightest part of a Crawler and not enough that it reads as a separate object.
+- **Metal.** `_sync_scenery` takes ambient and reflections off the sky *because* the generated
+  surfaces are mostly metal and a metal lit by an ambient colour has nothing to reflect — and
+  until #75 an Enemy was the one thing in the world that was not one. A Crawler was 0.05
+  metallic at 0.88 roughness, so a Wave arriving out of the sun had only the sky's flat
+  ambient on its front, which is most of why it rendered as a silhouette. All three kinds are
+  metal at the palette's own roughness now: `CastIron`'s 0.62 for the Crawler and the boss,
+  `WeldedSteel`'s 0.45 for the Breaker.
+- **Grime and relief the atlas cannot carry**, derived in `game/enemy_skin.gdshader` from the
+  **rest pose**. The props had this for free and these characters do not: heyheythere bakes
+  ambient occlusion into `COLOR_0`, so `prop_grade.deepen_grime` had per-prop geometric
+  information about where dirt collects, where KayKit's six characters carry **no `COLOR_0` at
+  all** — measured, their primitives are `JOINTS_0, NORMAL, POSITION, TEXCOORD_0, WEIGHTS_0`
+  and nothing else. So it is #42's answer to the same complaint about the yard, which had the
+  same premise: an albedo-only source with no normal map to load and no relief, lit by a
+  23-degree sun that finds nothing.
+
+**The per-kind tint survives and its job changed, which is the part worth knowing.** It no
+longer carries the *level* — the grade does — so it is near white and carries only a cast:
+warm for the Crawler, cold for the Breaker, neutral for the boss. That is a readability cue
+the Wave did not have, because before this everything was uniformly dark and **size was
+carrying the entire distinction** (#49). It is still a multiply and it still cannot change a
+ratio, which is precisely why it is no longer asked to.
+
+#### Five things about the shader, three of them carried over from the ground
+
+- **It is sampled in the rest pose, not in world space.** The yard's noise is a function of
+  where you are standing because the yard does not move; an Enemy does, and a world-space read
+  makes the grime swim over a walking Crawler like a projector. The rest position is the one
+  coordinate fixed to the body and it costs one varying — it is the pre-skin `VERTEX`, which
+  this shader already has in hand. It is in the normalised units `EnemyBodies` bakes a body
+  into, so `grime_metres` is a *fraction of a body* and the same number gives a 3.2 m Siege
+  Hulk coarser pitting than a 1.6 m Crawler in absolute terms, which is the right way round.
+- **What is visible is the slope, not the height**, and the first render proved it the other
+  way about. #42 found that a physically reasoned two centimetres over a metre is a one-degree
+  tilt the sun cannot find; here the first numbers were far too *large* and produced a swarm of
+  chrome camouflage blobs. Both are the same lesson — the knob is `relief` over `grime_metres`
+  — and the useful half of the failure is that it settled the plumbing in one glance, which is
+  the question #42 needed two diagnostic renders to answer. `relief` is written as a fraction
+  of the Enemy's own height for `bump_height_metres`' reason, so 0.012 on a 1.6 m Crawler is
+  two centimetres of pitting over three-centimetre features.
+- **The gradient is not normalised, and that is what the chrome render was really about.**
+  Normalising it turns the knob into "how far to rotate toward the gradient", which tilts
+  every fragment by the same amount whatever the field is doing — so a flat patch of the field
+  stops being a flat patch of the body. Unnormalised it is an ordinary height-field normal and
+  a smooth region stays smooth, which is most of the difference between a casting and a
+  camouflage pattern.
+- **The relief fades out with distance**, over 14 to 34 m, for `ground.gdshader`'s two reasons:
+  a procedural field has no mip chain, so past the range where one feature is under a pixel it
+  stops being relief and becomes noise; and a Crawler at forty metres is a silhouette with a
+  highlight on it, which is what a player is reading at that range anyway.
+- **The roughness is spread either side of the material's own figure by the same field.** A
+  surface whose roughness is one number is a surface with one highlight on it, and dirt in a
+  crease is matte where a worn edge is polished. That difference is most of what says "metal
+  that has been outside" rather than "grey plastic", and it costs nothing — the field is
+  already sampled for the albedo.
+
+The old note saying the Crawler was pushed to 0.88 roughness because the skulls "caught a hard
+specular off a low sun and read as glazed pottery" is **corrected rather than deleted**, and
+the correction generalises. That was a true observation about a *dielectric* at 0.17 albedo: a
+rough-plastic highlight on a near-black body is a bright smear with nothing under it. At
+metallic 1 the same highlight **is** the surface, because a metal's reflection is coloured by
+its own albedo rather than sitting white on top of it — so the fix was the material model and
+not the number, and 0.88 on a metal is a grey felt Crawler.
+
+#### What the measurement says, and what the gate says
+
+Masked to the pixels the change actually moved — which is the right denominator, because a
+window over an Enemy is mostly ground — before against after on the same `swarm bare` frame:
+
+| | median | mean | p90 |
+|---|---|---|---|
+| before | 0.0092 | 0.051 | 0.185 |
+| **after** | **0.0212** | **0.108** | **0.382** |
+| the ground it stands on | 0.0458 | — | — |
+
+So the median Enemy pixel went from a fifth of the ground to about half of it, and the mean
+from just over the ground to two and a half times it — the second figure being the highlights
+that only exist because the surface is metal now.
+
+**`test_enemy_silhouette` is unmoved at 0.58, 0.83 and 0.67**, re-measured rather than
+assumed, and that is the expected answer rather than a lucky one: #75 changed no geometry at
+all, and the gate rasterises a posed, scaled outline. The binding pair is still the Breaker
+against the boss.
+
+**No balance number moved, and none could have.** The capsule a round is resolved against is
+`enemy.*_hit_height_metres` and `*_hit_radius_metres`, which this ticket did not touch — and
+since #49 those are also what the drawn body is *scaled* by, so a surface change cannot reach
+them in either direction.
+
+#### What the pictures settle and what they do not
+
+[`docs/images/enemies_surface_before.png`](docs/images/enemies_surface_before.png) against
+[`_after`](docs/images/enemies_surface_after.png) is the frame the complaint was made about,
+and the triage pair beside it is the same claim at thirty metres:
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "swarm bare"
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "triage bare"
+```
+
+Before: pale skulls floating over bodies with nothing in them, every kind the same value, and
+the brightest thing on a Crawler being the one part that should read last. After: pitted dark
+iron, oxide-red ribcages, a rim off the low sun, and a Breaker that is cold where a Crawler is
+warm. At thirty metres the gain is narrower and real — the Crawler's oxide torso against its
+iron limbs is a second cue beside height, where before the two kinds were one value in two
+sizes.
+
+**What is left for a ticket about damage, which is the question this one was asked and
+should answer rather than leave to be rediscovered.** Nothing here spent the channel such a
+ticket needs. `INSTANCE_CUSTOM` is four floats: `.x` is the animation row and `.y` is the
+health fraction `wound_darkening` already reads — so a Crawler a Turret has been working on
+is *already* drawn darker — and **`.z` and `.w` are written as zero by
+`_write_skinned_instance` and read by nothing.** The stride is sixteen whatever is in them,
+so two channels are paid for and free. Three things follow:
+
+- **Prefer a free channel to `use_colors`.** Turning that on widens the stride to twenty and
+  with it the writer, `_stride_for` and every accessor that divides by one. Per-instance
+  colour buys nothing a channel cannot, because the shader is this project's own.
+- **A mark that has to be in a *place* needs a per-instance seed, and that is what `.z` is
+  for.** The grime field is a function of the rest pose alone, so it is identical on every
+  Enemy of a kind — which is right for wear and wrong for a wound. `grime_at(rest +
+  vec3(seed))` offsets the field per Enemy for one float.
+- **A death is the one thing the custom data cannot carry, and the reason is the
+  Simulation.** `_remove_enemy` closes the gap the tick a Crawler dies, so there is no
+  instance left to blend out — the fact that it died is a *change* rather than a condition,
+  which is `game/audio_director.gd`'s whole shape and the thing `game/combat_events.gd` is
+  being built for in #69. A death wants that diff, not a channel.
+
+**Three more things are recorded rather than fixed, and the first is the honest limit of this
+ticket.**
+
+- **The proportions are still a cartoon's.** A Crawler's skull is a third of its height and
+  nothing here changed that, because it is geometry and geometry is what
+  `test_enemy_silhouette` measures: the three pairs are at 0.58, 0.83 and 0.67 against a 0.50
+  floor, so reshaping a body is a decision that has to be re-measured rather than made in
+  passing. The ticket's own alternative — build an Enemy out of `machine_parts` and
+  `dieselpunk_palette.json`, which is #64's answer for the Build Gun — remains open and is the
+  obvious next step if the surface is not enough. It was not taken here because it is a
+  different and much larger ticket: it throws away six committed CC0 characters, the shared rig
+  that makes a clip authored for the Minion play on the Golem, and the whole of #38's bake,
+  and it would have to re-derive the silhouette numbers from scratch rather than leave them
+  untouched.
+- **The GPU cost is unmeasured, exactly as #38's was.** The shader now evaluates the grime
+  field four times a fragment — the value and one forward difference an axis, which is
+  `ground.gdshader`'s own arrangement — and `tools/visual/frame_cost.sh` measures
+  `WorldView.sync`, which is the CPU rebuild. Xvfb is llvmpipe, so the half of this that
+  matters wants a machine with a real card. The levers if it ever bites are `relief_fade_end`
+  and dropping the second octave.
+- **A Breaker at close range reads as blued gun-steel, and that may be a degree too
+  polished.** `WeldedSteel`'s own roughness is 0.45 and on a *full* metal under a bright
+  ochre sky that picks up a lot of sky — so at the `pair` preset's six to twelve metres the
+  armoured kind has a distinctly cold sheen where a Crawler has none. It is in the palette by
+  construction and it is the clearest thing separating the two kinds at range, which is why
+  it was left; whether it reads as armour or as chrome is a judgement for somebody with a
+  mouse, and the lever is `_enemy_roughness` rather than the tint.
+- **Only atlas A is graded, and atlas B is deliberately left alone.** All six committed
+  characters reference A — checked, not assumed; the six copies beside the `.glb`s are
+  byte-identical to the intake file. A graded copy of a map nothing samples is
+  `prop_grade.py`'s own opening defect in the other direction.
+
+**And the one trap worth naming, because it nearly swallowed this ticket.** The six
+`Skeleton_*_skeleton_texture_A.png` files sitting beside the characters are **read by
+nothing**: `gltf_info` reports `images: [None]`, which means the pack's converted `.glb`
+carries its image **inside its own buffer**. Grading those six files would have changed
+nothing on screen — which is literally `prop_grade.py`'s opening paragraph, *"it did nothing
+at all for the props a player actually stands among"*, arriving again in a different costume.
+So the graded atlas is **loaded by `_skinned_mesh` and put on the material**, the artist's own
+material is no longer read at all, and
+`test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own` asserts from the
+renderer's side that the graded file is what reaches the shader. A grade is invisible from the
+grading side of that seam.
 
 The lighting is the other half of the art pipeline. The generated surfaces are physically
 based and mostly metal, and a metal lit by an ambient *colour* has nothing to reflect, so
@@ -1441,6 +1664,153 @@ arrays, never as an object per Item.
 - **A Belt is not a Machine.** No row in `content/machines.csv`, no Recipe, no `role`.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
+
+### What is on the Belt, and that it is running
+
+#73, and the complaint is this file's own standard turned on the one system it had never been
+applied to. A Machine's **silhouette is a gameplay requirement, not polish** — the core skill in
+a factory game is reading your own production line at a glance, and `machine_silhouette.py`
+fails the asset suite if any two Machines converge. The **Items are the content of that line**,
+and `_sync_items` drew every one of them as the same `BoxMesh` painted
+`Color(0.62, 0.36, 0.20)` through one `material_override`: iron ore, coal, plate and Ammunition
+were one picture, so a player looking at two Belts could not tell which carried the Boiler's
+fuel and which the Press's plate. And the deck never moved, so the only motion on a working
+line was its cargo sliding along a surface that was scenery.
+
+**`game/item_appearance.gd` decides what an Item looks like, and it is not an Item table.** That
+is the whole design problem: the set of Items is exactly what `content/recipes.csv` mentions,
+interned in sorted order, and nothing in `sim/` names one — so a list of ids with colours
+against them would be the second content table the project refuses. What is derived instead is
+an Item's **standing**: what the Factory *does* with it.
+
+- **fired** — a weapon frame names it in `ammunition_item`. Brass-cased rounds.
+- **burned** — some `role=generator` Machine's Recipe eats it. A generator is a crafter that
+  makes nothing, so "a Boiler eats it" is the whole definition of fuel and it needs no column.
+- **dug** — every Recipe that yields it yields it out of nothing, because a Miner's input is the
+  ground under it. That *absence* is the definition; nothing reads the word "ore".
+- **made** — anything else.
+
+Four facts about the Recipes, the Machine roles and the Gear table, and
+`test_asking_what_an_item_looks_like_names_no_item_id` asserts the absence of an id in that file
+the way build mode's criterion is written as the absence of code. Add an Item to the Recipes and
+it is drawn correctly with no edit here and none in `world_view.gd`. It lives in `game/` for the
+reason `BuildChain` and `Objective` do, and asking any of it leaves the state hash alone.
+
+**The shipped four land one in each form**, which is what makes a Belt readable rather than
+merely painted, and `test_the_shipped_items_land_one_in_each_form` is that claim — a derivation
+that collapsed any pair would pass every other test in the file and fail that one. The
+precedence is load-bearing in both directions and each arm has its own test, because the shipped
+content exercises one of them *silently*: coal is both dug and burned, so one answer is right
+for two reasons, and the test that isolates it points the Boiler at iron ore instead.
+
+**A form wears one of the palette's own committed materials** — `DullBrass`, `Soot`, `OxideRed`,
+`WeldedSteel`, through the `assets/machines/materials/*.tres` the Walls and every Machine body
+already draw. Per-instance colour was the ticket's stated minimum and a material is strictly
+better: an instance colour multiplies **albedo** and says nothing else, and these surfaces are
+physically based and mostly metal — the lighting takes ambient and reflections off the sky
+precisely because a metal lit by an ambient colour renders as a dark smear whatever its albedo
+says. Brass has to be metallic and smooth and soot has to be matte and black, and only
+`metallic` and `roughness` can say so.
+
+**One MultiMesh a form, built eagerly on the first sync**, so the scene tree does not grow by a
+node for any amount of cargo — and that is the reason the look is keyed on a *form* rather than
+on an Item. The form set is **closed**, so this is `EnemyKind.KIND_NAMES`' bargain exactly:
+`test_cargo_is_never_a_node_however_much_of_it_there_is` asserts **zero** growth rather than "no
+more than one per form". A MultiMesh per Item **id** would have grown the scene tree with
+`content/recipes.csv`, which is the one thing the absence of an Item table exists to prevent.
+What it costs is four buffers and four draw calls where there was one. `_item_transforms` stays
+the flat array in the Simulation's own order, because that is what `item_instance_position` has
+always meant and what a MultiMesh buffer cannot be read back out of — the arrangement
+`_belt_transforms` already has.
+
+**The deck runs on `game/belt_deck.gdshader`, and its speed is the Belt's own.** Cleats advance
+**one Item slot every `ticks_per_item` ticks**, both read off the queries, so the surface moves
+at exactly the speed of the cargo on it for any rating — 0.5 m every 15 ticks on the shipped
+numbers, which is the Belt's 2 m/s — with no second number anywhere to disagree with
+`belt.items_per_second` and `belt.items_per_tile`. Counted in **ticks**, which is the hard rule
+the ore scanner's sweep and `WeaponViewmodel`'s clip time already obey, and
+`test_the_deck_scrolls_and_nothing_about_it_is_timed_by_a_clock` asserts it from both sides: a
+frame that stepped nothing draws the same deck, and one whole period on it is back.
+
+Three things about the shader worth knowing rather than rediscovering:
+
+- **The cleats are read in object space.** Every Belt body is modelled running along its own +Z
+  and placed by a yaw, so `VERTEX` is distance along the run whichever way the line points. A
+  world-space read would have made a north-south line and an east-west line scroll in unrelated
+  directions, and a UV read would have depended on an unwrap the mesh generator may change.
+  **Every tile is the same mesh instanced, so that coordinate restarts at every tile boundary**
+  — which means the pattern is continuous along a run only because the pitch divides the tile
+  exactly. It does by construction rather than by luck, since the pitch is `tile_size /
+  items_per_tile`; a pitch picked by eye would have put a visible seam at every tile join. That
+  is the second reason to derive it from the Belt's rating, beside matching the cargo's speed.
+- **It is a shader and not geometry**, because a Belt tile is one instance in one MultiMesh
+  shared by every Belt on the Map. Moving slats would be moving slats per tile, which is the one
+  thing this system's data layout exists to avoid.
+- **The deck surface is found by material name**, `BeltRubber`, which is what
+  `machine_recipes.py` calls the running surface — so "the deck" is a surface this can ask for
+  rather than an index to guess at, and the `BeltRubber` material's own albedo, texture, scale,
+  metallic and roughness are carried *into* the shader rather than painted over. Asserted rather
+  than assumed, because #49 is what an unchecked claim about a named surface costs: a branch
+  written against geometry nobody had looked at sat in these notes as a fact for a whole ticket.
+  `test_the_deck_that_scrolls_is_the_belts_own_rubber_and_not_its_frame` checks that the surface
+  resolves and that **exactly one** scrolls — the rubber, not the frame, the legs or the stripes.
+
+#### What the renders found, and the two plans they killed
+
+The pair is [`docs/images/belt_cargo_survey_before.png`](docs/images/belt_cargo_survey_before.png)
+against [`_after`](docs/images/belt_cargo_survey_after.png), and
+[`belt_cargo_eye_before.png`](docs/images/belt_cargo_eye_before.png) against
+[`_after`](docs/images/belt_cargo_eye_after.png), rebuilt with
+
+```bash
+tools/visual/shot.sh out.png survey
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "running bare"
+```
+
+**The first plan was to sample the Item's own committed icon, and measuring it is what killed
+it.** It is the elegant answer and the one the ticket points at — #59 committed a picture of
+every Item and `WorldView.icon_path_for_item` is the one authority on whether it resolves, so
+the cargo and the hotbar cell would have been the *same art* and could never disagree. Measured,
+the mean of the opaque pixels is **(81, 69, 70) for iron ore, (59, 59, 61) for coal, (76, 76, 78)
+for plate and (89, 90, 93) for Ammunition** — four near-identical greys, because the icons are
+monochrome industrial art. Ore against plate is eight parts in 255 summed over three channels.
+**The art cannot carry the signal**, and amplifying chroma from a near-neutral sample amplifies
+noise rather than hue. That is the third time this project has been wrong about a colour it had
+not measured, and the first time the measurement arrived before the render rather than after.
+
+**The second was the geometry, and the render caught it.** The first pass spanned about 0.7 of
+`ITEM_SIZE_METRES` against the solid box it replaced, which is half the screen area: from Survey
+View the colour was right and the cargo had got *quieter*, which is the opposite of the ticket.
+Worse, the forms straddled their own origin, so a stacked slab floated 9 cm over the surface a
+player walks on — exactly the "an Item riding above the deck reads as a bug" #30 warns about.
+Every form now **fills its envelope and stands on its own zero**, so it is *placed and never
+measured*, the rule every Machine body already obeys, and the test asserts the drawn origin is
+the deck to the centimetre rather than inside a band.
+
+Two things the pictures settle, and one they do not:
+
+- **From Survey View both halves land.** The deck reads as a cleated conveyor rather than a
+  plank, and the ore is unmistakable rust-red rubble where it used to be an orange box in very
+  nearly the port arrows' own colour — which is the same ambiguity #56 recorded for its red
+  posts, freight and marks sharing a palette.
+- **The cleats read brighter than their albedo, and that is the lighting working.** `WeldedSteel`
+  is 0.14 against `BeltRubber`'s 0.3, so on paper the cleats are the *darker* material; they
+  render as the lighter bands because they are `metallic = 1` at roughness 0.38 under a sky this
+  project deliberately takes its ambient and reflections from. A cleat picked on albedo alone
+  would have been picked on the wrong number.
+- **At eye level the deck is not the read, and the cargo is.** Standing beside a line at the
+  distance `running` frames, a Belt is seen edge-on: what fills the frame is its side trestle and
+  the wall of port arrows above it, and the deck is a few pixels of grazing surface. The colour
+  change carries that view on its own and the scroll does not reach it. That is honest rather
+  than a defect to fix — a player walking their own line looks down at it — but it does mean
+  **the scrolling deck is a Survey View and close-quarters read**, and nothing has watched a
+  person decide whether it reads as motion rather than as a texture.
+
+**What no still can settle** is the one thing the second half of this ticket is for: whether a
+deck that scrolls reads as a machine doing work. A strip, one frame per tick, would show the
+cleats advancing; it would not show whether the speed feels like the Belt's. The levers are
+`cleat_width` and the cleat material, and both are in the shader rather than in tuning, because
+the Simulation does not read either.
 
 ### Why a Belt will not dock, and the two answers
 
@@ -2521,6 +2891,202 @@ Two things a later ticket should know:
   table" below for the figures. The consequence for `fortified`'s second MG at (11, 6) is that
   it is no longer what answers the Breaker tier, and the two rows have converged.
 
+## A shot you can see, and the one fact a query cannot report
+
+#69, and the absence had been in plain sight since #10: grep `_sync_` in
+`game/world_view.gd` and there were twenty-six of them, **not one of which drew a shot.** No
+muzzle flash, no round in flight, no burst where it landed, nothing on the crosshair when it
+connected. `query_turret_last_shot_tick` had existed since #10 and **nothing read it**, so a
+Turret killing Crawlers four rounds a second was, on screen, a static box standing beside
+Enemies that stopped existing — the one mechanic DESIGN.md's whole thesis rests on, and a
+player could not watch it work.
+
+That absence is also why the Ammunition gauge had to be invented. #10's own note says it: mid-
+Wave a player is reading the whole Factory from thirty metres and needs to know which Turret is
+about to stop. A gauge is a good answer to *which Turret is dry* and a poor substitute for
+seeing the gun fire.
+
+### A tick number is already an event, which is why most of this needs no memory at all
+
+The line this ticket draws, and the reason most of it is free: **`query_turret_last_shot_tick`
+reports *when* a Turret last fired rather than *that* it is firing.** A change already stated as
+a number is not a condition anything has to diff — so "did this gun just go off" is a
+subtraction against `query_tick`, and the muzzle flash needs nothing remembered between frames.
+`query_player_last_shot_tick` is the same shape on the player's side.
+
+Exactly one fact in a fight is not available that way, and it is the one the ticket is about.
+**Where a round went and what it struck is known inside `_fight` and `_fire` and told to
+nobody**: `query_enemy_health` reports what an Enemy's health *is*, and a round landing is a
+change in it. A kill is worse than inaccessible — `_fire` removes an Enemy it reduced to nothing
+in the same tick *and clears that serial off every Turret holding it* — so by the time anything
+outside the façade can look there is no serial to resolve, no position to read and no health to
+compare against.
+
+**So `game/combat_events.gd` diffs, and the Simulation was not changed to tell it.** The honest
+alternative is `_resolve_a_hit` recording what it did, and it was refused on the grounds #54
+refused recording what killed a player: new hashed, saved, replayed state, in the Simulation,
+bought for a mark on the screen. Nothing about the Run would change and `hash()` would.
+
+It is also unnecessary, because the evidence is complete and **the precedent is literal rather
+than analogous**: `game/audio_director.gd` has read exactly this since #21. It snapshots
+`[health, attacking, position]` per Enemy serial, plays a death cue off a serial that has gone,
+and already attributes a hit to a melee swing inside `MELEE_WINDOW_TICKS`. This file is that
+design pointed at the picture instead of the sound, and the snapshot it holds is the same
+category of thing — a reading on its way through, like `TickPump`'s leftover frame time, never a
+fact about the world. `test_combat_events` asserts the consequence directly: four hundred ticks
+with and without something watching leave the same state hash.
+
+Four decisions in it worth knowing rather than rediscovering:
+
+- **Attribution is evidence, not a guess, and the order is the design.** A Turret's claim on a
+  hit is the serial it was aiming at **this frame or last** — last frame's answer is consulted
+  because a killing shot clears its own target, which is the only reason `_turret_targets` is
+  held at all. A player's trigger says only that a round left the barrel, since no query reports
+  where it went, so the player takes the hits nothing else accounts for. A tick on which both
+  fired therefore gives the hit to the Turret that was pointing at it.
+- **A swing is a hit with nobody behind it.** A wrench, an Artillery Barrage and a Breaker's own
+  bite all reduce health and none of them has a trajectory, so they are reported as
+  `From.NOBODY` rather than forced into a third kind of shooter — and nothing draws a line of
+  flight for one.
+- **An attributed event carries its own shot's firing tick**, read back out of
+  `query_turret_last_shot_tick` or `query_player_last_shot_tick`, so a mark's age is a Simulation
+  quantity and not a reading of when a frame happened to look. An unattributed one is stamped
+  with the last tick the Simulation executed, which is the renderer's own best reading and is
+  exact whenever a frame stepped one tick. **Nothing `WorldView` draws is unattributed**, so the
+  inexact case is unreachable from anything on screen; it is reported anyway because #70's
+  subject is an Enemy's own body rather than who shot it.
+- **The first observation of a Run reports nothing.** A Simulation resumed from a save has a
+  Wave on the Map already, and diffing against an empty snapshot would read as every Enemy alive
+  having just been hit. The consequence worth knowing is that a `WorldView` attached mid-Run
+  draws no tracer for the round that was in flight when it attached.
+
+### Three marks, one MultiMesh, and every duration a count of ticks
+
+ADR 0001's case is exactly this one — fifty Turrets at four rounds a second plus a swarm of
+bursts — so **no effect gets a node.** A flash and a burst are the unit box scaled evenly and a
+tracer is the same box stretched along its own flight, which is what lets all three share one
+buffer, one unshaded material and per-instance colour: the arrangement `_sync_ore_scanner`
+already uses. `test_a_shot_is_never_a_node` asserts the scene tree does not grow by one over six
+hundred ticks of firing.
+
+- **The flash is at the muzzle of the body a player can see**, `_machine_roof` times a fraction,
+  offset clear of the Machine's own footprint towards what is being shot at — #41's rule, and
+  both of those numbers were settled by a render rather than reasoned (below). A Turret with
+  nothing in its sights flashes over its own middle, which is the right answer for the one tick
+  a target dies on.
+- **`_mend` stamps the very same field `_fire` does**, so a Repair Pylon pulsing a plate would
+  otherwise flash as though it were shooting; Pylons are excluded by name. The test that pins
+  that puts a Breaker on the Map on purpose, because a Pylon with nothing to mend stamps nothing
+  and the assertion would be the kind #50 warns about — a cross-check whose only exercised case
+  is one where the rule is trivially true.
+- **-1 is "has never fired" and needs a clause of its own**, or a Turret on tick 2 of a Run
+  flashes for having been built.
+- **`step` increments `_tick` last**, so the tick a shot was fired on is always one behind the
+  tick anything outside the façade can ask about. **The freshest shot a renderer can observe is
+  one tick old**, which is worth knowing before writing a test that waits for
+  `last_shot_tick == tick` — one did, and it waited 1800 ticks through a Crawler being killed.
+- **A missed round draws nothing out in the world, and that is deliberate rather than
+  unfinished.** `_shoot` scatters the aim by an RNG draw before it resolves anything, so the
+  direction a round actually took is not a quantity anything outside the façade holds — and a
+  confident line down the player's *nominal* aim would be #35's green hologram over a click that
+  did nothing, in a different costume. The lever, if misses ever want tracers, is the Simulation
+  recording the scattered aim, and that is new hashed state and its own ticket.
+- **The crosshair marks the player's own hit and nobody else's.** The events list carries a
+  Turret's hits through the same channel, and a mark keyed on "something was hit" would
+  congratulate a player for standing still beside a working Turret — a mark that says something
+  false about their aim, which is worse than no mark.
+
+**`query_player_eye_height_metres` is the only thing added behind the façade, and it carries no
+state.** It is a projection over an expression that already existed inside `_shot_target`, and it
+exists for the reason `query_player_facing` does (#52): the alternative is `game/` holding a
+second copy of where a shot leaves from, free to disagree about the jump or about Survey View —
+in the one place a player would read the disagreement as the gun being broken. `_eye_height` is
+now the single definition and `query_player_camera_height_metres` reads it too.
+
+### What the renders found, which is all of the geometry
+
+The pairs are [`docs/images/gunfire_turret_before.png`](docs/images/gunfire_turret_before.png)
+against [`_after`](docs/images/gunfire_turret_after.png) — the documented `competent` Factory at
+**thirty metres**, on the tick its Turret fires — and
+[`gunfire_hit_before.png`](docs/images/gunfire_hit_before.png) against
+[`_after`](docs/images/gunfire_hit_after.png), the player's own round reaching a Crawler through
+the player's own camera. Rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_gunfire_shot.gd tools/visual/shot.sh out.png "turret bare"
+SHOT_SCRIPT=tools/visual/compose_gunfire_shot.gd tools/visual/shot.sh out.png "hit bare plain"
+```
+
+**The before images are the same Run at the same tick** — the composer reports "the Turret fired
+on tick 2454" for both halves — which is what makes them an argument rather than two pictures: a
+gun is firing, a round is reaching a Crawler, and nothing whatsoever on screen says so.
+
+**`tools/visual/compose_gunfire_shot.gd` had to exist, and the reason is not the vantage.** A
+Turret fires only while it holds a round *and* has something in reach, so a shot is a two-tick
+window in a Run that has to have built a production chain first. Every other composer frames a
+Factory standing still; `compose_wave_shot.gd` builds a Turret and never feeds it, so **its
+Turret has never fired in any image this project has committed.** The loop is driven off the
+Simulation's own queries rather than off the view, because the `before` half runs this same
+composer against a `WorldView` that has none of #69's accessors — a loop that watched the drawing
+could not take the picture that proves the drawing was missing.
+
+Five findings, and every one of them is a number that was reasoned and wrong:
+
+1. **The muzzle flash was *inside* the Turret**, which is #41's rule arriving from the
+   horizontal direction. A constant 1.1 m reach from the footprint centre is well inside a 2x2
+   Turret, whose footprint is four metres across; the mark was drawn, was the right colour, was
+   at the right height and was invisible. `_muzzle_clearance` derives it from the footprint, for
+   `_machine_roof`'s reason — a constant is right for one Machine and buries the mark inside
+   every Machine bigger than that one.
+2. **And then it was *behind* it.** At two thirds of the roof, 35 cm of horizontal clearance is
+   not clear of a two-metre body seen from a camera forty degrees round from the line of fire.
+   On the **roofline** the cube straddles the edge: half stands above the silhouette from any
+   angle, and the half that overlaps the body is what gives the mark an owner, which is #52's
+   rule about a bright mark with nothing under it.
+3. **A seven-centimetre tracer is sub-pixel at thirty metres** — about two pixels of a
+   1600-wide frame, at half alpha, which rendered as nothing at all. Sixteen is a round a player
+   can see crossing a gap.
+4. **One width cannot serve both kinds of tracer, and this is the sharpest of the five.** A
+   Turret's round is seen from *outside* at tens of metres, where sixteen centimetres is a thin
+   bright line. A player's own is seen **down its own axis from arm's length**, where the same
+   rod is a slab a metre and a half across the middle of the frame, hiding the very thing it is
+   about. So a player's round is thinner, starts a few metres out, and is offset to the weapon's
+   own side — which is what makes it converge on the target from the lower right rather than
+   point at the viewer, and is also what a real tracer looks like, since nobody sees one leave a
+   barrel.
+5. **A 0.75 m burst read as a cream crate standing among the Crawlers**, which is #56's finding
+   about a red post that was the same size and nearly the same colour as the freight riding past
+   it, in a different colour. Half a metre and hotter reads as a flash on a body.
+
+A sixth is about the instrument rather than the marks, and it is #56's lesson again: **a camera
+placed by arithmetic without a clause about the Nest** stood behind the four-by-four ziggurat,
+which filled half the frame and left the Turret a hundred pixels wide on the far edge. A vantage
+derived from the Simulation's own answers still has to be derived from the right ones.
+
+And one the composer reported rather than drew: the first `turret` render printed **"the Turret
+was destroyed before it fired"**, because a Wave called before the chain had smelted its first
+plate ate the gun. Fed before hunted — which is also a fair statement of what a player who builds
+a gun before a feed gets.
+
+### What a still image cannot settle
+
+Whether a three-tick tracer reads as a round or as a flicker, whether a nine-tick burst reads as
+a hit or as a smudge, and whether a late Factory of several Turrets at four rounds a second is
+legible or a light show. `MUZZLE_FLASH_TICKS`, `TRACER_TICKS`, `IMPACT_TICKS`, the two tracer
+widths and the three colours are the levers, and every one of them is a constant in
+`game/world_view.gd` rather than tuning, because the Simulation reads none of them — a tuning key
+nothing in `sim/` reads is a key `Definitions` warns about, which is `BuildGun.REACH_METRES`' own
+precedent.
+
+### What #70 inherits
+
+`CombatEvents` is a general record of what happened to an Enemy and not a record of shots:
+`Kind.KILLED` carries the serial, the kind, the hit points of the blow that finished it and
+**where the body was last seen alive**, which is the one fact nothing else in the project can
+answer once `_remove_enemy` has closed the gap. It is reported whoever caused it, including for
+a death nothing can be attributed to, and `MEMORY_TICKS` is a second — long enough for any mark
+drawn off one. Nothing about it is tailored to a shot.
+
 ## Mortality: what can be taken from you
 
 The ticket that makes a Factory's layout a **defensive** decision rather than a logistics one.
@@ -3335,7 +3901,8 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   at every end that leads nowhere and an amber tag hangs over every Machine
   `query_machine_is_starved` calls starved. There is no stored connection to go stale, so
   demolishing the Smelter a Belt fed marks it on the next frame with no bookkeeping anywhere.
-  An arrow a tile says which way each Belt carries.
+  An arrow a tile says which way each Belt carries. **Every one of those marks is a complaint,
+  and #68 is the only one that is not** — see "Nothing said the line works", below.
 - **The Machine picker is a grid of cells** — see "The hotbar states the chain" below, which
   is #53 replacing the flat row #36 shipped. Each cell still carries the key, the cost,
   whether a Delivery has it locked, and #20's generated icons, which nothing had used before
@@ -3467,6 +4034,487 @@ exposure on a narrow-topped body**, and they are deliberately untouched here: th
 behaviour change to three shipped marks with assertions pinning them, which is exactly the
 standing #48 gave the starved tag before #50 picked it up, and it wants the same treatment in
 its own ticket.
+
+### Nothing said the line works, and #68 is the one mark that is good news
+
+Count what this game draws about a production line and every single item is a **complaint**: a
+red post where a Belt leads nowhere (#36), an amber tag over a starved Machine (#36), a post at
+a blocked branch (#48), a red post raised clear of the port arrows at a bad dock and two
+sentences saying which rotation would fix it (#56). A player who has just laid their first
+Miner-to-Smelter chain had to infer success from the **absence** of marks — and absence is
+exactly what this project has twice found a player cannot read: #52's ore was invisible because
+nothing marked it, and #41's gauge was unreadable because a mark with no owner says nothing.
+"No red posts" is not a signal; it is the lack of one.
+
+It is also the gap a live playtest walked into. The player built the opening line, the Smelter
+ran, and their words were *"the smelter works but idk what next"*. **#71 fixed the instruction
+that misled them** — see "The last step of the opening loop", below — and this is the half that
+would have told them, without words, that the thing they had just built was alive. The two are
+deliberately different registers: that one is a sentence telling a player what to do next, and
+this one is the world acknowledging that they did it.
+
+**It fires on a change and then stops, which is the whole of why it is not another hedge.** #66
+landed an hour before this for exactly that failure on the port arrows — a mark that is always
+on everything is wallpaper, and in that case it was hiding the Belts it was about. `LineWorks`
+answers a *condition*, and the thing worth drawing is the **moment** it becomes true, which is
+the distinction `game/audio_director.gd` has been built on since #21. So: when a chain first
+reads whole a train of lights runs down its Belts and a tag stands over each of its Machines,
+for `WorldView.LINE_WORKS_TICKS` — five seconds — and then the Factory goes back to being quiet.
+
+#### What a chain is, and what makes one whole
+
+`game/line_works.gd` is the whole of it, and it lives in `game/` for the reason `Objective` and
+`BuildChain` do: whether a Belt hands an Item over is a fact the Simulation owns, and "these four
+things are one line and it is running" is a sentence about those facts. The Simulation does not
+know the file exists and asking any of it leaves `hash()` where it was.
+
+A **chain** is a maximal group of Machines joined by Belt runs, plus the Nest if any run reaches
+it — so a Miner belting ore straight to the counter is a chain with one Machine in it, which is
+the opening Delivery and the first thing a Run is told to build. It is **whole** when:
+
+- it joins at least two ends, so a Machine with no line is not a line;
+- **every** Belt touching any of its Machines is fed at its entry and connected at its far end;
+- every one of those Belts is **carrying at least one Item**, which is the literal content of
+  "and carrying" and the one condition that makes this a statement about a line that is *running*
+  rather than one that is merely wired up;
+- and no Machine in it is starved.
+
+The second of those is wider than it needs to be on purpose. A chain with a dangling Belt off one
+of its Machines is a chain standing next to a red post, and **a positive signal must never
+contradict a complaint** — so the dangling Belt breaks the claim even though it is not one of the
+runs that joins anything. `test_a_chain_with_a_dangling_belt_off_one_of_its_machines_is_not_whole`
+is that sentence as a test.
+
+**`query_belt_is_stalled` is deliberately not consulted, which is #48's note read the other way
+round.** A healthy saturated Belt feeding a slower consumer is stalled on most ticks — that is
+what back-pressure *is* — so requiring "not stalled" would switch the signal off on exactly the
+lines that are working hardest. #48 needed the stable fact because it was marking a *fault*; this
+is marking a success and wants the opposite.
+
+#### It is not a second opinion, and four projections are what make that true
+
+Whatever says "connected" has to be the same thing that decides whether an Item really hands over,
+or a line can read as working and starve. `query_belt_end_is_connected` already was that — the
+geometry half of `_hand_off` — but it answered only *whether*, and walking a chain needs *what*.
+
+So three projections, one line each over the function the hand-off itself goes through:
+`query_belt_feeds_machine` over `_machine_a_belt_feeds`, `query_belt_feeds_belt` over
+`_belt_downstream`, and `query_belt_feeds_the_nest` over `_hand_off`'s own Nest clause — which is
+its own question rather than a case of the first, because the Nest is not a Machine and a Belt
+docks anywhere on its 4x4 wall (GLOSSARY.md). **`query_belt_end_is_connected` is now literally
+the disjunction of the three**, where it used to spell those three branches out a second time, so
+there is one authority rather than four.
+
+A fourth projection is about the *other* end. `query_belt_loaded_by_machine` is one line over
+`_machine_behind_belt` — the function
+`_load_from_port` asks and the one `_branch_belts` groups a Machine's branch by — so it and
+`query_machine_branch_belt` are **the same answer read from the two ends**, which
+`test_which_machine_loads_a_belt_is_the_branch_list_read_from_the_other_end` asserts rather than
+assumes. It exists for cost as much as for symmetry: finding every Belt's loader off the branch
+lists means walking every Machine's whole list, and each of those is itself a walk of every
+Belt, where asking per Belt is one pass. `_sync_split_marks` already pays the quadratic version
+every frame and this deliberately does not add a second one.
+
+Nothing else behind the façade changed, which is why there is no new determinism fixture:
+`test_declared_ports` and `test_belts` already replay the Factories this walks.
+
+#### What it draws, and the one piece of memory in the renderer
+
+Two marks and a tether, three MultiMeshes, and `test_the_signal_adds_no_node_per_belt_or_per_machine`
+asserts the scene tree does not grow for any of them.
+
+- **A train of lights down the Belts**, in flow order, at `LINE_WORKS_PULSE_TICKS_PER_TILE` — six
+  ticks a tile, which is **faster than the goods on purpose**. A Belt carries one Item a tile
+  every fifteen ticks, so the lights overtake the freight and read as a signal travelling the line
+  rather than as more cargo. Only the lit ones are drawn and the train starts at the producer and
+  runs out past the far end, which is the ore scanner's shape and for the scanner's reason: a full
+  line of marks standing on a Belt is scenery, where a thing that *sweeps* reads as a signal.
+- **A tag over each Machine in the chain**, off `_machine_roof` and the housing like every other
+  mark since #50, one step above the split tag so the order is Ammunition gauge → starved tag →
+  split tag → this. It cannot collide with the starved tag by construction — a chain is not whole
+  while anything in it is starved — but a branch can be whole *and* splitting, so the split tag is
+  a real neighbour. **Each tag is tethered to the body under it**, which is #66's answer to #41
+  and which the first render said this needed too — see the renders below.
+
+**`_line_works_since` is the only state in `WorldView` that is about the Run** — `_machine_roofs`
+beside it is a cache of a fact about *content*, keyed by Machine id and thrown away on a reload —
+**and it is the same category of thing as
+`AudioDirector`'s snapshot and `TickPump`'s leftover frame time** — a reading on its way in, not a
+fact about the world. It maps a chain's **geographic signature** to the tick it was first seen
+whole. Geography and not indices, for the reason a Turret holds a serial: a Machine index shifts
+the moment anything is destroyed, so a chain keyed by index would change identity because
+something *else* fell over, where a Machine's anchor tile cannot move. Two consequences fall out
+and both are right: a chain that stops being whole is **forgotten**, so mending a broken line is
+acknowledged again; and a chain that gains a Machine has a new signature, so extending a line is
+acknowledged too.
+
+Everything drawn is a function of the tick minus that stamp, so nothing is timed by a clock and
+nothing is drawn at random — `test_the_signal_is_timed_by_the_tick_so_a_frame_that_stepped_nothing_draws_the_same`
+is the half of that rule a renderer can assert from inside.
+
+**The HUD says `LINE RUNNING` for exactly as long as the marks are up**, counted off
+`line_works_running_count()` rather than worked out a second way — the arrangement the
+dangling-ends and split clauses already have, where the mark says *where* and the line says *how
+many*. It sits beside the objective line on purpose: that one says what to do next and this one
+says the last thing you were told to do is now running.
+
+**No cue was added, and that is a decision rather than an omission.** The player has rejected four
+separate attempts at sound in this project for being too loud, nothing in this repository can
+listen, and a chain completing is the one event here whose *silence* costs nothing — the marks are
+in the world, in the frame the player is already looking at. If it is ever wanted, the lever is a
+`cues_for_frame` entry keyed on `line_works_running_count()` rising, which is a change and is what
+`audio_director` is shaped to take.
+
+#### What the four renders found
+
+`tools/visual/compose_line_shot.gd` is a sibling of `compose_building_shot.gd` rather than a preset
+on it, and the reason is `compose_death_shot.gd`'s: **the subject is a change, so the tool has to be
+watching while it happens.** That composer builds its line, steps 240 ticks with nothing looking,
+and only then syncs the view — fine for a shot of a condition and unable to photograph a signal
+that fires on one frame. Everything here steps the Simulation with the view synced every tick.
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "eye bare"
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "survey bare"
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "eye before bare"
+```
+
+The committed four are [`line_works_eye_before.png`](docs/images/line_works_eye_before.png)
+against [`_after`](docs/images/line_works_eye_after.png) and
+[`line_works_survey_before.png`](docs/images/line_works_survey_before.png) against
+[`_after`](docs/images/line_works_survey_after.png). **`before` is honest rather than
+reconstructed**: it watches the same Factory for longer than `LINE_WORKS_TICKS` and shoots after
+the signal has subsided, so what comes out is the game as it shipped rather than a build with a
+feature switched off.
+
+1. **The before image is the argument, and it is worse than the ticket said.** The identical
+   working line, and the only mark anywhere in frame is the **amber starved tag on the Steam
+   Boiler** — which has no coal line in this Factory — with the only thing the HUD says about the
+   Factory being `steam_boiler_mk1 starved`. So a player who has just got their first chain running
+   is shown one complaint about something else and nothing at all about the thing they built.
+2. **The tags floated with nothing under them, which is #41 biting for the fifth time and #66's
+   specific shape.** A tag rests a tag's height over a *wide* cap — a Miner's derrick, which is
+   what #50 judged the lift against — and **hangs** over a tapering one. The Miner's derrick and
+   the Smelter's flue both taper to a point, so both tags read as marks in the sky. The lift is not
+   what is wrong with it and was not moved; the fix is #66's own, a thin unshaded tether from the
+   top of the drawn body up to the tag, taken on sight rather than rediscovered.
+   `test_a_chain_tag_clears_the_body_a_player_can_see_not_the_housing_underneath_it` asserts the
+   count and that each tether spans its own gap.
+3. **Half-metre lights were modest at both distances and 0.75 m reads.** Bracketed by looking, like
+   every other size in this file.
+4. **The two vantages disagree, and in the opposite direction from #52's.** From the lift the
+   **tags** are the strong mark — they are horizontal quads seen face on — and the lights are small
+   squares among the deck's own flow arrows; at eye level the lights are the strong mark, reading as
+   blocks running down the deck, and the tags are small against the sky. Each vantage is carried by
+   a different half of the signal, which is the argument for having drawn two marks rather than one.
+5. **Two findings in the tool, and the second is a fact about the game.** The first eye-level
+   vantage stood across the line to the west, which is where the Steam Boiler stands — so the walk
+   slid along it and finished somewhere else, the Miner's derrick filled the shot, and the Belt the
+   picture is about was not in it. And **walking while surveying barely moves a player**:
+   `_walk_to` steers by `_aim_at`, and from 26 m up the pitch it asks for is one the lift has
+   pinned, so the aim never converges and the walk spends its whole budget turning. Walk first,
+   then lift — the order is free, because where a player stands and how high they are looking from
+   are independent.
+
+#### The colour was measured, and the first one failed its own test
+
+**#52's lesson is that the colours to check a mark against are the ones it is *guaranteed* to be
+seen beside; #73's is that "guaranteed" has to be a number.** That ticket found the four Item
+icons were four near-identical greys the moment somebody measured them, and it then gave cargo
+four palette **materials** — so this mark's lights now run directly over `OxideRed`, `Soot`,
+`DullBrass` and `WeldedSteel`, and its tag stands a metre above a **teal split tag** every time a
+Machine is both whole and splitting.
+
+The first value here was a pale mint, `Color(0.58, 1.0, 0.72)`, chosen the old way — by naming
+the neighbours and observing that none of them was green. Measured in CIE Lab against every
+colour it can share a frame with, it came out **ΔE 19.3 from the split teal and 17.4 from the
+hologram**, against the **21.4** that separates #73's own closest *accepted* pair of cargo forms.
+So the signal was nearer to the marks beside it than the four cargo colours are to each other,
+which is the same defect #73 had just fixed one layer down.
+
+The shipped green is `Color(0.36, 1.0, 0.22)`, and it clears that gate everywhere: 63 from the
+split teal, 34 from the hologram, 42 from the cream flow arrow, 44 at worst from any cargo form,
+67 from the amber starved tag.
+
+**The sweep's actual maximum was not taken, and that is the point.** A saturated
+`(0.2, 1.0, 0.0)` scores ΔE 73 and is a neon slab in a palette that runs 0.055 to 0.14 albedo —
+which is #42's Wall, #52's ore and #64's brightened tool, three tickets this project has paid for
+picking a colour against the wrong background. **Separation is a floor to clear, not a quantity
+to maximise**, and the render is what says which side of that line a number is on. The after
+images carry the Boiler's amber starved tag in the same frame, over #73's cargo on the same
+deck, and nothing in them reads alike.
+
+#### What it costs, and the cache a measurement forced
+
+Measured with `tools/visual/frame_cost.sh` against the same scenario with and without the call,
+on the 33-Machine, 9-Belt, 53-Wall Factory it builds: `WorldView.sync` goes from **11.64 ms to
+13.60 ms**, so about **two milliseconds of a 16.67 ms frame** — roughly 1.4 ms deriving the
+chains and 0.6 ms drawing the marks. That is the **worst case rather than the resting one**: it
+is a Factory whose every Machine is inside a lit chain at once, which happens in the seconds
+after a whole line comes up and not again, and past the window the derivation still runs while
+nothing is drawn.
+
+**It cost 3.6 ms before the measurement found where the first half of that was going, and the
+answer was not in this ticket's own code.** `_machine_roof` ends in `Mesh.get_aabb()`, which
+walks the merged body — and #48 and #50 only ever asked it for a Machine serving a **split**,
+which is rare, where this asks it for **every** Machine of a working chain **every frame**. So
+it is memoised by Machine id, which is what both halves of its answer are a property of: the
+housing comes out of that Machine's row and the body out of the one `.glb` every Machine of
+that id shares, so two Smelters cannot have different roofs. The cache is thrown away whenever
+`query_definition_digest` moves, because `height_metres` is hot-reloadable and a cached roof is
+exactly the kind of thing that would go on quietly answering with the number the Run stopped
+playing by. Every mark in the file got faster, not only this one.
+
+**It is shared machinery, so the key is worth stating exactly.** `_machine_roof` is read by five
+marks — the Ammunition gauge, the starved tag, its tether, the three split tags and this one —
+and the failure a cache over it could produce is a mark that is correct for the Machine that
+*used to be* on that tile, which is precisely the class #41 and #50 each paid for. It cannot
+happen, because **both halves of the answer are properties of the Machine's id and of nothing
+else**: the housing is `height_metres` off that id's row, and the body is `_body(id)`, one Mesh
+shared by every Machine of that id. Rotation is applied to the **node** rather than to the mesh,
+so a turned Machine reads the same AABB; a placeholder has no `res://` path at all and falls back
+to the declaration. Nothing index-shaped, nothing tile-shaped and nothing rotation-shaped is in
+either the key or the value, so `_remove_machine` closing a gap cannot produce a stale roof — and
+a mesh that is not loaded yet short-circuits **before** the cache is written rather than freezing
+a null answer into it.
+
+Two tests rather than a paragraph, because this is the kind of claim that passes for tickets
+while being wrong. `test_the_roof_a_mark_hangs_off_follows_the_machine_and_not_the_index` stands
+an 8.2 m Miner at index 0 and a 2.0 m Turret at index 1, demolishes the Miner so the Turret slides
+down to index 0, and asserts the Turret does not inherit the derrick.
+`test_the_roof_cache_is_thrown_away_when_the_definitions_move` puts two Runs whose `height_metres`
+differs in that column alone through **one** view and asserts the second answer follows the
+content. Checked by neutering the `_machine_roofs.clear()`: the second goes red.
+
+**Two milliseconds was taken rather than engineered away, and that is a decision.** Deriving
+every few ticks instead of every frame would cut it by an order of magnitude and would mean
+drawing from a cached chain whose Machine **indices** have shifted — `_remove_machine` closes
+the gap — so a tag could stand over the wrong Machine for a quarter of a second. A mark in the
+wrong place is the failure this whole area of the file is a record of (#41, #48, #50, #66), and
+it is not worth buying a millisecond with.
+
+**What no render can settle** is whether five seconds is the right length, and whether a Factory of
+a dozen lines being extended one at a time reads as encouragement or as flicker. `LINE_WORKS_TICKS`
+is the lever and it is a constant in `game/` rather than a tuning key, for the reason
+`BuildGun.REACH_METRES` is: the Simulation does not read it, and a tuning key the Simulation does
+not read is a key `Definitions` warns about.
+### The last step of the opening loop told a player to do a thing the game cannot do
+
+**#71, and it is the worst class of defect this project has shipped: not a missing feature, but
+an instruction.** From a playtest of the Windows build, in the player's own words: *"its not
+clear how to carry ingots to the nest... the smelter works but idk what next"*. They had built
+the opening line, the Smelter was producing, and they were stuck at the step the game had just
+told them to take. The line said, verbatim:
+
+```
+Carry ingots to the Nest and press F — delivering is how a Run gets better
+```
+
+**There is no way to carry ingots.** Grep `sim/simulation.gd` for hand transfers and there are
+exactly two: `_apply_deliver_to_nest` spends out of a player's own pockets, and
+`_apply_withdraw_from_nest` fills them from the Nest's store. Nothing anywhere moves goods out
+of a Machine's output buffer into a player's hands — the only way a plate leaves a Smelter is a
+Belt. So the line named an **act for which no Input Action exists**, in step four of four of the
+only sequence this game ever teaches, and a player who cannot get past it has no route into
+Delivery, Depth, Gear or Stratagems.
+
+**And it was wrong about the goods as well as the verb, which is the half the report could not
+see and the half worth remembering.** The ticket reasoned that the trap was self-confirming —
+`player.starting_stock` is `iron_plate:110`, a Smelter makes `iron_plate`, so pressing `F` at the
+Nest *would* deliver out of the opening stock and confirm the wrong mental model. Checked against
+the content, it is worse than that: **`t01_munitions` wants `coal:20`**, and
+`_apply_deliver_to_nest` iterates the open tier's goods and nothing else. So `F` with a pocketful
+of plate is refused `NOTHING_TO_DELIVER` and does **nothing at all**. The line named an
+impossible act in aid of an Item the counter was not waiting for, and the feedback for obeying it
+exactly was silence.
+
+**Why every claim in it was individually assertable and none of it was asserted.** `Objective`
+is a pure function of the Run's state with nothing remembered, which is what makes it cheap to
+test — and the suite tested the steps *one at a time*, so each one was checked for the words it
+contained and never for whether obeying it got anywhere. `tests/cases/test_opening_loop.gd` is
+the durable half of this ticket and it is the other shape: it reads `Objective.pointed_at` for
+which cell the line is about and `Objective.line` for which act, does that, and asks again, until
+`query_completed_deliveries()` is non-empty. **Nothing in it knows the sequence of steps** — so a
+step naming an impossible act leaves the loop with nothing to do, and a step naming the wrong
+Machine builds the wrong Machine. The one seam it does not drive is the aim, deliberately:
+`test_recorded_session.gd` is the fixture that proves a mouse reaches a tile, and this one
+substitutes *the very query the step's own wording is derived from* —
+`query_nearest_workable_node` is where "on the iron ore 12 m behind you" comes from — so the tile
+a step is obeyed at is the tile the step named.
+
+**One step became two, because the fixes are two.**
+
+- **`Step.PRODUCE`** — the open tier wants an Item nothing in the Factory makes.
+  *"Place a Coal Miner Mk1 — key 5; the Nest wants 20 coal to pay for your first Delivery"*.
+- **`Step.DELIVER`** — something makes it and nothing is carrying it over.
+  *"Drag a Belt from an orange arrow into the Nest — it wants 20 coal"*, behind the Belt-tool
+  clause when the tool is not already out.
+
+A single step could only ever have named one of those, which is how it came to name an act that
+is neither.
+
+Four things worth knowing rather than rediscovering:
+
+- **The bill is read off `query_delivery_goods` and never written down.** A sentence naming a
+  good is a sentence that has to come out of the tier, or it is a second copy of
+  `content/deliveries.csv` in GDScript — which is exactly what "ingots" was. The count is what
+  is **outstanding** rather than what the tier asked for, so a bill half paid by a Belt already
+  running says so. The *first* outstanding good rather than all of them, because one line is one
+  act: a tier wanting plate and Ammunition is two Machines and two Belts, and the second arrives
+  by itself when the first is satisfied, which is how every other step here moves on.
+- **`BuildChain.first_unlocked_producer_of` is `first_unlocked_of_role`'s sibling, and a role
+  could not have answered this.** Coal and ore are both mined, plate and Ammunition are both
+  crafted, and what separates the Machine a player needs from the one beside it is the Item it
+  puts out. So this is the **one step that prints a display name** — read off `Definitions` for
+  the row the chain chose, exactly as a picker cell reads it, with no id spelled anywhere in
+  `objective.gd`. The lock is asked of the Simulation for `first_unlocked_of_role`'s reason: a
+  player must not be pointed at a cell a Delivery still has shut.
+- **The Nest has no arrow to aim at, so the sentence does not promise one.** The Nest is
+  deliberately not port-enforced (#47) — it is not a Machine, so a Belt docks anywhere on its 4x4
+  wall — and `Step.BELT`'s wording is *"drag from the orange arrow to the blue one"*. Reusing it
+  would have sent a player hunting a mark the renderer never draws, so the new sentence names the
+  orange arrow at the end that has one and says "into the Nest" at the end that does not. What
+  **is** reused is the machinery: `_with_the_belt_tool` took the drag sentence as an argument
+  (it was #67's, with the sentence baked in), because the two drags are different acts and the
+  key clause in front of them is the same fact about the same hand — and two copies of that
+  clause is how a tool comes to be named while it is already out.
+- **`query_belt_ends_at_the_nest` is one line over the clause `query_belt_end_is_connected`
+  already answers through**, the arrangement `query_node_yields_for` and
+  `query_node_is_within_depth_of` have: the rule stays the Simulation's and `game/` does not
+  learn it. Deliberately narrower than `query_belt_end_is_connected` — a Belt into a *Machine* is
+  connected and is not a Delivery. It exists because the step has to **stop asking** once a Belt
+  is in: the tier takes thirty seconds to fill, and a line still saying "run a Belt into the
+  Nest" for all of it is #67's defect in the step rather than in the wording.
+
+**What this ticket deliberately did not build, and the argument is filed rather than lost.** The
+mechanic the player reached for is real — they did not say "I did not know a Belt could do that",
+they said "I do not know how to carry" — and most of its shape already exists:
+`aimed_tile_at_height` is the wrench's aim at a Machine's *body*, `_within_wrench_reach` is the
+reach, `query_withdraw_refusal` is the shape of the refusal, and `_refund_machine` already moves
+an output buffer into a player's pockets on a demolish. It was still not built here, because a
+false instruction must not stay in the game while somebody debates whether to invent a verb — and
+because the mechanic **competes with the Belt as the answer to the same problem**. `t01_munitions`
+is twenty coal, which is three trips on foot, and `content/deliveries.csv`'s own comment says the
+first thing a player should do is *"run a Belt out of the coal Miner and into the Nest and watch
+the Factory pay for its own progression"*. A faucet that bypasses Belts for small amounts teaches
+a new player they do not need one yet, at the moment it is cheapest to learn. #72 is the decision,
+with both cases written out and a third option on the table — that the lever may be the **Nest's
+own legibility** rather than a new verb, since a player who has learnt to aim a Belt at an arrow
+has nothing to aim at when the target is the Nest.
+
+**And it turned up a live defect in the step above it, which was filed rather than patched and
+is now fixed.** `Objective._anything_is_starved` asked `query_machine_is_starved`, so a player who
+had built the line correctly was told "Something is starved" on some ticks and what to do next on
+the others — advice naming a fix already applied, which is the defect `_with_the_build_gun` and
+`_with_the_belt_tool` exist to prevent for keys, in the step rather than in the wording. It was
+pre-existing and it was not what #71 was opened about, so what it cost *here* was a named fixture,
+`test_building_view._settle_until_nothing_is_starved`, which stepped a Factory until the step above
+was satisfied and failed if that never came. **#74 is the fix and that fixture is gone**; see
+"Why the right answer to one question is the wrong answer to another", below.
+
+**The pair is committed and it is the argument.**
+[`docs/images/opening_delivery_before.png`](docs/images/opening_delivery_before.png) against
+[`_after`](docs/images/opening_delivery_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "delivering bare"
+```
+
+`delivering` is #71's preset and it exists for the reason `opening` is #55's: **none of the
+others can see the question.** `running` builds exactly the Factory the report describes and then
+holsters the Build Gun, because that preset is a picture of a Factory working — and worse, it
+cannot be trusted to show this step at all, because of the starved flicker above: the step before
+it wins on some ticks and not others, and a render of a coin flip is not a render of a step. So
+`delivering` frames `running`'s own Factory, keeps the gun out so the lit cell and the line
+naming the same thing is half the subject, and then **steps until the line is the step**, bounded,
+printing the line it is looking at if the budget runs out. The stop condition is kept after #74
+rather than being taken out as redundant: what it waits for is a *step*, and the Factory in front
+of it still has to get there. That is the same closed loop over the
+real state that `_put_the_crosshair_on` already is, and it is what stops this picture being one a
+tool can no longer reproduce — which is the failure #53 caught in this very script.
+
+**And the first render of it found something about the shots that already exist.** `delivering`
+started as `running` plus a stop condition, and it ran its whole 600-tick budget and gave up —
+because `running` stands a Steam Boiler up to keep the grid off its baseline and **nothing ever
+feeds it coal**, so that Boiler is *permanently* starved and `Step.UNSTARVE` wins on every tick.
+The objective line in every committed building shot has therefore read "Something is starved"
+since the Boiler was added, about a Factory whose only fault is the one the shot put there. The
+way round it was not to fake state: a Miner and a Smelter alone draw exactly
+`power.baseline_supply_kw`, so `delivering` builds no Boiler, the line runs unthrottled, the
+Smelter's input buffer fills, and nothing is starved at all — which is the Factory the playtest
+report actually describes.
+
+**#74 did not make that render's problem go away, and that is the right outcome.** A Boiler
+nothing feeds coal is starved *and* has nothing docked into a declared input port, so it raises
+the step after the fix exactly as it did before — which is the step telling the truth rather than
+flickering. The two faults in that paragraph were always separable: one was a working line
+reported as broken, and the other is a Factory with a genuinely unfed Machine in it. `delivering`
+builds no Boiler for the second reason, which is unchanged.
+
+### Why the right answer to one question is the wrong answer to another
+
+#74, and the durable half of it is not about this step. `query_machine_is_starved` is **correct**
+and was not touched: it is `not _machine_has_its_inputs`, it is what `_machine_would_work` consults
+so the Power grid bills nothing for a Machine that cannot work, and it is what the amber tag over a
+Machine means. Several suites assert it. The defect was that `Objective` asked it a question it
+does not answer.
+
+The question the Simulation asks is **"would this Machine advance on this tick"**, which is a
+fact about *now* and has to be, because the grid is read every tick. The question the objective
+line asks is **"is something stuck"**, which is a fact about a *condition*. Those come apart on
+exactly the Factory a player has built correctly: the shipped Smelter smelts two ore every 3.2 s
+and the shipped Miner makes one every 1.5 s, so a saturated Smelter is empty-handed for the ticks
+between consuming one craft's ore and holding the next craft's. `Step.UNSTARVE` is walked ahead of
+the step below it, so the line alternated between "Something is starved — a Belt starts past an
+output arrow and ends at an input" and what to do next, **about a line whose Belt starts past an
+output arrow and ends at an input** — and the step it outranked is #71's, the one that pays for the
+Run.
+
+**The general shape, which is worth more than the fix:** a projection is a sentence about a
+condition and the Simulation's own predicates are statements about a tick, so a `game/` file that
+reads one as the other gets an answer that is true and useless. `AudioDirector` is the same
+distinction already solved from the other side — "a sound is a *change* and a query reports a
+*condition*", so it diffs query results against what they said last frame. `Objective` cannot diff,
+because it is a pure function of the Run with nothing remembered; so it has to narrow the
+*population* instead of widening the window.
+
+**So the step fires for a Machine that is starved and has nothing docked into a declared input
+port.** `Simulation.query_machine_is_fed` is the second half, and it is `_machine_a_belt_feeds` read
+from the Machine's side — the exact shape `query_machine_branch_count` took for outputs in #48, one
+clause of `_hand_off`'s own geometry asked per Machine rather than per Belt. So `game/` learns no
+new rule, a Belt standing against a wall whose port runs the other way is **not a feed at all**
+rather than a feed that delivers nothing (#47), and nothing behind the façade changed its
+behaviour — which is why #74 left no new determinism fixture.
+
+Four things worth knowing rather than rediscovering:
+
+- **A Miner is why the *pair* is read and not the feed alone.** A Miner's input is the ground, so
+  it declares no input port and `query_machine_is_fed` is false for one working its own Node and
+  one on bare rock alike. Telling a player about a Miner on bare rock, over the wrong Resource, or
+  on a seam deeper than its `max_depth` is this step earning its place — #52's three cases, all of
+  them permanent — and any predicate that required a *missing Belt* would have thrown all three
+  away. Read alone, either half is wrong about something; read together they are right about both.
+- **Counting ticks was the other candidate and is refused by name.** "Starved for N ticks running"
+  answers the same question and needs state in a file whose entire premise is that it has none:
+  nothing entered, nothing skipped, nothing remembered, so a player who demolishes their Miner an
+  hour in gets the first line back because the first thing is true again. A step that had to be
+  *observed* for a second before it could be believed would be the first thing in `Objective` that
+  a single frame could not answer.
+- **The wording was left alone, and it is the one thing recorded rather than fixed.** The sentence
+  names a Belt, which is the fix for a crafter and is not the fix for a Miner on bare rock — and
+  the Miner is the case the step exists for. The ticket's own argument is that the wording matches
+  this population exactly, which is true of the crafter half and not of the Miner half, so a
+  second sentence split on the same `query_machine_is_fed` reading is the obvious next step. That
+  is `Refusal`'s two-reasons-two-fixes shape (#56) pointed at a step, and it is a wording ticket.
+- **The workaround it existed to force is gone.**
+  `test_building_view._settle_until_nothing_is_starved` stepped a Factory until nothing was starved
+  so that a fixture about the *last* step could stand on a tick where the one before it was quiet.
+  Three fixtures called it and all three now stand on an ordinary tick. **A helper that exists to
+  step past a flicker is evidence about the code and not about the test**, which is why #74's
+  acceptance criteria named its deletion: a fix that left it necessary would not have been a fix.
+  The assertion that replaces it is over a **window** of six hundred ticks rather than at one of
+  them, because a single-tick assertion on an intermittent fault is a coin toss and is exactly how
+  this shipped.
 
 ### The hotbar states the chain
 

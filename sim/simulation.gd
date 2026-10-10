@@ -4710,12 +4710,7 @@ func _shot_target(
 ) -> Vector2i:
 	var from_x: int = _player_x[player_id]
 	var from_z: int = _player_z[player_id]
-	# Eye height above the ground the player is *standing on*, plus however far off it they
-	# currently are. A jumping player really is shooting downwards at the swarm, and an
-	# origin that ignored the jump would have made the one new way to change your elevation
-	# a lie about where a round comes from. Survey View is still excluded, because the
-	# camera is not where a shot leaves from (see the Gear section of CLAUDE.md).
-	var eye: int = _definitions.player_eye_height + _player_y[player_id]
+	var eye: int = _eye_height(player_id)
 
 	var best_what: int = HIT_NOTHING
 	var best_which: int = -1
@@ -9227,6 +9222,32 @@ func query_player_survey_blend(player_id: int) -> int:
 	return _survey_blend(player_id)
 
 
+## Eye height above the ground a player is *standing on*, plus however far off it they
+## currently are, in fixed-point metres.
+##
+## **Where a shot leaves from, and deliberately not where the camera is.** A jumping player
+## really is shooting downwards at the swarm, and an origin that ignored the jump would make
+## the one way to change your elevation a lie about where a round comes from; Survey View is
+## excluded, because it lifts the camera to twenty-six metres and is explicitly not a mode, so
+## a player who raised it to read their Factory must not thereby be firing from a helicopter.
+func _eye_height(player_id: int) -> int:
+	return _definitions.player_eye_height + _player_y[player_id]
+
+
+## The same figure as a projection, for a renderer drawing a round leaving the player's own
+## weapon (#69).
+##
+## It exists for the reason `query_player_facing` does: the alternative is `game/` holding a
+## second copy of where a shot comes from, and the two would then be free to disagree about the
+## jump or about Survey View — which is exactly the disagreement `query_build_refusal` exists
+## to prevent, in the one place a player would read it as the gun being broken. The Simulation
+## never reads it back, and `test_gear` asserts that asking leaves `hash()` where it was.
+func query_player_eye_height_metres(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _eye_height(player_id)
+
+
 ## How high a player's camera is off the ground, in fixed-point metres. Eye height on
 ## foot, the tuned Survey View height fully raised, and somewhere between during the
 ## transition.
@@ -9237,9 +9258,7 @@ func query_player_camera_height_metres(player_id: int) -> int:
 	# a player is standing is a fact about the world that the aim must honour, where a bob
 	# is a cosmetic response the renderer lays on top. See `query_player_view_bob_*`.
 	return Fixed.lerp_fixed(
-		_definitions.player_eye_height + _player_y[player_id],
-		_definitions.survey_height,
-		_survey_blend(player_id)
+		_eye_height(player_id), _definitions.survey_height, _survey_blend(player_id)
 	)
 
 
@@ -11364,19 +11383,86 @@ func query_belt_tile_refusal(tile: Vector3i) -> int:
 ## frame and remembering nothing, because there is no stored connection to go stale: Belts
 ## connect by adjacency and nothing else, so demolishing what a Belt fed makes it dangle on
 ## the next frame with no bookkeeping anywhere.
+## **It is literally the disjunction of the three projections below** (#68), which is what
+## keeps "connected" one answer rather than four. It used to spell `_hand_off`'s three
+## branches out a second time; now the three say *which* of them, and this says *whether*.
 func query_belt_end_is_connected(index: int) -> bool:
+	return (
+		query_belt_feeds_machine(index) != -1
+		or query_belt_feeds_the_nest(index)
+		or query_belt_feeds_belt(index) != -1
+	)
+
+
+## The Machine a Belt's far end hands goods to, or -1.
+##
+## **One line over `_machine_a_belt_feeds`, which is the function `_hand_off` itself asks**, so
+## the declared port rather than the footprint decides it (#47) — a Belt ending against a
+## Machine's blank wall feeds nothing, which is what it does.
+##
+## It is `query_machine_branch_belt`'s mirror: that one answers "which Belts does this Machine
+## load", per Machine, and this one answers "which Machine does this Belt reach", per Belt. Both
+## are needed to walk a chain, and neither is a second opinion about docking — `_dock_refusal`
+## is the one home for that and both go through it.
+func query_belt_feeds_machine(index: int) -> int:
+	if not _is_belt(index):
+		return -1
+	return _machine_a_belt_feeds(index)
+
+
+## The Machine whose declared output port loads a Belt at its entry, or -1.
+##
+## **One line over `_machine_behind_belt`, which is the function `_load_from_port` asks and the
+## one `_branch_belts` groups a Machine's branch by** — so this and `query_machine_branch_belt`
+## are the same answer read from the two ends, and a caller that wants the loader of one Belt
+## need not walk every Machine's branch list to find it. `query_belt_start_is_fed` is its
+## weaker twin: that one says *whether* anything feeds an entry, counting an upstream Belt,
+## where this names the Machine or nothing.
+func query_belt_loaded_by_machine(index: int) -> int:
+	if not _is_belt(index):
+		return -1
+	return _machine_behind_belt(index)
+
+
+## The Belt a Belt hands its Items on to, or -1. One line over `_belt_downstream`, which is the
+## same function the downstream-first update order is chased down.
+func query_belt_feeds_belt(index: int) -> int:
+	if not _is_belt(index):
+		return -1
+	return _belt_downstream(index)
+
+
+## Whether a Belt's far end points into the Nest's footprint.
+##
+## The Nest is deliberately not a Machine and `_hand_off` reaches it through a clause of its
+## own, so a Belt docks anywhere on its 4x4 wall — which is why this is its own question rather
+## than a case of the one above.
+func query_belt_feeds_the_nest(index: int) -> bool:
 	if not _is_belt(index):
 		return false
-	var beyond: Vector3i = (
+	return _nest_covers(
 		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
 	)
-	# The declared port rather than the footprint, since #47, so a Belt that ends against a
-	# Machine's blank wall is marked as going nowhere — which it does.
-	if _machine_a_belt_feeds(index) != -1:
-		return true
-	if _nest_covers(beyond):
-		return true
-	return _belt_entered_at(beyond) != -1
+
+
+## Whether a Belt's far end hands its goods to the Nest — the one act that pays for a
+## Delivery without a player carrying anything.
+##
+## **One line over the same clause `query_belt_end_is_connected` answers through**, which is
+## the arrangement `query_node_yields_for` and `query_node_is_within_depth_of` have: the rule
+## stays the Simulation's and `game/` does not have to learn it. #71 is why it is needed — the
+## objective line has to stop asking for a Belt into the Nest once one is there, and working
+## that out in the renderer would be a second copy of "beyond the exit tile" living next to
+## the first.
+##
+## Deliberately narrower than `query_belt_end_is_connected`: a Belt into a *Machine* is
+## connected and is not a Delivery. A projection; nothing in the Simulation reads it back.
+func query_belt_ends_at_the_nest(index: int) -> bool:
+	if not _is_belt(index):
+		return false
+	return _nest_covers(
+		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
+	)
 
 
 ## Whether anything is loading a Belt at its entry: a Machine output port behind it, or
@@ -11456,6 +11542,31 @@ func _branch_belts(machine: int) -> PackedInt64Array:
 		if _machine_behind_belt(canonical[position]) == machine:
 			branches.append(canonical[position])
 	return branches
+
+
+## Whether any Belt's far end docks into one of a Machine's declared input ports.
+##
+## **`query_machine_branch_count`'s mirror, and the same clause read from the other side.**
+## `_machine_a_belt_feeds` is what `_hand_off` refuses through, so a Belt counted here is a
+## Belt that would really hand an Item over, and a Belt standing against a wall whose port
+## runs the other way is not a feed that delivers nothing — it is not a feed (#47).
+##
+## **It is geometry and emphatically not "is this Machine working".**
+## `query_machine_is_starved` is that question, and the two are different in the direction
+## that matters: a saturated Smelter is briefly starved between consuming one craft's inputs
+## and holding the next craft's, and it is fed throughout. A **Miner** is the opposite case —
+## it declares no input port at all, so this is false for one working its own Node and for
+## one on bare rock alike. Reading this alone as a verdict about a Machine would be wrong
+## about both; reading the two together is #74's whole subject.
+##
+## A projection the Simulation never reads back, so asking leaves `hash()` where it was.
+func query_machine_is_fed(machine: int) -> bool:
+	if machine < 0 or machine >= query_machine_count():
+		return false
+	for index: int in range(query_belt_count()):
+		if _machine_a_belt_feeds(index) == machine:
+			return true
+	return false
 
 
 ## The Belt, if any, whose far end hands Items onto the tile given. The reverse of
