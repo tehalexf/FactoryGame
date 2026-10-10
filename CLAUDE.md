@@ -664,6 +664,13 @@ ticket.**
   `WorldView.sync`, which is the CPU rebuild. Xvfb is llvmpipe, so the half of this that
   matters wants a machine with a real card. The levers if it ever bites are `relief_fade_end`
   and dropping the second octave.
+- **A Breaker at close range reads as blued gun-steel, and that may be a degree too
+  polished.** `WeldedSteel`'s own roughness is 0.45 and on a *full* metal under a bright
+  ochre sky that picks up a lot of sky — so at the `pair` preset's six to twelve metres the
+  armoured kind has a distinctly cold sheen where a Crawler has none. It is in the palette by
+  construction and it is the clearest thing separating the two kinds at range, which is why
+  it was left; whether it reads as armour or as chrome is a judgement for somebody with a
+  mouse, and the lever is `_enemy_roughness` rather than the tint.
 - **Only atlas A is graded, and atlas B is deliberately left alone.** All six committed
   characters reference A — checked, not assumed; the six copies beside the `.glb`s are
   byte-identical to the intake file. A graded copy of a map nothing samples is
