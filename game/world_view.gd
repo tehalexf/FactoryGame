@@ -1523,6 +1523,13 @@ static func _write_scaled_instance(
 ## the Walls did before #32: four of them in a heap at the world origin with an engine error
 ## a frame. The custom data carries the animation frame and the Enemy's remaining health, and
 ## nothing else: there is no per-Crawler object anywhere for anything else to live in.
+##
+## **The last two floats are written as zero and read by nothing, and that is deliberate
+## headroom rather than slack.** `INSTANCE_CUSTOM.z` and `.w` cost nothing to carry — the
+## stride is sixteen whatever is in them — so the next thing that wants to say something per
+## Enemy has two channels without widening anything. Turning on `use_colors` instead would
+## take the stride to twenty and with it this function, `_stride_for` and every accessor that
+## divides by one.
 static func _write_skinned_instance(
 	buffer: PackedFloat32Array,
 	instance: int,

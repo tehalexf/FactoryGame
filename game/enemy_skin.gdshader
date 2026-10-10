@@ -51,6 +51,24 @@ uniform float roughness : hint_range(0.0, 1.0) = 0.8;
 // working on reads as hurt without a gauge over it.
 uniform float wound_darkening : hint_range(0.0, 1.0) = 0.45;
 
+// ── What is left in the custom data, which is the next ticket's room ─────────
+//
+// `INSTANCE_CUSTOM` is four floats and two of them are spoken for: `.x` is the animation
+// row and `.y` is the health fraction above. **`.z` and `.w` are written as zero by
+// `_write_skinned_instance` and read by nothing**, so anything that wants to say something
+// per Enemy has two channels already paid for — the stride is fixed at sixteen whatever
+// they carry, so using them costs no bandwidth and no second buffer.
+//
+// Worth knowing before reaching for `use_colors` instead: turning that on widens the stride
+// to twenty, which means `_write_skinned_instance`, `_stride_for` and every accessor that
+// divides by it. A free channel is much the cheaper door.
+//
+// And one thing about *this* file that a damage ticket will meet immediately: the grime
+// field below is a function of the **rest pose alone**, so it is identical on every Enemy
+// of a kind. A mark that has to be in a different place on each one — scorching, a wound —
+// wants a per-instance offset into that field, which is exactly what one of the two free
+// channels is for: `grime_at(rest + vec3(seed))`.
+
 // ── Grime and relief, derived from the rest pose (#75) ───────────────────────
 //
 // The committed atlas is a sheet of flat swatches with a vertical gradient and nothing

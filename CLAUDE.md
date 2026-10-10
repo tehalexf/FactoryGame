@@ -644,7 +644,28 @@ warm. At thirty metres the gain is narrower and real — the Crawler's oxide tor
 iron limbs is a second cue beside height, where before the two kinds were one value in two
 sizes.
 
-**Three things are recorded rather than fixed, and the first is the honest limit of this
+**What is left for a ticket about damage, which is the question this one was asked and
+should answer rather than leave to be rediscovered.** Nothing here spent the channel such a
+ticket needs. `INSTANCE_CUSTOM` is four floats: `.x` is the animation row and `.y` is the
+health fraction `wound_darkening` already reads — so a Crawler a Turret has been working on
+is *already* drawn darker — and **`.z` and `.w` are written as zero by
+`_write_skinned_instance` and read by nothing.** The stride is sixteen whatever is in them,
+so two channels are paid for and free. Three things follow:
+
+- **Prefer a free channel to `use_colors`.** Turning that on widens the stride to twenty and
+  with it the writer, `_stride_for` and every accessor that divides by one. Per-instance
+  colour buys nothing a channel cannot, because the shader is this project's own.
+- **A mark that has to be in a *place* needs a per-instance seed, and that is what `.z` is
+  for.** The grime field is a function of the rest pose alone, so it is identical on every
+  Enemy of a kind — which is right for wear and wrong for a wound. `grime_at(rest +
+  vec3(seed))` offsets the field per Enemy for one float.
+- **A death is the one thing the custom data cannot carry, and the reason is the
+  Simulation.** `_remove_enemy` closes the gap the tick a Crawler dies, so there is no
+  instance left to blend out — the fact that it died is a *change* rather than a condition,
+  which is `game/audio_director.gd`'s whole shape and the thing `game/combat_events.gd` is
+  being built for in #69. A death wants that diff, not a channel.
+
+**Three more things are recorded rather than fixed, and the first is the honest limit of this
 ticket.**
 
 - **The proportions are still a cartoon's.** A Crawler's skull is a third of its height and
