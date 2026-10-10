@@ -3638,13 +3638,33 @@ feature switched off.
    then lift — the order is free, because where a player stands and how high they are looking from
    are independent.
 
-**Green, and the collision was checked rather than assumed**, which is #52's lesson: the colours to
-check a mark against are the ones it is *guaranteed* to be seen beside. Those are the Belt deck it
-stands over, the cream flow arrows on it and the warm-orange port arrows at either end, none of
-them green. The one green in the project is `HOLOGRAM_ALLOWED`, and it is translucent, flat on the
-ground and only on screen with the Machine tool out, where this is opaque, head-high and fires on
-the frame a *drag* has just paid off. The after images have the amber starved tag in the same frame
-and the two do not read alike.
+#### The colour was measured, and the first one failed its own test
+
+**#52's lesson is that the colours to check a mark against are the ones it is *guaranteed* to be
+seen beside; #73's is that "guaranteed" has to be a number.** That ticket found the four Item
+icons were four near-identical greys the moment somebody measured them, and it then gave cargo
+four palette **materials** — so this mark's lights now run directly over `OxideRed`, `Soot`,
+`DullBrass` and `WeldedSteel`, and its tag stands a metre above a **teal split tag** every time a
+Machine is both whole and splitting.
+
+The first value here was a pale mint, `Color(0.58, 1.0, 0.72)`, chosen the old way — by naming
+the neighbours and observing that none of them was green. Measured in CIE Lab against every
+colour it can share a frame with, it came out **ΔE 19.3 from the split teal and 17.4 from the
+hologram**, against the **21.4** that separates #73's own closest *accepted* pair of cargo forms.
+So the signal was nearer to the marks beside it than the four cargo colours are to each other,
+which is the same defect #73 had just fixed one layer down.
+
+The shipped green is `Color(0.36, 1.0, 0.22)`, and it clears that gate everywhere: 63 from the
+split teal, 34 from the hologram, 42 from the cream flow arrow, 44 at worst from any cargo form,
+67 from the amber starved tag.
+
+**The sweep's actual maximum was not taken, and that is the point.** A saturated
+`(0.2, 1.0, 0.0)` scores ΔE 73 and is a neon slab in a palette that runs 0.055 to 0.14 albedo —
+which is #42's Wall, #52's ore and #64's brightened tool, three tickets this project has paid for
+picking a colour against the wrong background. **Separation is a floor to clear, not a quantity
+to maximise**, and the render is what says which side of that line a number is on. The after
+images carry the Boiler's amber starved tag in the same frame, over #73's cargo on the same
+deck, and nothing in them reads alike.
 
 #### What it costs, and the cache a measurement forced
 
@@ -3666,6 +3686,27 @@ that id shares, so two Smelters cannot have different roofs. The cache is thrown
 `query_definition_digest` moves, because `height_metres` is hot-reloadable and a cached roof is
 exactly the kind of thing that would go on quietly answering with the number the Run stopped
 playing by. Every mark in the file got faster, not only this one.
+
+**It is shared machinery, so the key is worth stating exactly.** `_machine_roof` is read by five
+marks — the Ammunition gauge, the starved tag, its tether, the three split tags and this one —
+and the failure a cache over it could produce is a mark that is correct for the Machine that
+*used to be* on that tile, which is precisely the class #41 and #50 each paid for. It cannot
+happen, because **both halves of the answer are properties of the Machine's id and of nothing
+else**: the housing is `height_metres` off that id's row, and the body is `_body(id)`, one Mesh
+shared by every Machine of that id. Rotation is applied to the **node** rather than to the mesh,
+so a turned Machine reads the same AABB; a placeholder has no `res://` path at all and falls back
+to the declaration. Nothing index-shaped, nothing tile-shaped and nothing rotation-shaped is in
+either the key or the value, so `_remove_machine` closing a gap cannot produce a stale roof — and
+a mesh that is not loaded yet short-circuits **before** the cache is written rather than freezing
+a null answer into it.
+
+Two tests rather than a paragraph, because this is the kind of claim that passes for tickets
+while being wrong. `test_the_roof_a_mark_hangs_off_follows_the_machine_and_not_the_index` stands
+an 8.2 m Miner at index 0 and a 2.0 m Turret at index 1, demolishes the Miner so the Turret slides
+down to index 0, and asserts the Turret does not inherit the derrick.
+`test_the_roof_cache_is_thrown_away_when_the_definitions_move` puts two Runs whose `height_metres`
+differs in that column alone through **one** view and asserts the second answer follows the
+content. Checked by neutering the `_machine_roofs.clear()`: the second goes red.
 
 **Two milliseconds was taken rather than engineered away, and that is a decision.** Deriving
 every few ticks instead of every frame would cut it by an order of magnitude and would mean
