@@ -1827,6 +1827,141 @@ untouched — the three raked tiers and the beacon mast are exactly the geometry
 The lever if it is wrong is the caps: they are the Survey read, and `OxideRed` on them is what
 carries the warmth.
 
+### The dielectric tints are wrong and are kept, which is #82
+
+**#80 measured a palette-wide defect and declined to fix it; #82 is the ticket that went and
+looked, and the answer is to leave it.** Four dielectric entries render above their own
+declared `base_color` and the three metals do not — OliveDrab **1.78x**, OxideRed **1.64x**,
+BeltRubber **2.22x**, Soot **2.95x**, against CastIron 0.87, WeldedSteel 1.01, OiledSteel 0.94.
+`HazardYellow` at 0.76 is the documented exemption and is not part of it. The asymmetry is an
+accident rather than a decision — going metal makes a surface *darker* under this lighting,
+which #80 probed, so the tints that overshoot sit on the entries that were already brighter,
+and the likeliest story is a column tuned while looking at metal.
+
+**A measured "leave it" is the outcome, and it is written where somebody will meet it.** The
+reasoning is in `dieselpunk_palette.json`'s own `_comment`, next to `HazardYellow`'s exemption,
+because that is where the next person to measure the ratios will be standing. This section is
+the evidence behind it.
+
+#### What was done
+
+All four tints were scaled so `texture x tint` lands on that entry's own `base_color` **in
+luminance, leaving the hue alone** — the tint carries a level and a cast, and only the level is
+what was measured wrong, so matching per channel would have re-hued four entries as a side
+effect of a brightness fix. The factors are OliveDrab 0.561, OxideRed 0.609, BeltRubber 0.450,
+Soot 0.339.
+
+Five frames were rendered as shipped and again corrected, with nothing else touched: the yard
+at eye level and from Survey, the ground, a working line, and the Nest at its wall. Measured
+over **the pixels that actually moved**, which is #75's denominator because a window over a
+changed surface is mostly things that did not change:
+
+| frame | pixels moved | share of frame | before | after | | whole frame |
+|---|---|---|---|---|---|---|
+| yard, eye level | 18,510 | 1.3% | 0.0491 | 0.0292 | 0.60x | 0.0570 → 0.0568 |
+| yard, Survey | 10,017 | 0.7% | 0.0804 | 0.0293 | 0.36x | 0.0446 → 0.0445 |
+| ground | 57,725 | 4.0% | 0.0283 | 0.0173 | 0.61x | 0.0504 → 0.0502 |
+| a working line | 35,336 | 2.5% | 0.1203 | 0.0526 | 0.44x | 0.0507 → 0.0505 |
+| the Nest at its wall | 80,039 | 5.6% | 0.0982 | 0.0454 | 0.46x | 0.0430 → 0.0429 |
+
+#### Four measured reasons it is not worth it
+
+- **It desaturates as much as it darkens, and the mechanism is physical.** A dielectric's
+  specular is about 4% white and **does not scale with albedo**, so lowering albedo raises the
+  specular's share of what comes back. The Smelter's sunlit oxide band went to **0.80x
+  luminance and 0.81x saturation together** — the two fell by the same factor — and a rust band
+  became a pale salmon one. `OxideRed`'s stated job is *primer showing through where paint has
+  gone*; a desaturated pink is not primer. This is the one cost no amount of re-picking the
+  target fixes, because it is a property of correcting a dielectric's albedo downward at all.
+- **It re-ranks the Factory's colours, and the entry that wins is the one that is exempt.**
+  `HazardYellow` is deliberately pushed past 1.0 and is the one entry a correction leaves alone,
+  so correcting the other four makes the safety striping **1.39x louder against the olive beside
+  it** — 1.72:1 before, 2.40:1 after, measured on the same sunlit plinth. From Survey the yard
+  reads as yellow stripes on black. Nobody asked for that and it is an art-direction change
+  rather than a correctness one.
+- **It buys almost nothing.** These four are **0.7% to 5.6% of the screen** in every vantage
+  measured, so the frame-wide median moves by about 0.3% — while every Machine, every Belt deck
+  and all of #73's cargo change. The ratios are wrong and the fix costs more than the error.
+- **And it partially re-opens #80, which is the sharpest of the four because it is an
+  interaction rather than a taste.** That ticket put the Nest's tier walls in `CastIron` and
+  **kept `OxideRed` on the caps on purpose** — they are what holds the three steps apart from
+  above and what carries the warmth, and it rejected a candidate that took them to steel after
+  measuring the Nest at 0.42x the ground from Survey. Correcting `OxideRed` takes the cap band
+  from **2.45x to 1.16x** at the wall and the whole Nest from 0.97x to 0.91x from Survey, with
+  the caps' mean going (147, 57, 29) to (107, 51, 30) — most of the warmth gone. A palette
+  correction would therefore undo, by a side effect, a decision that was made three tickets ago
+  by rendering it.
+
+And a fourth that is a trap rather than a cost: **`prop_grade.py`'s shoulders are frozen
+constants derived from the tinted result.** Its own comment says the families are tuned so each
+lands inside "the *measured* linear-albedo range of the material's own generated texture …
+(the ranges above are of the tinted result)", and those numbers — `ceiling: 0.098` and the rest
+— are literals, not reads. Correcting the tints silently invalidates them, so the purchased
+props would stop landing inside the palette's range — and the props are **gitignored**, so no
+suite in this project could notice. Any future attempt at this correction has to re-derive that
+file's shoulders in the same ticket.
+
+#### What the pictures show
+
+[`palette_tint_line_shipped.png`](docs/images/palette_tint_line_shipped.png) against
+[`_corrected`](docs/images/palette_tint_line_corrected.png), and
+[`palette_tint_survey_shipped.png`](docs/images/palette_tint_survey_shipped.png) against
+[`_corrected`](docs/images/palette_tint_survey_corrected.png). **These are the one case in this
+project where a committed pair is an argument for *not* making a change**, which is why they
+are here: the ratios in #80's table are convincing on paper and the pictures are what settle
+them.
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "running bare"
+tools/visual/shot.sh out.png survey
+```
+
+The honest reading of the pair is that **the Machines are marginally better in isolation and
+the Factory is worse as a whole.** A Smelter alone reads more like iron and less like a painted
+toy; the yard reads as hazard stripes over dark shapes, with the oxide gone pink. The thing a
+player looks at is the yard.
+
+#### What was deliberately not done
+
+- **No partial correction.** Doing OliveDrab and OxideRed alone halves the blast radius and
+  keeps both costs, because those two are the entries the desaturation and the re-ranking are
+  measured on. Doing `Soot` and `BeltRubber` alone — the two extremes, and the two the ticket
+  guessed were tuned by eye against something specific — moves the least visible surfaces in the
+  game for the most extreme numbers.
+- **No compensating lift of `HazardYellow`.** Pushing it up to preserve the ranking makes the
+  one already-loud entry louder in absolute terms, which is the wrong direction for the entry
+  this project has twice had to darken.
+- **Nothing about the lighting.** If the world is ever too bright or too dark the lever is
+  `_sync_scenery`, not this column: a palette owns the relation between entries and the lighting
+  owns the level, and #80 is the ticket that established those are two tunings rather than one.
+
+#### Nothing moved, which is the other half of the result
+
+Nothing is committed but the palette's own comment and four evidence images. The three contact
+sheets, every `docs/images/` pair for cargo, belts, the yard, the ground, the Enemies and the
+Nest, `machine_silhouette.py`'s convergence gate and the byte-for-byte mesh regeneration are
+**all untouched and all still reproduce**, because no material, no mesh and no number changed.
+The rebuild list the ticket anticipated is empty, and that is the measurement rather than an
+omission.
+
+**That was checked rather than assumed, and the check corrected something #80 wrote.** Running
+`render_machines.sh` on this branch leaves all three sheets `git status`-modified and
+**pixel-identical** — zero pixels differ, the difference bounding box is empty, and what
+changed is the PNG encoding alone. So a sheet that comes back modified is not evidence that
+anything moved. #80 attributed its own sheet churn to "text rasterisation" on the strength of a
+changed bounding box in the caption band, which was true *there* — 710 pixels really did move —
+but the general rule it implied is wrong: **compare the pixels, not the file.** A rebuilt sheet
+is worth committing when its pixels differ and worth reverting when they do not.
+
+#### What is still unmeasured
+
+Whether a player notices any of this. Every figure here is a ratio between two surfaces in a
+still frame, and the question the ticket actually asks — better or worse — was answered by
+looking at four pictures, which is one person's judgement and is recorded as such. If somebody
+with a mouse disagrees, the four factors are in this section and the correction is twenty lines
+of script; what they should not do is re-derive the table, because it is in
+`dieselpunk_palette.json` and has now been measured twice.
+
 The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
