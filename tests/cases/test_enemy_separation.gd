@@ -431,7 +431,7 @@ func test_determinism_the_fixture_really_did_put_a_crowd_through_the_pass() -> v
 # in each test, the evidence that the crowd really was thicker than the cap, because a test
 # that exercised only the uncapped case would pass for as long as the cap was broken.
 
-## How many neighbours in one cell one body may be pushed by, on the shipped content.
+## How many neighbours one body may be pushed by on one tick, on the shipped content.
 ##
 ## Written down here and derived in the Simulation, which is the right way round: this is a
 ## fixture's claim about the content it is playing, and `_separation_neighbour_cap` is the
@@ -455,9 +455,10 @@ chaff_crawlers,crawler,0,24,0,24
 ## The most Enemies standing on one tile.
 ##
 ## **The evidence that the cap is binding at all**, and the only honest way to show it from
-## outside: the cap is over the members of a *bucket cell*, and a bucket cell is a tile, so a
-## tile holding more bodies than the cap is a body whose neighbours were sampled rather than
-## all consulted. All-tiles, because a test is allowed to be quadratic about two dozen Enemies.
+## outside. A body spends its budget cell by cell and a bucket cell is a tile, so a tile
+## holding more bodies than the cap holds a body whose own tile alone can exhaust the budget —
+## which is to say a body whose neighbours were sampled rather than all consulted. All-tiles,
+## because a test is allowed to be quadratic about two dozen Enemies.
 func _thickest_tile(sim: Simulation) -> int:
 	var thickest: int = 0
 	for a: int in range(sim.query_enemy_count()):
@@ -498,7 +499,7 @@ func test_a_crowd_thicker_than_the_cap_comes_apart_rather_than_deadlocking() -> 
 
 	assert_true(
 		thickest > SHIPPED_NEIGHBOUR_CAP,
-		"a tile held more bodies than one of them may be pushed by, so the cap was binding"
+		"a tile held more bodies than any one of them may be pushed by, so the cap was binding"
 		+ " — it held %d" % thickest
 	)
 	# They walk west, so the rearmost body's x is what falls. **One metre a second is the
