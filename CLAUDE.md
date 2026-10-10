@@ -826,9 +826,12 @@ died. After: the hurt Breaker wears glowing cracks across its lower body and the
 fire and a scorch on the ground where the Crawler was.
 
 Measured over the two Breakers' own pixels in the committed after frame, counting hot glow
-(R > 190 and R − B > 110): **41 pixels on the hurt one against 3 on the fresh one.** That is the
-acceptance criterion as a number rather than as an impression, and it is the right *kind* of
-difference — bright warm specks on a dark body, where the atlas's own `OxideRed` chest is dull
+(R > 190 and R − B > 110): **18 pixels on the hurt one against 0 on the fresh one**, where the
+two stand side by side and are otherwise the same body. (The pair was re-rendered on the merged
+tip, because #76's separation pass changed where a Wave stands; the figures before that merge
+were 41 against 3 on a frame where the hurt Breaker was nearer the camera. The *ratio* is the
+claim and it survived.) That is the acceptance criterion as a number rather than as an
+impression, and it is the right *kind* of difference — bright warm specks on a dark body, where the atlas's own `OxideRed` chest is dull
 and dark and cannot be confused with it.
 
 **`wounded` is #70's preset and it exists because no other one can see the question** — the
