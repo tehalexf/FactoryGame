@@ -1642,7 +1642,7 @@ changed surface is mostly things that did not change:
 | a working line | 35,336 | 2.5% | 0.1203 | 0.0526 | 0.44x | 0.0507 → 0.0505 |
 | the Nest at its wall | 80,039 | 5.6% | 0.0982 | 0.0454 | 0.46x | 0.0430 → 0.0429 |
 
-#### Three measured reasons it is not worth it
+#### Four measured reasons it is not worth it
 
 - **It desaturates as much as it darkens, and the mechanism is physical.** A dielectric's
   specular is about 4% white and **does not scale with albedo**, so lowering albedo raises the
@@ -1660,6 +1660,15 @@ changed surface is mostly things that did not change:
 - **It buys almost nothing.** These four are **0.7% to 5.6% of the screen** in every vantage
   measured, so the frame-wide median moves by about 0.3% — while every Machine, every Belt deck
   and all of #73's cargo change. The ratios are wrong and the fix costs more than the error.
+- **And it partially re-opens #80, which is the sharpest of the four because it is an
+  interaction rather than a taste.** That ticket put the Nest's tier walls in `CastIron` and
+  **kept `OxideRed` on the caps on purpose** — they are what holds the three steps apart from
+  above and what carries the warmth, and it rejected a candidate that took them to steel after
+  measuring the Nest at 0.42x the ground from Survey. Correcting `OxideRed` takes the cap band
+  from **2.45x to 1.16x** at the wall and the whole Nest from 0.97x to 0.91x from Survey, with
+  the caps' mean going (147, 57, 29) to (107, 51, 30) — most of the warmth gone. A palette
+  correction would therefore undo, by a side effect, a decision that was made three tickets ago
+  by rendering it.
 
 And a fourth that is a trap rather than a cost: **`prop_grade.py`'s shoulders are frozen
 constants derived from the tinted result.** Its own comment says the families are tuned so each
