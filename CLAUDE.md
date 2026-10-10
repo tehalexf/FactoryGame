@@ -1713,6 +1713,15 @@ Nest, `machine_silhouette.py`'s convergence gate and the byte-for-byte mesh rege
 The rebuild list the ticket anticipated is empty, and that is the measurement rather than an
 omission.
 
+**That was checked rather than assumed, and the check corrected something #80 wrote.** Running
+`render_machines.sh` on this branch leaves all three sheets `git status`-modified and
+**pixel-identical** — zero pixels differ, the difference bounding box is empty, and what
+changed is the PNG encoding alone. So a sheet that comes back modified is not evidence that
+anything moved. #80 attributed its own sheet churn to "text rasterisation" on the strength of a
+changed bounding box in the caption band, which was true *there* — 710 pixels really did move —
+but the general rule it implied is wrong: **compare the pixels, not the file.** A rebuilt sheet
+is worth committing when its pixels differ and worth reverting when they do not.
+
 #### What is still unmeasured
 
 Whether a player notices any of this. Every figure here is a ratio between two surfaces in a
