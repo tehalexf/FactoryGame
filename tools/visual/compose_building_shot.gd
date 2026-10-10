@@ -15,6 +15,17 @@
 ##   placing   a Machine on the Build Gun, its ports arrowed, over a clear tile
 ##   routing   a Belt drag in flight, cornering, with a refused tile in it
 ##   running   a fed line, flowing, with the Machines reading as fed
+##   delivering  the same line, at the tick the objective line asks for the Delivery
+##
+## `delivering` is #71's and exists for the reason `opening` does: none of the others can see
+## its question. The claim is about the **last** step of the opening loop — the one a playtest
+## got stuck on, where the line used to say `Carry ingots to the Nest and press F` and there
+## is no way to carry anything — and `running` cannot be trusted to show it, because
+## `query_machine_is_starved` is "short of a craft's inputs right now" and a saturated Smelter
+## is briefly that on every cycle. So the step before it wins on some ticks and not others,
+## and a render of a coin flip is not a render of a step. This one frames `running`'s own
+## Factory and then steps until the line is the step, bounded, which is the same closed loop
+## over the real state that `_put_the_crosshair_on` is.
 ##
 ## And a fourth, `opening`, which is #55's and exists because **none of the three can see
 ## its question**. The claim is about tick 0 — that the hologram, the lit hotbar cell and
@@ -79,6 +90,8 @@ func _initialize() -> void:
 		for tick: int in range(240):
 			sim.step([])
 		_stand_the_player_where_the_work_is(sim, preset)
+	if preset == "delivering":
+		_step_until_the_line_asks_for_the_delivery(sim)
 	var drag: Array = _set_up_the_shot(sim, view, preset)
 
 	for frame: int in range(FRAMES_TO_SETTLE):
@@ -128,7 +141,7 @@ func _build_the_opening_line(sim: Simulation, preset: String) -> void:
 			0, definitions.machine_index("smelter_mk1"), _smelter_tile(), 0
 		)
 	])
-	if preset != "running":
+	if not _is_a_running_line(preset):
 		return
 
 	sim.step([
@@ -139,11 +152,45 @@ func _build_the_opening_line(sim: Simulation, preset: String) -> void:
 			BeltRoute.ALONG_Z
 		)
 	])
+	# **No Boiler for `delivering`, and finding that out was worth the render.** `running`
+	# stands one up to keep the grid off its baseline, and nothing ever feeds it coal — so the
+	# Boiler in that shot is *permanently* starved, `Step.UNSTARVE` is walked ahead of
+	# everything below it, and the objective line in every committed building shot has read
+	# "Something is starved" since the Boiler was added. That is #74 rather than this ticket,
+	# and the way round it is not to fake state: a Miner and a Smelter alone draw exactly
+	# `power.baseline_supply_kw`, so the line runs unthrottled, the Smelter's input buffer
+	# fills, and nothing is starved at all — which is the Factory the playtest report describes
+	# and the state the step under test is about.
+	if preset == "delivering":
+		return
 	sim.step([
 		InputAction.build_machine(
 			0, definitions.machine_index("steam_boiler_mk1"), _node_tile + Vector3i(-4, 0, 0)
 		)
 	])
+
+
+## Whether this preset is a picture of the opening line **running** — the Belt laid, the
+## Boiler up, the camera at eye level. Two presets are, and the second one differs only in
+## which tick it stops on.
+func _is_a_running_line(preset: String) -> bool:
+	return preset == "running" or preset == "delivering"
+
+
+## Steps until the objective line is the step that pays for the Run, and says so if it never
+## is.
+##
+## Bounded for `_put_the_crosshair_on`'s reason: a tool that hangs is worse than a tool that
+## renders the wrong frame, and a tool that renders the wrong frame *quietly* is worse than
+## both — so a budget that runs out prints the line it is actually looking at. Matched on the
+## Nest rather than on the whole sentence, because the wording is what the shot is for
+## judging and a tool that demanded the wording would have to be edited every time it is.
+func _step_until_the_line_asks_for_the_delivery(sim: Simulation) -> void:
+	for tick: int in range(600):
+		if Objective.line(sim, 0).contains("Nest"):
+			return
+		sim.step([])
+	print("the objective line never reached the Delivery step: %s" % Objective.line(sim, 0))
 
 
 func _smelter_tile() -> Vector3i:
@@ -164,9 +211,9 @@ func _stand_the_player_where_the_work_is(sim: Simulation, preset: String) -> voi
 	# the picture — and the two building shots are the ones Survey View exists for: at
 	# 1.7 m among 1.5 m to 2.4 m Machines you are looking at a wall of Machine, and a
 	# previewed route on the ground behind one is a route nobody can see.
-	if preset != "running":
+	if not _is_a_running_line(preset):
 		_lift_into_survey(sim)
-	_put_the_crosshair_on(sim, target, preset == "running")
+	_put_the_crosshair_on(sim, target, _is_a_running_line(preset))
 
 
 ## Turns to face a point and then walks towards or away from it until the Build Gun's
@@ -327,7 +374,11 @@ func _set_up_the_shot(sim: Simulation, view: WorldView, preset: String) -> Array
 		])
 		return [false, Vector3i.ZERO, BeltRoute.ALONG_X]
 
-	if preset == "running":
+	# `delivering` keeps the Build Gun out where `running` holsters it, and that is the
+	# difference between the two: this one is a picture of what a player is *told* at the step
+	# where a playtest got stuck, so the lit hotbar cell and the objective line naming the
+	# same thing is half of the subject (#53).
+	if _is_a_running_line(preset):
 		return [false, Vector3i.ZERO, BeltRoute.ALONG_X]
 
 	# Routing: the Belt tool out and a drag anchored back at the Miner's output, so the

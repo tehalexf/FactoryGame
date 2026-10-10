@@ -10977,6 +10977,26 @@ func query_belt_end_is_connected(index: int) -> bool:
 	return _belt_entered_at(beyond) != -1
 
 
+## Whether a Belt's far end hands its goods to the Nest — the one act that pays for a
+## Delivery without a player carrying anything.
+##
+## **One line over the same clause `query_belt_end_is_connected` answers through**, which is
+## the arrangement `query_node_yields_for` and `query_node_is_within_depth_of` have: the rule
+## stays the Simulation's and `game/` does not have to learn it. #71 is why it is needed — the
+## objective line has to stop asking for a Belt into the Nest once one is there, and working
+## that out in the renderer would be a second copy of "beyond the exit tile" living next to
+## the first.
+##
+## Deliberately narrower than `query_belt_end_is_connected`: a Belt into a *Machine* is
+## connected and is not a Delivery. A projection; nothing in the Simulation reads it back.
+func query_belt_ends_at_the_nest(index: int) -> bool:
+	if not _is_belt(index):
+		return false
+	return _nest_covers(
+		_belt_exit_tile(index) + WorldGrid.direction_step(_belt_direction[index])
+	)
+
+
 ## Whether anything is loading a Belt at its entry: a Machine output port behind it, or
 ## another Belt handing Items on.
 ##

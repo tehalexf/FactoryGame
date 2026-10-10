@@ -297,19 +297,141 @@ func test_the_hud_says_how_long_the_route_is_and_why_it_would_be_refused() -> vo
 
 
 # ── Ports made visible ────────────────────────────────────────────────────────
+
+func test_the_tile_the_port_tests_stand_on_is_the_one_a_run_opens_pointed_at() -> void:
+	# `AIMED_TILE` is a literal in four tests below. If the opening pose ever moves, this is
+	# what says so, rather than four tests quietly asserting about empty ground.
+	var sim: Simulation = Simulation.new(1, 1)
+	assert_eq(BuildGun.aimed_tile(sim, 0), AIMED_TILE)
+
+
+func test_a_holstered_build_gun_draws_no_port_arrows_at_all() -> void:
+	# #66. An arrow is advice about where to put a Belt, and since #42 the weapon is the
+	# default hand — so the state a player spends most of a Run in was the state the whole
+	# Factory wore a hedge of 3.2 m quads in.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	var where: Vector3i = BuildGun.aimed_tile(sim, 0)
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), where
+		)
+	])
+	view.sync(sim)
+	assert_eq(view.port_marker_count(), 0, "the Build Gun is holstered")
+
+	sim.step([InputAction.set_build_mode(0, true)])
+	view.sync(sim)
+	assert_true(
+		view.port_marker_count() > 0, "and the same Machine wears them once it is drawn"
+	)
+	view.free()
+
+
+func test_a_belt_drag_keeps_the_arrows_at_the_end_it_started_from() -> void:
+	# A route has two ends, and the far one is the one a player committed to several seconds
+	# ago. Without the anchor the arrow that started the drag goes out while the drag is being
+	# made, which is the one moment it is being read.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([
+		InputAction.set_build_mode(0, true),
+		InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT),
+	])
+	var view: WorldView = WorldView.new()
+	var far: Vector3i = AIMED_TILE + Vector3i(WorldView.PORT_ARROW_RANGE_TILES * 4, 0, 0)
+	sim.step([
+		InputAction.build_machine(0, sim.query_definitions().machine_index("smelter_mk1"), far)
+	])
+	view.sync(sim)
+	assert_eq(view.port_marker_count(), 0, "out of range of the aim, and no hologram is up")
+
+	view.note_belt_drag(true, far, BeltRoute.ALONG_X)
+	view.sync(sim)
+	assert_eq(
+		view.port_marker_count(),
+		sim.query_definitions().machine_ports().ports_of("smelter_mk1").size(),
+		"a drag anchored on it is a question about it"
+	)
+	view.free()
+
+
+func test_a_machine_near_the_aim_wears_every_port_it_has_or_none_of_them() -> void:
+	# A render caught this: filtered tile by tile, a Machine straddling the range showed the
+	# arrows on its near face and not the ones on its far one — which reads as "those are all
+	# the ports it has", and is a worse thing to tell a player than nothing at all. So the
+	# range decides *whether a Machine is being asked about*, and the answer is its whole
+	# declaration either way.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	var declared: int = sim.query_definitions().machine_ports().ports_of("smelter_mk1").size()
+	var view_before: int = 0
+	view.sync(sim)
+	view_before = view.port_marker_count()
+
+	# A 3x3 Smelter with one corner just inside the range and the opposite one outside it.
+	sim.step([
+		InputAction.build_machine(
+			0,
+			sim.query_definitions().machine_index("smelter_mk1"),
+			AIMED_TILE + Vector3i(WorldView.PORT_ARROW_RANGE_TILES - 1, 0, 0)
+		)
+	])
+	view.sync(sim)
+	assert_eq(
+		view.port_marker_count() - view_before,
+		declared,
+		"every port of a Machine the range reaches, not the near face only"
+	)
+	view.free()
+
+
+func test_arrows_are_drawn_where_the_build_gun_is_pointing_and_not_across_the_yard() -> void:
+	# #66's second fault. Eight of the ten shipped Machines declare every tile of every face,
+	# so a Factory left to wear all of them at once is a hedge of quads — and a ring of twelve
+	# arrows pointing outward in every direction has no tile in it. Drawn only around the aim,
+	# the ring is a legend for the Machine a player is actually deciding about.
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	var smelter: int = sim.query_definitions().machine_index("smelter_mk1")
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+
+	sim.step([InputAction.build_machine(0, smelter, aimed + Vector3i(0, 0, 2))])
+	view.sync(sim)
+	var near: int = view.port_marker_count()
+	assert_true(near > 0, "the Machine the gun is pointing at wears its ports")
+
+	sim.step([InputAction.build_machine(0, smelter, aimed + Vector3i(30, 0, 30))])
+	view.sync(sim)
+	assert_eq(
+		view.port_marker_count(), near, "and one thirty tiles away adds nothing to the frame"
+	)
+	view.free()
+
+
+## The tile a Run's Build Gun points at on tick 0, with nobody having moved or looked.
+## Written down rather than read back, so these tests state the ground they stand on — and
+## since #66 an arrow is only drawn near the aim, so the port tests have to build *here*.
+const AIMED_TILE: Vector3i = Vector3i(0, 0, -8)
+
+
 # `content/machine_ports.csv` has declared every port since #19 and nothing showed a
 # player any of it, so you could not tell which face of a Smelter takes ore. These assert
 # that the declaration reaches the screen, for a Machine standing and for one about to be.
 
 func test_a_standing_machine_shows_one_marker_for_every_port_it_declares() -> void:
+	# With the Build Gun drawn, and named rather than assumed: since #66 a holstered gun
+	# draws no arrows at all, which is its own test above.
 	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 	var before: int = view.port_marker_count()
 
 	sim.step([
 		InputAction.build_machine(
-			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(12, 0, 12)
+			0, sim.query_definitions().machine_index("smelter_mk1"), AIMED_TILE
 		)
 	])
 	view.sync(sim)
@@ -328,6 +450,7 @@ func test_inputs_and_outputs_are_counted_apart_so_they_can_be_drawn_apart() -> v
 	# first — a Run opens with a Machine on the Build Gun, so there is never a frame with
 	# nothing to draw.
 	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
 	var held_in: int = view.input_port_marker_count()
@@ -335,7 +458,7 @@ func test_inputs_and_outputs_are_counted_apart_so_they_can_be_drawn_apart() -> v
 
 	sim.step([
 		InputAction.build_machine(
-			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(12, 0, 12)
+			0, sim.query_definitions().machine_index("smelter_mk1"), AIMED_TILE
 		)
 	])
 	view.sync(sim)
@@ -350,40 +473,42 @@ func test_inputs_and_outputs_are_counted_apart_so_they_can_be_drawn_apart() -> v
 
 func test_a_port_marker_stands_on_the_tile_a_belt_would_dock_at() -> void:
 	# The Smelter is 3x3 and the first ingot output declared is the near end of its south edge,
-	# which is tile (12, 14) of a body anchored at (12, 12). The marker goes on the tile *past*
-	# it — (12, 15), spanning 24 m to 26 m on x and 30 m to 32 m on z, centre (25, 31) — because
+	# which is tile (0, -6) of a body anchored at (0, -8). The marker goes on the tile *past*
+	# it — (0, -5), spanning 0 m to 2 m on x and -10 m to -8 m on z, centre (1, -9) — because
 	# a marker on the port tile is a marker inside the Machine, which a render showed
 	# immediately, and because the tile outside is where the Belt actually goes.
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([
+		InputAction.set_build_mode(0, true),
 		InputAction.build_machine(
-			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(12, 0, 12)
+			0, sim.query_definitions().machine_index("smelter_mk1"), AIMED_TILE
 		)
 	])
 	view.sync(sim)
 	# Marker 0 is the standing Smelter's: the Machines are written before the hologram's.
 	var at: Vector3 = view.output_port_marker_position(0)
-	assert_true(is_equal_approx(at.x, 25.0), "expected x 25.0, got %f" % at.x)
-	assert_true(is_equal_approx(at.z, 31.0), "expected z 31.0, got %f" % at.z)
+	assert_true(is_equal_approx(at.x, 1.0), "expected x 1.0, got %f" % at.x)
+	assert_true(is_equal_approx(at.z, -9.0), "expected z -9.0, got %f" % at.z)
 	view.free()
 
 
 func test_turning_the_machine_moves_its_markers_with_it() -> void:
 	# A half turn puts the south face north: the first ingot port goes from local (0, 2) to
-	# (2, 0), which for an anchor at (12, 12) is tile (14, 12), and the tile a Belt would
-	# dock at is (14, 11) — centre (29, 23).
+	# (2, 0), which for an anchor at (0, -8) is tile (2, -8), and the tile a Belt would
+	# dock at is (2, -9) — centre (5, -17).
 	var sim: Simulation = Simulation.new(1, 1)
 	var view: WorldView = WorldView.new()
 	sim.step([
+		InputAction.set_build_mode(0, true),
 		InputAction.build_machine(
-			0, sim.query_definitions().machine_index("smelter_mk1"), Vector3i(12, 0, 12), 2
+			0, sim.query_definitions().machine_index("smelter_mk1"), AIMED_TILE, 2
 		)
 	])
 	view.sync(sim)
 	var at: Vector3 = view.output_port_marker_position(0)
-	assert_true(is_equal_approx(at.x, 29.0), "expected x 29.0, got %f" % at.x)
-	assert_true(is_equal_approx(at.z, 23.0), "expected z 23.0, got %f" % at.z)
+	assert_true(is_equal_approx(at.x, 5.0), "expected x 5.0, got %f" % at.x)
+	assert_true(is_equal_approx(at.z, -17.0), "expected z -17.0, got %f" % at.z)
 	view.free()
 
 
@@ -450,6 +575,41 @@ func test_joining_a_belt_to_a_machine_takes_the_mark_away() -> void:
 	])
 	view.sync(sim)
 	assert_eq(view.dangling_marker_count(), 0, "both ends are somewhere now")
+	view.free()
+
+
+func test_a_starved_tag_is_tethered_to_the_body_it_is_about() -> void:
+	# #66's third fault, which is #41's rule a fourth time. A Steam Boiler's drawn body tops
+	# out in a narrow chimney, so a tag resting 1.2 m over that top is 1.2 m of sky over a
+	# pipe: at the distance a player reads a Factory from it is a bright amber slab belonging
+	# to nobody, which is exactly what the `running` render showed. The lift is right — #50
+	# measured it — so what was missing was the thing that says whose mark it is.
+	var sim: Simulation = Simulation.new(1, 1)
+	var view: WorldView = WorldView.new()
+	sim.step([
+		InputAction.build_machine(
+			0, sim.query_definitions().machine_index("smelter_mk1"), AIMED_TILE
+		)
+	])
+	view.sync(sim)
+	assert_eq(view.starved_marker_count(), 1, "a Smelter with nothing coming in")
+	assert_eq(
+		view.starved_tether_count(),
+		view.starved_marker_count(),
+		"one tether per tag, so no tag is ever left floating"
+	)
+
+	var tag: Vector3 = view.starved_marker_position(0)
+	var tether: Vector3 = view.starved_tether_position(0)
+	var roof: float = view.machine_drawn_roof_metres(sim, 0)
+	assert_true(
+		roof < tether.y and tether.y < tag.y,
+		"the tether spans roof %.2f to tag %.2f, and sits at %.2f" % [roof, tag.y, tether.y]
+	)
+	assert_true(
+		is_equal_approx(tether.x, tag.x) and is_equal_approx(tether.z, tag.z),
+		"and stands directly under it"
+	)
 	view.free()
 
 
@@ -1682,3 +1842,163 @@ func test_a_run_opens_pointed_at_the_first_cell_of_the_chain() -> void:
 	)
 	assert_true(view.hologram_is_visible(), "and it is in front of the player")
 	view.free()
+
+
+# ── The step that pays for the Run, and the act it names ──────────────────────
+# **#71, and the report is the strongest kind there is: a player read the line, did what it
+# said, and was stuck anyway.** *"its not clear how to carry ingots to the nest... the
+# smelter works but idk what next"*. The line said `Carry ingots to the Nest and press F`,
+# and **there is no way to carry ingots** — the only two hand transfers in the Simulation are
+# `_apply_deliver_to_nest`, which spends out of a player's own pockets, and
+# `_apply_withdraw_from_nest`, which fills them from the Nest's store. Nothing moves goods
+# out of a Machine's output buffer into a player's hands, so the only way a plate leaves a
+# Smelter is a Belt.
+#
+# And it was wrong about the goods as well as the verb, which is the half the report could
+# not see: `t01_munitions` wants **coal**, so `F` at the Nest with a pocketful of plate is
+# refused `NOTHING_TO_DELIVER` and does nothing at all. A player who followed the line
+# exactly was told to perform an impossible act in aid of the wrong Item.
+
+## A Map and a Factory at the step the report was stuck on: something mining, something
+## crafting, a Belt between them, and nothing yet carrying anything to the Nest.
+##
+## Compact rather than the shipped Map, which is `test_nest_store`'s precedent and for its
+## reason: the starter Map's Nodes are far enough apart that joining them up is a lesson in
+## Belt routing rather than a statement about the objective line. The content is the shipped
+## content, because the whole point of the assertions below is what the shipped Delivery
+## chain actually asks for.
+func _at_the_step_that_pays_for_the_run() -> Simulation:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.add_node(Vector3i(0, 0, -6), "coal", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([InputAction.set_build_mode(0, true)])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0))
+	])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(0, 0, 5))
+	])
+	sim.step([InputAction.build_belt(0, Vector3i(1, 0, 2), Vector3i(1, 0, 4))])
+	_run(sim, 300)
+	_settle_until_nothing_is_starved(sim)
+	return sim
+
+
+## Steps until no Machine is starved, and fails if that never comes.
+##
+## **Not padding, and the reason is a finding this ticket turned up rather than fixed.**
+## `query_machine_is_starved` is "does not hold a whole Recipe's worth", so a Smelter is
+## starved for the seconds between consuming one craft's ore and holding the next craft's —
+## which it is, intermittently, on a line that is working perfectly. `Step.UNSTARVE` is
+## walked ahead of the step below it, so on a Factory the player has built correctly the line
+## really does alternate between "Something is starved" and what to do next. That is a
+## separate defect in a step that shipped long before #71 and it is filed as its own ticket;
+## what it means here is that a fixture about the *last* step has to stand on a tick where
+## the one before it is satisfied, and say so rather than hope.
+func _settle_until_nothing_is_starved(sim: Simulation) -> void:
+	for tick: int in range(600):
+		var starved: bool = false
+		for index: int in range(sim.query_machine_count()):
+			if sim.query_machine_is_starved(index):
+				starved = true
+				break
+		if not starved:
+			return
+		sim.step([])
+	assert_true(false, "the opening line never came off starved, so the premise is wrong")
+
+
+func test_the_line_never_tells_a_player_to_carry_goods_out_of_a_machine() -> void:
+	var sim: Simulation = _at_the_step_that_pays_for_the_run()
+	var line: String = Objective.line(sim, 0)
+	assert_false(
+		line.to_lower().contains("carry"),
+		"there is no intent anywhere that moves goods out of a Machine: %s" % line
+	)
+	assert_false(
+		line.to_lower().contains("ingot"),
+		"and the open tier does not want ingots at all: %s" % line
+	)
+
+
+func test_the_step_that_pays_for_the_run_names_what_the_nest_actually_wants() -> void:
+	# Read off `query_delivery_goods` rather than written down, so the line cannot name one
+	# Item while the counter waits for another — which is exactly what it did.
+	var sim: Simulation = _at_the_step_that_pays_for_the_run()
+	var line: String = Objective.line(sim, 0)
+	assert_true(line.contains("coal"), "the shipped chain opens on twenty coal: %s" % line)
+	assert_true(line.contains("20"), "and how much of it: %s" % line)
+
+
+func test_making_what_the_nest_wants_comes_before_the_belt_that_carries_it() -> void:
+	# Nothing on this Map makes coal yet, so a line about a Belt would be a line about a Belt
+	# out of nowhere. The act is to build the Machine that makes it, and the cell the hotbar
+	# marks is that Machine's — one `_step`, drawn twice (#53).
+	var sim: Simulation = _at_the_step_that_pays_for_the_run()
+	var definitions: Definitions = sim.query_definitions()
+	assert_eq(
+		Objective.pointed_at(sim, 0),
+		definitions.machine_index("coal_miner_mk1"),
+		Objective.line(sim, 0)
+	)
+	assert_true(Objective.line(sim, 0).contains("key 5"), Objective.line(sim, 0))
+
+
+func test_once_something_makes_it_the_step_is_the_belt_into_the_nest() -> void:
+	var sim: Simulation = _at_the_step_that_pays_for_the_run()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(
+			0, definitions.machine_index("coal_miner_mk1"), Vector3i(0, 0, -6)
+		)
+	])
+	_run(sim, 200)
+	_settle_until_nothing_is_starved(sim)
+	var line: String = Objective.line(sim, 0)
+	assert_true(line.contains("Belt"), line)
+	assert_true(line.contains("Nest"), line)
+	# The Nest is deliberately not port-enforced (#47) — it is not a Machine, so a Belt docks
+	# anywhere on its 4x4 wall. Sending a player looking for an arrow on it would be sending
+	# them after a mark that is not drawn.
+	assert_false(
+		line.contains("blue"), "there is no input arrow on the Nest to aim at: %s" % line
+	)
+	assert_eq(
+		Objective.pointed_at(sim, 0),
+		definitions.machine_count(),
+		"and the cell is the Belt tool's, past the end of the Machine list"
+	)
+
+
+func test_the_step_stops_asking_for_a_belt_once_one_lands_in_the_nest() -> void:
+	# #67's defect, which is the one this step is most exposed to: the tier takes thirty
+	# seconds to fill, and a line still saying "run a Belt into the Nest" for all of it is an
+	# instruction to do a thing already done.
+	var sim: Simulation = _at_the_step_that_pays_for_the_run()
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([
+		InputAction.build_machine(
+			0, definitions.machine_index("coal_miner_mk1"), Vector3i(0, 0, -6)
+		)
+	])
+	sim.step([InputAction.build_belt(0, Vector3i(-1, 0, -6), Vector3i(-2, 0, -6))])
+	_run(sim, 60)
+	_settle_until_nothing_is_starved(sim)
+	assert_true(
+		sim.query_belt_ends_at_the_nest(1),
+		"the premise: the second Belt runs into the Nest's wall"
+	)
+	assert_eq(
+		Objective.line(sim, 0), "", "the opening has taught itself: %s" % Objective.line(sim, 0)
+	)
+
+
+func test_asking_whether_a_belt_feeds_the_nest_leaves_the_run_where_it_was() -> void:
+	var sim: Simulation = _at_the_step_that_pays_for_the_run()
+	var before: int = sim.hash()
+	for index: int in range(sim.query_belt_count()):
+		sim.query_belt_ends_at_the_nest(index)
+	assert_eq(sim.hash(), before, "a projection the Simulation never reads back")
