@@ -349,48 +349,89 @@ const AMMUNITION_LOW_FRACTION: float = 0.5
 ## shipped MG fires on, so four rounds a second read as four flashes rather than as a glow,
 ## and long enough that a frame cannot fall between two of them.
 const MUZZLE_FLASH_TICKS: int = 4
-const MUZZLE_FLASH_SIZE_METRES: float = 0.55
 
-## Where up the gun the flash sits, as a fraction of the body a player can see. A fraction of
-## `_machine_roof` rather than a constant, for #41's reason: a mark measured off a number that
-## is not this Machine's is a mark that ends up inside the body or floating over it.
-const MUZZLE_FLASH_HEIGHT_FRACTION: float = 0.7
+## How big the flash is. Over half the width of a Belt deck, which sounds large written down
+## and is what the render settled: at 0.55 m it was the same size and very nearly the same
+## colour as the tracer leaving it, so it read as the line's end rather than as a gun going
+## off. A flash has to be the brightest and roundest thing in its corner of the frame.
+const MUZZLE_FLASH_SIZE_METRES: float = 0.9
 
-## How far out from the footprint centre, towards what is being shot at, the flash stands. A
-## muzzle rather than a middle, so the flash and the tracer leaving it read as one thing.
-const MUZZLE_FLASH_REACH_METRES: float = 1.1
+## Where up the gun the flash sits, as a fraction of the body a player can see — `_machine_roof`
+## rather than a constant, for #41's reason: a mark measured off a number that is not this
+## Machine's ends up inside the body or floating over it.
+##
+## **At the roofline, and the two thirds that was tried first is what a render rejected.** A
+## Turret's footprint is four metres across and its clearance is 35 cm, so a flash at 1.4 m was
+## 35 cm clear of a body two metres tall — which, from a camera forty degrees round from the
+## line of fire, is behind it. On the roofline the cube straddles the edge: half of it stands
+## above the silhouette from any angle, and the half that overlaps the body is what gives the
+## mark an owner, which is #52's rule about a bright mark with nothing under it.
+const MUZZLE_FLASH_HEIGHT_FRACTION: float = 1.0
+
+## How far **clear of the footprint** the flash stands, towards what is being shot at. A muzzle
+## rather than a middle, so the flash and the tracer leaving it read as one thing.
+##
+## A clearance rather than a reach, and that is #41's rule arriving from the horizontal
+## direction: a constant 1.1 m was tried and it put the flash *inside* a 2x2 Turret, whose
+## footprint is four metres across. The mark was drawn, was the right colour, was at the right
+## height and was invisible — the third time this project has paid for a mark measured off a
+## number that is not this Machine's, and the second time only a render found it.
+const MUZZLE_FLASH_CLEARANCE_METRES: float = 0.35
 
 ## Hot white-yellow, unshaded. Unshaded for the Ammunition gauge's reason: a flash a
 ## directional light can darken is a flash a player misses at thirty metres, which is the
 ## distance this whole mark exists for.
-const MUZZLE_FLASH_COLOUR: Color = Color(1.0, 0.86, 0.45, 0.95)
+const MUZZLE_FLASH_COLOUR: Color = Color(1.0, 0.95, 0.76, 1.0)
 
 ## How long the round itself is in frame. Three ticks — a round crosses sixteen metres rather
 ## faster than that, so this is a streak left behind rather than a projectile with a speed, and
 ## giving it one would be the renderer inventing a flight time the Simulation does not have.
 const TRACER_TICKS: int = 3
-const TRACER_WIDTH_METRES: float = 0.07
+
+## How thick the round is. Seven centimetres was the first guess and is **sub-pixel at thirty
+## metres** — about two pixels of a 1600-wide frame, at half alpha, which the render showed as
+## nothing at all. Sixteen is a round a player can see crossing a gap and is still well under
+## half the Item riding the Belt underneath it.
+const TRACER_WIDTH_METRES: float = 0.16
 
 ## Hot, and a little cooler than the flash, so the two read as one thing with a direction.
-const TRACER_COLOUR: Color = Color(1.0, 0.72, 0.30, 0.8)
+const TRACER_COLOUR: Color = Color(1.0, 0.76, 0.34, 0.95)
 
 ## How far out in front of the eye a player's own round leaves from, and how far under it. The
 ## weapon is held below and ahead of the camera, so a tracer that started exactly at the eye
 ## would be a line emerging from the middle of the crosshair and would hide the thing it is
 ## about.
-const PLAYER_TRACER_REACH_METRES: float = 0.9
-const PLAYER_TRACER_DROP_METRES: float = 0.22
+## And it begins a few metres out rather than at the barrel, and is thinner. **One width cannot
+## serve both kinds of tracer**, which is the sharpest thing the renders found: a Turret's round
+## is seen from outside at tens of metres, where sixteen centimetres is a thin bright line, and
+## a player's own is seen down its own axis from arm's length, where the same rod is a slab a
+## metre and a half across the middle of the frame, hiding the very thing it is about.
+##
+## The sideways offset matters as much as the thickness and only a render found it: ahead-and-
+## below alone leaves the round travelling almost exactly along the line of sight, and a rod
+## seen down its own axis is not a line. Offset to the weapon's own side it converges on the
+## target from the lower right, which is what reads as a round going out — and starting a few
+## metres out is what a real tracer looks like anyway, since nobody sees one leave a barrel.
+const PLAYER_TRACER_REACH_METRES: float = 3.5
+const PLAYER_TRACER_DROP_METRES: float = 0.35
+const PLAYER_TRACER_ASIDE_METRES: float = 0.55
+const PLAYER_TRACER_WIDTH_METRES: float = 0.05
 
 ## How long the burst where a round landed stays. Longer than the tracer, because the tracer
 ## says *that* a round went and the burst says *where it arrived*, which is the half a player
 ## is actually reading — and it is the one mark that survives being looked at a frame late.
 const IMPACT_TICKS: int = 9
-const IMPACT_SIZE_METRES: float = 0.75
+
+## How big the burst is. Three quarters of a metre was the first guess and read, in the render,
+## as a **cream crate standing among the Crawlers** — #56's finding about a red post that was
+## the same size and nearly the same colour as the freight riding past it, in a different
+## colour. Half a metre and hotter reads as a flash on a body rather than as an object.
+const IMPACT_SIZE_METRES: float = 0.5
 
 ## Pale and hot at the centre of the body it landed on. Deliberately **not** red: red is
 ## load-bearing in this file — a ruined Wall, a dry magazine, a Belt end that leads nowhere —
 ## and a cloud of red sparks over a Wave would drown all three.
-const IMPACT_COLOUR: Color = Color(1.0, 0.94, 0.74, 0.85)
+const IMPACT_COLOUR: Color = Color(1.0, 0.88, 0.58, 0.9)
 
 ## How long the crosshair wears a mark after the player's own round connects. A fifth of a
 ## second: long enough to register at sixteen rounds a magazine, short enough that a held
@@ -437,6 +478,7 @@ var _muzzle_flash_colours: Array[Color] = []
 var _tracer_starts: Array[Vector3] = []
 var _tracer_ends: Array[Vector3] = []
 var _tracer_colours: Array[Color] = []
+var _tracer_widths: Array[float] = []
 var _impact_positions: Array[Vector3] = []
 var _impact_colours: Array[Color] = []
 
@@ -3087,6 +3129,7 @@ func _sync_shots(sim: Simulation) -> void:
 	_tracer_starts.clear()
 	_tracer_ends.clear()
 	_tracer_colours.clear()
+	_tracer_widths.clear()
 	_impact_positions.clear()
 	_impact_colours.clear()
 
@@ -3137,7 +3180,17 @@ func _muzzle_of(sim: Simulation, index: int) -> Vector3:
 	towards.y = 0.0
 	if towards.length() < 0.001:
 		return at
-	return at + towards.normalized() * MUZZLE_FLASH_REACH_METRES
+	return at + towards.normalized() * _muzzle_clearance(sim, index)
+
+
+## How far from a Machine's own centre its muzzle has to stand to be outside it: the radius of
+## the circle its footprint fits inside, plus a clearance. Derived from the footprint for
+## `_machine_roof`'s reason — the alternative is a constant that is right for one Machine and
+## buries the mark inside every Machine bigger than that one.
+func _muzzle_clearance(sim: Simulation, index: int) -> float:
+	var footprint: Vector2i = sim.query_machine_footprint(index)
+	var across: float = float(maxi(footprint.x, footprint.y) * WorldGrid.TILE_SIZE_METRES)
+	return across * 0.5 + MUZZLE_FLASH_CLEARANCE_METRES
 
 
 ## Where an Enemy's body is, at the middle of the height a round is resolved against — so a
@@ -3259,6 +3312,11 @@ func _lay_the_rounds_that_landed(sim: Simulation) -> void:
 				_tracer_starts.append(from)
 				_tracer_ends.append(event.at)
 				_tracer_colours.append(lit)
+				_tracer_widths.append(
+					PLAYER_TRACER_WIDTH_METRES
+					if event.from == CombatEvents.From.PLAYER
+					else TRACER_WIDTH_METRES
+				)
 		if age < IMPACT_TICKS:
 			var spark: Color = IMPACT_COLOUR
 			spark.a = IMPACT_COLOUR.a * _fading(age, IMPACT_TICKS)
@@ -3305,11 +3363,14 @@ func _where_the_player_fires_from(sim: Simulation, player_id: int) -> Vector3:
 		Fixed.to_float(sim.query_player_eye_height_metres(player_id)),
 		Fixed.to_float(at.z)
 	)
-	var along: Vector3 = Vector3(Fixed.to_float(facing.x), 0.0, Fixed.to_float(facing.z))
+	var along: Vector3 = Vector3(
+		Fixed.to_float(facing.x), 0.0, Fixed.to_float(facing.z)
+	).normalized()
 	return (
 		eye
 		+ along * PLAYER_TRACER_REACH_METRES
 		+ Vector3.DOWN * PLAYER_TRACER_DROP_METRES
+		+ along.cross(Vector3.UP).normalized() * PLAYER_TRACER_ASIDE_METRES
 	)
 
 
@@ -3335,7 +3396,10 @@ func _upload_the_shot_marks() -> void:
 
 	for mark: int in range(_tracer_starts.size()):
 		marks.set_instance_transform(
-			instance, _stretched_between(_tracer_starts[mark], _tracer_ends[mark])
+			instance,
+			_stretched_between(
+				_tracer_starts[mark], _tracer_ends[mark], _tracer_widths[mark]
+			)
 		)
 		marks.set_instance_color(instance, _tracer_colours[mark])
 		instance += 1
@@ -3348,22 +3412,18 @@ func _upload_the_shot_marks() -> void:
 
 
 ## The unit box stretched into a thin rod from one point to another, centred on the midpoint.
-func _stretched_between(from: Vector3, to: Vector3) -> Transform3D:
+func _stretched_between(from: Vector3, to: Vector3, width: float) -> Transform3D:
 	var along: Vector3 = to - from
 	var span: float = along.length()
 	if span < 0.001:
-		return Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * TRACER_WIDTH_METRES), from)
+		return Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * width), from)
 	var forward: Vector3 = along / span
 	var up: Vector3 = Vector3.UP
 	if absf(forward.dot(up)) > 0.99:
 		up = Vector3.FORWARD
 	var right: Vector3 = up.cross(forward).normalized()
 	return Transform3D(
-		Basis(
-			right * TRACER_WIDTH_METRES,
-			forward.cross(right).normalized() * TRACER_WIDTH_METRES,
-			forward * span
-		),
+		Basis(right * width, forward.cross(right).normalized() * width, forward * span),
 		from + along * 0.5
 	)
 

@@ -2493,11 +2493,17 @@ func test_a_turret_that_fires_flashes_where_the_gun_is() -> void:
 		return
 	view.sync(sim)
 	assert_eq(view.muzzle_flash_count(), 1, "the Turret that fired is the thing that flashes")
-	# The 2x2 Turret anchored at (8,0,0) spans 16 m to 20 m along x and 0 m to 4 m along z,
-	# so its centre is (18 m, 2 m) and the flash stands over that rather than beside it.
+	# The 2x2 Turret anchored at (8,0,0) spans 16 m to 20 m along x and 0 m to 4 m along z, so
+	# its centre is (18 m, 2 m) and the circle its footprint fits inside has a 2 m radius. The
+	# flash stands just **outside** that circle, towards what is being shot at — which is the
+	# whole of `_muzzle_clearance`, and a render is why it is not a constant: at 1.1 m the mark
+	# was inside the body and invisible.
 	var flash: Vector3 = view.muzzle_flash_position(0)
-	assert_true(absf(flash.x - 18.0) < 1.5, "flashing at x %f, not over the gun" % flash.x)
-	assert_true(absf(flash.z - 2.0) < 1.5, "flashing at z %f, not over the gun" % flash.z)
+	var out: float = Vector2(flash.x, flash.z).distance_to(Vector2(18.0, 2.0))
+	assert_true(
+		absf(out - (2.0 + WorldView.MUZZLE_FLASH_CLEARANCE_METRES)) < 0.01,
+		"the muzzle is %f m from the Turret's middle, not clear of its own footprint" % out
+	)
 	assert_true(flash.y > 0.0, "and above the ground rather than printed on it")
 	view.free()
 
@@ -2633,7 +2639,7 @@ func test_a_repair_pylon_pulsing_a_plate_is_not_a_gun_going_off() -> void:
 	var gun: Vector3 = view.machine_placeholder_position(turret)
 	assert_true(
 		Vector2(flash.x, flash.z).distance_to(Vector2(gun.x, gun.z))
-			< WorldView.MUZZLE_FLASH_REACH_METRES + 0.001,
+			< 2.0 + WorldView.MUZZLE_FLASH_CLEARANCE_METRES + 0.001,
 		"and it is the Turret's own muzzle it is at, not %s" % flash
 	)
 	view.free()
@@ -2866,11 +2872,19 @@ func test_a_players_own_round_draws_a_line_from_their_weapon_to_what_it_hit() ->
 	var from: Vector3 = view.tracer_start(0)
 	var to: Vector3 = view.tracer_end(0)
 	var at: FixedVec2 = sim.query_player_position(0)
+	var facing: FixedVec2 = sim.query_player_facing(0)
+	var ahead: Vector2 = Vector2(Fixed.to_float(facing.x), Fixed.to_float(facing.z))
+	var out: Vector2 = Vector2(from.x, from.z) - Vector2(
+		Fixed.to_float(at.x), Fixed.to_float(at.z)
+	)
 	assert_true(
-		Vector2(from.x, from.z).distance_to(
-			Vector2(Fixed.to_float(at.x), Fixed.to_float(at.z))
-		) < WorldView.PLAYER_TRACER_REACH_METRES + 0.001,
-		"it leaves from the weapon in the player's own hands, not from %s" % from
+		out.dot(ahead) > 0.0,
+		"it leaves from in front of the player rather than behind them: %s" % from
+	)
+	assert_true(
+		out.length() < WorldView.PLAYER_TRACER_REACH_METRES
+			+ WorldView.PLAYER_TRACER_ASIDE_METRES + 0.001,
+		"and from the weapon's own distance rather than from somewhere out in the yard"
 	)
 	assert_true(
 		from.y < Fixed.to_float(sim.query_player_eye_height_metres(0)),
