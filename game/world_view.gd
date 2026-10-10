@@ -291,7 +291,7 @@ const PALETTE_MATERIALS: String = "res://assets/machines/materials/"
 ## How many times a palette map repeats over one body height. 1 UV unit is one authored
 ## metre, and a body is authored one metre tall, so this is the whole of the texture density
 ## on an Enemy. Bracketed by rendering: see "What an Enemy is made of" in CLAUDE.md.
-const ENEMY_TEXTURE_TILES: float = 4.0
+const ENEMY_TEXTURE_TILES: float = 2.5
 
 ## Enemy's, not the players', so it reads as grown rather than welded.
 const HIVE_SIZE_METRES: float = 4.0
@@ -3262,51 +3262,63 @@ func _enemy_tint(kind: int) -> Color:
 	return Color(1.0, 0.88, 0.78)
 
 
-## How metallic each kind reads — **nothing, and that is #79 re-deriving #75 rather than
-## inheriting it.**
+## How metallic each kind reads, and **#79 tested the other answer and the render rejected
+## it.**
 ##
-## #75 pushed all three to full metal and the argument was sound for the body it had: the
-## pack's graded atlas sat at about 0.17 linear, `_sync_scenery` takes ambient and reflections
-## off the sky *because* the generated surfaces are mostly metal, and a **dielectric** that
-## dark has almost nothing to return under a sky dome — so a Wave arriving out of the sun
-## rendered as a silhouette. A metal's reflection is coloured by its own albedo and so *is*
-## the surface, which is what rescued it.
+## #79's own ticket says a plated insect shell is a glossy dielectric, that #75's `metallic
+## = 1` was the answer to a different problem, and that the material should be re-derived and
+## *measured* rather than guessed. All three are fair and the first is true of real chitin,
+## and the conclusion still does not hold in this world. Shipped as a dielectric at roughness
+## 0.45 and rendered, a Crawler came back as pale tan limbs under a crawling white speckle and
+## the Breaker's legs as chrome — which is #75's own sentence about a rough-plastic highlight,
+## arriving from the opposite direction.
 ##
-## Neither half of that premise survives a declared body. The albedo is the palette's own
-## `OxideRed` and `CastIron` *times a tiling 1024-square map* rather than a tinted swatch, so
-## it is several times brighter than 0.17 before anything is reflected; and a chitin shell is
-## a glossy dielectric, which has a bright narrow specular of its own at the Fresnel angles a
-## low sun and a sky dome supply in quantity. Rendering it as metal makes a Crawler a chromed
-## beetle, which is the one register this palette has no room for.
+## **The reason is the palette and not the biology.** `dieselpunk_palette.json` runs 0.055 to
+## 0.14 albedo, and `_sync_scenery` takes ambient *and* reflections off a bright ochre sky
+## because the generated surfaces are metal. A dielectric at that albedo under that sky is a
+## body whose own colour is a twentieth of the specular sitting on top of it, so what a player
+## sees is the sky with a silhouette cut out of it. At `metallic = 1` the same reflection **is**
+## the surface, coloured by the albedo rather than laid over it, which is what makes an oxide
+## tail read as oxide rather than as a lamp.
 ##
-## So all three are dielectric and the gloss is in the roughness below. Measured rather than
-## argued — the before-and-after luminance is in CLAUDE.md, and it is the number this decision
-## stands on.
+## So #75's figure survives its own argument being superseded, and the durable form is worth
+## having: it was defended as *a dark dielectric has nothing to reflect*, and what the render
+## actually shows is **this world's light is tuned for metal, so anything in it that is not
+## metal reads as a smear**. The dielectric is the honest physical answer and the wrong
+## rendering answer. The measurement is in CLAUDE.md beside the pictures that settled it.
 func _enemy_metallic(_kind: int) -> float:
-	return 0.0
+	return 1.0
 
 
-## And how rough, which is where the three kinds differ.
+## And how rough, against the palette's own figures: a Breaker is `WeldedSteel` at 0.45, the
+## boss is `CastIron` at 0.62, and a Crawler sits between them at 0.55.
 ##
-## A chitin plate is glossy and nothing in the palette's dielectric range is: its paint, rust
-## and soot run 0.58 to 0.95, which is matte by construction because a Machine's housing is
-## meant to look like it has been outside for twenty years. A shell is not that surface, so
-## these are the project's first dielectric figures *below* the palette's own, and the three
-## carry the same sentence the sizes do — the armoured kind is the smoothest, because a plate
-## somebody maintains is what "the threat" is; the boss is the roughest, because it is the
-## biggest and oldest thing on the Map.
-##
-## The shader then spreads each either side of itself off the grime field, because one
-## roughness over a whole body is one highlight over a whole body.
+## The three carry the same sentence the sizes do — the armoured kind is the smoothest,
+## because a plate somebody maintains is what "the threat" is, and the boss is the roughest
+## because it is the biggest and oldest thing on the Map. The shader spreads each either side
+## of itself off the grime field, because one roughness over a whole body is one highlight
+## over a whole body.
 func _enemy_roughness(kind: int) -> float:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return 0.26
+			return 0.45
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return 0.40
-	return 0.32
+			return 0.62
+	return 0.55
 
 
+## The glowing vent on the back of every Siege Hulk on the Map.
+##
+## **The hull moved into `_sync_enemies` with every other kind in #38** — a Hulk is an entry in
+## the same Enemy arrays as a Crawler (ADR 0001), so it is drawn the same way. The vent did
+## not move, and that is the point: it is a *second* mesh standing behind the body along the
+## Hulk's own facing, and it is the only place in this project where geometry carries a rule.
+## The front shrugs off 85% of a hit and the back does not; nothing tells a player that in
+## words; so the glowing end is the end that is not armoured.
+##
+## Unshaded, for the reason a Turret's gauge is: a weak point a directional light can darken is
+## a weak point a player misreads at the worst moment. **Where** it goes comes out of the body
+## itself since #79 — see `_siege_hulk_vent_offset`.
 func _sync_siege_hulk_vents(sim: Simulation) -> void:
 	if _hulk_vent_meshes == null:
 		_hulk_vent_meshes = _instanced(_siege_hulk_vent_mesh(_siege_hulk_vent_offset()))

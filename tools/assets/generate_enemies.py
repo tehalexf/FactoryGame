@@ -198,21 +198,25 @@ def build(insect: recipe.Insect) -> Rigged:
     """
     rig = Rigged()
 
-    # ── thorax ────────────────────────────────────────────────────────────────
-    # Tapered front to back rather than a box: the front of a thorax carries the
-    # head and the back carries the abdomen, and a taper is what says which way an
-    # insect is facing when the head is in shadow.
-    half = insect.thorax_length / 2.0
-    rig.add(insect.material("thorax"), "Thorax", parts.prism(
-        (0.0, -half, insect.thorax_centre - insect.thorax_depth / 2.0),
-        (insect.thorax_width * 0.86, 0.0),
-        (0.0, -half, insect.thorax_centre + insect.thorax_depth / 2.0),
-        (insect.thorax_width * 0.70, 0.0),
-    ))
+    # ── thorax: a box with a domed back ───────────────────────────────────────
+    # **The first version put a zero-depth `prism` here as a "taper" and the render
+    # is what caught it**: `prism` interpolates between two rectangles in XY at two
+    # heights, so a size of `(width, 0.0)` is a flat plate standing inside the body.
+    # It read as a bright slab with legs, which is nothing like an insect — and no
+    # test could have seen it, because the mesh was watertight, correctly named and
+    # the right number of triangles.
     rig.add(insect.material("thorax"), "Thorax", parts.box(
         (insect.thorax_width, insect.thorax_length, insect.thorax_depth),
         (0.0, 0.0, insect.thorax_centre),
         chamfer=CHAMFER,
+    ))
+    # The dome is what says which way up a thorax is, and the shoulder it puts on the
+    # silhouette is what stops a body reading as a crate on legs.
+    rig.add(insect.material("thorax"), "Thorax", parts.frustum(
+        (insect.thorax_width * 0.94, insect.thorax_length * 0.94),
+        (insect.thorax_width * 0.52, insect.thorax_length * 0.56),
+        insect.thorax_depth * 0.42,
+        (0.0, -insect.thorax_length * 0.04, insect.thorax_centre + insect.thorax_depth * 0.44),
     ))
 
     # ── carapace: the plate over the back, or nothing ─────────────────────────
@@ -248,14 +252,16 @@ def build(insect: recipe.Insect) -> Rigged:
         depth_low = insect.abdomen_depth * (1.0 - insect.abdomen_taper * low)
         depth_high = insect.abdomen_depth * (1.0 - insect.abdomen_taper * high)
         bone = "Abdomen" if segment * 2 < segments else "AbdomenTip"
-        rig.add(insect.material("abdomen"), bone, parts.prism(
-            tuple(at_low + Vector((0.0, 0.0, -depth_low / 2.0))),
-            (width_low, 0.0),
-            tuple(at_low + Vector((0.0, 0.0, depth_low / 2.0))),
-            (width_low * 0.84, 0.0),
-        ))
+        # One box a segment, each a little smaller than the last. The taper is what
+        # makes a segmented body read as segmented at ten metres, and it has to be
+        # in the **boxes** rather than in a cross-section plate between them — see
+        # the thorax above for what a zero-depth `prism` actually draws.
         rig.add(insect.material("abdomen"), bone, parts.box(
-            (width_low, at_high.y - at_low.y + 0.01, depth_low),
+            (
+                (width_low + width_high) / 2.0,
+                (at_high - at_low).length + 0.02,
+                (depth_low + depth_high) / 2.0,
+            ),
             tuple((at_low + at_high) / 2.0),
             chamfer=CHAMFER,
         ))

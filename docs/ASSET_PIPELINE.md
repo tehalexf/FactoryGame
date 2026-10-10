@@ -1219,10 +1219,13 @@ their four animation libraries, the intake FBX and the bone map — 14 MB and 55
 generator whose output nothing samples is `prop_grade.py`'s own opening defect and the rule
 `Definitions` applies to a tuning key nothing reads.
 
-**What #75 built and #79 kept is the shader.** The grime field, the derived relief and the
-roughness spread are about a *surface* rather than about a source, and chitin wants them as
-much as iron did — and the premise still holds, because `assets/generated/` is albedo-only and
-there is no normal map to load. See `game/enemy_skin.gdshader` and CLAUDE.md.
+**What #75 built and #79 kept is the shader**, and also its material model. The grime field,
+the derived relief and the roughness spread are about a *surface* rather than about a source,
+and chitin wants them as much as iron did. `metallic = 1` was re-derived rather than inherited
+— the ticket is right that a plated shell is a glossy dielectric — and the dielectric was
+**shipped into a render and rejected by the picture**: this palette runs 0.055 to 0.14 albedo
+under a sky the scene takes its reflections from, so a dielectric here is a body whose own
+colour is a twentieth of the specular on top of it. See CLAUDE.md for the measurement.
 
 ### What is still a judgement for a human
 

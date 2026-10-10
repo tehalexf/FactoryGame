@@ -2809,16 +2809,22 @@ func test_every_enemy_surface_is_painted_out_of_the_palette_by_its_own_name() ->
 	view.free()
 
 
-func test_an_enemy_is_a_glossy_dielectric_rather_than_a_metal() -> void:
-	# #79, and it is #75's own decision re-derived rather than inherited. That ticket pushed
-	# all three kinds to `metallic = 1`, correctly, for a **dielectric at 0.17 albedo** under
-	# a sky this project takes its ambient and reflections from: such a surface has almost
-	# nothing to return and rendered as a silhouette. A chitin shell is a glossy dielectric
-	# with a bright specular of its own, over a palette albedo several times that, so the
-	# premise is gone — and drawing it as metal makes a Crawler a chromed beetle.
+func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal() -> void:
+	# `_sync_scenery` takes ambient and reflections off the sky precisely because the generated
+	# surfaces are mostly metal. #75 made the Enemies metal on the argument that a **dielectric
+	# at 0.17 albedo has nothing to reflect**, and #79 was asked to re-derive that for a chitin
+	# shell, which really is a glossy dielectric.
 	#
-	# Asserted as a pair, because either half alone is satisfiable by the wrong answer: full
-	# metal at a low roughness, or a dielectric at the palette's own matte figures.
+	# **It was re-derived, shipped into a render, and rejected by the picture.** At `metallic
+	# = 0` and roughness 0.45 a Crawler came back as pale tan limbs under a crawling white
+	# speckle: the palette runs 0.055 to 0.14 albedo, so a dielectric here is a body whose own
+	# colour is a twentieth of the specular sitting on top of it. The durable form of #75's
+	# claim is therefore about the **lighting** rather than about the albedo — this world's
+	# light is tuned for metal, and anything in it that is not metal reads as a smear — which
+	# is why this assertion survives a ticket that set out to reverse it.
+	#
+	# Asserted as a pair, because either half alone is satisfiable by the wrong answer: a
+	# dielectric at any roughness, or a metal polished to a mirror.
 	var sim: Simulation = _threatened_sim()
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
@@ -2827,13 +2833,11 @@ func test_an_enemy_is_a_glossy_dielectric_rather_than_a_metal() -> void:
 		Simulation.ENEMY_KIND_BREAKER,
 		Simulation.ENEMY_KIND_SIEGE_HULK,
 	]:
-		assert_eq(
-			view.enemy_surface_metallic(kind), 0.0,
-			"kind %d is a dielectric" % kind
-		)
+		assert_eq(view.enemy_surface_metallic(kind), 1.0, "kind %d is metal" % kind)
 		assert_true(
-			view.enemy_surface_roughness(kind) < 0.5,
-			"kind %d is glossier than the palette's own dielectrics, which run 0.58 up" % kind
+			view.enemy_surface_roughness(kind) >= 0.4,
+			"kind %d is cast and worn rather than polished: %f"
+			% [kind, view.enemy_surface_roughness(kind)]
 		)
 	view.free()
 
@@ -3238,22 +3242,6 @@ func test_a_hot_reload_redraws_cargo_that_changed_what_it_is() -> void:
 	)
 	view.free()
 
-
-func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal() -> void:
-	# `_sync_scenery` takes ambient and reflections off the sky precisely because the generated
-	# surfaces are mostly metal and a metal lit by an ambient *colour* has nothing to reflect.
-	# Until #75 a Crawler was the one thing in the world that was not metal — 0.05 metallic at
-	# 0.88 roughness — so it had nothing to catch, and measured off a `swarm bare` render it sat
-	# at a seventh of the luminance of the ground it was standing on.
-	var sim: Simulation = _threatened_sim()
-	var view: WorldView = WorldView.new()
-	view.sync(sim)
-	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
-		assert_true(
-			view.enemy_surface_metallic(kind) >= 0.5,
-			"kind %d is %f metallic" % [kind, view.enemy_surface_metallic(kind)]
-		)
-	view.free()
 
 
 ## ── An Enemy at one hit point, and a death that leaves something behind (#70) ────────────

@@ -571,6 +571,15 @@ stride over them.
 - **A tripod gait is most of what makes these read as insects**, and `tripod_phase` takes the
   pair index *and the side* for that reason. From the pair alone both sides step in unison,
   which is a pace and reads as a pantomime horse — the first version did exactly that.
+- **One of #38's tests now passes trivially, and that is worth saying rather than hiding.**
+  `test_a_clip_never_walks_the_body_away_from_where_the_simulation_put_it` exists because a
+  forward-travelling walk cycle baked as authored would slide a Crawler out of its own
+  instance transform, so `_pose` replaces the root's horizontal translation with its rest on
+  every frame. A declared gait **authors no root translation at all** — the legs move and the
+  body does not — so there is nothing left for that rule to undo and the test asserts a
+  property of the declaration rather than of the bake. The rule stays, because the bake is
+  what would have to survive somebody authoring a travelling cycle, and because a kind with
+  no body still falls back through it.
 
 **The casting itself is unchanged in the one way that matters.** A Crawler *runs* and the other
 two *walk*, which was #38's decision and was never about the art: Chaff has to read as
@@ -652,35 +661,36 @@ assigns it. What is left is near white and says only *which kind* — warm for t
 for the Breaker, neutral for the boss — which is the readability cue #49's sizing was carrying
 alone.
 
-#### Chitin is a glossy dielectric, and that is #75 re-derived rather than reversed
+#### Chitin is a glossy dielectric, and the render rejected it anyway
 
-**#75 made all three `metallic = 1` and was right about the body it had.** `_sync_scenery` takes
-ambient and reflections off the sky *because* the generated surfaces are mostly metal, and a
-**dielectric** at 0.17 albedo has almost nothing to return under a sky dome — which is most of
-why a backlit Crawler rendered as a silhouette. A metal's reflection is coloured by its own
-albedo and so *is* the surface, which is what rescued it.
+**#79's ticket asked for #75's `metallic = 1` to be re-derived and measured rather than
+inherited, and it was — by shipping the other answer into a render and looking at it.** The
+ticket's reasoning is fair and its physics is right: #75's figure was defended as *a dielectric
+at 0.17 albedo has nothing to reflect under a sky dome*, that premise is about the pack's
+graded atlas rather than about a declared body, and a plated insect shell really is a glossy
+dielectric with a bright specular of its own.
 
-Neither half of that premise survives a declared body. The albedo is the palette's own entry
-**times a tiling 1024-square map** rather than a tinted swatch, so it is several times brighter
-than 0.17 before anything is reflected; and a chitin shell is a glossy dielectric with a bright
-narrow specular of its own at exactly the Fresnel angles a 23-degree sun and a sky dome supply
-in quantity. Rendering it as metal is a chromed beetle, which is the one register this palette
-has no room for.
+**The picture says no.** At `metallic = 0` and roughness 0.45 a Crawler came back as pale tan
+limbs with a white speckle crawling over them and the Breaker's legs as chrome. The reason is
+the palette rather than the biology: it runs **0.055 to 0.14 albedo**, and `_sync_scenery`
+takes ambient *and* reflections off a bright ochre sky precisely because the generated
+surfaces are metal. A dielectric at that albedo under that sky is a body whose own colour is a
+twentieth of the specular sitting on top of it — so what a player sees is the sky with a
+silhouette cut out of it, which is #75's own sentence about a rough-plastic highlight arriving
+from the opposite direction.
 
-So all three are **dielectric**, and the gloss is in the roughness: 0.26 for the Breaker, 0.32
-for the Crawler, 0.40 for the boss. Those are the project's first dielectric figures *below* the
-palette's own — its paint, rust and soot run 0.58 to 0.95, matte by construction because a
-Machine's housing is meant to look like it has been outside for twenty years, and a shell is not
-that surface. The three carry the same sentence the sizes do: the armoured kind is the smoothest,
-because a plate somebody maintains is what "the threat" is, and the boss is the roughest because
-it is the biggest and oldest thing on the Map.
-`test_an_enemy_is_a_glossy_dielectric_rather_than_a_metal` asserts the **pair**, because a full
-metal at a low roughness and a dielectric at the palette's matte figures each satisfy one of them.
+So the Enemies are metal, at the palette's own figures: `WeldedSteel`'s 0.45 for the Breaker,
+`CastIron`'s 0.62 for the boss, and 0.55 for the Crawler between them. **#75's number survives
+its own argument being superseded**, and the durable form is worth more than the number: not
+*a dark dielectric has nothing to reflect*, but **this world's light is tuned for metal, so
+anything in it that is not metal reads as a smear**. The dielectric is the honest physical
+answer and the wrong rendering answer, and that distinction is the whole of what this
+sub-section is for.
 
-**What #75 built and #79 kept is the shader.** The grime field, the derived relief and the
-roughness spread are about a *surface* rather than about a source, and chitin wants them as much
-as iron did — and the premise is unchanged, because `assets/generated/` is albedo-only and there
-is no normal map to load. The five notes below are #75's and are current.
+`test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal` therefore survives
+a ticket that set out to reverse it, with the reason rewritten and a second clause added —
+the pair is asserted together, because a dielectric at any roughness and a metal polished to a
+mirror each satisfy one half.
 
 #### Five things about the shader, three of them carried over from the ground
 
