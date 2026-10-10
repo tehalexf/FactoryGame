@@ -3190,6 +3190,217 @@ func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal()
 	view.free()
 
 
+## ── An Enemy at one hit point, and a death that leaves something behind (#70) ────────────
+##
+## The ticket's complaint is in its title, and half of it turned out to be already answered:
+## #38 put the health fraction on `INSTANCE_CUSTOM.y` and the skinning shader has darkened a
+## hurt Enemy by it since. What was wrong was that the darkening is invisible — see the notes
+## in `game/enemy_skin.gdshader` and the render pair in `docs/images/`. These tests stand
+## behind the three claims that survive a change of how it *looks*: the Simulation's own
+## numbers reach the buffer, the marks are a function of the tick and of nothing else, and a
+## death leaves a mark where the body was.
+
+
+func test_a_hurt_enemy_carries_its_own_health_into_the_buffer_and_a_fresh_one_does_not() -> void:
+	# The wound is per instance, out of `query_enemy_health` against `query_enemy_max_health`,
+	# so what a player sees is what a round actually did rather than a renderer's estimate.
+	var sim: Simulation = _rifleman_sim()
+	var view: WorldView = WorldView.new()
+	if not _arm_and_aim(sim):
+		view.free()
+		return
+	view.sync(sim)
+	assert_eq(
+		view.enemy_instance_health_fraction(Simulation.ENEMY_KIND_BREAKER, 0),
+		1.0,
+		"a Breaker nobody has shot at is drawn whole"
+	)
+
+	var whole: int = sim.query_enemy_health(0)
+	sim.step([InputAction.fire(0)])
+	view.sync(sim)
+	if not assert_true(sim.query_enemy_health(0) < whole, "the premise: the round connected"):
+		view.free()
+		return
+	assert_eq(
+		view.enemy_instance_health_fraction(Simulation.ENEMY_KIND_BREAKER, 0),
+		float(sim.query_enemy_health(0)) / float(sim.query_enemy_max_health(0)),
+		"and one that has been shot carries exactly the fraction the Simulation reports"
+	)
+	view.free()
+
+
+func test_two_enemies_of_one_kind_wear_their_damage_in_different_places() -> void:
+	# The grime field is a function of the rest pose alone, so it is identical on every body
+	# of a kind — which is fine for dirt and wrong for a wound: six Crawlers scorched in
+	# exactly the same place read as six copies of one Crawler. The seed is the Enemy's own
+	# **serial**, which is issued once and never reused (#9), so it is a Simulation quantity
+	# and two Runs down the same script put the same marks on the same bodies.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	_run(sim, 5 * Simulation.TICKS_PER_SECOND)
+	view.sync(sim)
+	var drawn: int = view.enemy_instance_count(Simulation.ENEMY_KIND_CRAWLER)
+	if not assert_true(drawn >= 2, "the premise: a Wave of Crawlers is out, %d drawn" % drawn):
+		view.free()
+		return
+	var seeds: Dictionary = {}
+	for instance: int in range(drawn):
+		seeds[view.enemy_instance_wound_seed(Simulation.ENEMY_KIND_CRAWLER, instance)] = true
+	assert_true(
+		seeds.size() > 1,
+		"the swarm carries %d distinct wound seeds between %d Crawlers" % [seeds.size(), drawn]
+	)
+
+	var again: float = view.enemy_instance_wound_seed(Simulation.ENEMY_KIND_CRAWLER, 0)
+	view.sync(sim)
+	assert_eq(
+		view.enemy_instance_wound_seed(Simulation.ENEMY_KIND_CRAWLER, 0),
+		again,
+		"and a frame that stepped nothing moves nobody's marks"
+	)
+	view.free()
+
+
+func test_a_round_landing_flashes_on_the_body_and_the_flash_goes_out_by_itself() -> void:
+	# The one thing `query_enemy_health` cannot say on its own: that a round *just* landed.
+	# A health fraction is a condition and a hit is a change, so it comes off `CombatEvents`
+	# — the same diff `AudioDirector` has read since #21 — and it is aged by subtracting the
+	# tick it happened on from `query_tick`, so nothing here is timed by a clock.
+	var sim: Simulation = _rifleman_sim()
+	var view: WorldView = WorldView.new()
+	if not _arm_and_aim(sim):
+		view.free()
+		return
+	view.sync(sim)
+	assert_eq(
+		view.enemy_instance_hit_flash(Simulation.ENEMY_KIND_BREAKER, 0),
+		0.0,
+		"nothing has been shot at, so nothing is lit"
+	)
+
+	sim.step([InputAction.fire(0)])
+	view.sync(sim)
+	var lit: float = view.enemy_instance_hit_flash(Simulation.ENEMY_KIND_BREAKER, 0)
+	if not assert_true(lit > 0.0, "the round that landed lights the body it landed on"):
+		view.free()
+		return
+	view.sync(sim)
+	assert_eq(
+		view.enemy_instance_hit_flash(Simulation.ENEMY_KIND_BREAKER, 0),
+		lit,
+		"and a frame that stepped no ticks draws the very same flash"
+	)
+
+	for tick: int in range(WorldView.HIT_FLASH_TICKS + 1):
+		sim.step([])
+		view.sync(sim)
+	assert_eq(
+		view.enemy_instance_hit_flash(Simulation.ENEMY_KIND_BREAKER, 0),
+		0.0,
+		"and it is out again a few ticks later with nothing holding it alight"
+	)
+	view.free()
+
+
+func test_a_death_leaves_a_mark_where_the_body_was_and_then_clears_it() -> void:
+	# The ticket's second half: an Enemy that dies **vanishes**, which is the one event in a
+	# fight a query cannot report at all — the arrays no longer hold it. `CombatEvents` sees a
+	# serial that was there last frame and is not there now, which is exactly how
+	# `AudioDirector` has played a death cue since #21.
+	var sim: Simulation = _rifleman_sim()
+	var view: WorldView = WorldView.new()
+	if not _arm_and_aim(sim):
+		view.free()
+		return
+	view.sync(sim)
+	assert_eq(view.death_mark_count(), 0, "nothing has died")
+
+	var where: FixedVec2 = sim.query_enemy_position_metres(0)
+	var fired: int = 0
+	while sim.query_enemy_count() > 0 and fired < 20:
+		sim.step([InputAction.fire(0)])
+		view.sync(sim)
+		for tick: int in range(sim.query_player_weapon_interval_ticks(0)):
+			sim.step([])
+			view.sync(sim)
+		fired += 1
+	if not assert_eq(sim.query_enemy_count(), 0, "the premise: the Breaker is dead"):
+		view.free()
+		return
+
+	if not assert_true(view.death_mark_count() > 0, "a death is drawn where the body was"):
+		view.free()
+		return
+	var mark: Vector3 = view.death_mark_position(0)
+	assert_true(
+		Vector2(mark.x, mark.z).distance_to(
+			Vector2(Fixed.to_float(where.x), Fixed.to_float(where.z))
+		) < 1.0,
+		"and it stands where the Breaker was last seen alive, not at the origin: %s" % mark
+	)
+
+	for tick: int in range(WorldView.DEATH_MARK_TICKS + 1):
+		sim.step([])
+		view.sync(sim)
+	assert_eq(view.death_mark_count(), 0, "and the yard is clear again a few seconds later")
+	view.free()
+
+
+func test_a_death_is_never_a_node_and_neither_is_a_wound() -> void:
+	# ADR 0001's claim, kept through the one ticket most likely to break it: a mark per death
+	# is the shape that ends up as a node per death. Both ride buffers that already existed —
+	# the wound is two of the four floats of per-instance custom data #38 left free, and the
+	# death goes through the one MultiMesh #69 draws every shot through.
+	var sim: Simulation = _rifleman_sim()
+	var view: WorldView = WorldView.new()
+	if not _arm_and_aim(sim):
+		view.free()
+		return
+	view.sync(sim)
+	var before: int = view.get_child_count()
+
+	var fired: int = 0
+	while sim.query_enemy_count() > 0 and fired < 20:
+		sim.step([InputAction.fire(0)])
+		view.sync(sim)
+		for tick: int in range(sim.query_player_weapon_interval_ticks(0)):
+			sim.step([])
+			view.sync(sim)
+		fired += 1
+	if not assert_eq(sim.query_enemy_count(), 0, "the premise: something died"):
+		view.free()
+		return
+	assert_true(view.death_mark_count() > 0, "and it is drawn")
+	assert_eq(
+		view.get_child_count(),
+		before,
+		"the scene tree did not grow by one node for a Breaker dying"
+	)
+	view.free()
+
+
+func test_asking_what_a_wound_looks_like_leaves_the_run_exactly_where_it_was() -> void:
+	# Every projection in this project owes this one assertion: the Run that is watched is the
+	# Run that would have happened unwatched. Nothing #70 added is Simulation state — a wound
+	# is `query_enemy_health` divided by `query_enemy_max_health`, a death is a serial that has
+	# gone, and both are read in `game/`.
+	var sim: Simulation = _rifleman_sim()
+	var view: WorldView = WorldView.new()
+	if not _arm_and_aim(sim):
+		view.free()
+		return
+	sim.step([InputAction.fire(0)])
+	var hash_before: int = sim.hash()
+	view.sync(sim)
+	view.enemy_instance_health_fraction(Simulation.ENEMY_KIND_BREAKER, 0)
+	view.enemy_instance_wound_seed(Simulation.ENEMY_KIND_BREAKER, 0)
+	view.enemy_instance_hit_flash(Simulation.ENEMY_KIND_BREAKER, 0)
+	view.death_mark_count()
+	assert_eq(sim.hash(), hash_before, "being drawn moved nothing")
+	view.free()
+
+
 func test_the_nests_delivery_marks_are_never_nodes_however_often_the_view_is_synced() -> void:
 	# Count decides node or instance, and a square Nest's four bands are one MultiMesh — so
 	# the tree does not grow by one for them on the first sync or on the hundredth. #72.

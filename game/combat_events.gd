@@ -75,10 +75,12 @@ enum From {
 	PLAYER,
 }
 
-## How long an event stays available to be asked about, in ticks. A second, which is comfortably
-## longer than any mark drawn off one lives and short enough that a forty-hour Run accumulates
-## nothing: the list is swept every time it is observed.
-const MEMORY_TICKS: int = 60
+## How long an event stays available to be asked about, in ticks. **As long as the
+## longest-lived mark drawn off one**, which is what this number has always meant and is now
+## `WorldView.DEATH_MARK_TICKS` — #70's soot on the ground, two and a half seconds. It was 60
+## while every mark was a flash or a burst. Short enough that a forty-hour Run accumulates
+## nothing either way: the list is swept every time it is observed.
+const MEMORY_TICKS: int = 150
 
 ## Which player's trigger is read. One for now; co-op makes it the local id, and in lockstep
 ## every other player's shots are visible through exactly the same queries.

@@ -32,7 +32,8 @@ ENEMY_COUNT=2000 godot --headless --path . --script res://tools/visual/enemy_tic
                                  # what a Simulation *tick* costs with a crowd on it. The other
                                  # half of frame_cost.sh, which times the renderer
 SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
-                                 # a Wave arriving (swarm|pair|triage|boss|distance|crush; + hud, + bare)
+                                 # a Wave arriving (swarm|pair|triage|boss|distance|crush|wounded;
+                                 # + hud, + bare, + near). `wounded` has been shot at (#70)
 SHOT_SCRIPT=tools/visual/compose_branch_shot.gd tools/visual/shot.sh out.png bare
                                  # a line that branches, one side blocked (+ bare)
 SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare
@@ -738,6 +739,164 @@ material is no longer read at all, and
 `test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own` asserts from the
 renderer's side that the graded file is what reaches the shader. A grade is invisible from the
 grading side of that seam.
+
+### An Enemy that takes damage, and a death that leaves something behind
+
+**#70, and the first thing it found is that half of it was already there and did not work.** The
+ticket says `query_enemy_health` and `query_enemy_max_health` "have existed since #9 and the
+renderer reads **neither**". It reads both: `WorldView._health_fraction` has put the health
+fraction on `INSTANCE_CUSTOM.y` since #38 and `enemy_skin.gdshader` has multiplied albedo by
+`mix(1.0 - wound_darkening, 1.0, health)` ever since — a correct implementation of the wrong
+idea. **A wound cannot be a darkening on a body that is already the darkest thing in frame.**
+#75 measured the median Enemy pixel at a linear 0.021 against a ground at 0.046, so taking
+another 45% off a dying Crawler moves it from dark-against-dark to darker-against-dark, and at
+thirty metres that is a silhouette either way. It is #42's Wall, #52's ore, #64's tool and #65's
+gloves a **fifth** time: a value picked against the wrong background — and here the background is
+very nearly black.
+
+So **a wound is light rather than the absence of it**, and the vocabulary was already in this
+world: a Siege Hulk's vent is an unshaded glow and is the one place geometry carries a rule
+(#16). A hurt Enemy is a casting cracked open with something hot inside it.
+
+#### Two free channels, spent exactly as #38 and #75 said they would be
+
+`INSTANCE_CUSTOM` is four floats. `.x` is the animation row and `.y` the health fraction, both
+#38's; `.z` and `.w` were written as zero and read by nothing, and #75's closing note named what
+they were for almost to the line — *"a mark that has to be in a different place on each one wants
+a per-instance offset into that field"*. That is `.z`:
+
+- **`.z` is a wound seed**, the Enemy's own **serial** modulo 97 and spaced well past the field's
+  own scale. The grime field is a function of the rest pose alone, so it is identical on every
+  body of a kind — right for wear and wrong for a wound, because six Crawlers scorched in the
+  same place are six copies of one Crawler. A serial is issued once and never reused (#9), so it
+  is a Simulation quantity exactly as the animation row beside it is, and two Runs down the same
+  script wear the same marks on the same bodies.
+- **`.w` is how fresh the last hit is**, 0 to 1, out of `game/combat_events.gd`. **A health
+  fraction is a condition and a round landing is a change**, which is the whole reason the two
+  ride different channels and come from different places: an Enemy at 40% looks the same on the
+  tick a round lands and on the tick after, and what a player emptying a magazine into a Siege
+  Hulk's glacis needs to know is that *this round* connected. Aged by subtracting the event's own
+  tick from `query_tick`, so a frame that stepped nothing draws the same flash.
+
+**The stride stays sixteen and nothing widened**, which is what made a free channel the cheap
+door: `use_colors` would have taken it to twenty and with it `_write_skinned_instance`,
+`_stride_for` and every accessor that divides by one.
+
+#### A death is the one thing no channel can carry
+
+`_remove_enemy` closes the gap on the tick a Crawler dies, so there is no instance left to fade
+out and no serial left to resolve. #75 wrote that down and #69 built the answer: a serial that
+was in the array last frame and is not in it now, with **where the body was last seen alive**,
+which is the one fact nothing else in the project can produce. #70 is the first consumer of
+`CombatEvents.Kind.KILLED` and it needed no change to the Simulation at all.
+
+- **Two marks, because they answer different questions.** A burst says *now* and is gone in a
+  quarter of a second; a soot stain says *here* and is still on the ground two and a half
+  seconds later when a player sweeps back across the lane. Both are sized off
+  `query_enemy_hit_height_metres` for the kind that died — the very number the drawn body is
+  scaled by — so a Siege Hulk's death is twice a Crawler's, which is #41's rule.
+- **`CombatEvents.MEMORY_TICKS` went from 60 to 150**, which is the stain's own life. That
+  constant has always meant "as long as the longest-lived mark drawn off one" and was 60 while
+  every mark was a flash or a burst.
+- **Their own MultiMesh, built on the first sync**, so the scene tree does not grow when
+  something dies — `test_a_death_is_never_a_node_and_neither_is_a_wound` asserts zero growth over
+  a Breaker being killed, which is `test_an_enemy_is_never_a_node`'s claim pointed at the one
+  ticket most likely to break it.
+
+#### Five things the renders threw away
+
+Every one of these was drawn, was the right colour, was in the right place and was wrong.
+
+1. **The burst as a cube read as a crate standing in the Wave.** It began as the unit box #69
+   scales a muzzle flash and an impact out of; at a death's size that is a 1.3 m pale box among
+   the Crawlers, which is #69's own finding about a 0.75 m impact and #56's about a red post, a
+   third time. A **flat disc** cannot read as an object, because nothing in this world is a metre
+   across and six centimetres thick — and it needed a cylinder rather than the shared box, since
+   at ten metres a flat *square* reads as a plate somebody put there. The third shape was the
+   obvious correction to the second and is also wrong: seen from eye level a flat disc on the
+   floor is nearly edge-on and reads as a **bar**, so it was given three tenths of a body's
+   height to read as a puff — and came back as a pale slab two metres wide standing in front of
+   the Chaff and hiding one of them. **A mark on the ground is allowed to look like a mark on
+   the ground**; what it may not do is look like something somebody put there.
+2. **The stain at three centimetres read as a plinth.** #52's rule for the one mark that lies on
+   the floor — paint, not a plinth — and one centimetre is what makes it paint.
+3. **Thresholding the wound against 1.0 opened nothing at all.** The arithmetically tidy version
+   is "the field, scaled by how hurt you are"; the field does not reach the ends of its own
+   range. **Measured**, two octaves of value noise mixed 0.68/0.32 come out at mean 0.497 and
+   standard deviation 0.149, with coverage 4% above 0.75 and 1.3% above 0.80 — so a Breaker at
+   half health opened **nothing** and the first render of a 50% Breaker is indistinguishable from
+   a fresh one. The band is now measured against where the field actually lives, `0.82` at full
+   health down to `0.58` at none.
+4. **A 0.10 ramp above the threshold spent the whole wound in the ramp.** At half health a body
+   reached *full* brightness over half a percent of itself. `wound_edge` is 0.04.
+5. **At the grime's own scale a dying Breaker came out as a speckled leopard** — dirt-sized
+   detail doing a wound's job, which reads as camouflage rather than as a body that has come
+   apart, and is #75's own chrome-camouflage failure one layer up. `wound_metres` is six times
+   `grime_metres`: a crack is the size of a limb segment.
+
+#### What the pictures and the pixels say
+
+[`docs/images/enemy_damage_before.png`](docs/images/enemy_damage_before.png) against
+[`_after`](docs/images/enemy_damage_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "wounded bare"
+```
+
+Both frames are the same Run at the same tick: a Breaker at **90 of its 240** hit points standing
+beside one on full health, and the spot a Crawler fell on six ticks earlier. Before: the two
+Breakers are the same dark body, and the only thing where the Crawler was is **#69's impact
+burst** — which is a mark about the *round* and looks identical whether the thing it hit lived or
+died. After: the hurt Breaker wears glowing cracks across its lower body and there is a disc of
+fire and a scorch on the ground where the Crawler was.
+
+Measured over the two Breakers' own pixels in the committed after frame, counting hot glow
+(R > 190 and R − B > 110): **18 pixels on the hurt one against 0 on the fresh one**, where the
+two stand side by side and are otherwise the same body. (The pair was re-rendered on the merged
+tip, because #76's separation pass changed where a Wave stands; the figures before that merge
+were 41 against 3 on a frame where the hurt Breaker was nearer the camera. The *ratio* is the
+claim and it survived.) That is the acceptance criterion as a number rather than as an
+impression, and it is the right *kind* of difference — bright warm specks on a dark body, where the atlas's own `OxideRed` chest is dull
+and dark and cannot be confused with it.
+
+**`wounded` is #70's preset and it exists because no other one can see the question** — the
+name is not `crush`, which #76 took in the same hour for the crowd pressed against the Nest —: every other
+preset renders a Wave that has never been shot at, and the Factory a composer builds has no
+Ammunition chain, so its Turret is dry from the first frame to the last. The player is the only
+gun on the Map that can be made to go off, so the shot is driven the way `test_world_view`'s
+rifleman fixture is — aim by sending the pixels that close the bearing, fire, and read the result
+back out of the queries. Four things it cost, every one of them found by a wrong picture:
+
+- **A `LOOK` intent carries fixed-point pixels.** The first version sent 990 and turned the player
+  by nothing at all.
+- **A round aimed at a Breaker's middle hits the Crawler in front of it, every time.** A Wave
+  trickles out of one Breach and stands in a heap, so twenty-four rounds went into Chaff and left
+  both Breakers untouched. The aim is lifted to 1.15 of the target's height — above 1.0 on
+  purpose, because a Crawler's capsule **top** is its 1.6 m plus its 0.6 m radius and a Breaker's
+  is 3.0 m.
+- **Rounds all land on whichever Breaker is nearest**, so a loop that meant to hurt both killed
+  one and never touched the other. Five rounds into *one* of them is the better composition
+  anyway: "distinguishable from a fresh one" is a claim about two bodies in one frame.
+- **Seven seconds of settle is a photograph of a pile.** Thirty seconds at a slowed walk is what
+  separates the release order into a column, and it is what lets a hurt Breaker, a fresh one and
+  a death be three things in a frame. Also the frame is taken **six ticks after the killing
+  shot**: #69's tracer is a rod from the muzzle to the body, and a camera standing off to the
+  side sees it as a cream ramp across half the picture.
+
+**No balance number moved and no Simulation state was added.** The wound is `query_enemy_health`
+over `query_enemy_max_health`, the seed is `query_enemy_serial`, the flash is a diff in `game/`,
+and `test_asking_what_a_wound_looks_like_leaves_the_run_exactly_where_it_was` is the assertion
+that the Run which is watched is the Run that would have happened unwatched.
+
+**What no still image can settle**, and the second of these is the ticket's own question. Whether
+a quarter-second burst and a two-and-a-half-second stain read as a death or as litter over the
+hundreds of kills a Run contains — `DEATH_BURST_TICKS` and `DEATH_MARK_TICKS` are the levers, and
+both are constants in `game/` because the Simulation reads neither. And **whether a Siege Hulk's
+frontal armour now reads as a discovery rather than as a broken gun**: a round into the glacis
+takes 2 of 1800 and lights the body for eight ticks, so the flash says *that* it connected while
+the cracks say almost nothing about progress — which is exactly the honest picture, and whether a
+player reads it as "wrong end" or as "wrong gun" is a judgement for somebody with a mouse.
+`siege_hulk.frontal_armour_percent` was left alone, as the ticket asked.
 
 The lighting is the other half of the art pipeline. The generated surfaces are physically
 based and mostly metal, and a metal lit by an ambient *colour* has nothing to reflect, so

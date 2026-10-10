@@ -46,28 +46,74 @@ uniform float roughness : hint_range(0.0, 1.0) = 0.8;
 // geometry is inside the skull on every committed character, so nothing ever reached the
 // screen. `WorldView._skinned_mesh` carries the whole note and the measurement.
 
-// How dark an Enemy goes as its hit points run out, as a fraction taken off its albedo at
-// zero health. Carried per instance on INSTANCE_CUSTOM.y, so a Crawler a Turret has been
-// working on reads as hurt without a gauge over it.
-uniform float wound_darkening : hint_range(0.0, 1.0) = 0.45;
+// ── What damage looks like (#70) ─────────────────────────────────────────────
+//
+// **The darkening was here since #38 and it is invisible, which is the finding this ticket
+// turned on.** `INSTANCE_CUSTOM.y` has carried the health fraction from the day the
+// characters arrived, and `ALBEDO *= mix(1.0 - wound_darkening, 1.0, health)` is a correct
+// implementation of the wrong idea: these bodies are already the darkest thing in frame —
+// #75 measured the median Enemy pixel at 0.021 linear against a ground at 0.046 — so taking
+// another 45% off a mortally wounded Crawler moves it from *dark against dark ground* to
+// *darker against dark ground*, and at thirty metres that is a silhouette either way. It is
+// #42's Wall, #52's ore, #64's tool and #65's gloves a fifth time: **a value picked against
+// the wrong background**, and the background here is almost black.
+//
+// So a wound is **light** rather than the absence of it, and the vocabulary is already in
+// this world: the Siege Hulk's vent is an unshaded glow and is the one place geometry
+// carries a rule (#16). A hurt Enemy is a casting cracked open with something hot inside it,
+// and what decides *where* it cracks is the grime field the surface is already derived from,
+// offset per Enemy by `INSTANCE_CUSTOM.z` so six Crawlers are not six copies of one Crawler.
+//
+// The soot stays and its job changed, exactly as the per-kind tint's did in #75: it is no
+// longer asked to carry the signal, so it is halved — enough to dirty a body around the
+// cracks and nowhere near enough to be the thing a player reads.
+uniform float wound_darkening : hint_range(0.0, 1.0) = 0.22;
 
-// ── What is left in the custom data, which is the next ticket's room ─────────
+// What the inside of one of these looks like. Hot iron, near the palette's own furnace
+// colours, and **emissive** — which is what survives thirty metres of depth fog and a body
+// that is a silhouette, where no albedo can. The glow threshold this project renders at is
+// deliberately high, so it reads as heat rather than as bloom.
+uniform vec3 wound_glow : source_color = vec3(1.0, 0.36, 0.09);
+uniform float wound_glow_strength = 6.0;
+// Where the field has to reach before a crack opens, at full health and at none.
 //
-// `INSTANCE_CUSTOM` is four floats and two of them are spoken for: `.x` is the animation
-// row and `.y` is the health fraction above. **`.z` and `.w` are written as zero by
-// `_write_skinned_instance` and read by nothing**, so anything that wants to say something
-// per Enemy has two channels already paid for — the stride is fixed at sixteen whatever
-// they carry, so using them costs no bandwidth and no second buffer.
+// **Two numbers rather than one fraction, and a render is why.** The first version thresholded
+// against 1.0 and scaled by how hurt the body was, which is arithmetically tidy and wrong
+// about this field: two octaves of value noise averaged 0.68/0.32 do not reach the ends of
+// their own range, so practically nothing is above 0.79 and a Breaker at half health opened
+// **nothing at all**. The band is measured against where the field actually lives.
+uniform float wound_closed_at : hint_range(0.0, 1.5) = 0.82;
+uniform float wound_open_at : hint_range(0.0, 1.0) = 0.58;
+// How big a crack is, as a fraction of the Enemy's own height. **Six times the grime's**, and
+// a render is why: read at the grime's own three-centimetre scale a dying Breaker came out as
+// a speckled leopard — which is dirt-sized detail doing a wound's job, and reads as camouflage
+// rather than as a body that has come apart. A crack is the size of a limb segment.
+uniform float wound_metres = 0.2;
+// How sharp the edge of a crack is. Measured rather than picked: the field's own distribution
+// is mean 0.50 and standard deviation 0.149, so a 0.10 ramp above the threshold means a body
+// at half health reaches **full** brightness over half a percent of itself and spends the
+// rest of its wound in the ramp — which is a crack drawn at a tenth of its intended strength
+// and rendered, in the first pass, as nothing at all.
+uniform float wound_edge : hint_range(0.001, 0.5) = 0.04;
+
+// How bright a body goes on the tick a round lands on it, and how far up its own glow colour
+// that flash is pulled towards white. `INSTANCE_CUSTOM.w` carries how fresh the hit is, out
+// of `CombatEvents` — a health fraction is a condition and a round landing is a change, which
+// is why one rides `.y` and the other rides `.w`.
+uniform float hit_flash_strength = 5.0;
+uniform float hit_flash_whiteness : hint_range(0.0, 1.0) = 0.65;
+
+// ── The custom data, all four floats of it ───────────────────────────────────
 //
-// Worth knowing before reaching for `use_colors` instead: turning that on widens the stride
-// to twenty, which means `_write_skinned_instance`, `_stride_for` and every accessor that
-// divides by it. A free channel is much the cheaper door.
+// `.x` is the animation row (#38), `.y` the health fraction (#38), `.z` the wound seed and
+// `.w` how fresh the last hit is (#70). #38 left the last two written as zero against
+// exactly this ticket and said what they were for — *"a mark that has to be in a different
+// place on each one wants a per-instance offset into that field"* — and that is what `.z`
+// became, to the line.
 //
-// And one thing about *this* file that a damage ticket will meet immediately: the grime
-// field below is a function of the **rest pose alone**, so it is identical on every Enemy
-// of a kind. A mark that has to be in a different place on each one — scorching, a wound —
-// wants a per-instance offset into that field, which is exactly what one of the two free
-// channels is for: `grime_at(rest + vec3(seed))`.
+// **The stride stays sixteen and nothing widened**, which is why a free channel was the door
+// rather than `use_colors`: turning that on takes the stride to twenty and with it
+// `_write_skinned_instance`, `_stride_for` and every accessor that divides by one.
 
 // ── Grime and relief, derived from the rest pose (#75) ───────────────────────
 //
@@ -126,6 +172,8 @@ uniform float relief_fade_end = 34.0;
 uniform float roughness_spread : hint_range(0.0, 0.5) = 0.10;
 
 varying float health;
+varying float wound_seed;
+varying float hit_flash;
 varying vec3 rest;
 varying mat3 surface_basis;
 
@@ -167,16 +215,23 @@ float value_noise(vec3 at) {
 // 0 is a crease and 1 is a face the weather has got at. The second octave is turned off the
 // first's axes, for `ground_height`'s reason: two octaves of a square lattice sharing an
 // axis reinstate the lattice the rest of this is for removing.
-float grime_at(vec3 at) {
-	vec3 scaled = at / grime_metres;
+float field_at(vec3 at, float metres) {
+	vec3 scaled = at / metres;
 	float coarse = value_noise(scaled);
 	vec3 turned = vec3(scaled.z * 2.17 + 11.3, scaled.x * 2.17 - 7.1, scaled.y * 2.17 + 3.9);
 	return clamp(coarse * 0.68 + value_noise(turned) * 0.32, 0.0, 1.0);
 }
 
+
+float grime_at(vec3 at) {
+	return field_at(at, grime_metres);
+}
+
 void vertex() {
 	int row = int(INSTANCE_CUSTOM.x);
 	health = INSTANCE_CUSTOM.y;
+	wound_seed = INSTANCE_CUSTOM.z;
+	hit_flash = INSTANCE_CUSTOM.w;
 	rest = VERTEX;
 
 	// The weights sum to one — `EnemyBodies._influences` renormalises after dropping any
@@ -219,6 +274,17 @@ void fragment() {
 		grime_at(rest + vec3(0.0, 0.0, grime_step)) - dirt
 	) / grime_step;
 
+	// Where this body has opened up. The same field the grime is read out of, offset by the
+	// Enemy's own seed so the cracks are in a different place on every one of them, and
+	// thresholded against how much health is gone — so damage *spreads* rather than
+	// brightening, which is what makes "nearly dead" and "just hit" different pictures.
+	float hurt = 1.0 - clamp(health, 0.0, 1.0);
+	float seam = field_at(
+		rest + vec3(wound_seed, wound_seed * 1.7, wound_seed * 2.3), wound_metres
+	);
+	float threshold = mix(wound_closed_at, wound_open_at, hurt);
+	float opened = smoothstep(threshold, threshold + wound_edge, seam);
+
 	ALBEDO = (
 		colour.rgb
 		* mix(1.0 - grime_depth, 1.0, dirt)
@@ -227,6 +293,18 @@ void fragment() {
 	ALPHA = colour.a;
 	METALLIC = metallic;
 	ROUGHNESS = clamp(roughness + (0.5 - dirt) * 2.0 * roughness_spread, 0.04, 1.0);
+
+	// The wound itself, and the flash of a round arriving. One emission, two contributions:
+	// the cracks are steady and belong to how hurt the body is, and the flash is whole-body
+	// and belongs to the tick a round landed. A flash pulls its colour toward white rather
+	// than being a second hue, so a body that is both hurt and freshly hit reads as one thing
+	// getting brighter rather than as two marks.
+	float lit = clamp(hit_flash, 0.0, 1.0);
+	vec3 flash_colour = mix(wound_glow, vec3(1.0), hit_flash_whiteness);
+	EMISSION = (
+		wound_glow * opened * hurt * wound_glow_strength
+		+ flash_colour * lit * hit_flash_strength
+	);
 
 	// Bend the normal down the slope, with the component along it taken out first so that
 	// the field tilts the surface rather than inflating it.
