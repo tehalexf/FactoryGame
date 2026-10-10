@@ -344,6 +344,113 @@ const CHARGE_EMPTY: Color = Color(0.45, 0.07, 0.07)
 ## at which a player still has time to go and look at the Belt.
 const AMMUNITION_LOW_FRACTION: float = 0.5
 
+
+# ── A shot you can see ────────────────────────────────────────────────────────
+# #69. `query_turret_last_shot_tick` had existed since #10 and nothing read it, so a Turret
+# killing Crawlers four rounds a second was, on screen, a static box standing next to Enemies
+# that stopped existing — the one mechanic DESIGN.md's whole thesis rests on, and a player
+# could not watch it work.
+#
+# **Every duration here is a count of ticks and nothing is drawn at random**, the rule
+# `SCANNER_PERIOD_TICKS` states and `WeaponViewmodel` already keeps for animation: a mark's
+# age is `query_tick` minus the tick the shot happened on, so a frame that stepped nothing
+# draws the same thing twice and two Runs down the same script look the same.
+
+## How long a muzzle flash is lit. Four ticks is 67 ms — shorter than the 15-tick interval the
+## shipped MG fires on, so four rounds a second read as four flashes rather than as a glow,
+## and long enough that a frame cannot fall between two of them.
+const MUZZLE_FLASH_TICKS: int = 4
+
+## How big the flash is. Over half the width of a Belt deck, which sounds large written down
+## and is what the render settled: at 0.55 m it was the same size and very nearly the same
+## colour as the tracer leaving it, so it read as the line's end rather than as a gun going
+## off. A flash has to be the brightest and roundest thing in its corner of the frame.
+const MUZZLE_FLASH_SIZE_METRES: float = 0.9
+
+## Where up the gun the flash sits, as a fraction of the body a player can see — `_machine_roof`
+## rather than a constant, for #41's reason: a mark measured off a number that is not this
+## Machine's ends up inside the body or floating over it.
+##
+## **At the roofline, and the two thirds that was tried first is what a render rejected.** A
+## Turret's footprint is four metres across and its clearance is 35 cm, so a flash at 1.4 m was
+## 35 cm clear of a body two metres tall — which, from a camera forty degrees round from the
+## line of fire, is behind it. On the roofline the cube straddles the edge: half of it stands
+## above the silhouette from any angle, and the half that overlaps the body is what gives the
+## mark an owner, which is #52's rule about a bright mark with nothing under it.
+const MUZZLE_FLASH_HEIGHT_FRACTION: float = 1.0
+
+## How far **clear of the footprint** the flash stands, towards what is being shot at. A muzzle
+## rather than a middle, so the flash and the tracer leaving it read as one thing.
+##
+## A clearance rather than a reach, and that is #41's rule arriving from the horizontal
+## direction: a constant 1.1 m was tried and it put the flash *inside* a 2x2 Turret, whose
+## footprint is four metres across. The mark was drawn, was the right colour, was at the right
+## height and was invisible — the third time this project has paid for a mark measured off a
+## number that is not this Machine's, and the second time only a render found it.
+const MUZZLE_FLASH_CLEARANCE_METRES: float = 0.35
+
+## Hot white-yellow, unshaded. Unshaded for the Ammunition gauge's reason: a flash a
+## directional light can darken is a flash a player misses at thirty metres, which is the
+## distance this whole mark exists for.
+const MUZZLE_FLASH_COLOUR: Color = Color(1.0, 0.95, 0.76, 1.0)
+
+## How long the round itself is in frame. Three ticks — a round crosses sixteen metres rather
+## faster than that, so this is a streak left behind rather than a projectile with a speed, and
+## giving it one would be the renderer inventing a flight time the Simulation does not have.
+const TRACER_TICKS: int = 3
+
+## How thick the round is. Seven centimetres was the first guess and is **sub-pixel at thirty
+## metres** — about two pixels of a 1600-wide frame, at half alpha, which the render showed as
+## nothing at all. Sixteen is a round a player can see crossing a gap and is still well under
+## half the Item riding the Belt underneath it.
+const TRACER_WIDTH_METRES: float = 0.16
+
+## Hot, and a little cooler than the flash, so the two read as one thing with a direction.
+const TRACER_COLOUR: Color = Color(1.0, 0.76, 0.34, 0.95)
+
+## How far out in front of the eye a player's own round leaves from, and how far under it. The
+## weapon is held below and ahead of the camera, so a tracer that started exactly at the eye
+## would be a line emerging from the middle of the crosshair and would hide the thing it is
+## about.
+## And it begins a few metres out rather than at the barrel, and is thinner. **One width cannot
+## serve both kinds of tracer**, which is the sharpest thing the renders found: a Turret's round
+## is seen from outside at tens of metres, where sixteen centimetres is a thin bright line, and
+## a player's own is seen down its own axis from arm's length, where the same rod is a slab a
+## metre and a half across the middle of the frame, hiding the very thing it is about.
+##
+## The sideways offset matters as much as the thickness and only a render found it: ahead-and-
+## below alone leaves the round travelling almost exactly along the line of sight, and a rod
+## seen down its own axis is not a line. Offset to the weapon's own side it converges on the
+## target from the lower right, which is what reads as a round going out — and starting a few
+## metres out is what a real tracer looks like anyway, since nobody sees one leave a barrel.
+const PLAYER_TRACER_REACH_METRES: float = 3.5
+const PLAYER_TRACER_DROP_METRES: float = 0.35
+const PLAYER_TRACER_ASIDE_METRES: float = 0.55
+const PLAYER_TRACER_WIDTH_METRES: float = 0.05
+
+## How long the burst where a round landed stays. Longer than the tracer, because the tracer
+## says *that* a round went and the burst says *where it arrived*, which is the half a player
+## is actually reading — and it is the one mark that survives being looked at a frame late.
+const IMPACT_TICKS: int = 9
+
+## How big the burst is. Three quarters of a metre was the first guess and read, in the render,
+## as a **cream crate standing among the Crawlers** — #56's finding about a red post that was
+## the same size and nearly the same colour as the freight riding past it, in a different
+## colour. Half a metre and hotter reads as a flash on a body rather than as an object.
+const IMPACT_SIZE_METRES: float = 0.5
+
+## Pale and hot at the centre of the body it landed on. Deliberately **not** red: red is
+## load-bearing in this file — a ruined Wall, a dry magazine, a Belt end that leads nowhere —
+## and a cloud of red sparks over a Wave would drown all three.
+const IMPACT_COLOUR: Color = Color(1.0, 0.88, 0.58, 0.9)
+
+## How long the crosshair wears a mark after the player's own round connects. A fifth of a
+## second: long enough to register at sixteen rounds a magazine, short enough that a held
+## trigger reads as a flicker rather than as a permanent change to the reticle.
+const HIT_MARK_TICKS: int = 12
+const HIT_MARK_COLOUR: Color = Color(1.0, 0.93, 0.70, 0.9)
+const HIT_MARK_SIZE_PIXELS: float = 18.0
+
 ## One node per Machine, pooled: a Machine arriving takes the next free instance and a
 ## Machine demolished hands one back, so a Factory of fifty costs fifty nodes rather than
 ## fifty rebuilt every frame.
@@ -375,6 +482,34 @@ var _ore_beacon_colours: Array[Color] = []
 var _ore_marking_transforms: Array[Vector3] = []
 var _ore_marking_colours: Array[Color] = []
 var _scanner_pings: MultiMeshInstance3D = null
+
+## Every mark a shot leaves, through **one** MultiMesh: the flash at the gun, the tracer
+## between, and the burst where the round landed. One buffer rather than three, because a
+## unit box carries all three — a flash and a burst are small cubes and a tracer is the same
+## cube stretched along its own flight — and because ADR 0001's case is exactly this one:
+## fifty Turrets at four rounds a second plus a swarm of impacts is not fifty nodes a second.
+var _shot_marks: MultiMeshInstance3D = null
+
+## The readable record of what was drawn, because a MultiMesh keeps its buffer on the
+## rendering server where a headless test cannot see it. One entry per mark, in the order they
+## were laid: flashes, then tracers, then impacts.
+var _muzzle_flash_positions: Array[Vector3] = []
+var _muzzle_flash_colours: Array[Color] = []
+var _tracer_starts: Array[Vector3] = []
+var _tracer_ends: Array[Vector3] = []
+var _tracer_colours: Array[Color] = []
+var _tracer_widths: Array[float] = []
+var _impact_positions: Array[Vector3] = []
+var _impact_colours: Array[Color] = []
+
+## What has happened in the fight since the last frame. See `game/combat_events.gd`: the
+## snapshot it holds is the same category of thing as `AudioDirector`'s and `TickPump`'s
+## leftover frame time — a reading on its way through, never a fact about the world.
+var _combat: CombatEvents = CombatEvents.new()
+
+## A mark that appears on the crosshair when the player's own round connects. One node, built
+## once and shown or hidden, which is the rule every other thing in this file obeys.
+var _hit_mark: Control = null
 var _scanner_transforms: Array[Vector3] = []
 var _scanner_colours: Array[Color] = []
 
@@ -1197,6 +1332,9 @@ func sync(sim: Simulation) -> void:
 	_sync_enemies(sim)
 	_sync_siege_hulk_vents(sim)
 	_sync_hives(sim)
+	# After the Machines, because a muzzle flash is measured off the body a player can see
+	# (`_machine_roof`) rather than off the housing the Simulation collides against.
+	_sync_shots(sim)
 	_sync_shell_markers(sim)
 	_sync_belts(sim)
 	_sync_walls(sim)
@@ -1212,6 +1350,9 @@ func sync(sim: Simulation) -> void:
 	# clear of the two that say it is wrong.
 	_sync_line_works(sim)
 	_sync_hud(sim)
+	# After the HUD, because the mark hangs off the crosshair the HUD builds — and after
+	# `_sync_shots`, because what it is about is in that frame's events.
+	_sync_hit_mark(sim)
 	_place_camera(sim)
 	# After the camera, because the weapon hangs off it.
 	_sync_weapon(sim)
@@ -3483,6 +3624,390 @@ func _cargo_mesh(form: int) -> Mesh:
 
 ## The one number this ticket exists to make visible: what the Factory has extracted.
 ## Read out of the buffers every frame, so it cannot be stale or invented.
+## The three marks a shot leaves, all of them through one MultiMesh.
+##
+## **A tick number is already an event, which is why most of this needs no diff at all.**
+## `query_turret_last_shot_tick` reports *when* a Turret last fired rather than *that* it is
+## firing, so "did this gun go off within the last few ticks" is a subtraction against
+## `query_tick` and nothing has to be remembered between frames. That is the cheap half and it
+## is most of what a player at thirty metres needs.
+func _sync_shots(sim: Simulation) -> void:
+	if _shot_marks == null:
+		_shot_marks = _unshaded_instances()
+		add_child(_shot_marks)
+
+	_combat.observe(sim)
+
+	_muzzle_flash_positions.clear()
+	_muzzle_flash_colours.clear()
+	_tracer_starts.clear()
+	_tracer_ends.clear()
+	_tracer_colours.clear()
+	_tracer_widths.clear()
+	_impact_positions.clear()
+	_impact_colours.clear()
+
+	_lay_the_muzzle_flashes(sim)
+	_lay_the_rounds_that_landed(sim)
+	_upload_the_shot_marks()
+
+
+## A flash at the muzzle of every gun that has gone off within the last `MUZZLE_FLASH_TICKS`.
+##
+## **Turrets that shoot, not Turrets that mend.** `_mend` stamps the very same
+## `_turret_last_shot_tick` a Turret's `_fire` does — GLOSSARY.md calls a Repair Pylon a
+## Turret-class Machine whose output is repair rather than damage — so a Pylon pulsing a plate
+## into a Smelter would otherwise flash as though it were shooting at something.
+func _lay_the_muzzle_flashes(sim: Simulation) -> void:
+	var tick: int = sim.query_tick()
+	for index: int in range(sim.query_machine_count()):
+		if not sim.query_machine_is_turret(index):
+			continue
+		if sim.query_machine_is_repair_pylon(index):
+			continue
+		var fired: int = sim.query_turret_last_shot_tick(index)
+		# -1 is "has never fired", and it is worth a clause of its own rather than falling out
+		# of the arithmetic: a Turret standing on tick 2 of a Run would otherwise be two ticks
+		# past a shot that never happened, and flash for having been built.
+		if fired < 0:
+			continue
+		var age: int = tick - fired
+		if age < 0 or age >= MUZZLE_FLASH_TICKS:
+			continue
+		var lit: Color = MUZZLE_FLASH_COLOUR
+		lit.a = MUZZLE_FLASH_COLOUR.a * _fading(age, MUZZLE_FLASH_TICKS)
+		_muzzle_flash_positions.append(_muzzle_of(sim, index))
+		_muzzle_flash_colours.append(lit)
+
+
+## Where a Turret's muzzle is: up the body a player can see, and out towards whatever it is
+## shooting at. The offset is what makes a flash read as leaving a barrel rather than as a
+## lamp sitting on a roof; a Turret with nothing in its sights flashes over its own middle,
+## which is the right answer for the one tick a target dies on.
+func _muzzle_of(sim: Simulation, index: int) -> Vector3:
+	var at: Vector3 = _machine_centre(sim, index)
+	at.y = _machine_roof(sim, index) * MUZZLE_FLASH_HEIGHT_FRACTION
+	var target: int = sim.query_enemy_index_of_serial(sim.query_turret_target_serial(index))
+	if target == -1:
+		return at
+	var towards: Vector3 = _enemy_centre(sim, target) - at
+	towards.y = 0.0
+	if towards.length() < 0.001:
+		return at
+	return at + towards.normalized() * _muzzle_clearance(sim, index)
+
+
+## How far from a Machine's own centre its muzzle has to stand to be outside it: the radius of
+## the circle its footprint fits inside, plus a clearance. Derived from the footprint for
+## `_machine_roof`'s reason — the alternative is a constant that is right for one Machine and
+## buries the mark inside every Machine bigger than that one.
+func _muzzle_clearance(sim: Simulation, index: int) -> float:
+	var footprint: Vector2i = sim.query_machine_footprint(index)
+	var across: float = float(maxi(footprint.x, footprint.y) * WorldGrid.TILE_SIZE_METRES)
+	return across * 0.5 + MUZZLE_FLASH_CLEARANCE_METRES
+
+
+## Where an Enemy's body is, at the middle of the height a round is resolved against — so a
+## mark about a hit stands on the thing that was hit rather than at its feet.
+func _enemy_centre(sim: Simulation, index: int) -> Vector3:
+	var at: FixedVec2 = sim.query_enemy_position_metres(index)
+	return Vector3(
+		Fixed.to_float(at.x),
+		Fixed.to_float(sim.query_enemy_hit_height_metres(index)) * 0.5,
+		Fixed.to_float(at.z)
+	)
+
+
+## How bright a mark of a given age is, as a fraction: full on the tick it happened and
+## nothing by the tick it expires. Integer arithmetic over two tick counts, which is what
+## keeps it a function of the Simulation rather than of how many frames were drawn.
+func _fading(age: int, span: int) -> float:
+	if span <= 0:
+		return 0.0
+	return 1.0 - float(age) / float(span)
+
+
+## One MultiMesh of unit boxes, unshaded and alpha-blended, with per-instance colour. The
+## arrangement `_sync_ore_scanner` already uses: one mesh, one material, and the size and
+## colour of every mark carried per instance.
+func _unshaded_instances() -> MultiMeshInstance3D:
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	instanced.use_colors = true
+	var unit: BoxMesh = BoxMesh.new()
+	unit.size = Vector3.ONE
+	instanced.mesh = unit
+	var marks: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	marks.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.vertex_color_use_as_albedo = true
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	marks.material_override = skin
+	return marks
+
+
+## Four short diagonals around the crosshair: the mark a player's own round leaving a mark on
+## something puts there.
+##
+## Diagonal rather than another cross, so it cannot be mistaken for the reticle growing, and
+## built once like the reticle itself — shown, hidden and recoloured, never rebuilt.
+func _hit_marker() -> Control:
+	var mark: Control = Control.new()
+	mark.set_anchors_preset(Control.PRESET_CENTER)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.visible = false
+	for corner: Vector2 in [
+		Vector2(-1.0, -1.0), Vector2(1.0, -1.0), Vector2(-1.0, 1.0), Vector2(1.0, 1.0)
+	]:
+		var tick: ColorRect = ColorRect.new()
+		tick.color = HIT_MARK_COLOUR
+		tick.size = Vector2(HIT_MARK_SIZE_PIXELS * 0.5, 2.0)
+		tick.rotation = corner.x * corner.y * PI * 0.25
+		tick.position = corner * HIT_MARK_SIZE_PIXELS * 0.5
+		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.add_child(tick)
+	return mark
+
+
+## Whether the crosshair is wearing its hit mark. The readable record of what was drawn, for
+## the smoke test.
+func hit_mark_is_showing() -> bool:
+	return _hit_mark != null and _hit_mark.visible
+
+
+## Shows the crosshair's hit mark while the player's own round has recently connected.
+##
+## **The player's own and nobody else's.** `CombatEvents` reports a Turret's hits and a
+## player's through the one list, and a mark keyed on "something was hit" would congratulate a
+## player for standing still next to a working Turret — which is worse than no mark, because
+## it is a mark that says something false about their aim.
+func _sync_hit_mark(sim: Simulation) -> void:
+	if _hit_mark == null:
+		return
+	var tick: int = sim.query_tick()
+	var connected: bool = false
+	for event: CombatEvents.Event in _combat.events():
+		if event.from != CombatEvents.From.PLAYER or event.from_index != VIEWED_PLAYER:
+			continue
+		var age: int = tick - event.tick
+		if age >= 0 and age < HIT_MARK_TICKS:
+			connected = true
+			break
+	_hit_mark.visible = connected and sim.query_player_is_alive(VIEWED_PLAYER)
+
+
+## A tracer and a burst for every round `CombatEvents` says arrived.
+##
+## **The tracer is only drawn for a round somebody can be shown to have fired**, and the burst
+## for every hit whoever caused it. That split is the honest one: a line of flight from a gun
+## to a body is a claim about a trajectory, and a swing of a wrench, an Artillery Barrage and a
+## Breaker's own bite have no trajectory to draw. A burst says only that this body was hit
+## there, which is true of all of them.
+##
+## **A missed round draws nothing out in the world, and that is deliberate rather than
+## unfinished.** `_shoot` scatters the aim by an RNG draw before it resolves anything, so the
+## direction a round actually took is not a quantity anything outside the façade holds — and a
+## tracer drawn down the player's nominal aim would be a confident line along a path the round
+## did not take, which is the same defect as a green hologram over a click that does nothing.
+## The lever, if misses ever want tracers, is the Simulation recording the scattered aim, and
+## that is new hashed state and its own ticket.
+func _lay_the_rounds_that_landed(sim: Simulation) -> void:
+	var tick: int = sim.query_tick()
+	for event: CombatEvents.Event in _combat.events():
+		var age: int = tick - event.tick
+		if age < 0:
+			continue
+		if age < TRACER_TICKS:
+			var from: Vector3 = _where_it_was_fired_from(sim, event)
+			if from != Vector3.ZERO:
+				var lit: Color = TRACER_COLOUR
+				lit.a = TRACER_COLOUR.a * _fading(age, TRACER_TICKS)
+				_tracer_starts.append(from)
+				_tracer_ends.append(event.at)
+				_tracer_colours.append(lit)
+				_tracer_widths.append(
+					PLAYER_TRACER_WIDTH_METRES
+					if event.from == CombatEvents.From.PLAYER
+					else TRACER_WIDTH_METRES
+				)
+		if age < IMPACT_TICKS:
+			var spark: Color = IMPACT_COLOUR
+			spark.a = IMPACT_COLOUR.a * _fading(age, IMPACT_TICKS)
+			_impact_positions.append(event.at)
+			_impact_colours.append(spark)
+
+
+## Where the round that caused an event left from, or `Vector3.ZERO` for one that cannot be
+## traced back to a gun at all.
+##
+## **A Turret is checked against its own stamp rather than trusted by index**, which is the one
+## subtle thing here: `_remove_machine` closes the gap when a Machine is destroyed, so an index
+## recorded three ticks ago could by now name a different Machine. Asking whether the Machine
+## standing at that index is a gun that fired on that very tick makes a misattribution very
+## nearly impossible and costs two array reads.
+func _where_it_was_fired_from(sim: Simulation, event: CombatEvents.Event) -> Vector3:
+	if event.from == CombatEvents.From.TURRET:
+		var index: int = event.from_index
+		if index < 0 or index >= sim.query_machine_count():
+			return Vector3.ZERO
+		if not sim.query_machine_is_turret(index) or sim.query_machine_is_repair_pylon(index):
+			return Vector3.ZERO
+		if sim.query_turret_last_shot_tick(index) != event.tick:
+			return Vector3.ZERO
+		return _muzzle_of(sim, index)
+	if event.from == CombatEvents.From.PLAYER and event.from_index == VIEWED_PLAYER:
+		return _where_the_player_fires_from(sim, VIEWED_PLAYER)
+	return Vector3.ZERO
+
+
+## The muzzle of the weapon in the player's own hands: in front of the eye and below it, along
+## the facing the Simulation is holding.
+##
+## `query_player_facing` rather than a yaw turned into a vector here, so the renderer does not
+## own a second copy of the convention `_wanted_velocity` walks a player by. And the *eye*
+## rather than the camera, for `_shoot`'s own reason: Survey View lifts the camera to
+## twenty-six metres and a player who raised it to read their Factory is not firing from a
+## helicopter.
+func _where_the_player_fires_from(sim: Simulation, player_id: int) -> Vector3:
+	var at: FixedVec2 = sim.query_player_position(player_id)
+	var facing: FixedVec2 = sim.query_player_facing(player_id)
+	var eye: Vector3 = Vector3(
+		Fixed.to_float(at.x),
+		Fixed.to_float(sim.query_player_eye_height_metres(player_id)),
+		Fixed.to_float(at.z)
+	)
+	var along: Vector3 = Vector3(
+		Fixed.to_float(facing.x), 0.0, Fixed.to_float(facing.z)
+	).normalized()
+	return (
+		eye
+		+ along * PLAYER_TRACER_REACH_METRES
+		+ Vector3.DOWN * PLAYER_TRACER_DROP_METRES
+		+ along.cross(Vector3.UP).normalized() * PLAYER_TRACER_ASIDE_METRES
+	)
+
+
+## Hands every mark to the one MultiMesh: the flashes, then the tracers, then the bursts.
+##
+## A flash and a burst are the unit box scaled evenly; a tracer is the same box stretched along
+## its own flight, which is what lets all three share one buffer and one material. The basis is
+## built by hand rather than with `looking_at`, because a round fired straight up or straight
+## down would make that degenerate and a player can look straight up.
+func _upload_the_shot_marks() -> void:
+	var marks: MultiMesh = _shot_marks.multimesh
+	marks.instance_count = (
+		_muzzle_flash_positions.size() + _tracer_starts.size() + _impact_positions.size()
+	)
+	var instance: int = 0
+	var flash: Basis = Basis.IDENTITY.scaled(Vector3.ONE * MUZZLE_FLASH_SIZE_METRES)
+	for mark: int in range(_muzzle_flash_positions.size()):
+		marks.set_instance_transform(
+			instance, Transform3D(flash, _muzzle_flash_positions[mark])
+		)
+		marks.set_instance_color(instance, _muzzle_flash_colours[mark])
+		instance += 1
+
+	for mark: int in range(_tracer_starts.size()):
+		marks.set_instance_transform(
+			instance,
+			_stretched_between(
+				_tracer_starts[mark], _tracer_ends[mark], _tracer_widths[mark]
+			)
+		)
+		marks.set_instance_color(instance, _tracer_colours[mark])
+		instance += 1
+
+	var spark: Basis = Basis.IDENTITY.scaled(Vector3.ONE * IMPACT_SIZE_METRES)
+	for mark: int in range(_impact_positions.size()):
+		marks.set_instance_transform(instance, Transform3D(spark, _impact_positions[mark]))
+		marks.set_instance_color(instance, _impact_colours[mark])
+		instance += 1
+
+
+## The unit box stretched into a thin rod from one point to another, centred on the midpoint.
+func _stretched_between(from: Vector3, to: Vector3, width: float) -> Transform3D:
+	var along: Vector3 = to - from
+	var span: float = along.length()
+	if span < 0.001:
+		return Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * width), from)
+	var forward: Vector3 = along / span
+	var up: Vector3 = Vector3.UP
+	if absf(forward.dot(up)) > 0.99:
+		up = Vector3.FORWARD
+	var right: Vector3 = up.cross(forward).normalized()
+	return Transform3D(
+		Basis(right * width, forward.cross(right).normalized() * width, forward * span),
+		from + along * 0.5
+	)
+
+
+## How many rounds are in frame. The readable record of what was drawn.
+func tracer_count() -> int:
+	return _tracer_starts.size()
+
+
+## Where one round left from — the muzzle of the gun that fired it.
+func tracer_start(instance: int) -> Vector3:
+	if instance < 0 or instance >= _tracer_starts.size():
+		return Vector3.ZERO
+	return _tracer_starts[instance]
+
+
+## Where one round arrived — the body `CombatEvents` says lost health.
+func tracer_end(instance: int) -> Vector3:
+	if instance < 0 or instance >= _tracer_ends.size():
+		return Vector3.ZERO
+	return _tracer_ends[instance]
+
+
+## What one tracer is painted, faded by its age in ticks.
+func tracer_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _tracer_colours.size():
+		return Color.BLACK
+	return _tracer_colours[instance]
+
+
+## How many bursts are in frame: one per hit, whoever caused it.
+func impact_count() -> int:
+	return _impact_positions.size()
+
+
+## Where one burst is — on the body that was hit, at the middle of the height a round is
+## resolved against.
+func impact_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= _impact_positions.size():
+		return Vector3.ZERO
+	return _impact_positions[instance]
+
+
+## What one burst is painted, faded by its age in ticks.
+func impact_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _impact_colours.size():
+		return Color.BLACK
+	return _impact_colours[instance]
+
+
+## How many guns are flashing. Zero on a tick nothing fired, which is what the smoke test
+## reads it for.
+func muzzle_flash_count() -> int:
+	return _muzzle_flash_positions.size()
+
+
+## Where one flash is. The readable record of what was drawn.
+func muzzle_flash_position(instance: int) -> Vector3:
+	if instance < 0 or instance >= _muzzle_flash_positions.size():
+		return Vector3.ZERO
+	return _muzzle_flash_positions[instance]
+
+
+## What one flash is painted, faded by its age in ticks.
+func muzzle_flash_colour(instance: int) -> Color:
+	if instance < 0 or instance >= _muzzle_flash_colours.size():
+		return Color.BLACK
+	return _muzzle_flash_colours[instance]
+
+
 func _sync_hud(sim: Simulation) -> void:
 	if _hud == null:
 		_hud_layer = CanvasLayer.new()
@@ -3496,6 +4021,8 @@ func _sync_hud(sim: Simulation) -> void:
 		_hud_layer.add_child(_mortality_detail)
 		_crosshair_mark = _crosshair()
 		_hud_layer.add_child(_crosshair_mark)
+		_hit_mark = _hit_marker()
+		_hud_layer.add_child(_hit_mark)
 		add_child(_hud_layer)
 
 	_sync_mortality_overlay(sim)
@@ -5002,6 +5529,10 @@ func _sync_mortality_overlay(sim: Simulation) -> void:
 	# comes back on the tick they are upright, off the same number as everything else here.
 	if _crosshair_mark != null:
 		_crosshair_mark.visible = not showing
+	if showing and _hit_mark != null:
+		# A dead player's reticle goes, so what hangs off it goes too. `_sync_shots` puts it
+		# back on the tick they are upright, off the same events.
+		_hit_mark.visible = false
 
 	_mortality_tint.visible = showing
 	_mortality_caption.visible = showing

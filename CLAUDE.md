@@ -36,6 +36,10 @@ SHOT_SCRIPT=tools/visual/compose_dock_shot.gd tools/visual/shot.sh out.png bare
                                  # two Belts that will not dock, for the two different reasons (+ bare)
 SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "eye bare"
                                  # a line that has just started working (eye|survey; + before, + bare)
+SHOT_SCRIPT=tools/visual/compose_gunfire_shot.gd tools/visual/shot.sh out.png "turret bare"
+                                 # a round actually being fired (turret|hit; + hud, + bare, + plain).
+                                 # `hit` is through the player's own camera; `plain` hides the
+                                 # purchased arms, which a committed image must do
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -2508,6 +2512,202 @@ Two things a later ticket should know:
   on the Factory where a player can watch it. See the flowfield section, and "What #34 cost the
   table" below for the figures. The consequence for `fortified`'s second MG at (11, 6) is that
   it is no longer what answers the Breaker tier, and the two rows have converged.
+
+## A shot you can see, and the one fact a query cannot report
+
+#69, and the absence had been in plain sight since #10: grep `_sync_` in
+`game/world_view.gd` and there were twenty-six of them, **not one of which drew a shot.** No
+muzzle flash, no round in flight, no burst where it landed, nothing on the crosshair when it
+connected. `query_turret_last_shot_tick` had existed since #10 and **nothing read it**, so a
+Turret killing Crawlers four rounds a second was, on screen, a static box standing beside
+Enemies that stopped existing — the one mechanic DESIGN.md's whole thesis rests on, and a
+player could not watch it work.
+
+That absence is also why the Ammunition gauge had to be invented. #10's own note says it: mid-
+Wave a player is reading the whole Factory from thirty metres and needs to know which Turret is
+about to stop. A gauge is a good answer to *which Turret is dry* and a poor substitute for
+seeing the gun fire.
+
+### A tick number is already an event, which is why most of this needs no memory at all
+
+The line this ticket draws, and the reason most of it is free: **`query_turret_last_shot_tick`
+reports *when* a Turret last fired rather than *that* it is firing.** A change already stated as
+a number is not a condition anything has to diff — so "did this gun just go off" is a
+subtraction against `query_tick`, and the muzzle flash needs nothing remembered between frames.
+`query_player_last_shot_tick` is the same shape on the player's side.
+
+Exactly one fact in a fight is not available that way, and it is the one the ticket is about.
+**Where a round went and what it struck is known inside `_fight` and `_fire` and told to
+nobody**: `query_enemy_health` reports what an Enemy's health *is*, and a round landing is a
+change in it. A kill is worse than inaccessible — `_fire` removes an Enemy it reduced to nothing
+in the same tick *and clears that serial off every Turret holding it* — so by the time anything
+outside the façade can look there is no serial to resolve, no position to read and no health to
+compare against.
+
+**So `game/combat_events.gd` diffs, and the Simulation was not changed to tell it.** The honest
+alternative is `_resolve_a_hit` recording what it did, and it was refused on the grounds #54
+refused recording what killed a player: new hashed, saved, replayed state, in the Simulation,
+bought for a mark on the screen. Nothing about the Run would change and `hash()` would.
+
+It is also unnecessary, because the evidence is complete and **the precedent is literal rather
+than analogous**: `game/audio_director.gd` has read exactly this since #21. It snapshots
+`[health, attacking, position]` per Enemy serial, plays a death cue off a serial that has gone,
+and already attributes a hit to a melee swing inside `MELEE_WINDOW_TICKS`. This file is that
+design pointed at the picture instead of the sound, and the snapshot it holds is the same
+category of thing — a reading on its way through, like `TickPump`'s leftover frame time, never a
+fact about the world. `test_combat_events` asserts the consequence directly: four hundred ticks
+with and without something watching leave the same state hash.
+
+Four decisions in it worth knowing rather than rediscovering:
+
+- **Attribution is evidence, not a guess, and the order is the design.** A Turret's claim on a
+  hit is the serial it was aiming at **this frame or last** — last frame's answer is consulted
+  because a killing shot clears its own target, which is the only reason `_turret_targets` is
+  held at all. A player's trigger says only that a round left the barrel, since no query reports
+  where it went, so the player takes the hits nothing else accounts for. A tick on which both
+  fired therefore gives the hit to the Turret that was pointing at it.
+- **A swing is a hit with nobody behind it.** A wrench, an Artillery Barrage and a Breaker's own
+  bite all reduce health and none of them has a trajectory, so they are reported as
+  `From.NOBODY` rather than forced into a third kind of shooter — and nothing draws a line of
+  flight for one.
+- **An attributed event carries its own shot's firing tick**, read back out of
+  `query_turret_last_shot_tick` or `query_player_last_shot_tick`, so a mark's age is a Simulation
+  quantity and not a reading of when a frame happened to look. An unattributed one is stamped
+  with the last tick the Simulation executed, which is the renderer's own best reading and is
+  exact whenever a frame stepped one tick. **Nothing `WorldView` draws is unattributed**, so the
+  inexact case is unreachable from anything on screen; it is reported anyway because #70's
+  subject is an Enemy's own body rather than who shot it.
+- **The first observation of a Run reports nothing.** A Simulation resumed from a save has a
+  Wave on the Map already, and diffing against an empty snapshot would read as every Enemy alive
+  having just been hit. The consequence worth knowing is that a `WorldView` attached mid-Run
+  draws no tracer for the round that was in flight when it attached.
+
+### Three marks, one MultiMesh, and every duration a count of ticks
+
+ADR 0001's case is exactly this one — fifty Turrets at four rounds a second plus a swarm of
+bursts — so **no effect gets a node.** A flash and a burst are the unit box scaled evenly and a
+tracer is the same box stretched along its own flight, which is what lets all three share one
+buffer, one unshaded material and per-instance colour: the arrangement `_sync_ore_scanner`
+already uses. `test_a_shot_is_never_a_node` asserts the scene tree does not grow by one over six
+hundred ticks of firing.
+
+- **The flash is at the muzzle of the body a player can see**, `_machine_roof` times a fraction,
+  offset clear of the Machine's own footprint towards what is being shot at — #41's rule, and
+  both of those numbers were settled by a render rather than reasoned (below). A Turret with
+  nothing in its sights flashes over its own middle, which is the right answer for the one tick
+  a target dies on.
+- **`_mend` stamps the very same field `_fire` does**, so a Repair Pylon pulsing a plate would
+  otherwise flash as though it were shooting; Pylons are excluded by name. The test that pins
+  that puts a Breaker on the Map on purpose, because a Pylon with nothing to mend stamps nothing
+  and the assertion would be the kind #50 warns about — a cross-check whose only exercised case
+  is one where the rule is trivially true.
+- **-1 is "has never fired" and needs a clause of its own**, or a Turret on tick 2 of a Run
+  flashes for having been built.
+- **`step` increments `_tick` last**, so the tick a shot was fired on is always one behind the
+  tick anything outside the façade can ask about. **The freshest shot a renderer can observe is
+  one tick old**, which is worth knowing before writing a test that waits for
+  `last_shot_tick == tick` — one did, and it waited 1800 ticks through a Crawler being killed.
+- **A missed round draws nothing out in the world, and that is deliberate rather than
+  unfinished.** `_shoot` scatters the aim by an RNG draw before it resolves anything, so the
+  direction a round actually took is not a quantity anything outside the façade holds — and a
+  confident line down the player's *nominal* aim would be #35's green hologram over a click that
+  did nothing, in a different costume. The lever, if misses ever want tracers, is the Simulation
+  recording the scattered aim, and that is new hashed state and its own ticket.
+- **The crosshair marks the player's own hit and nobody else's.** The events list carries a
+  Turret's hits through the same channel, and a mark keyed on "something was hit" would
+  congratulate a player for standing still beside a working Turret — a mark that says something
+  false about their aim, which is worse than no mark.
+
+**`query_player_eye_height_metres` is the only thing added behind the façade, and it carries no
+state.** It is a projection over an expression that already existed inside `_shot_target`, and it
+exists for the reason `query_player_facing` does (#52): the alternative is `game/` holding a
+second copy of where a shot leaves from, free to disagree about the jump or about Survey View —
+in the one place a player would read the disagreement as the gun being broken. `_eye_height` is
+now the single definition and `query_player_camera_height_metres` reads it too.
+
+### What the renders found, which is all of the geometry
+
+The pairs are [`docs/images/gunfire_turret_before.png`](docs/images/gunfire_turret_before.png)
+against [`_after`](docs/images/gunfire_turret_after.png) — the documented `competent` Factory at
+**thirty metres**, on the tick its Turret fires — and
+[`gunfire_hit_before.png`](docs/images/gunfire_hit_before.png) against
+[`_after`](docs/images/gunfire_hit_after.png), the player's own round reaching a Crawler through
+the player's own camera. Rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_gunfire_shot.gd tools/visual/shot.sh out.png "turret bare"
+SHOT_SCRIPT=tools/visual/compose_gunfire_shot.gd tools/visual/shot.sh out.png "hit bare plain"
+```
+
+**The before images are the same Run at the same tick** — the composer reports "the Turret fired
+on tick 2454" for both halves — which is what makes them an argument rather than two pictures: a
+gun is firing, a round is reaching a Crawler, and nothing whatsoever on screen says so.
+
+**`tools/visual/compose_gunfire_shot.gd` had to exist, and the reason is not the vantage.** A
+Turret fires only while it holds a round *and* has something in reach, so a shot is a two-tick
+window in a Run that has to have built a production chain first. Every other composer frames a
+Factory standing still; `compose_wave_shot.gd` builds a Turret and never feeds it, so **its
+Turret has never fired in any image this project has committed.** The loop is driven off the
+Simulation's own queries rather than off the view, because the `before` half runs this same
+composer against a `WorldView` that has none of #69's accessors — a loop that watched the drawing
+could not take the picture that proves the drawing was missing.
+
+Five findings, and every one of them is a number that was reasoned and wrong:
+
+1. **The muzzle flash was *inside* the Turret**, which is #41's rule arriving from the
+   horizontal direction. A constant 1.1 m reach from the footprint centre is well inside a 2x2
+   Turret, whose footprint is four metres across; the mark was drawn, was the right colour, was
+   at the right height and was invisible. `_muzzle_clearance` derives it from the footprint, for
+   `_machine_roof`'s reason — a constant is right for one Machine and buries the mark inside
+   every Machine bigger than that one.
+2. **And then it was *behind* it.** At two thirds of the roof, 35 cm of horizontal clearance is
+   not clear of a two-metre body seen from a camera forty degrees round from the line of fire.
+   On the **roofline** the cube straddles the edge: half stands above the silhouette from any
+   angle, and the half that overlaps the body is what gives the mark an owner, which is #52's
+   rule about a bright mark with nothing under it.
+3. **A seven-centimetre tracer is sub-pixel at thirty metres** — about two pixels of a
+   1600-wide frame, at half alpha, which rendered as nothing at all. Sixteen is a round a player
+   can see crossing a gap.
+4. **One width cannot serve both kinds of tracer, and this is the sharpest of the five.** A
+   Turret's round is seen from *outside* at tens of metres, where sixteen centimetres is a thin
+   bright line. A player's own is seen **down its own axis from arm's length**, where the same
+   rod is a slab a metre and a half across the middle of the frame, hiding the very thing it is
+   about. So a player's round is thinner, starts a few metres out, and is offset to the weapon's
+   own side — which is what makes it converge on the target from the lower right rather than
+   point at the viewer, and is also what a real tracer looks like, since nobody sees one leave a
+   barrel.
+5. **A 0.75 m burst read as a cream crate standing among the Crawlers**, which is #56's finding
+   about a red post that was the same size and nearly the same colour as the freight riding past
+   it, in a different colour. Half a metre and hotter reads as a flash on a body.
+
+A sixth is about the instrument rather than the marks, and it is #56's lesson again: **a camera
+placed by arithmetic without a clause about the Nest** stood behind the four-by-four ziggurat,
+which filled half the frame and left the Turret a hundred pixels wide on the far edge. A vantage
+derived from the Simulation's own answers still has to be derived from the right ones.
+
+And one the composer reported rather than drew: the first `turret` render printed **"the Turret
+was destroyed before it fired"**, because a Wave called before the chain had smelted its first
+plate ate the gun. Fed before hunted — which is also a fair statement of what a player who builds
+a gun before a feed gets.
+
+### What a still image cannot settle
+
+Whether a three-tick tracer reads as a round or as a flicker, whether a nine-tick burst reads as
+a hit or as a smudge, and whether a late Factory of several Turrets at four rounds a second is
+legible or a light show. `MUZZLE_FLASH_TICKS`, `TRACER_TICKS`, `IMPACT_TICKS`, the two tracer
+widths and the three colours are the levers, and every one of them is a constant in
+`game/world_view.gd` rather than tuning, because the Simulation reads none of them — a tuning key
+nothing in `sim/` reads is a key `Definitions` warns about, which is `BuildGun.REACH_METRES`' own
+precedent.
+
+### What #70 inherits
+
+`CombatEvents` is a general record of what happened to an Enemy and not a record of shots:
+`Kind.KILLED` carries the serial, the kind, the hit points of the blow that finished it and
+**where the body was last seen alive**, which is the one fact nothing else in the project can
+answer once `_remove_enemy` has closed the gap. It is reported whoever caused it, including for
+a death nothing can be attributed to, and `MEMORY_TICKS` is a second — long enough for any mark
+drawn off one. Nothing about it is tailored to a shot.
 
 ## Mortality: what can be taken from you
 

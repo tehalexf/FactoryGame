@@ -4710,12 +4710,7 @@ func _shot_target(
 ) -> Vector2i:
 	var from_x: int = _player_x[player_id]
 	var from_z: int = _player_z[player_id]
-	# Eye height above the ground the player is *standing on*, plus however far off it they
-	# currently are. A jumping player really is shooting downwards at the swarm, and an
-	# origin that ignored the jump would have made the one new way to change your elevation
-	# a lie about where a round comes from. Survey View is still excluded, because the
-	# camera is not where a shot leaves from (see the Gear section of CLAUDE.md).
-	var eye: int = _definitions.player_eye_height + _player_y[player_id]
+	var eye: int = _eye_height(player_id)
 
 	var best_what: int = HIT_NOTHING
 	var best_which: int = -1
@@ -8806,6 +8801,32 @@ func query_player_survey_blend(player_id: int) -> int:
 	return _survey_blend(player_id)
 
 
+## Eye height above the ground a player is *standing on*, plus however far off it they
+## currently are, in fixed-point metres.
+##
+## **Where a shot leaves from, and deliberately not where the camera is.** A jumping player
+## really is shooting downwards at the swarm, and an origin that ignored the jump would make
+## the one way to change your elevation a lie about where a round comes from; Survey View is
+## excluded, because it lifts the camera to twenty-six metres and is explicitly not a mode, so
+## a player who raised it to read their Factory must not thereby be firing from a helicopter.
+func _eye_height(player_id: int) -> int:
+	return _definitions.player_eye_height + _player_y[player_id]
+
+
+## The same figure as a projection, for a renderer drawing a round leaving the player's own
+## weapon (#69).
+##
+## It exists for the reason `query_player_facing` does: the alternative is `game/` holding a
+## second copy of where a shot comes from, and the two would then be free to disagree about the
+## jump or about Survey View — which is exactly the disagreement `query_build_refusal` exists
+## to prevent, in the one place a player would read it as the gun being broken. The Simulation
+## never reads it back, and `test_gear` asserts that asking leaves `hash()` where it was.
+func query_player_eye_height_metres(player_id: int) -> int:
+	if not _is_player(player_id):
+		return 0
+	return _eye_height(player_id)
+
+
 ## How high a player's camera is off the ground, in fixed-point metres. Eye height on
 ## foot, the tuned Survey View height fully raised, and somewhere between during the
 ## transition.
@@ -8816,9 +8837,7 @@ func query_player_camera_height_metres(player_id: int) -> int:
 	# a player is standing is a fact about the world that the aim must honour, where a bob
 	# is a cosmetic response the renderer lays on top. See `query_player_view_bob_*`.
 	return Fixed.lerp_fixed(
-		_definitions.player_eye_height + _player_y[player_id],
-		_definitions.survey_height,
-		_survey_blend(player_id)
+		_eye_height(player_id), _definitions.survey_height, _survey_blend(player_id)
 	)
 
 

@@ -2377,6 +2377,274 @@ func test_the_scanner_does_not_grow_the_scene_tree() -> void:
 	view.free()
 
 
+# ── A shot you can see ────────────────────────────────────────────────────────
+# #69. `query_turret_last_shot_tick` has existed since #10 and nothing read it, so a Turret
+# killing Crawlers four rounds a second was a static box standing next to Enemies that
+# stopped existing. These assert the three marks a shot now leaves — the flash at the gun,
+# the tracer between, the burst where it landed — and that every one of them is a function
+# of the tick rather than of the clock or of a draw.
+
+
+## Content that puts Ammunition in a Turret without the three-stage chain in the way: a Miner
+## whose Node yields Ammunition directly, feeding the shipped MG Turret by one Belt.
+##
+## Deliberately the arrangement `test_turrets._ammo_fixture` already uses, down to the tiles,
+## because what is asserted here is what the renderer *draws* about a Turret that fires and
+## the fixture should not be a second opinion about how one comes to fire at all. Power is
+## left out of it so a brownout cannot be mistaken for a Turret that chose not to shoot.
+const SHOOTING_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+ammo_source_mk1,Ammunition Seam,miner,2,2,2,0,0,400,1,0,0,0,0,dig_ammunition,
+mg_turret_mk1,MG Turret Mk1,turret,2,2,2,0,0,350,0,8,15,0,0,fire_mg,
+"""
+
+const SHOOTING_RECIPES: String = """id,display_name,inputs,outputs,seconds
+dig_ammunition,Dig Ammunition,,ammunition:1,0.25
+fire_mg,Fire MG,ammunition:1,,0.25
+"""
+
+const ONE_CRAWLER: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+chaff_crawlers,crawler,0,1,0,1
+"""
+
+const SHOOTING_DELIVERIES: String = (
+	"id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems\n"
+	+ "t01_rounds,Rounds,1,ammunition:1,,placeholder_gear,\n"
+)
+
+
+## A Map with an Ammunition seam beside the Crawlers' lane, so a Turret standing in the lane
+## can be fed by one Belt and will have something to shoot at within a few seconds.
+func _shooting_layout() -> MapLayout:
+	var layout: MapLayout = MapLayout.new()
+	layout.nest_tile = Vector3i(0, WorldGrid.GROUND_LAYER, 0)
+	layout.add_node(Vector3i(8, WorldGrid.GROUND_LAYER, 6), "ammunition", 1)
+	layout.sort_nodes()
+	layout.add_breach(Vector3i(20, WorldGrid.GROUND_LAYER, 1))
+	layout.sort_breaches()
+	return layout
+
+
+## A Run with one fed MG Turret in the lane and one Crawler walking into it. The Turret is
+## built first, so machine 0 is the Turret in every assertion below.
+func _firing_turret_sim() -> Simulation:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = SHOOTING_MACHINES
+	fixture.recipes = SHOOTING_RECIPES
+	fixture.waves = ONE_CRAWLER
+	fixture.deliveries = SHOOTING_DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	var definitions: Definitions = (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 2"]])
+		. stock("")
+		. starting_machine("ammo_source_mk1")
+		. definitions()
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	var sim: Simulation = Simulation.new(1, 1, definitions, _shooting_layout())
+	sim.step([
+		InputAction.build_machine(
+			0, definitions.machine_index("mg_turret_mk1"), Vector3i(8, WorldGrid.GROUND_LAYER, 0)
+		),
+		InputAction.build_machine(
+			0,
+			definitions.machine_index("ammo_source_mk1"),
+			Vector3i(8, WorldGrid.GROUND_LAYER, 6)
+		),
+		InputAction.build_belt(
+			0,
+			Vector3i(8, WorldGrid.GROUND_LAYER, 5),
+			Vector3i(8, WorldGrid.GROUND_LAYER, 2)
+		),
+		InputAction.call_wave_early(0),
+	])
+	return sim
+
+
+## Steps until the Turret has fired its first round, and reports the ticks it took. Bounded,
+## like every wait in this suite: an unbounded `while` is a hung suite rather than a failing
+## one, and a hung suite says nothing at all.
+##
+## It waits for `query_turret_last_shot_tick` to stop being -1 rather than for it to equal
+## `query_tick`, and that is a fact about the Simulation worth knowing here: `step` increments
+## `_tick` **last**, so the tick a shot was fired on is always one behind the tick a renderer
+## or a test can ask about. The freshest shot anything outside the façade can observe is one
+## tick old.
+func _step_until_fired(sim: Simulation) -> int:
+	var waited: int = 0
+	while sim.query_turret_last_shot_tick(0) < 0 and waited < 1800:
+		sim.step([])
+		waited += 1
+	return waited
+
+
+func test_a_turret_that_fires_flashes_where_the_gun_is() -> void:
+	# The ticket's own complaint, and the one a gauge was invented to work around: a player
+	# thirty metres off needs to see the gun work, not infer it from a magazine going down.
+	var sim: Simulation = _firing_turret_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_eq(view.muzzle_flash_count(), 0, "nothing has fired yet")
+
+	var waited: int = _step_until_fired(sim)
+	if not assert_true(waited < 1800, "the premise: the Turret fires at all"):
+		view.free()
+		return
+	view.sync(sim)
+	assert_eq(view.muzzle_flash_count(), 1, "the Turret that fired is the thing that flashes")
+	# The 2x2 Turret anchored at (8,0,0) spans 16 m to 20 m along x and 0 m to 4 m along z, so
+	# its centre is (18 m, 2 m) and the circle its footprint fits inside has a 2 m radius. The
+	# flash stands just **outside** that circle, towards what is being shot at — which is the
+	# whole of `_muzzle_clearance`, and a render is why it is not a constant: at 1.1 m the mark
+	# was inside the body and invisible.
+	var flash: Vector3 = view.muzzle_flash_position(0)
+	var out: float = Vector2(flash.x, flash.z).distance_to(Vector2(18.0, 2.0))
+	assert_true(
+		absf(out - (2.0 + WorldView.MUZZLE_FLASH_CLEARANCE_METRES)) < 0.01,
+		"the muzzle is %f m from the Turret's middle, not clear of its own footprint" % out
+	)
+	assert_true(flash.y > 0.0, "and above the ground rather than printed on it")
+	view.free()
+
+
+## A Repair Pylon beside the MG Turret, both fed off the one seam by a branch.
+##
+## The Pylon mends with Ammunition, which is content nobody would ship and is deliberate here:
+## what is being asserted is that the renderer tells a gun from a wrench, and a whole plate
+## chain in the way would only be a slower way of arriving at the same two stamped tick
+## numbers. An inputless Recipe was the first attempt and `Definitions` refuses one by name —
+## a Recipe that consumes nothing and produces nothing is not a Recipe.
+const SHOOTING_AND_MENDING_MACHINES: String = """id,display_name,role,footprint_x,footprint_z,height_metres,power_draw_kw,power_supply_kw,health,max_depth,range_tiles,damage,repair,charge_capacity,recipe_id,build_cost
+ammo_source_mk1,Ammunition Seam,miner,2,2,2,0,0,400,1,0,0,0,0,dig_ammunition,
+mg_turret_mk1,MG Turret Mk1,turret,2,2,2,0,0,350,0,8,15,0,0,fire_mg,
+repair_pylon_mk1,Repair Pylon Mk1,turret,2,2,2.4,0,0,300,0,8,0,40,0,mend,
+"""
+
+const MENDING_RECIPES: String = """id,display_name,inputs,outputs,seconds
+dig_ammunition,Dig Ammunition,,ammunition:1,0.25
+fire_mg,Fire MG,ammunition:1,,0.25
+mend,Mend,ammunition:1,,0.25
+"""
+
+const ONE_BREAKER: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+shock_breakers,breaker,0,1,0,1
+"""
+
+
+## `_shooting_layout` with the Breach brought in to seven metres of the Turret. A Breaker
+## walks at a third of a metre a second, so the forty-metre lane the Turret fixture uses would
+## be two and a half minutes of game time before the Pylon had anything to mend — and a test
+## that takes two minutes to reach its first assertion is a test nobody runs.
+func _mending_layout() -> MapLayout:
+	var layout: MapLayout = MapLayout.new()
+	layout.nest_tile = Vector3i(0, WorldGrid.GROUND_LAYER, 0)
+	layout.add_node(Vector3i(8, WorldGrid.GROUND_LAYER, 6), "ammunition", 1)
+	layout.sort_nodes()
+	layout.add_breach(Vector3i(12, WorldGrid.GROUND_LAYER, 1))
+	layout.sort_breaches()
+	return layout
+
+
+## A Run with a fed MG Turret, a Repair Pylon, and one Breaker walking in to chew on the
+## Factory — so that by the time anything is asserted **both** Machines have stamped
+## `query_turret_last_shot_tick` and the renderer has to tell them apart.
+func _shooting_and_mending_sim() -> Simulation:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = SHOOTING_AND_MENDING_MACHINES
+	fixture.recipes = MENDING_RECIPES
+	fixture.waves = ONE_BREAKER
+	fixture.deliveries = SHOOTING_DELIVERIES
+	fixture.gear = GEAR
+	fixture.stratagems = STRATAGEMS
+	var definitions: Definitions = (
+		fixture
+		. tune([["telegraph_seconds = 12", "telegraph_seconds = 2"]])
+		. stock("")
+		. starting_machine("ammo_source_mk1")
+		. definitions()
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	var sim: Simulation = Simulation.new(1, 1, definitions, _mending_layout())
+	sim.step([
+		InputAction.build_machine(
+			0, definitions.machine_index("mg_turret_mk1"), Vector3i(8, WorldGrid.GROUND_LAYER, 0)
+		),
+		InputAction.build_machine(
+			0,
+			definitions.machine_index("ammo_source_mk1"),
+			Vector3i(8, WorldGrid.GROUND_LAYER, 6)
+		),
+		InputAction.build_machine(
+			0,
+			definitions.machine_index("repair_pylon_mk1"),
+			Vector3i(12, WorldGrid.GROUND_LAYER, 6)
+		),
+		# The seam occupies (8,6) to (9,7). One Belt leaves its northern face for the Turret
+		# and one leaves its eastern face for the Pylon, so the two share the seam's output by
+		# #46's rotation rather than one of them starving.
+		InputAction.build_belt(
+			0,
+			Vector3i(8, WorldGrid.GROUND_LAYER, 5),
+			Vector3i(8, WorldGrid.GROUND_LAYER, 2)
+		),
+		InputAction.build_belt(
+			0,
+			Vector3i(10, WorldGrid.GROUND_LAYER, 6),
+			Vector3i(11, WorldGrid.GROUND_LAYER, 6)
+		),
+		InputAction.call_wave_early(0),
+	])
+	return sim
+
+
+func test_a_repair_pylon_pulsing_a_plate_is_not_a_gun_going_off() -> void:
+	# `_mend` stamps the very same `_turret_last_shot_tick` that `_fire` does — GLOSSARY.md
+	# calls a Repair Pylon a Turret-class Machine whose output is repair rather than damage —
+	# so the naive reading of that field flashes a muzzle over a Machine that has no muzzle.
+	# The fixture puts a Breaker on the Map on purpose: without something to mend the Pylon
+	# never stamps anything, and this would be a cross-check whose only exercised case is one
+	# where the rule is trivially true.
+	var sim: Simulation = _shooting_and_mending_sim()
+	var view: WorldView = WorldView.new()
+	var pylon: int = -1
+	var turret: int = -1
+	for index: int in range(sim.query_machine_count()):
+		if sim.query_machine_is_repair_pylon(index):
+			pylon = index
+		elif sim.query_machine_is_turret(index):
+			turret = index
+
+	var waited: int = 0
+	while waited < 2400:
+		sim.step([])
+		waited += 1
+		var mended: bool = sim.query_turret_last_shot_tick(pylon) >= 0
+		if mended and sim.query_turret_last_shot_tick(turret) >= 0:
+			break
+	if not assert_true(
+		sim.query_turret_last_shot_tick(pylon) >= 0, "the premise: the Pylon has mended"
+	):
+		view.free()
+		return
+	if not assert_true(
+		sim.query_turret_last_shot_tick(turret) >= 0, "the premise: the Turret has fired"
+	):
+		view.free()
+		return
+
+	view.sync(sim)
+	assert_eq(view.muzzle_flash_count(), 1, "one gun went off, not two")
+	var flash: Vector3 = view.muzzle_flash_position(0)
+	var gun: Vector3 = view.machine_placeholder_position(turret)
+	assert_true(
+		Vector2(flash.x, flash.z).distance_to(Vector2(gun.x, gun.z))
+			< 2.0 + WorldView.MUZZLE_FLASH_CLEARANCE_METRES + 0.001,
+		"and it is the Turret's own muzzle it is at, not %s" % flash
+	)
+	view.free()
+
+
 # ── What is riding the Belt, and reading it at a glance (#73) ─────────────────
 # Every Item used to be the same brown box, so a coal line and an ore line were the same
 # picture — which contradicts the standard this project holds Machine silhouettes to, and the
@@ -2524,6 +2792,301 @@ func test_the_deck_scrolls_and_nothing_about_it_is_timed_by_a_clock() -> void:
 	assert_eq(
 		view.belt_deck_scroll(), opening, "one whole period later the deck is back"
 	)
+	view.free()
+
+
+func test_a_muzzle_flash_is_a_function_of_the_tick_and_not_of_the_clock() -> void:
+	# The rule `SCANNER_PERIOD_TICKS` states and `WeaponViewmodel` already keeps: two Runs
+	# down the same script look the same, which they could not if a flash were lit for a
+	# number of *seconds* or faded by how many frames the renderer happened to draw. A flash's
+	# age is `query_tick` minus the tick the shot was stamped on, so a frame that stepped
+	# nothing cannot move it.
+	var sim: Simulation = _firing_turret_sim()
+	var view: WorldView = WorldView.new()
+	var waited: int = _step_until_hit(sim, view)
+	if not assert_true(waited > 0, "the premise: a round was fired and landed"):
+		view.free()
+		return
+
+	var drawn: Array = _shot_pattern(view)
+	assert_true(view.muzzle_flash_count() > 0, "there is a flash to compare")
+	assert_true(view.tracer_count() > 0, "and a line")
+	assert_true(view.impact_count() > 0, "and a burst — all three are in the comparison")
+	view.sync(sim)
+	assert_eq(_shot_pattern(view), drawn, "a frame that stepped nothing draws the same thing")
+
+	# And a second Run down the same script draws the identical marks, which is the claim from
+	# the other side: nothing here is seeded by anything but the Simulation's own tick.
+	var twin: Simulation = _firing_turret_sim()
+	var twin_view: WorldView = WorldView.new()
+	assert_eq(_step_until_hit(twin, twin_view), waited, "the same Run reaches the same tick")
+	assert_eq(_shot_pattern(twin_view), drawn, "and draws the same marks on it")
+	view.free()
+	twin_view.free()
+
+
+## Every mark a shot has left and what it is painted, as one comparable value.
+func _shot_pattern(view: WorldView) -> Array:
+	var pattern: Array = []
+	for flash: int in range(view.muzzle_flash_count()):
+		pattern.append([view.muzzle_flash_position(flash), view.muzzle_flash_colour(flash)])
+	for tracer: int in range(view.tracer_count()):
+		pattern.append([
+			view.tracer_start(tracer), view.tracer_end(tracer), view.tracer_colour(tracer)
+		])
+	for burst: int in range(view.impact_count()):
+		pattern.append([view.impact_position(burst), view.impact_colour(burst)])
+	return pattern
+
+
+func test_a_shot_is_never_a_node() -> void:
+	# ADR 0001's case, and the one the ticket names: fifty Turrets at four rounds a second
+	# plus a swarm of impacts is the load that decides this, so every mark a shot leaves is an
+	# instance of one MultiMesh and the scene tree does not grow by one for any of them.
+	var sim: Simulation = _firing_turret_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	var quiet: int = view.get_child_count()
+	var marks: int = 0
+	for tick: int in range(600):
+		sim.step([])
+		view.sync(sim)
+		marks += view.muzzle_flash_count() + view.tracer_count() + view.impact_count()
+	assert_true(marks > 0, "the premise: rounds were fired, flew and landed, and were drawn")
+	assert_eq(view.get_child_count(), quiet, "and not one node was added for any of them")
+	view.free()
+
+
+func test_a_turret_round_draws_a_line_from_its_own_muzzle_to_what_it_hit() -> void:
+	# The flash says a gun went off; the tracer says where the round went, which is the half no
+	# query reports. It is drawn between two things the renderer already knows how to place —
+	# the muzzle it laid the flash at, and the body `CombatEvents` says lost health — so the
+	# line and the two marks at its ends cannot disagree about the shot they are describing.
+	var sim: Simulation = _firing_turret_sim()
+	var view: WorldView = WorldView.new()
+	var waited: int = _step_until_hit(sim, view)
+	if not assert_true(waited > 0, "the premise: a round reaches the Crawler"):
+		view.free()
+		return
+
+	if not assert_eq(view.tracer_count(), 1, "one round in flight, one line"):
+		view.free()
+		return
+	var from: Vector3 = view.tracer_start(0)
+	var to: Vector3 = view.tracer_end(0)
+	assert_eq(from, view.muzzle_flash_position(0), "it leaves the muzzle the flash is at")
+	# The Crawler is walking the lane towards the Nest, so it is somewhere inside the Turret's
+	# own 16 m and emphatically not at the Turret.
+	assert_true(from.distance_to(to) > 1.0, "and reaches out to the thing it hit: %s" % to)
+	assert_eq(view.impact_count(), 1, "with a burst where it landed")
+	assert_eq(view.impact_position(0), to, "at the far end of its own tracer")
+	view.free()
+
+
+## Steps until a round has landed and the view has drawn it, and reports the ticks it took.
+## Bounded, like every wait in this suite.
+func _step_until_hit(sim: Simulation, view: WorldView) -> int:
+	var waited: int = 0
+	view.sync(sim)
+	while waited < 1800:
+		sim.step([])
+		waited += 1
+		view.sync(sim)
+		if view.impact_count() > 0:
+			return waited
+	return 0
+
+
+func test_a_shot_that_landed_fades_out_rather_than_standing_there() -> void:
+	# A tracer is an event and not a condition, so it has to leave — and it leaves on a count
+	# of ticks, like everything else presentational here. The alternative is a Factory that
+	# accumulates a cat's cradle of bright lines nobody can see the Machines through.
+	var sim: Simulation = _firing_turret_sim()
+	var view: WorldView = WorldView.new()
+	if not assert_true(_step_until_hit(sim, view) > 0, "the premise: a round landed"):
+		view.free()
+		return
+	assert_true(view.tracer_count() > 0, "the line is up")
+
+	for tick: int in range(WorldView.TRACER_TICKS):
+		sim.step([])
+		view.sync(sim)
+	assert_eq(view.tracer_count(), 0, "and `TRACER_TICKS` later it is gone")
+	for tick: int in range(WorldView.IMPACT_TICKS):
+		sim.step([])
+		view.sync(sim)
+	assert_eq(view.impact_count(), 0, "as is the burst, on its own longer count")
+	view.free()
+
+
+# ── The player's own round ────────────────────────────────────────────────────
+# `test_combat_events.gd` is the authority on how a hit comes to be *reported*; these are
+# about what is drawn for one. The fixture is a third copy of `test_gear`'s diagonal
+# arithmetic, which is the convention this suite already follows for a Machine table: the
+# comment there is the authority on the numbers.
+
+## A rifle and a wrench. `heavy_barrel` is there because the Delivery tier has to unlock
+## something.
+const ARMED_GEAR: String = """id,display_name,kind,attack,damage,range_metres,spread_degrees,seconds_per_shot,ammunition_item,ammunition_per_shot,damage_percent,range_percent,spread_percent,interval_percent,ammunition_percent,damage_taken_percent
+bolt_rifle,Bolt Rifle,weapon,ranged,30,60,0,1,ammunition,1,0,0,0,0,0,0
+pneumatic_wrench,Pneumatic Wrench,weapon,melee,50,4,0,0.5,,0,0,0,0,0,0,0
+heavy_barrel,Heavy Barrel,barrel,,0,0,0,0,,0,100,50,0,100,100,0
+"""
+
+const ARMED_DELIVERIES: String = (
+	"id,display_name,min_depth,goods,unlocks_machines,unlocks_gear,unlocks_stratagems\n"
+	+ "t01_rounds,Rounds,1,ammunition:1,,heavy_barrel,\n"
+)
+
+const ONE_FROZEN_BREAKER: String = """id,enemy_kind,min_heat,count_per_breach,heat_per_extra,max_per_breach
+shock_breakers,breaker,0,1,0,1
+"""
+
+## `test_gear`'s own arithmetic: tile (4,-5) puts the Enemy at (9, -9) metres, exactly
+## forty-five degrees to the right of a player who has not turned, and 625 pixels is exactly
+## an eighth of a turn at the shipped sensitivity. So the aim is exact rather than nudged.
+const DIAGONAL_BREACH: Vector3i = Vector3i(4, 0, -5)
+const FORTY_FIVE_DEGREES_RIGHT: int = 625
+
+
+## A Run with a Breaker frozen forty-five degrees off the player's opening facing, a Bolt Rifle
+## in hand and rounds in the pockets. A Breaker rather than a Crawler because a Crawler dies to
+## one rifle round, and what is wanted is a hit that leaves a body for the mark to stand on.
+func _rifleman_sim() -> Simulation:
+	var fixture: ContentFixture = ContentFixture.for_case(self)
+	fixture.machines = SHOOTING_MACHINES
+	fixture.recipes = SHOOTING_RECIPES
+	fixture.waves = ONE_FROZEN_BREAKER
+	fixture.deliveries = ARMED_DELIVERIES
+	fixture.gear = ARMED_GEAR
+	fixture.stratagems = STRATAGEMS
+	var definitions: Definitions = (
+		fixture
+		. tune([
+			["telegraph_seconds = 12", "telegraph_seconds = 0.5"],
+			["breaker_speed_metres_per_second = 2", "breaker_speed_metres_per_second = 0.02"],
+		])
+		. stock("ammunition:400")
+		. starting_machine("ammo_source_mk1")
+		. definitions()
+	)
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	var layout: MapLayout = MapLayout.new()
+	layout.nest_tile = Vector3i(-30, WorldGrid.GROUND_LAYER, -30)
+	layout.add_node(Vector3i(8, WorldGrid.GROUND_LAYER, 6), "ammunition", 1)
+	layout.sort_nodes()
+	layout.add_breach(DIAGONAL_BREACH)
+	layout.sort_breaches()
+	var sim: Simulation = Simulation.new(11, 1, definitions, layout)
+	sim.step([InputAction.call_wave_early(0)])
+	return sim
+
+
+## Steps until the Breaker is out, draws the rifle and turns onto the diagonal.
+func _arm_and_aim(sim: Simulation) -> bool:
+	var waited: int = 0
+	while sim.query_enemy_count() == 0 and waited < 600:
+		sim.step([])
+		waited += 1
+	if not assert_true(sim.query_enemy_count() > 0, "the premise: a Breaker came out"):
+		return false
+	sim.step([InputAction.equip_weapon(0, sim.query_definitions().gear_index("bolt_rifle"))])
+	sim.step([InputAction.look(0, Fixed.from_int(FORTY_FIVE_DEGREES_RIGHT), 0)])
+	return true
+
+
+func test_a_players_own_round_draws_a_line_from_their_weapon_to_what_it_hit() -> void:
+	# The first half of the ticket's first acceptance criterion: a player can see their own
+	# shot connect. The near end is the weapon rather than the eye, because a line starting in
+	# the middle of the crosshair would hide the very thing it is about — and it is the *eye
+	# height* rather than the camera, which is `_shoot`'s own rule: Survey View lifts the
+	# camera to twenty-six metres and a player reading their Factory is not firing from a
+	# helicopter.
+	var sim: Simulation = _rifleman_sim()
+	var view: WorldView = WorldView.new()
+	if not _arm_and_aim(sim):
+		view.free()
+		return
+	view.sync(sim)
+	var whole: int = sim.query_enemy_health(0)
+
+	sim.step([InputAction.fire(0)])
+	view.sync(sim)
+	if not assert_true(sim.query_enemy_health(0) < whole, "the premise: the round connected"):
+		view.free()
+		return
+
+	if not assert_eq(view.tracer_count(), 1, "one round, one line"):
+		view.free()
+		return
+	var from: Vector3 = view.tracer_start(0)
+	var to: Vector3 = view.tracer_end(0)
+	var at: FixedVec2 = sim.query_player_position(0)
+	var facing: FixedVec2 = sim.query_player_facing(0)
+	var ahead: Vector2 = Vector2(Fixed.to_float(facing.x), Fixed.to_float(facing.z))
+	var out: Vector2 = Vector2(from.x, from.z) - Vector2(
+		Fixed.to_float(at.x), Fixed.to_float(at.z)
+	)
+	assert_true(
+		out.dot(ahead) > 0.0,
+		"it leaves from in front of the player rather than behind them: %s" % from
+	)
+	assert_true(
+		out.length() < WorldView.PLAYER_TRACER_REACH_METRES
+			+ WorldView.PLAYER_TRACER_ASIDE_METRES + 0.001,
+		"and from the weapon's own distance rather than from somewhere out in the yard"
+	)
+	assert_true(
+		from.y < Fixed.to_float(sim.query_player_eye_height_metres(0)),
+		"and from under the eye rather than out of the crosshair"
+	)
+	var enemy: FixedVec2 = sim.query_enemy_position_metres(0)
+	assert_true(
+		Vector2(to.x, to.z).distance_to(
+			Vector2(Fixed.to_float(enemy.x), Fixed.to_float(enemy.z))
+		) < 0.5,
+		"and it reaches the Breaker, which is standing at %s" % enemy
+	)
+	assert_eq(view.impact_count(), 1, "with a burst on the body it struck")
+	assert_eq(view.muzzle_flash_count(), 0, "and no Turret fired, so no Turret flashed")
+	view.free()
+
+
+func test_the_crosshair_marks_the_players_own_hit_and_then_puts_the_mark_away() -> void:
+	# The ticket's fourth absence: nothing on the crosshair when a round connects. A burst
+	# thirty metres away on a body in a crowd is a thing a player can miss; a mark where they
+	# are already looking is not. It is the player's **own** hit and nobody else's — a mark
+	# that lit up for a Turret's kill would be telling them their shot landed when it did not.
+	var sim: Simulation = _rifleman_sim()
+	var view: WorldView = WorldView.new()
+	if not _arm_and_aim(sim):
+		view.free()
+		return
+	view.sync(sim)
+	assert_false(view.hit_mark_is_showing(), "nothing has been hit yet")
+
+	sim.step([InputAction.fire(0)])
+	view.sync(sim)
+	assert_true(view.hit_mark_is_showing(), "the round connected, and the crosshair says so")
+
+	for tick: int in range(WorldView.HIT_MARK_TICKS):
+		sim.step([])
+		view.sync(sim)
+	assert_false(view.hit_mark_is_showing(), "and `HIT_MARK_TICKS` later it is gone again")
+	view.free()
+
+
+func test_a_turrets_kill_does_not_mark_the_players_crosshair() -> void:
+	# The claim above from the other side, and the reason it needs one: `CombatEvents` reports
+	# a Turret's hits and a player's through the same list, so a mark keyed on "something was
+	# hit" rather than on "I hit it" would congratulate a player for standing still.
+	var sim: Simulation = _firing_turret_sim()
+	var view: WorldView = WorldView.new()
+	if not assert_true(_step_until_hit(sim, view) > 0, "the premise: the Turret landed one"):
+		view.free()
+		return
+	assert_eq(view.impact_count(), 1, "the round is drawn where it landed")
+	assert_false(view.hit_mark_is_showing(), "and the player's crosshair says nothing")
 	view.free()
 
 
