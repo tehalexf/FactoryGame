@@ -1382,6 +1382,229 @@ the palette's own `WeldedSteel` with the health colour as a per-instance
 *multiplier* on it, which fixes the brightness and gives the cheapest built thing
 in the game a surface at the same time.
 
+### The Nest, and the colour nobody picked
+
+**#80, and it is the first of these findings where nobody chose the colour.** The Nest
+rendered at a median linear luminance of **0.2758 against a ground at 0.0428** — 6.4 times the
+thing it stands on — in a palette whose `base_color` entries run 0.055 to 0.14. It is the
+structure a Run is lost with and the point a player runs back to, and **nobody had rendered it
+close up until #78 needed a picture of a Wave at its wall.** The picture is the finding.
+
+#### Three terms, separated one at a time
+
+Each probe renders the same `crush bare` frame with **one thing changed and everything else
+held**, which is possible cheaply because the `.tres` in `assets/machines/materials/` is what
+the renderer samples: a mesh's glTF material is identity only and `.glb.import` substitutes the
+palette's own resource for it. So a probe touches no geometry, no light and no mesh.
+
+| | nest tier wall, upper | x ground |
+|---|---|---|
+| as shipped | 0.2758 | **6.44x** |
+| dielectric → metal, nothing else | 0.1918 | 4.48x |
+| texture tint → its own `base_color`, nothing else | 0.2045 | 4.77x |
+| both | 0.0464 | 1.08x |
+
+So **neither term alone is responsible and both are real.** They compound more than they
+multiply — 0.70 and 0.74 separately against 0.17 together — because a metal's albedo *is* its
+specular colour, so halving the albedo of a dielectric dims its diffuse and halving a metal's
+dims the whole response.
+
+**And the third term is the biggest, and the ticket did not name it.** A tier wall is *raked* —
+`parts.prism` from wide to narrow, leaning about 11 degrees off vertical — so the one large
+surface in the game turned face-on to a **23-degree sun** is the Nest's. Against a flat sunlit
+Machine top of the same material measured in the same yard, the rake is worth **about four
+times**: `N·L` is 0.98 on the rake and `sin(23°)` = 0.39 on the flat.
+
+**The Nest's own base tier is the control that closes the decomposition**, and it is the
+cleanest instrument this ticket had: tier 0 is `CastIron` on the same rake under the same sun,
+and it renders **5.5x darker** than the `OliveDrab` tiers above it — against declared
+`base_color` luminances of 0.0577 and 0.0546, equal to within 6%. 1.95 of that 5.5 is the
+texture level and the rest is the material model, which is the two probe figures arriving a
+second way.
+
+#### What was wrong with the comparison the ticket made
+
+**`base_color` is not what a textured entry renders from**, and the palette says so in as many
+words: *"Where a material has a texture, THE TEXTURE CARRIES THE COLOUR."* So "`OliveDrab`'s
+declared albedo is 0.052 and it is rendering at 0.259" is comparing against a number the entry
+does not use. What it *should* be compared against is `texture × texture_tint`, and measured
+off the committed maps that is **0.0973** — which is still 1.78 times the `base_color` the tint
+exists to bring it back to, so the complaint survives being restated correctly, at about half
+the magnitude.
+
+#### The fix is the entry choice, and the other vantage is why
+
+A fortification is iron. `_nest`'s tier walls carry **`CastIron`**, and the caps keep
+**`OxideRed`** as the rust on the capping plates — which is what holds the three steps apart
+from above, where the caps are most of what is visible. The mast stays `WeldedSteel`, so the
+Nest is cast iron and steel with an oxide edge, which is `_nest`'s own docstring made literal.
+
+| | before | x ground | after | x ground |
+|---|---|---|---|---|
+| **`crush bare`, at the wall** | | | | |
+| nest tier wall, upper | 0.2758 | 6.44x | **0.0826** | **1.93x** |
+| nest tier wall, middle | 0.1866 | 4.36x | **0.0366** | **0.85x** |
+| nest cap band | 0.1491 | 3.48x | **0.1051** | **2.45x** |
+| a Machine and its Belt | 0.0367 | 0.86x | 0.0367 | 0.86x |
+| **`survey`, the whole yard** | | | | |
+| the whole Nest | 0.0650 | 1.46x | **0.0434** | **0.97x** |
+| Machine, sunlit top | 0.0709 | 1.59x | 0.0709 | 1.59x |
+| Machine, sunlit top | 0.0804 | 1.80x | 0.0804 | 1.80x |
+
+**The Machine and the ground rows are byte-identical in both frames**, which is the control
+saying the change is the Nest's alone and not a palette edit wearing a disguise. Both halves
+were re-rendered on the tip with #79 merged in — the Enemies in frame are its insects rather
+than the skeletons they replaced — and every figure above came back unchanged, which is the
+same control stated across a merge.
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+tools/visual/shot.sh out.png survey
+```
+
+[`docs/images/nest_brightness_before.png`](docs/images/nest_brightness_before.png) against
+[`_after`](docs/images/nest_brightness_after.png) is the frame the complaint was made about;
+[`nest_brightness_survey_before.png`](docs/images/nest_brightness_survey_before.png) against
+[`_after`](docs/images/nest_brightness_survey_after.png) is the vantage that refused the
+candidate which went further.
+
+**The second vantage is what stopped this overshooting, and it very nearly did.** From Survey
+View the Nest measured **1.46x the ground against Machines at 1.59x and 1.80x** — *in family
+all along*. The 6.4x is a property of the raked walls at eye level and of nothing else, because
+from above it is the horizontal caps that fill the outline. A candidate that took the fix
+further — iron walls **and** steel caps, which is "cast iron and steel" read as literally as it
+will go — measured a perfectly respectable 0.57x to 1.93x at eye level and **0.42x from Survey
+View**, a quarter of the Machines beside it and darker than the ground. That is the "not a dark
+one" the ticket warns against, and only the second vantage could have said so.
+
+#### Two things the candidate renders threw away
+
+- **`riveted_steel_plate` at 1.2 m reads as masonry on an 8 m wall.** A candidate with
+  `WeldedSteel` tier walls came back as pale blue-grey courses of block — *painted concrete*,
+  which is the exact thing the ticket says to avoid, arrived at by reaching for the entry whose
+  name says steel. `texture_scale_m` is documented as "how many metres across one tile of it
+  covers **on a Machine**", and the Nest is half again wider than the widest Machine, so the
+  rivet rows stop being rivets and become courses. The same candidate with the walls and caps
+  swapped was worse still: whitish glazed tile.
+- **A horizontal metal plate seen from above mirrors the sky.** Steel caps turned the Nest
+  *cold* in a warm yard — correct physics and the wrong landmark, since the Survey read is how a
+  player finds the Factory.
+
+#### Every other structure wears these entries too, and only the Nest shows it
+
+Measured as surface area off the committed `.glb`s rather than grepped out of the recipes,
+because the generator splits a body into a mesh per material and the areas are what a player
+sees:
+
+| body | dielectric share | the entries |
+|---|---|---|
+| `assembler_mk1` | 62% | OliveDrab 40%, OxideRed 14%, GaugeGlass 7% |
+| **`nest`** | **58%** | OxideRed 32%, OliveDrab 23%, Soot 2% |
+| `belt_straight` | 58% | BeltRubber 54%, HazardYellow 4% |
+| `generator_mk1` | 50% | OliveDrab 32%, OxideRed 16% |
+| `ammo_press_mk1` | 49% | OliveDrab 27%, OxideRed 13%, HazardYellow 6%, Soot 3% |
+| `smelter_mk1` | 45% | OxideRed 20%, OliveDrab 17%, HazardYellow 5%, Soot 3% |
+| `miner_mk1` | 43% | OliveDrab 19%, OxideRed 12%, Soot 6%, HazardYellow 6% |
+| `coal_miner_mk1` | 41% | OliveDrab 17%, OxideRed 12%, HazardYellow 6%, Soot 6% |
+| `silo_mk1` | 32% | OliveDrab 24%, Soot 4%, HazardYellow 4% |
+| `steam_boiler_mk1` | 27% | Soot 19%, HazardYellow 4%, OxideRed 4% |
+| `press_mk1` | 9% | OliveDrab 7% |
+
+So **the entry is shared and the symptom is not**, and the reason is area, contiguity and
+orientation rather than the entry: no Machine presents half of itself as two unbroken raked
+bands facing the sun, and measured from above the Machines sit at 1.59x and 1.80x the ground
+while the Nest sat at 1.46x. The two `HazardYellow` prop ids #39 placed deliberately are
+untouched.
+
+#### The tint overshoot is real, is palette-wide, and is recorded rather than fixed
+
+`texture_tint` is documented as *"the knob that brings the generated set back to this palette's
+values"*. Measured as `texture × tint` against each entry's own `base_color`, in luminance:
+
+| entry | metallic | effective albedo | `base_color` | ratio |
+|---|---|---|---|---|
+| CastIron | 1.0 | 0.0500 | 0.0577 | 0.87 |
+| WeldedSteel | 1.0 | 0.1454 | 0.1443 | **1.01** |
+| OiledSteel | 1.0 | 0.0853 | 0.0904 | 0.94 |
+| OliveDrab | 0.0 | 0.0973 | 0.0546 | **1.78** |
+| OxideRed | 0.0 | 0.0891 | 0.0543 | **1.64** |
+| BeltRubber | 0.0 | 0.0492 | 0.0221 | **2.22** |
+| Soot | 0.0 | 0.0417 | 0.0141 | **2.95** |
+| HazardYellow | 0.0 | 0.2363 | 0.3117 | 0.76 |
+
+**The three metals are within 13% of their declared value and the four dielectrics are all
+over it.** That is not a compensation — going metal makes a surface *darker* under this
+lighting, which the second probe row measures, so the tints that overshoot are on the entries
+that were already the brighter ones. Whoever tuned the column tuned it on metal.
+
+It is **not fixed here**, and the reasons are worth stating so the next person can disagree
+with them rather than rediscover them. Correcting the four would darken 27% to 58% of every
+Machine, every Belt deck and #73's cargo by about 40%, and would move a dozen committed
+`docs/images/` pairs — a change to the whole game's look made on the back of a ticket about one
+building, and in the direction this project has twice overshot (#42's invisible bump, #75's
+first tint). `HazardYellow` is a documented exception that is deliberately pushed past 1.0, so
+the rule is not "every tint equals its `base_color`" and wants stating carefully. And the Nest
+is in family without it. **It is its own ticket**, and the table above is the measurement it
+starts from.
+
+#### The sixth time, and why the first five did not prevent it
+
+#70 already called itself the fifth: #42's Wall at 0.30 albedo against a palette running 0.055
+to 0.14, #52's ore slab at four times the palette, #64's Build Gun at (212, 187, 146) over a
+ground of (24, 22, 18), #65's gloves at 129 against 81, and #70's wound-darkening applied to a
+body that was already the darkest thing in frame. Every one of those is **a colour somebody
+picked against the wrong background**, and every one of them was found by looking at a render.
+
+**This one is different in kind, and that is why none of the five caught it: nobody picked
+0.2758.** It is what `OliveDrab` *comes out at* when a dielectric entry, tinted 1.78 times above
+its own declared albedo, is raked toward a 23-degree sun over half of the largest object in the
+game. Three decisions, each locally correct, each in a different file, made by different
+tickets, multiplying. There was no colour to check against a background.
+
+So the rule the five already had — *measure a colour against what will be beside it* — is
+necessary and was never going to be sufficient. Two more, earned here:
+
+- **A palette declares an albedo; a player sees a rendering.** What reaches the screen is
+  albedo times the material model times the orientation times the area, and only the first of
+  those is in `dieselpunk_palette.json`. An entry that is correct everywhere it has been used
+  can still be wrong on the next body, and the only way to know is to render *that body* and
+  measure it against its neighbours.
+- **The thing most likely to be wrong is the thing nobody has photographed, and the biggest
+  object needs it first.** The Nest is the largest structure in the game, the one a Run ends
+  with, and until #78 there was no committed image of it at the range a player meets it. Every
+  one of the previous five was found by reading a picture; this one could not be, because the
+  picture did not exist. **A structure with no committed render at the range a player meets it
+  is a structure nobody has checked** — and a brightness complaint is a *vantage-specific*
+  measurement, so both vantages have to be read before deciding how much to take away.
+
+#### The contact sheet moved, and it is the one committed image this touched
+
+`tools/assets/render_machines.sh` globs every `.glb` in `assets/machines/`, so the Nest is on
+the committed sheets and all three were rebuilt:
+[`machines_lit.png`](docs/images/machines_lit.png) carries the change, and the two silhouette
+sheets moved by a few hundred pixels **in the caption band only** — measured, the changed
+bounding box is the label row — which is text rasterisation and not geometry. They are
+committed anyway rather than reverted, because #53 is what a committed image the tool can no
+longer reproduce costs.
+
+Worth knowing from that sheet: **under Blender's own lighting the olive Nest never looked
+wrong**, which is why four tickets of contact sheets did not catch this. The palette was tuned
+in those renders and `_sync_scenery`'s numbers are a second tuning that is explicitly not
+interchangeable with them — so a sheet is the instrument for *silhouette and surface*, and only
+a game render is the instrument for *value*. The sheet also says something the fix did not set
+out to buy: the Nest is now the one iron building in a row of olive Machines, so it is
+distinguished by material as well as by its steps.
+
+#### What no render here can settle
+
+Whether a Nest that no longer glows is still the first thing a player's eye goes to when they
+come back to it under fire. The measurement says it is in family and the silhouette is
+untouched — the three raked tiers and the beacon mast are exactly the geometry they were, and
+`machine_silhouette.py`'s convergence gate is unmoved because nothing geometric changed — but
+"findable at a glance while something is chasing you" is a judgement for somebody with a mouse.
+The lever if it is wrong is the caps: they are the Survey read, and `OxideRed` on them is what
+carries the warmth.
+
 The split between `sim/` and `game/` is the project's load-bearing boundary, and
 it runs one way only: `game/` depends on `sim/`, never the reverse. Nothing in
 `sim/` may reference `Node`, the scene tree, or any Godot type whose state is
