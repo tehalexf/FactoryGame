@@ -685,7 +685,7 @@ assigns it. What is left is near white and says only *which kind* — warm for t
 for the Breaker, neutral for the boss — which is the readability cue #49's sizing was carrying
 alone.
 
-#### Chitin is a glossy dielectric, and the render rejected it anyway
+#### Chitin is a glossy dielectric, and two renders rejected it anyway
 
 **#79's ticket asked for #75's `metallic = 1` to be re-derived and measured rather than
 inherited, and it was — by shipping the other answer into a render and looking at it.** The
@@ -710,6 +710,16 @@ its own argument being superseded**, and the durable form is worth more than the
 anything in it that is not metal reads as a smear**. The dielectric is the honest physical
 answer and the wrong rendering answer, and that distinction is the whole of what this
 sub-section is for.
+
+**And it was tested a second time, on a surface that had been fixed in the meantime**, which
+is the right thing to do once the first rejection's evidence turns out to have had another
+cause — the white speckle that helped convict the dielectric was `relief` on faceted plate, not
+the material. Re-rendered with the relief and the lift corrected, it comes back **chalky**:
+pale grey plate with safety-orange abdomens, reading as painted concrete rather than as a
+shell. A dielectric's diffuse is flat and carries none of the sky's gradient, and the metal's
+reflection is exactly what gives plate its sheen. So metal stands on better evidence than it
+did, and the honest summary is that the ticket's physics is right about chitin and wrong about
+this renderer.
 
 `test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal` therefore survives
 a ticket that set out to reverse it, with the reason rewritten and a second clause added —
@@ -761,48 +771,76 @@ carries; the quiet-machine figure that file quotes is 94 ms and is the one to tr
 CPU rebuild, the skinning is in a vertex shader, and Xvfb is llvmpipe. The levers if it ever
 bites are the same two: `relief_fade_end`, and dropping the grime field's second octave.
 
-#### What the measurement says, and the one frame where it says the wrong thing
+#### Four things a second look found, and only one of them was what it looked like
 
-#75's own method, repeated: linear luminance over the pixels the change actually moved, which
-is the right denominator because a window drawn round an Enemy is mostly ground. Five frames,
-`bare` throughout, against the ground in the same picture.
+**The first pass measured a histogram and shipped a broken surface**, which is this file's own
+lesson arriving again: the medians were defensible and the Breakers were blue-and-white
+confetti. Four faults, and the order they were *found* in is not the order they were guessed
+in — each was isolated by rendering one probe.
 
-| frame | before, median | after, median | ground | after, mean | after, p90 |
-|---|---|---|---|---|---|
-| `triage` — thirty metres, the readability shot | 0.091 | **0.070** | 0.049 | 0.109 | 0.293 |
-| `pair` — six to twelve metres | 0.073 | **0.039** | 0.052 | 0.093 | 0.245 |
-| `boss` | 0.049 | **0.042** | 0.046 | 0.094 | 0.359 |
-| `crush` — from above, at the Nest | 0.032 | **0.012** | 0.042 | 0.046 | 0.143 |
-| `swarm` — six metres, **into the sun** | 0.055 | **0.006** | 0.047 | 0.039 | 0.074 |
+1. **It was `relief`, not the roughness spread.** The obvious suspect is #75's per-fragment
+   roughness, because a metal's reflection *is* its surface. Probed at `roughness_spread = 0`
+   and **the confetti was unchanged**; probed at `relief = 0` and it vanished completely. The
+   mechanism is the derived normal: on #75's smooth skinned characters the base normal already
+   varies across a face, so bending it a little bends it a little, where a generated body is
+   **flat-shaded faceted plate** whose facet normal is constant — so the field is the *only*
+   variation on that facet, and on a metal it swings the reflected direction across a sky that
+   is bright ochre at the horizon and dark blue at the zenith. Hence blue and white. `#79`
+   ships 0.003, a quarter of #75's 0.012, bracketed at 0, 0.003 and 0.012 by looking.
+2. **The lift was applied in the wrong space and was clipping past a physical albedo.** It
+   multiplied the palette entry's **sRGB** colour and handed the product to a `source_color`
+   uniform, and that conversion is a 2.4 power — so 1.6 on `CastIron`'s 0.52 became
+   `srgb_to_linear(0.83) = 0.66` against the 0.23 a Machine gets, an effective **2.9x**. On the
+   Breaker's cold cast it took `WeldedSteel` to a **linear albedo of 1.13 in blue**: over one,
+   a surface returning more light than it receives. It is applied in linear now and clamped at
+   `ALBEDO_CEILING = 0.80`, and bracketed at 1.0 / 1.8 / 2.6 — 1.8 reaches `triage` parity with
+   the cast and 2.6 adds 0.002, so 1.8.
+3. **The dielectric was re-tested on the fixed surface and is still wrong, for a new reason.**
+   That was the right thing to check: with the speckle traced to `relief` rather than to the
+   material, the first rejection might have been convicting the wrong thing. Rendered at
+   `metallic = 0` with the relief and the lift corrected, the bodies come back **chalky** —
+   pale grey plate with safety-orange abdomens, reading as painted concrete. A dielectric's
+   diffuse is flat, so it carries none of the sky's gradient; the metal's reflection is what
+   gives plate its sheen. Metal stands, and now for a better reason than "the dielectric was
+   speckled".
+4. **The texture density is fine, and that was measured rather than argued.** Texels per real
+   metre, #65's own figure: **Crawler 1455, Breaker 1058, Siege Hulk 727, against a Machine's
+   931**. So the Crawler is 1.56x a Machine and the boss is *below* one — not the order of
+   magnitude it was suspected of, and `filter_linear_mipmap` handles the minification anyway.
+   What has no mip chain is the **procedural** field, which is why (1) was the fault and this
+   was not.
 
-**The honest reading is that the median went down and the mean and p90 went up**, which is a
-body with more contrast in it rather than a brighter or a darker one: the mean rises on four
-of the five frames and the p90 nearly doubles, because a faceted metal plate under a low sun
-has real highlights where a graded swatch had none.
+**And a structural fix that (1) uncovered.** `relief` fades over 14-34 m because a procedural
+field past the range where one feature is under a pixel stops being detail and becomes noise.
+`grime_depth` and `roughness_spread` are the same field and **did not fade** — #75 computed
+`near` and applied it to one of the three. Both fade now, which is #75's own argument finished
+rather than a new idea.
 
-**At the range the readability gate is about, this is the number #75 was reaching for and did
-not get.** `triage` puts the median Enemy pixel at **1.43 times the ground it is standing on**;
-#75 measured 0.021 against 0.046, which is 0.46 times. An Enemy is no longer darker than the
-floor at the distance a player triages a Wave from.
+#### What the measurement says, and the two frames where it says the wrong thing
 
-**And `swarm` says the opposite, which is worth stating rather than burying.** That preset
-stands six metres off with the sun behind the Wave, so what it frames is backlit plate — and a
-dark metal body backlit is a silhouette, at 0.006 against a ground of 0.047. The cast managed
-0.055 there because a graded bone atlas is pale enough to carry ambient on its own. Some of
-that is the point (a chitin bug between you and the sun *should* be a shape) and some of it is
-a real loss, and nothing here can tell you which half is which — `ENEMY_LIFT` is the lever and
-it was bracketed on `triage` rather than on `swarm`, deliberately, because thirty metres is
-where a player decides what a Wave is.
+#75's method: linear luminance over the pixels the change moved, against the ground in the
+same picture.
 
-**`ENEMY_LIFT` is the one number in this that is not a palette entry, and it is a measurement.**
-At the entries' own levels the median came to **0.000** on `swarm` and 0.013 on `triage` — not a
-dark Enemy, a hole in the floor, which is #75's finding reproduced from a completely different
-direction. The palette is tuned for a Machine: six metres of it, standing still, with big
-horizontal faces a 23-degree sun lands on. An Enemy is a 1.6 m body of mostly vertical plate,
-usually between the sun and the player. So the entry supplies the *hue* and the lift supplies
-the level — which is the one job a multiply can honestly do, because there is no ratio to fight
-here: a part is **assigned** its entry rather than having one inferred from a pixel, which is
-exactly the thing #75 could not say about a tint over an atlas.
+| frame | before, median | after, median | ground | after / ground |
+|---|---|---|---|---|
+| `triage` — thirty metres, the readability shot | 0.090 | **0.088** | 0.049 | **1.82x** |
+| `boss` | 0.049 | **0.048** | 0.046 | 1.03x |
+| `pair` — six to twelve metres | 0.072 | 0.032 | 0.052 | 0.60x |
+| `crush` — from above, in the Nest's shadow | 0.032 | 0.013 | 0.042 | 0.31x |
+| `swarm` — six metres, **into the sun** | 0.055 | **0.004** | 0.047 | **0.09x** |
+
+**At the two vantages that decide whether a Wave is readable the bodies are now at parity with
+the cast** — `triage` within 0.002 of it and `boss` within 0.001 — and `triage` sits at 1.82
+times the ground where #75 left an Enemy at 0.46 times.
+
+**`swarm` and `crush` are still below the ground and that is said plainly rather than
+defended.** `swarm` is a *ninth* of the floor, which is worse than the fifth #75 called "not a
+dark Enemy, it is a hole in the floor". Both are the cases where the body is between the camera
+and the light or inside the Nest's shadow, and neither is a lift problem: bracketed at 1.0, 1.8
+and 2.6, `swarm`'s median moved 0.000 → 0.0041 → 0.0042 and then stopped, because a backlit
+metal in shadow has almost nothing to return whatever its albedo says. Buying it with more lift
+was offered and refused; what it actually wants is either a fill light reaching the Enemies or
+an emissive cue on a kind, and both are their own ticket.
 
 #### What the pictures settle, and what they do not
 

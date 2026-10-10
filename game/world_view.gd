@@ -308,7 +308,17 @@ const ENEMY_TEXTURE_TILES: float = 2.5
 ## off the tint and the one thing a multiply can honestly do — there is no ratio to fight here,
 ## because a part is assigned its entry rather than having one inferred from a pixel. Bracketed
 ## by rendering and measuring: the figures are in CLAUDE.md.
-const ENEMY_LIFT: float = 1.6
+const ENEMY_LIFT: float = 1.8
+
+## How far either side of its own figure the grime field is allowed to move an Enemy's
+## roughness. The shader's own default is #75's 0.10, tuned on smooth skinned characters;
+## this overrides it for the generated bodies and the reason is in `_enemy_metallic`.
+const ENEMY_ROUGHNESS_SPREAD: float = 0.10
+
+## How far the grime field is allowed to bend an Enemy's normal, as a fraction of its own
+## height. #75's 0.012 was tuned on a smooth skinned character; this overrides it for the
+## generated bodies.
+const ENEMY_RELIEF: float = 0.003
 
 ## Enemy's, not the players', so it reads as grown rather than welded.
 const HIVE_SIZE_METRES: float = 4.0
@@ -3233,9 +3243,11 @@ func _skinned_mesh(kind: int, body: EnemyBodies.Body) -> ArrayMesh:
 					"uv_scale",
 					Vector2(entry.uv1_scale.x, entry.uv1_scale.y) * ENEMY_TEXTURE_TILES
 				)
-		painted.set_shader_parameter("albedo_tint", albedo * _enemy_tint(kind))
+		painted.set_shader_parameter("albedo_tint", _enemy_albedo(albedo, kind))
 		painted.set_shader_parameter("metallic", _enemy_metallic(kind))
 		painted.set_shader_parameter("roughness", _enemy_roughness(kind))
+		painted.set_shader_parameter("roughness_spread", ENEMY_ROUGHNESS_SPREAD)
+		painted.set_shader_parameter("relief", ENEMY_RELIEF)
 		body.mesh.surface_set_material(surface, painted)
 	return body.mesh
 
@@ -3270,6 +3282,40 @@ func _palette_material(name: String) -> StandardMaterial3D:
 ## because they were never about the atlas: a Crawler should read as something nobody
 ## maintains, the thing a player has to *answer* should read as plated, and the boss should
 ## agree with the cast-iron hull a kind with no body falls back to.
+## The palette entry's own colour, cast toward the kind and lifted — **in linear space, and
+## clamped, because the first version of this was neither.**
+##
+## It multiplied the lift straight into the entry's sRGB colour and handed the product to a
+## `source_color` uniform, so a 1.6 lift on `CastIron`'s 0.52 became `srgb_to_linear(0.83)` =
+## 0.66 against the 0.23 a Machine gets — an effective **2.9x**, because the conversion is a
+## 2.4 power and multiplying before it is not multiplying. Worse, the Breaker's cold cast took
+## `WeldedSteel` to a *linear albedo of 1.13 in blue*: over one, which is a surface returning
+## more light than it receives, and on a metal an albedo is the colour of the reflection — so
+## the Breaker was a blue mirror. That is most of what the "blue and white confetti" was made
+## of, and the rest was `ENEMY_RELIEF`.
+##
+## So the lift is applied where a lift means what it says, and the clamp is what makes the
+## claim "this is still a surface" rather than a hope.
+func _enemy_albedo(entry: Color, kind: int) -> Color:
+	var cast: Color = _enemy_tint(kind)
+	var linear: Color = Color(
+		entry.r * cast.r, entry.g * cast.g, entry.b * cast.b
+	).srgb_to_linear()
+	var lifted: Color = Color(
+		minf(linear.r * ENEMY_LIFT, ALBEDO_CEILING),
+		minf(linear.g * ENEMY_LIFT, ALBEDO_CEILING),
+		minf(linear.b * ENEMY_LIFT, ALBEDO_CEILING)
+	)
+	return lifted.linear_to_srgb()
+
+
+## The most of the light falling on it that any surface in this game may return. Below one on
+## purpose: a real dielectric tops out around 0.9 and a real metal lower still, and the one
+## thing the first lift proved is that nothing here notices when a colour goes past it.
+const ALBEDO_CEILING: float = 0.80
+
+
+## What a kind's entry is cast toward — a hue, never a level. See `_enemy_albedo`.
 func _enemy_tint(kind: int) -> Color:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:

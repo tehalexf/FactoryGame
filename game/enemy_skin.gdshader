@@ -310,14 +310,35 @@ void fragment() {
 	float threshold = mix(wound_closed_at, wound_open_at, hurt);
 	float opened = smoothstep(threshold, threshold + wound_edge, seam);
 
+	// **How much of the grime survives this far out**, and #79 found that #75 computed this
+	// and then applied it to only one of the three things that need it.
+	//
+	// The field is procedural, so it has **no mip chain** — which is `ground.gdshader`'s own
+	// reason for fading the relief, and the reason is about sampling rather than about
+	// normals: past the range where one feature is under a pixel, a field stops being detail
+	// and becomes noise. `grime_metres` is 0.034 of a body, which on a 1.6 m Crawler is 5.4 cm
+	// features, and the screen resolves about 49 px a metre at twelve metres — so the field is
+	// aliasing from about there on. The relief faded and the **albedo** and the **roughness**
+	// did not.
+	//
+	// The roughness one is the damaging half on a metal, and it is what #79's renders came
+	// back as. A metal's reflection *is* its surface, so a per-fragment roughness is a
+	// per-fragment change of what the body reflects — and this sky is a bright ochre at the
+	// horizon and dark blue at the zenith, so an aliasing field turns a Breaker into blue and
+	// white confetti. On #75's smooth skinned characters neighbouring fragments faced almost
+	// the same way and the spread only blurred a reflection; on hard-edged plate it swaps it.
+	float near = 1.0 - smoothstep(relief_fade_begin, relief_fade_end, length(VERTEX));
+
 	ALBEDO = (
 		colour.rgb
-		* mix(1.0 - grime_depth, 1.0, dirt)
+		* mix(1.0, mix(1.0 - grime_depth, 1.0, dirt), near)
 		* mix(1.0 - wound_darkening, 1.0, clamp(health, 0.0, 1.0))
 	);
 	ALPHA = colour.a;
 	METALLIC = metallic;
-	ROUGHNESS = clamp(roughness + (0.5 - dirt) * 2.0 * roughness_spread, 0.04, 1.0);
+	ROUGHNESS = clamp(
+		roughness + (0.5 - dirt) * 2.0 * roughness_spread * near, 0.04, 1.0
+	);
 
 	// The wound itself, and the flash of a round arriving. One emission, two contributions:
 	// the cracks are steady and belong to how hurt the body is, and the flash is whole-body
@@ -333,7 +354,6 @@ void fragment() {
 
 	// Bend the normal down the slope, with the component along it taken out first so that
 	// the field tilts the surface rather than inflating it.
-	float near = 1.0 - smoothstep(relief_fade_begin, relief_fade_end, length(VERTEX));
 	// A height field's normal, with the component along the surface normal taken out first
 	// so the field tilts the surface rather than inflating it. The gradient is **not**
 	// normalised: a flat patch of the field has to stay a flat patch of the body, and
