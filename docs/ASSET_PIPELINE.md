@@ -908,7 +908,7 @@ inside what #38 measured:
   heaviest, so a fifth would be dropped in silence; there is nothing to drop, because a chitin
   plate is **rigid**. That is not a shortcut: a smooth-skinned insect leg is a rubber tube, and
   plates sliding over one another at the joint is what an exoskeleton is.
-- **824, 612 and 848 triangles**, against the cast's 4,858 vertices apiece. "Not too detailed"
+- **788, 588 and 812 triangles**, against the cast's 4,858 vertices apiece. "Not too detailed"
   is the user's own instruction and `TRIANGLE_BUDGET` is it as a number. Limbs are tapered
   boxes rather than cylinders for the same reason: a 16-segment cylinder is 96 triangles a
   segment, which on six legs of two is 1,152 triangles of leg on a body a player sees twenty

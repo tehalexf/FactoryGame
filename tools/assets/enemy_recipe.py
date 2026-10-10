@@ -55,8 +55,9 @@ from dataclasses import dataclass, field
 
 
 #: Frames a second every clip is authored and baked at. `EnemyBodies.FRAMES_PER_SECOND`
-#: is the same number from the other side, and `EnemyAnimator.TICKS_PER_FRAME` is 2 —
-#: so a 24-frame cycle is 48 ticks, which is 0.8 s of Run.
+#: is the same number from the other side, and `EnemyAnimator.TICKS_PER_FRAME` is 2 — so a
+#: frame is two ticks and the shipped cycles are 0.93 s of Run for a walk, 0.53 s for a run,
+#: 1.33 s for an idle and 0.67 s for a bite.
 FPS = 30
 
 
