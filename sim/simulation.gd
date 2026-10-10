@@ -1036,11 +1036,13 @@ var _flow_distance: PackedInt64Array = PackedInt64Array()
 ## Which ground tiles an Enemy cannot walk through, one byte each, rebuilt alongside the
 ## field it shaped.
 ##
-## Marked by walking the *Machines* and painting their footprints rather than by asking
-## every tile on the Map what is standing on it: the first is O(Machines), the second is
-## O(tiles x Machines), and at 16641 tiles the second is a visible hitch every time a
-## player places something. It doubles as the answer `query_tile_obstructs_enemies` gives,
-## so the obstruction set still has exactly one definition.
+## Marked by walking the *structures* — the Nest, the Machines, the Walls — and painting
+## their footprints rather than by asking every tile on the Map what is standing on it: the
+## first is O(structures), the second is O(tiles x structures), and at 16641 tiles the second
+## is a visible hitch every time a player places something. It doubles as the answer
+## `query_tile_obstructs_enemies` gives and as the thing every Enemy mover refuses a step
+## against (`_move_enemy_against_the_factory`), so the obstruction set still has exactly one
+## definition.
 var _flow_blocked: PackedByteArray = PackedByteArray()
 var _flowfield_stale: bool = true
 
@@ -7336,12 +7338,10 @@ func _separate_one_pair(
 ## one of the flowfield's four directions, so "with it" and "across it" is a choice between
 ## `apart_x` and `apart_z` rather than a projection onto a vector.
 ##
-## **And it never pushes anything into an obstruction**, resolved one axis at a time, x then
-## z, which is the convention and the written-down order `_move_against_the_factory` already
-## uses for a player — so being pushed against a Machine's wall slides along it rather than
-## stopping dead. A refused axis keeps the coordinate it had rather than snapping to the
-## face, for the same reason it does there: the face is a tile boundary minus a radius, and
-## getting it wrong puts a body inside a solid. Refusing costs at most one tick of travel.
+## **And it never pushes anything into an obstruction**, which since #78 is
+## `_move_enemy_against_the_factory`'s rule rather than a copy of it here — one axis at a
+## time, x then z, a refused axis keeping the coordinate it had. See that function for the
+## order, for why nothing snaps to a face, and for the one exemption.
 func _apply_separation(index: int, apart_x: int, apart_z: int, marched: int) -> void:
 	if apart_x == 0 and apart_z == 0:
 		return
@@ -7358,12 +7358,18 @@ func _apply_separation(index: int, apart_x: int, apart_z: int, marched: int) -> 
 		apart_x = Fixed.clamp_fixed(apart_x, -step_metres, step_metres)
 		apart_z = Fixed.clamp_fixed(apart_z, -step_metres, step_metres)
 
-	var moved_x: int = _enemy_x[index] + apart_x
-	if not _tile_is_blocked(WorldGrid.tile_at_metres(moved_x, _enemy_z[index])):
-		_enemy_x[index] = moved_x
-	var moved_z: int = _enemy_z[index] + apart_z
-	if not _tile_is_blocked(WorldGrid.tile_at_metres(_enemy_x[index], moved_z)):
-		_enemy_z[index] = moved_z
+	# Through the walk's own mover since #78, so the obstruction rule has one home. The
+	# `escaping` exemption comes with it and is right here too: a body a Machine was built on
+	# top of may be shoved *within* that footprint by the crowd, which is one more thing
+	# helping it out rather than a hole — nothing can push it anywhere it could not walk.
+	var escaping: bool = _tile_is_blocked(
+		WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+	)
+	if not escaping:
+		var redirected: Vector2i = _squeezed_along_the_wall(index, apart_x, apart_z)
+		apart_x = redirected.x
+		apart_z = redirected.y
+	_move_enemy_against_the_factory(index, apart_x, apart_z, escaping)
 
 
 ## Whether a Breaker is hunting the Factory yet, latching it the tick it starts.
@@ -7554,6 +7560,104 @@ func _structure_in_contact(tile: Vector3i) -> Vector2i:
 	return Vector2i(BITE_NOTHING, -1)
 
 
+## Turns a push that a wall refuses into a push *along* that wall, in the same x-then-z order
+## the mover resolves in.
+##
+## **#78 needed this and did not expect to, and the render is what said so.** Painting the
+## Nest closed the one hole a body could walk into, and the first picture of the result was a
+## crowd that had stopped standing inside the ziggurat and started standing inside *itself* —
+## which is the complaint #76 exists to answer, arriving one obstruction later.
+##
+## The cause is that **a queue down a one-tile lane is exactly collinear**, and a collinear
+## pair has no lateral component at all: an Enemy is released at the centre of a Breach tile,
+## the field walks it down one row, and nothing between there and the Nest ever gives it a
+## reason to move across the lane. So every push in the pile is along the lane, the half of
+## each pair that points at the Nest is refused by the wall, and what is left is a crowd
+## compressing into two metres of road with nowhere for the overlap to go. Measured on
+## `test_enemy_separation`'s own crush: eight Crawlers in 1.97 m of lane, the tightest pair
+## **0.006 of the room their two bodies ask for**, against 0.97 while they could still spill
+## over the Nest's sixteen tiles. The degeneracy was always there — a Wave sealed behind a
+## line of Wall meets it too — and the Nest was simply the wall it had never been tried
+## against.
+##
+## A body squeezed against a wall by the crowd behind it squirts sideways, so the refused
+## magnitude is kept and turned through a right angle rather than dropped. What it cannot
+## take from the arithmetic is a **sign**, because there is none: the configuration is
+## symmetric. So it comes off the Enemy's own **serial**, which is issued once, never reused,
+## hashed, and is already this project's answer to de-locksteping a crowd without spending the
+## Run an RNG draw (`game/enemy_animator.gd` chooses an animation frame the same way). Even
+## serials fan one way along the face and odd ones the other, which is what turns a knot at a
+## corner into a rank spread along the wall it is eating.
+##
+## It is **not** applied to a body that is `escaping`, for the reason nothing else is: a body
+## inside an obstruction is on its way out and must not be given a second opinion about which
+## way that is.
+func _squeezed_along_the_wall(index: int, apart_x: int, apart_z: int) -> Vector2i:
+	if apart_x != 0:
+		var into_x: Vector3i = WorldGrid.tile_at_metres(
+			_enemy_x[index] + apart_x, _enemy_z[index]
+		)
+		if _tile_is_blocked(into_x):
+			apart_z += _wall_hand(index) * absi(apart_x)
+			apart_x = 0
+	if apart_z != 0:
+		var into_z: Vector3i = WorldGrid.tile_at_metres(
+			_enemy_x[index], _enemy_z[index] + apart_z
+		)
+		if _tile_is_blocked(into_z):
+			apart_x += _wall_hand(index) * absi(apart_z)
+			apart_z = 0
+	return Vector2i(apart_x, apart_z)
+
+
+## Which way a body squeezed against a wall goes along it: +1 or -1, off the serial, so that a
+## crowd splits rather than all of it leaning the same way. A serial is issued once and never
+## reused (#9), so a body's hand never changes under it mid-crush.
+func _wall_hand(index: int) -> int:
+	return 1 if _enemy_serial[index] % 2 == 0 else -1
+
+
+## Moves one Enemy by a displacement, **one axis at a time, x then z**, refusing either axis
+## that would put the body inside an obstruction.
+##
+## **#78, and it is the one mover in this file that did not have this.** `_apply_separation`
+## has checked since #76 and `_move_against_the_factory` has checked for a player since #30;
+## the *walk* never did, so `_advance_enemy` added a step to a position without once asking
+## what was standing there. Every mover goes through this function now, so there is one rule
+## rather than three that could come to disagree about where a body may stand.
+##
+## The order is x then z and it is the written-down convention `_move_against_the_factory`
+## already uses, for its reason: walking into a wall at an angle slides along it rather than
+## stopping dead, and two clients have to agree on which axis is tried first. **A refused axis
+## keeps the coordinate it had rather than snapping to the obstacle's face**, which is the
+## other half of that convention and the half with the sharper reason — the face is a tile
+## boundary minus a radius, it still has to be re-tested for the two-wall corner, and getting
+## it wrong puts a body *inside* a solid, which is the one state this must never produce.
+## Refusing costs at most one tick of travel.
+##
+## `escaping` is how #9's rule survives the refusal, and it is deliberately the **same
+## predicate** `_enemy_contact_target` already decides this question with: a body whose own
+## tile is blocked is one a player has built a Machine on top of, and a player who does that
+## has not built a prison. Without the exemption the naive refusal freezes it there for ever,
+## because every step out of the middle of a 4x4 footprint is a step into another blocked tile
+## of the same footprint. Sharing the predicate means "inside an obstruction" cannot mean one
+## thing to the walk and another to the bite.
+##
+## The alternative shape — permit a step only where it does not *increase* how blocked a body
+## is — was considered and is worse rather than safer. There is no measure of blockedness in
+## this file to compare against, it would have to invent one, and on the case it exists for
+## the two rules give the same answer anyway: every tile of a Machine's footprint is blocked
+## to exactly the same degree, so "does not increase" permits the whole crossing. More code,
+## no new behaviour, and a second meaning for "inside".
+func _move_enemy_against_the_factory(index: int, by_x: int, by_z: int, escaping: bool) -> void:
+	var moved_x: int = _enemy_x[index] + by_x
+	if escaping or not _tile_is_blocked(WorldGrid.tile_at_metres(moved_x, _enemy_z[index])):
+		_enemy_x[index] = moved_x
+	var moved_z: int = _enemy_z[index] + by_z
+	if escaping or not _tile_is_blocked(WorldGrid.tile_at_metres(_enemy_x[index], moved_z)):
+		_enemy_z[index] = moved_z
+
+
 ## One Enemy, one tick, along the field.
 ##
 ## The field names the way out of the tile the Enemy is standing on; the Enemy walks that
@@ -7583,21 +7687,46 @@ func _advance_enemy(
 	if step == Vector3i.ZERO:
 		return MARCHED_NOWHERE
 
-	_enemy_x[index] += step.x * step_metres
-	_enemy_z[index] += step.z * step_metres
+	# **The march, refused if it would walk the body into something (#78).** `escaping` is
+	# read before the step rather than after it: a body standing inside an obstruction is
+	# walking out of it and nothing here may stop that. See
+	# `_move_enemy_against_the_factory`.
+	var escaping: bool = _tile_is_blocked(tile)
+	var was_x: int = _enemy_x[index]
+	var was_z: int = _enemy_z[index]
+	_move_enemy_against_the_factory(
+		index, step.x * step_metres, step.z * step_metres, escaping
+	)
+	var travelled: bool = _enemy_x[index] != was_x or _enemy_z[index] != was_z
 
 	# Gather back towards the middle of the lane, on the axis the Enemy is not travelling
 	# along — but only from outside a corridor the crowd is allowed to spread inside. See
 	# `_lane_corridor_metres`, which is #76's one change to how an Enemy walks.
+	#
+	# It is routed through the same refusal as the march, which costs nothing and is worth
+	# having written down: the slide closes towards the centre of the tile the body is
+	# *already standing on*, so it cannot leave that tile and therefore cannot by itself reach
+	# a blocked one. That is a property of `_gathered_towards`' bound rather than a rule, and a
+	# later change to the corridor would quietly make it a path back into the Factory.
 	var centre: FixedVec2 = WorldGrid.tile_centre_metres(
 		WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
 	)
 	var corridor: int = _lane_corridor_metres(_enemy_kind[index])
+	var gather_x: int = 0
+	var gather_z: int = 0
 	if step.x == 0:
-		_enemy_x[index] += _gathered_towards(_enemy_x[index], centre.x, corridor, step_metres)
+		gather_x = _gathered_towards(_enemy_x[index], centre.x, corridor, step_metres)
 	if step.z == 0:
-		_enemy_z[index] += _gathered_towards(_enemy_z[index], centre.z, corridor, step_metres)
+		gather_z = _gathered_towards(_enemy_z[index], centre.z, corridor, step_metres)
+	_move_enemy_against_the_factory(index, gather_x, gather_z, escaping)
 
+	# **A body the wall refused reports `MARCHED_NOWHERE`**, which is the same thing a body
+	# that bit or held station reports, and for the same reason: `_apply_separation` rations
+	# what may be taken *away from a march*, and there is no march to take anything away from.
+	# So a rank stopped against the Nest spreads along the face it is eating instead of
+	# compressing into one half-metre of it — which is the regime `crush` renders.
+	if not travelled:
+		return MARCHED_NOWHERE
 	return MARCHED_ALONG_X if step.x != 0 else MARCHED_ALONG_Z
 
 
@@ -7666,18 +7795,28 @@ func _towards_the_nest(tile: Vector3i) -> Vector3i:
 ## `_towards_the_nest` run backwards: a straight line is not pathing, it is a refusal to stand
 ## somewhere it can be shot. An Enemy exactly on top of the thing it is backing away from steps
 ## along +x, so the degenerate case moves rather than freezing.
+##
+## **It goes through the same refusal the walk does (#78)**, or the boss reverses into a
+## Machine — and it is the one mover where that was not merely latent, because nothing checks
+## whether there is a Factory behind a Hulk before it backs away from a Turret in front of it.
+## A Hulk with its back to a wall simply stays where it is and goes on shelling, which is the
+## right answer: where it comes to rest is `siege_hulk.range_metres` or the first solid thing
+## behind it, and neither is a number that can disagree with the other.
 func _withdraw_enemy(index: int, from: FixedVec2, step_metres: int) -> void:
 	if step_metres <= 0:
 		return
+	var escaping: bool = _tile_is_blocked(
+		WorldGrid.tile_at_metres(_enemy_x[index], _enemy_z[index])
+	)
 	var gap_x: int = _enemy_x[index] - from.x
 	var gap_z: int = _enemy_z[index] - from.z
 	if gap_x == 0 and gap_z == 0:
-		_enemy_x[index] += step_metres
+		_move_enemy_against_the_factory(index, step_metres, 0, escaping)
 		return
 	if absi(gap_x) >= absi(gap_z):
-		_enemy_x[index] += signi(gap_x) * step_metres
+		_move_enemy_against_the_factory(index, signi(gap_x) * step_metres, 0, escaping)
 		return
-	_enemy_z[index] += signi(gap_z) * step_metres
+	_move_enemy_against_the_factory(index, 0, signi(gap_z) * step_metres, escaping)
 
 
 ## How far a coordinate is from the nearer end of a span, signed towards it. 0 when it is
@@ -8153,7 +8292,10 @@ func _sweep(seeds: PackedInt64Array) -> Array:
 	return [direction_out, distance]
 
 
-## Every cell of the Nest's footprint, which is what the Crawlers' field is seeded on.
+## Every cell of the Nest's footprint, which is what the Crawlers' field is seeded on **and,
+## since #78, what `_mark_obstructions` paints.** Both at once, exactly as a Machine's
+## footprint is both, and for the reason `_sweep` makes that safe: a seed takes distance 0
+## without being asked whether it is blocked.
 ##
 ## The whole footprint because the destination is a 4x4 building and not a point: an Enemy
 ## heading for its near edge must not be routed to its anchor.
@@ -8201,13 +8343,33 @@ func _machine_seed_cells() -> PackedInt64Array:
 ## O(tiles x (Machines + Walls)), and at this Map's size the second is a visible hitch every
 ## time a player places something.
 ##
-## The Nest itself is deliberately not painted: it is the destination, seeded at distance
-## zero, so a sweep that treated it as solid would have nowhere to start. A Machine *is*
-## painted and is seeded as well, which is what lets the Breakers' field point at the
-## Factory without routing through it.
+## **The Nest is painted, and until #78 it was the one solid thing on the Map that was not.**
+## The note that stood here said it could not be, because it is the destination and a sweep
+## that treated its tiles as solid would have nowhere to start — and that is simply not how
+## `_sweep` works: a seed is given distance 0 **unconditionally** and only the *expansion*
+## tests `_flow_blocked`, which is exactly why a Machine has always been painted *and* seeded
+## at once. So the reasoning was wrong about the one case it excepted, and the consequence was
+## the defect #78 is about: the Nest's sixteen tiles were walkable ground, the tile beside the
+## Nest points *at* it, and a Crawler therefore stepped onto the footprint and kept going.
+## Measured before the fix, a Crawler's centre reached **two tiles inside a 4x4 Nest** — which
+## is what the Windows build's *"the skeletons phase into the base"* was a picture of.
+##
+## Painting it is the half of the fix that matters, because without it there is nothing for
+## `_move_enemy_against_the_factory` to refuse: the refusal reads this field and this field
+## said the Nest was a field. It also makes `query_tile_obstructs_enemies` tell the truth
+## about the 4x4 a player respawns on top of, and brings the Enemies' obstruction set into
+## agreement with `_solid_height`, which has called the Nest solid for a player since #30.
+## What it does *not* change is any route: the Nest is the destination, so no path ever needed
+## to pass through it, and the tile beside it still points at it and is still in contact with
+## it — which is what keeps a body stopped at the wall biting at exactly the rate it did.
 func _mark_obstructions() -> void:
 	_flow_blocked.resize(FIELD_TILES)
 	_flow_blocked.fill(0)
+	# The Nest, which is neither a Machine nor a Wall (GLOSSARY.md) and so needs a loop of its
+	# own, in the same shape the other two have.
+	for cell: int in _nest_seed_cells():
+		if cell != -1:
+			_flow_blocked[cell] = 1
 	for index: int in range(query_machine_count()):
 		var size: Vector2i = _machine_size(index)
 		if size == Vector2i.ZERO:
