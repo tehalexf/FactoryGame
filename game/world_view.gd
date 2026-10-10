@@ -293,6 +293,23 @@ const PALETTE_MATERIALS: String = "res://assets/machines/materials/"
 ## on an Enemy. Bracketed by rendering: see "What an Enemy is made of" in CLAUDE.md.
 const ENEMY_TEXTURE_TILES: float = 2.5
 
+## How much brighter an Enemy's palette entry is drawn than a Machine's, and **this is a
+## measurement rather than a preference.**
+##
+## The palette is tuned for a Machine: six metres of it, standing still, with big horizontal
+## faces the 23-degree sun lands on. An Enemy is a 1.6 m body of mostly *vertical* plate that
+## is usually between the sun and the player, so the same entry gives it only the sky — and at
+## `CastIron`'s 0.055 albedo the sky is 5% of the sky. Measured on the `swarm bare` frame at
+## the entries' own levels, the median Enemy pixel came to a linear luminance of **0.000**
+## against a ground at 0.047: not a dark Enemy, a hole in the floor, which is #75's own
+## finding reproduced by a different route.
+##
+## So the entry supplies the *hue* and this supplies the level, which is the one job #75 took
+## off the tint and the one thing a multiply can honestly do — there is no ratio to fight here,
+## because a part is assigned its entry rather than having one inferred from a pixel. Bracketed
+## by rendering and measuring: the figures are in CLAUDE.md.
+const ENEMY_LIFT: float = 1.6
+
 ## Enemy's, not the players', so it reads as grown rather than welded.
 const HIVE_SIZE_METRES: float = 4.0
 const HIVE_COLOUR: Color = Color(0.29, 0.20, 0.26)
@@ -3256,10 +3273,10 @@ func _palette_material(name: String) -> StandardMaterial3D:
 func _enemy_tint(kind: int) -> Color:
 	match kind:
 		Simulation.ENEMY_KIND_BREAKER:
-			return Color(0.91, 0.95, 1.0)
+			return Color(0.91, 0.95, 1.0) * ENEMY_LIFT
 		Simulation.ENEMY_KIND_SIEGE_HULK:
-			return Color(0.92, 0.90, 0.88)
-	return Color(1.0, 0.88, 0.78)
+			return Color(0.92, 0.90, 0.88) * ENEMY_LIFT
+	return Color(1.0, 0.88, 0.78) * ENEMY_LIFT
 
 
 ## How metallic each kind reads, and **#79 tested the other answer and the render rejected

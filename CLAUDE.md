@@ -587,6 +587,30 @@ numerous and coming, and a Breaker marches the Nest's own lane under fire (#34).
 are #38's two named stand-ins — `Rig_Large` carried no attack take at all, so a Siege Hulk's
 stomp played `Hit_A`, a lurch rather than a swing. A declared body declares its own.
 
+#### What the gate says, and it is the one number that got better on its own
+
+`tests/cases/test_enemy_silhouette.gd` was **not touched** — the threshold is still 0.50, and a
+gate rewritten to admit what it is measuring is not a gate. Measured on the generated bodies,
+posed and scaled exactly as `WorldView` draws them:
+
+| pair | the cast (#49) | declared (#79) |
+|---|---|---|
+| Crawler vs Breaker | 0.58 | **0.655** |
+| Crawler vs Siege Hulk | 0.83 | **0.989** |
+| Breaker vs Siege Hulk | 0.67 | **0.868** |
+
+**Every pair is further apart than the cast managed, and the binding one moved back to the
+Crawler against the Breaker.** That is the declaration working rather than luck: the cast was
+three humanoids of the same proportions at three heights, so #49 could only separate them by
+size and that walked the Breaker toward the boss as fast as it walked it away from the Crawler.
+Six legs against four, a body slung at 0.40 against 0.52, and mass spread down a tail against
+massed in a front shield are three independent differences, so the pairs no longer trade
+against one another.
+
+The Crawler against the Siege Hulk at 0.989 is very nearly disjoint, which is the expected
+answer rather than a suspicious one: a 1.6 m body slung low and a 3.2 m one slung high share
+almost no cell of a grid rasterised at one cell per player pixel at thirty metres.
+
 #### The weak point is in the mesh now, which closes the one disagreement it could have
 
 A Siege Hulk's vent is the only place in this project where geometry carries a rule. It used
@@ -691,6 +715,136 @@ sub-section is for.
 a ticket that set out to reverse it, with the reason rewritten and a second clause added —
 the pair is asserted together, because a dielectric at any roughness and a metal polished to a
 mirror each satisfy one half.
+
+#### What it costs, and "not too detailed" as a number
+
+The user's instruction was *"not too detailed"*, which is a performance instruction as much as
+a style one — these are drawn through one MultiMesh a kind in the thousands. Measured with
+`ENEMY_COUNT=<n> tools/visual/frame_cost.sh` on the same scenario, the cast against the
+declaration:
+
+| | the cast (#38) | declared (#79) |
+|---|---|---|
+| primitives, 18 Enemies | 4,291,354 | **3,994,066** |
+| primitives, 71 Enemies | 5,505,532 | **4,158,192** |
+| video memory, 18 / 71 | 265.4 / 265.9 MB | **259.2 / 259.7 MB** |
+| `WorldView.sync`, 18 | 16.76 ms | 17.22 ms |
+| `WorldView.sync`, 71 | 20.76 ms | 20.25 ms |
+
+**The declaration is cheaper on the figures that are properties of the asset, and the gap
+widens with the Wave** — which is the half that matters, because the Wave is what grows. 297,000
+fewer primitives at 18 Enemies and **1.35 million fewer at 71, a quarter of the frame's total**,
+because 788, 588 and 812 triangles a body replace 4,858 *vertices* apiece. Six megabytes less
+texture, because the glTF embeds no image and the palette's maps were already resident for the
+Machines. `test_generated_enemies.test_not_too_detailed_is_a_number`
+is the ceiling that keeps it so when somebody adds a part.
+
+**The sync figure is not a finding and should not be read as one.** Half a millisecond on a
+17 ms rebuild, measured on a machine running five other Godot processes at load 11, is inside
+the noise of the instrument — and both columns are far above the figures this file quotes for
+#38, because the Factory the harness builds has grown since. What the measurement is for is
+the two columns above it, which are counts rather than timings.
+
+**The pose texture went down too**, which is the half #38's architecture actually cares about:
+19 bones for a six-legged body and 15 for the four-legged one against the cast's 23, over 104
+frames rather than 90. `test_generated_enemies` holds the bone budget at 23 so a later
+declaration cannot quietly walk past it.
+
+**And the Simulation's own tick is untouched by construction.** `ENEMY_COUNT=2000
+enemy_tick_cost.gd` times `Simulation.step`, and #79 changed no file under `sim/` at all — the
+bodies are an asset and the surface is a renderer decision, so a difference there would have
+been a bug rather than a cost. Measured at 2000 Enemies on this machine it is about 300 ms a
+step either way, which is #76's crush figure inflated by the same contention the sync column
+carries; the quiet-machine figure that file quotes is 94 ms and is the one to trust.
+
+**The GPU half is unmeasured, exactly as #38's and #75's were.** `frame_cost.sh` measures the
+CPU rebuild, the skinning is in a vertex shader, and Xvfb is llvmpipe. The levers if it ever
+bites are the same two: `relief_fade_end`, and dropping the grime field's second octave.
+
+#### What the measurement says, and the one frame where it says the wrong thing
+
+#75's own method, repeated: linear luminance over the pixels the change actually moved, which
+is the right denominator because a window drawn round an Enemy is mostly ground. Five frames,
+`bare` throughout, against the ground in the same picture.
+
+| frame | before, median | after, median | ground | after, mean | after, p90 |
+|---|---|---|---|---|---|
+| `triage` — thirty metres, the readability shot | 0.091 | **0.070** | 0.049 | 0.109 | 0.293 |
+| `pair` — six to twelve metres | 0.073 | **0.039** | 0.052 | 0.093 | 0.245 |
+| `boss` | 0.049 | **0.042** | 0.046 | 0.094 | 0.359 |
+| `crush` — from above, at the Nest | 0.032 | **0.012** | 0.042 | 0.046 | 0.143 |
+| `swarm` — six metres, **into the sun** | 0.055 | **0.006** | 0.047 | 0.039 | 0.074 |
+
+**The honest reading is that the median went down and the mean and p90 went up**, which is a
+body with more contrast in it rather than a brighter or a darker one: the mean rises on four
+of the five frames and the p90 nearly doubles, because a faceted metal plate under a low sun
+has real highlights where a graded swatch had none.
+
+**At the range the readability gate is about, this is the number #75 was reaching for and did
+not get.** `triage` puts the median Enemy pixel at **1.43 times the ground it is standing on**;
+#75 measured 0.021 against 0.046, which is 0.46 times. An Enemy is no longer darker than the
+floor at the distance a player triages a Wave from.
+
+**And `swarm` says the opposite, which is worth stating rather than burying.** That preset
+stands six metres off with the sun behind the Wave, so what it frames is backlit plate — and a
+dark metal body backlit is a silhouette, at 0.006 against a ground of 0.047. The cast managed
+0.055 there because a graded bone atlas is pale enough to carry ambient on its own. Some of
+that is the point (a chitin bug between you and the sun *should* be a shape) and some of it is
+a real loss, and nothing here can tell you which half is which — `ENEMY_LIFT` is the lever and
+it was bracketed on `triage` rather than on `swarm`, deliberately, because thirty metres is
+where a player decides what a Wave is.
+
+**`ENEMY_LIFT` is the one number in this that is not a palette entry, and it is a measurement.**
+At the entries' own levels the median came to **0.000** on `swarm` and 0.013 on `triage` — not a
+dark Enemy, a hole in the floor, which is #75's finding reproduced from a completely different
+direction. The palette is tuned for a Machine: six metres of it, standing still, with big
+horizontal faces a 23-degree sun lands on. An Enemy is a 1.6 m body of mostly vertical plate,
+usually between the sun and the player. So the entry supplies the *hue* and the lift supplies
+the level — which is the one job a multiply can honestly do, because there is no ratio to fight
+here: a part is **assigned** its entry rather than having one inferred from a pixel, which is
+exactly the thing #75 could not say about a tint over an atlas.
+
+#### What the pictures settle, and what they do not
+
+Six pairs are committed, `bare` throughout because the yard is drawn out of the purchased packs
+and this repository is public:
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "<preset> bare"
+```
+
+`docs/images/enemies_insect_{swarm,pair,triage,boss,crush}_{before,after}.png`, plus
+`enemies_insect_wounded_before.png`.
+
+- **`triage` is the one that carries the ticket**, because thirty metres is where a player
+  decides what a Wave is. Before: three humanoid silhouettes in three sizes, the Crawler and the
+  Breaker separated by height alone. After: a line of low six-legged bodies with oxide tails
+  against the iron of their own thorax and legs, and a four-legged plated thing standing over
+  them. The oxide tail is a second cue beside height, which is the thing #49 recorded as missing
+  and #75 could not buy with a tint.
+- **`crush` answers #76's question for the new bodies**, and it answers it better than the cast
+  did: eight insects pressed into the Nest's corner read as eight bodies with legs interleaved,
+  where eight skeletons read as a heap. Legs splayed wide is a silhouette that *shows* a crowd.
+- **`swarm` is the honest loss.** Six metres, into the sun: the generated bodies are
+  silhouettes where the cast was pale. Some of that is a chitin bug doing what a chitin bug
+  should do between you and a low sun, and some of it is a real step backwards; the measurement
+  above says which frames it costs and the lever is `ENEMY_LIFT`.
+- **`wounded` has a before and no after**, and that is deliberate rather than an omission: #70's
+  glowing cracks are drawn by the shader off `INSTANCE_CUSTOM`, which #79 did not touch, so the
+  after is `pair`'s surface with #70's marks on it and the pair would be comparing two tickets
+  at once. The *before* is kept because it is the frame #70 argued from.
+
+**What no still image settles**, and it is the question the whole ticket is really about:
+whether a tripod walk reads as an insect walking. Everything measurable is measured —
+silhouette separation, luminance, triangles, texels, video memory — and none of it has an
+opinion about gait. The levers are the two numbers in `enemy_recipe.leg_pose` (the stance
+fraction and the lift) and the clip lengths in `CLIPS`, all in the declaration rather than in
+tuning, because the Simulation reads none of them.
+
+**And the bodies are faceted plate rather than organic**, which is the honest limit of this kit.
+A Terminid has curved chitin and a lot of it; these have chamfered boxes, because that is what
+`machine_parts` is good at and what every other surface in this world is made of. Whether that
+reads as *this game's* bug or as a Machine with legs is a judgement for somebody with a mouse.
 
 #### Five things about the shader, three of them carried over from the ground
 
