@@ -2939,6 +2939,28 @@ the closest thing to it and is about a *Machine*, which was painted; the one sol
 was not had no such test, and the query that would have said so —
 `query_tile_obstructs_enemies` — was never once asked about a Nest tile in the whole suite.
 
+**The pair is committed and it is the argument.**
+[`docs/images/nest_phasing_before.png`](docs/images/nest_phasing_before.png) against
+[`_after`](docs/images/nest_phasing_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+```
+
+#76's own preset, unchanged and pointed at the obstruction one layer out. Before: a Crawler's
+skull protruding from the ziggurat's plinth with its body inside the masonry, and the rest of
+the Wave strung across ground that is supposed to be a building. After: a ragged arc of
+distinct bodies pressed along the wall they are eating, nothing inside the Nest and nothing
+inside anything else.
+
+**What the balance table said is under "What stopping at the wall cost the table"**, below,
+and the short version is that it said almost nothing: no row moved by more than four seconds,
+because a body stopped at the wall bites at the rate it bit at before.
+
+**What no render can settle** is whether a crowd that presses along a face rather than
+spilling over the thing it is eating reads as a siege or as a queue, which is #76's own open
+question asked about the one building it could not reach before.
+
 `tests/cases/test_enemy_collision.gd` is the gap closed, and its load-bearing test is an
 **invariant** in the shape `test_collision` states the player's: on *every* tick of a Wave
 converging on the Nest, no Enemy's position is inside a blocked tile. Beside it are the two
@@ -7823,6 +7845,61 @@ That is #62's own qualification arriving as a measurement: a row spreads when it
 to matter*, and separation is precisely what makes each of its 133 shots matter more, because a
 scatter-miss into a spread crowd now misses. `armed_player` fires 374 shots and is identical on
 all three, which is the counter-example that keeps the rule honest.
+
+### What stopping at the wall cost the table
+
+**#78 painted the Nest as an obstruction and refused every Enemy step into one, and no row
+moved by more than four seconds.** Seventeen scenarios, seeds 7, 11 and 29, measured against
+#76's column.
+
+| Scenario | #76 | **#78** | moved by |
+|---|---|---|---|
+| `bare` | 3m22s | **3m22s** | — |
+| `opening_line` | 3m12s | **3m12s** | — |
+| `competent` | 28m51s | **28m49s** | −2s |
+| `over_producer` | 20m22s | **20m22s** | — |
+| `fortified` | 28m48s | **28m46s** | −2s |
+| `deep_digger` | 12m28s | **12m29s** | +1s |
+| `hive_sortie` | 32m07s | **32m06s** | −1s |
+| `rifle_picket` | 25m03s | **25m04s** | +1s |
+| `artillery` | 16m41s | **16m42s** | +1s |
+| `second_press` | 24m16s | **24m15s** | −1s |
+| `walled_lane` | 28m48s | **28m46s** | −2s |
+| `sealed_breach` | 26m41s | **26m44s** | +3s |
+| `branched_artillery` | 13m58s | **13m59s** | +1s |
+| `deep_silo` | 13m00s | **13m01s** | +1s |
+| `coal_haul` | 15m42s | **15m46s** | +4s |
+| `armed_player` | 24m14s | **24m15s** | +1s |
+| `armed_second_press` | 14m26s | **14m26s** | — |
+
+**The ticket predicted this would move rows and it very nearly did not, which is the fix's own
+argument arriving as a measurement.** What stops a Wave walking into the Nest cannot change
+how fast the Nest is chewed, because `_nest_in_contact` tests the tile a body stands on **or
+one sharing an edge with it** — so the tile a refusal leaves a body on is a tile it bites
+from, at the rate it bit at before. The sixteen tiles a Wave used to stand on were never where
+the damage was decided; they were only where the bodies were drawn.
+
+**It is worth knowing how much bigger the effect is where melee against the Nest really is the
+clock.** On `test_enemy_collision`'s own fixture — eight Crawlers, no Factory, nothing shooting
+at them — the Nest falls at tick 5637 against 4765 before, **18% later**, because there the
+whole Run is a pile chewing one building and the pile is now outside it rather than spread
+across it. No shipped scenario looks like that: fifteen of the seventeen end swarmed or with a
+Siege Hulk standing, and the Turret kills most of the Chaff before it is at anybody's wall.
+
+Three smaller things the figures say. `sealed_breach` absorbed **960** hit points against
+#60's 980 across the same 7 Walls built and 3 standing, which is the one row where a crowd
+pressed into a pocket is the mechanic and where three extra seconds of chewing is the whole
+delta. `walled_lane` is still **11 Walls built, 11 standing, 0 hit points absorbed** — a Wall a
+Wave can walk round is still never bitten, and nothing here was going to change that.
+And `rifle_picket` spread a little wider — 25m04s, 25m09s and 24m40s against #76's 25m03s,
+24m40s and 25m08s — which is the same seed sensitivity that row has had since #47 and is still
+`Simulation._scatter` moving where 457 rounds went; its economy is untouched at 468 rounds
+reaching the player and 75% of the Run dry, the identical figures #76 measured. **Do not read
+an Ammunition finding into it**; `armed_player` is the row for that, and it is unchanged at 9%
+dry on 446 rounds.
+
+**No value in `content/` was touched**, and nothing in the measurement is an argument for
+touching one.
 
 ### What the seed can reach
 
