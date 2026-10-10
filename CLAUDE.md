@@ -7924,14 +7924,23 @@ Consequences worth knowing:
   both directions: an abort after a passing assertion must fail, and a method that
   completes must not. A guard that always fires and one that never fires are
   equally worthless, so neither case may be dropped.
-- **The guard reads `SCRIPT ERROR:` and nothing else, so a leak is invisible to it**, and #76
-  is where that cost something: `test_world_view.gd`'s last method ended the file without
-  `view.free()` and the run reported **177 leaked RIDs at exit** with every test green. A
-  suite that passes while leaking is exactly the shape this guard was built for and exactly
-  the shape it cannot see — the engine reports a leak as an `ERROR:` at *cleanup*, after the
-  runner has already counted its results. Fixed in `5936fc1`; worth knowing that **a view a
-  test builds has to be freed by the test that built it**, because nothing will tell you
-  otherwise.
+- **The guard reads `SCRIPT ERROR:` and nothing else, so a leaked RID is invisible to it, and
+  the suite leaks.** Noticed during #76: a run reported **177 leaked scene-cull Instances at
+  exit** with every test green. `test_world_view.gd`'s last method ended the file without
+  `view.free()` and `5936fc1` fixed that one — which took it to **79**, with dummy meshes,
+  materials and MultiMeshes still outstanding. So that method was **one instance of a pattern
+  rather than the whole of it**, and the honest state of this is "the suite leaks views, by an
+  unknown number of tests, and passes".
+
+  **The mechanism is the durable half and it is unchanged by how many there turn out to be.**
+  Godot reports a leak as an `ERROR:` at *cleanup*, after the runner has counted its results
+  and printed its verdict — and the guard matches `SCRIPT ERROR:` precisely so that a test
+  which deliberately drives production code into `push_error()` is not failed for it. The two
+  facts together mean **nothing in the suite can see any leak, ever**, which is a different
+  gap from the one this guard closed: it catches a method that was severed, not a method that
+  finished untidily. A view a test builds has to be freed by the test that built it, and
+  **nothing will tell you if it was not** — so the cheap rule is to free it in the test, not to
+  trust a green run.
 
 ### Run it through `tools/run_tests.sh`, and why that is not a convenience
 
