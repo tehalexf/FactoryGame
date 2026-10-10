@@ -34,6 +34,8 @@ SHOT_SCRIPT=tools/visual/compose_mark_shot.gd tools/visual/shot.sh out.png bare
                                  # the marks a starved Machine wears, over bodies of three heights (+ bare)
 SHOT_SCRIPT=tools/visual/compose_dock_shot.gd tools/visual/shot.sh out.png bare
                                  # two Belts that will not dock, for the two different reasons (+ bare)
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "eye bare"
+                                 # a line that has just started working (eye|survey; + before, + bare)
 tools/run_tests.sh              # the Simulation and the Godot layer, headless
 tools/run_tests.sh determinism   # only tests whose case.method contains "determinism"
 tools/balance/measure.sh         # play every balance scenario headless and print the table
@@ -3321,7 +3323,8 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   at every end that leads nowhere and an amber tag hangs over every Machine
   `query_machine_is_starved` calls starved. There is no stored connection to go stale, so
   demolishing the Smelter a Belt fed marks it on the next frame with no bookkeeping anywhere.
-  An arrow a tile says which way each Belt carries.
+  An arrow a tile says which way each Belt carries. **Every one of those marks is a complaint,
+  and #68 is the only one that is not** — see "Nothing said the line works", below.
 - **The Machine picker is a grid of cells** — see "The hotbar states the chain" below, which
   is #53 replacing the flat row #36 shipped. Each cell still carries the key, the cost,
   whether a Delivery has it locked, and #20's generated icons, which nothing had used before
@@ -3454,6 +3457,269 @@ behaviour change to three shipped marks with assertions pinning them, which is e
 standing #48 gave the starved tag before #50 picked it up, and it wants the same treatment in
 its own ticket.
 
+### Nothing said the line works, and #68 is the one mark that is good news
+
+Count what this game draws about a production line and every single item is a **complaint**: a
+red post where a Belt leads nowhere (#36), an amber tag over a starved Machine (#36), a post at
+a blocked branch (#48), a red post raised clear of the port arrows at a bad dock and two
+sentences saying which rotation would fix it (#56). A player who has just laid their first
+Miner-to-Smelter chain had to infer success from the **absence** of marks — and absence is
+exactly what this project has twice found a player cannot read: #52's ore was invisible because
+nothing marked it, and #41's gauge was unreadable because a mark with no owner says nothing.
+"No red posts" is not a signal; it is the lack of one.
+
+It is also the gap a live playtest walked into. The player built the opening line, the Smelter
+ran, and their words were *"the smelter works but idk what next"*. **#71 fixed the instruction
+that misled them** — see "The last step of the opening loop", below — and this is the half that
+would have told them, without words, that the thing they had just built was alive. The two are
+deliberately different registers: that one is a sentence telling a player what to do next, and
+this one is the world acknowledging that they did it.
+
+**It fires on a change and then stops, which is the whole of why it is not another hedge.** #66
+landed an hour before this for exactly that failure on the port arrows — a mark that is always
+on everything is wallpaper, and in that case it was hiding the Belts it was about. `LineWorks`
+answers a *condition*, and the thing worth drawing is the **moment** it becomes true, which is
+the distinction `game/audio_director.gd` has been built on since #21. So: when a chain first
+reads whole a train of lights runs down its Belts and a tag stands over each of its Machines,
+for `WorldView.LINE_WORKS_TICKS` — five seconds — and then the Factory goes back to being quiet.
+
+#### What a chain is, and what makes one whole
+
+`game/line_works.gd` is the whole of it, and it lives in `game/` for the reason `Objective` and
+`BuildChain` do: whether a Belt hands an Item over is a fact the Simulation owns, and "these four
+things are one line and it is running" is a sentence about those facts. The Simulation does not
+know the file exists and asking any of it leaves `hash()` where it was.
+
+A **chain** is a maximal group of Machines joined by Belt runs, plus the Nest if any run reaches
+it — so a Miner belting ore straight to the counter is a chain with one Machine in it, which is
+the opening Delivery and the first thing a Run is told to build. It is **whole** when:
+
+- it joins at least two ends, so a Machine with no line is not a line;
+- **every** Belt touching any of its Machines is fed at its entry and connected at its far end;
+- every one of those Belts is **carrying at least one Item**, which is the literal content of
+  "and carrying" and the one condition that makes this a statement about a line that is *running*
+  rather than one that is merely wired up;
+- and no Machine in it is starved.
+
+The second of those is wider than it needs to be on purpose. A chain with a dangling Belt off one
+of its Machines is a chain standing next to a red post, and **a positive signal must never
+contradict a complaint** — so the dangling Belt breaks the claim even though it is not one of the
+runs that joins anything. `test_a_chain_with_a_dangling_belt_off_one_of_its_machines_is_not_whole`
+is that sentence as a test.
+
+**`query_belt_is_stalled` is deliberately not consulted, which is #48's note read the other way
+round.** A healthy saturated Belt feeding a slower consumer is stalled on most ticks — that is
+what back-pressure *is* — so requiring "not stalled" would switch the signal off on exactly the
+lines that are working hardest. #48 needed the stable fact because it was marking a *fault*; this
+is marking a success and wants the opposite.
+
+#### It is not a second opinion, and four projections are what make that true
+
+Whatever says "connected" has to be the same thing that decides whether an Item really hands over,
+or a line can read as working and starve. `query_belt_end_is_connected` already was that — the
+geometry half of `_hand_off` — but it answered only *whether*, and walking a chain needs *what*.
+
+So three projections, one line each over the function the hand-off itself goes through:
+`query_belt_feeds_machine` over `_machine_a_belt_feeds`, `query_belt_feeds_belt` over
+`_belt_downstream`, and `query_belt_feeds_the_nest` over `_hand_off`'s own Nest clause — which is
+its own question rather than a case of the first, because the Nest is not a Machine and a Belt
+docks anywhere on its 4x4 wall (GLOSSARY.md). **`query_belt_end_is_connected` is now literally
+the disjunction of the three**, where it used to spell those three branches out a second time, so
+there is one authority rather than four.
+
+A fourth projection is about the *other* end. `query_belt_loaded_by_machine` is one line over
+`_machine_behind_belt` — the function
+`_load_from_port` asks and the one `_branch_belts` groups a Machine's branch by — so it and
+`query_machine_branch_belt` are **the same answer read from the two ends**, which
+`test_which_machine_loads_a_belt_is_the_branch_list_read_from_the_other_end` asserts rather than
+assumes. It exists for cost as much as for symmetry: finding every Belt's loader off the branch
+lists means walking every Machine's whole list, and each of those is itself a walk of every
+Belt, where asking per Belt is one pass. `_sync_split_marks` already pays the quadratic version
+every frame and this deliberately does not add a second one.
+
+Nothing else behind the façade changed, which is why there is no new determinism fixture:
+`test_declared_ports` and `test_belts` already replay the Factories this walks.
+
+#### What it draws, and the one piece of memory in the renderer
+
+Two marks and a tether, three MultiMeshes, and `test_the_signal_adds_no_node_per_belt_or_per_machine`
+asserts the scene tree does not grow for any of them.
+
+- **A train of lights down the Belts**, in flow order, at `LINE_WORKS_PULSE_TICKS_PER_TILE` — six
+  ticks a tile, which is **faster than the goods on purpose**. A Belt carries one Item a tile
+  every fifteen ticks, so the lights overtake the freight and read as a signal travelling the line
+  rather than as more cargo. Only the lit ones are drawn and the train starts at the producer and
+  runs out past the far end, which is the ore scanner's shape and for the scanner's reason: a full
+  line of marks standing on a Belt is scenery, where a thing that *sweeps* reads as a signal.
+- **A tag over each Machine in the chain**, off `_machine_roof` and the housing like every other
+  mark since #50, one step above the split tag so the order is Ammunition gauge → starved tag →
+  split tag → this. It cannot collide with the starved tag by construction — a chain is not whole
+  while anything in it is starved — but a branch can be whole *and* splitting, so the split tag is
+  a real neighbour. **Each tag is tethered to the body under it**, which is #66's answer to #41
+  and which the first render said this needed too — see the renders below.
+
+**`_line_works_since` is the only state in `WorldView` that is about the Run** — `_machine_roofs`
+beside it is a cache of a fact about *content*, keyed by Machine id and thrown away on a reload —
+**and it is the same category of thing as
+`AudioDirector`'s snapshot and `TickPump`'s leftover frame time** — a reading on its way in, not a
+fact about the world. It maps a chain's **geographic signature** to the tick it was first seen
+whole. Geography and not indices, for the reason a Turret holds a serial: a Machine index shifts
+the moment anything is destroyed, so a chain keyed by index would change identity because
+something *else* fell over, where a Machine's anchor tile cannot move. Two consequences fall out
+and both are right: a chain that stops being whole is **forgotten**, so mending a broken line is
+acknowledged again; and a chain that gains a Machine has a new signature, so extending a line is
+acknowledged too.
+
+Everything drawn is a function of the tick minus that stamp, so nothing is timed by a clock and
+nothing is drawn at random — `test_the_signal_is_timed_by_the_tick_so_a_frame_that_stepped_nothing_draws_the_same`
+is the half of that rule a renderer can assert from inside.
+
+**The HUD says `LINE RUNNING` for exactly as long as the marks are up**, counted off
+`line_works_running_count()` rather than worked out a second way — the arrangement the
+dangling-ends and split clauses already have, where the mark says *where* and the line says *how
+many*. It sits beside the objective line on purpose: that one says what to do next and this one
+says the last thing you were told to do is now running.
+
+**No cue was added, and that is a decision rather than an omission.** The player has rejected four
+separate attempts at sound in this project for being too loud, nothing in this repository can
+listen, and a chain completing is the one event here whose *silence* costs nothing — the marks are
+in the world, in the frame the player is already looking at. If it is ever wanted, the lever is a
+`cues_for_frame` entry keyed on `line_works_running_count()` rising, which is a change and is what
+`audio_director` is shaped to take.
+
+#### What the four renders found
+
+`tools/visual/compose_line_shot.gd` is a sibling of `compose_building_shot.gd` rather than a preset
+on it, and the reason is `compose_death_shot.gd`'s: **the subject is a change, so the tool has to be
+watching while it happens.** That composer builds its line, steps 240 ticks with nothing looking,
+and only then syncs the view — fine for a shot of a condition and unable to photograph a signal
+that fires on one frame. Everything here steps the Simulation with the view synced every tick.
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "eye bare"
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "survey bare"
+SHOT_SCRIPT=tools/visual/compose_line_shot.gd tools/visual/shot.sh out.png "eye before bare"
+```
+
+The committed four are [`line_works_eye_before.png`](docs/images/line_works_eye_before.png)
+against [`_after`](docs/images/line_works_eye_after.png) and
+[`line_works_survey_before.png`](docs/images/line_works_survey_before.png) against
+[`_after`](docs/images/line_works_survey_after.png). **`before` is honest rather than
+reconstructed**: it watches the same Factory for longer than `LINE_WORKS_TICKS` and shoots after
+the signal has subsided, so what comes out is the game as it shipped rather than a build with a
+feature switched off.
+
+1. **The before image is the argument, and it is worse than the ticket said.** The identical
+   working line, and the only mark anywhere in frame is the **amber starved tag on the Steam
+   Boiler** — which has no coal line in this Factory — with the only thing the HUD says about the
+   Factory being `steam_boiler_mk1 starved`. So a player who has just got their first chain running
+   is shown one complaint about something else and nothing at all about the thing they built.
+2. **The tags floated with nothing under them, which is #41 biting for the fifth time and #66's
+   specific shape.** A tag rests a tag's height over a *wide* cap — a Miner's derrick, which is
+   what #50 judged the lift against — and **hangs** over a tapering one. The Miner's derrick and
+   the Smelter's flue both taper to a point, so both tags read as marks in the sky. The lift is not
+   what is wrong with it and was not moved; the fix is #66's own, a thin unshaded tether from the
+   top of the drawn body up to the tag, taken on sight rather than rediscovered.
+   `test_a_chain_tag_clears_the_body_a_player_can_see_not_the_housing_underneath_it` asserts the
+   count and that each tether spans its own gap.
+3. **Half-metre lights were modest at both distances and 0.75 m reads.** Bracketed by looking, like
+   every other size in this file.
+4. **The two vantages disagree, and in the opposite direction from #52's.** From the lift the
+   **tags** are the strong mark — they are horizontal quads seen face on — and the lights are small
+   squares among the deck's own flow arrows; at eye level the lights are the strong mark, reading as
+   blocks running down the deck, and the tags are small against the sky. Each vantage is carried by
+   a different half of the signal, which is the argument for having drawn two marks rather than one.
+5. **Two findings in the tool, and the second is a fact about the game.** The first eye-level
+   vantage stood across the line to the west, which is where the Steam Boiler stands — so the walk
+   slid along it and finished somewhere else, the Miner's derrick filled the shot, and the Belt the
+   picture is about was not in it. And **walking while surveying barely moves a player**:
+   `_walk_to` steers by `_aim_at`, and from 26 m up the pitch it asks for is one the lift has
+   pinned, so the aim never converges and the walk spends its whole budget turning. Walk first,
+   then lift — the order is free, because where a player stands and how high they are looking from
+   are independent.
+
+#### The colour was measured, and the first one failed its own test
+
+**#52's lesson is that the colours to check a mark against are the ones it is *guaranteed* to be
+seen beside; #73's is that "guaranteed" has to be a number.** That ticket found the four Item
+icons were four near-identical greys the moment somebody measured them, and it then gave cargo
+four palette **materials** — so this mark's lights now run directly over `OxideRed`, `Soot`,
+`DullBrass` and `WeldedSteel`, and its tag stands a metre above a **teal split tag** every time a
+Machine is both whole and splitting.
+
+The first value here was a pale mint, `Color(0.58, 1.0, 0.72)`, chosen the old way — by naming
+the neighbours and observing that none of them was green. Measured in CIE Lab against every
+colour it can share a frame with, it came out **ΔE 19.3 from the split teal and 17.4 from the
+hologram**, against the **21.4** that separates #73's own closest *accepted* pair of cargo forms.
+So the signal was nearer to the marks beside it than the four cargo colours are to each other,
+which is the same defect #73 had just fixed one layer down.
+
+The shipped green is `Color(0.36, 1.0, 0.22)`, and it clears that gate everywhere: 63 from the
+split teal, 34 from the hologram, 42 from the cream flow arrow, 44 at worst from any cargo form,
+67 from the amber starved tag.
+
+**The sweep's actual maximum was not taken, and that is the point.** A saturated
+`(0.2, 1.0, 0.0)` scores ΔE 73 and is a neon slab in a palette that runs 0.055 to 0.14 albedo —
+which is #42's Wall, #52's ore and #64's brightened tool, three tickets this project has paid for
+picking a colour against the wrong background. **Separation is a floor to clear, not a quantity
+to maximise**, and the render is what says which side of that line a number is on. The after
+images carry the Boiler's amber starved tag in the same frame, over #73's cargo on the same
+deck, and nothing in them reads alike.
+
+#### What it costs, and the cache a measurement forced
+
+Measured with `tools/visual/frame_cost.sh` against the same scenario with and without the call,
+on the 33-Machine, 9-Belt, 53-Wall Factory it builds: `WorldView.sync` goes from **11.64 ms to
+13.60 ms**, so about **two milliseconds of a 16.67 ms frame** — roughly 1.4 ms deriving the
+chains and 0.6 ms drawing the marks. That is the **worst case rather than the resting one**: it
+is a Factory whose every Machine is inside a lit chain at once, which happens in the seconds
+after a whole line comes up and not again, and past the window the derivation still runs while
+nothing is drawn.
+
+**It cost 3.6 ms before the measurement found where the first half of that was going, and the
+answer was not in this ticket's own code.** `_machine_roof` ends in `Mesh.get_aabb()`, which
+walks the merged body — and #48 and #50 only ever asked it for a Machine serving a **split**,
+which is rare, where this asks it for **every** Machine of a working chain **every frame**. So
+it is memoised by Machine id, which is what both halves of its answer are a property of: the
+housing comes out of that Machine's row and the body out of the one `.glb` every Machine of
+that id shares, so two Smelters cannot have different roofs. The cache is thrown away whenever
+`query_definition_digest` moves, because `height_metres` is hot-reloadable and a cached roof is
+exactly the kind of thing that would go on quietly answering with the number the Run stopped
+playing by. Every mark in the file got faster, not only this one.
+
+**It is shared machinery, so the key is worth stating exactly.** `_machine_roof` is read by five
+marks — the Ammunition gauge, the starved tag, its tether, the three split tags and this one —
+and the failure a cache over it could produce is a mark that is correct for the Machine that
+*used to be* on that tile, which is precisely the class #41 and #50 each paid for. It cannot
+happen, because **both halves of the answer are properties of the Machine's id and of nothing
+else**: the housing is `height_metres` off that id's row, and the body is `_body(id)`, one Mesh
+shared by every Machine of that id. Rotation is applied to the **node** rather than to the mesh,
+so a turned Machine reads the same AABB; a placeholder has no `res://` path at all and falls back
+to the declaration. Nothing index-shaped, nothing tile-shaped and nothing rotation-shaped is in
+either the key or the value, so `_remove_machine` closing a gap cannot produce a stale roof — and
+a mesh that is not loaded yet short-circuits **before** the cache is written rather than freezing
+a null answer into it.
+
+Two tests rather than a paragraph, because this is the kind of claim that passes for tickets
+while being wrong. `test_the_roof_a_mark_hangs_off_follows_the_machine_and_not_the_index` stands
+an 8.2 m Miner at index 0 and a 2.0 m Turret at index 1, demolishes the Miner so the Turret slides
+down to index 0, and asserts the Turret does not inherit the derrick.
+`test_the_roof_cache_is_thrown_away_when_the_definitions_move` puts two Runs whose `height_metres`
+differs in that column alone through **one** view and asserts the second answer follows the
+content. Checked by neutering the `_machine_roofs.clear()`: the second goes red.
+
+**Two milliseconds was taken rather than engineered away, and that is a decision.** Deriving
+every few ticks instead of every frame would cut it by an order of magnitude and would mean
+drawing from a cached chain whose Machine **indices** have shifted — `_remove_machine` closes
+the gap — so a tag could stand over the wrong Machine for a quarter of a second. A mark in the
+wrong place is the failure this whole area of the file is a record of (#41, #48, #50, #66), and
+it is not worth buying a millisecond with.
+
+**What no render can settle** is whether five seconds is the right length, and whether a Factory of
+a dozen lines being extended one at a time reads as encouragement or as flicker. `LINE_WORKS_TICKS`
+is the lever and it is a constant in `game/` rather than a tuning key, for the reason
+`BuildGun.REACH_METRES` is: the Simulation does not read it, and a tuning key the Simulation does
+not read is a key `Definitions` warns about.
 ### The last step of the opening loop told a player to do a thing the game cannot do
 
 **#71, and it is the worst class of defect this project has shipped: not a missing feature, but
