@@ -32,11 +32,32 @@ uniform int texels_per_bone = 3;
 
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
 uniform bool has_albedo_texture = false;
-// What the pack's own colours are multiplied by. The committed skeletons are bone-white and
-// this palette runs 0.055 to 0.14 albedo, so a character dropped in untinted is the
-// brightest thing in frame — which is the mistake #32 found on the Walls, measured rather
-// than guessed, and the reason a colour picked against a white background is a colour
-// picked against the wrong thing.
+
+// How many times the palette's own tiling map repeats over one body height.
+//
+// **#79's bodies have UVs worth sampling, and the characters did not.** The note below used
+// to say a normal map through these UVs would be a flat colour, because KayKit's unwrap
+// points every limb at one cell of a 64-pixel swatch sheet. A generated body is
+// box-projected at one UV unit to the authored metre (`machine_parts.box_project_uvs`),
+// which is one UV unit to the *body height* here — so the palette's real 1024-square
+// `assets/generated/` map tiles across it, and this is how finely. A fraction of a body
+// rather than a count of metres, for `grime_metres`' reason: the same number gives a 3.2 m
+// Siege Hulk coarser plate than a 1.6 m Crawler in absolute terms, which is the right way
+// round.
+uniform vec2 uv_scale = vec2(1.0);
+
+// What the map is multiplied by, and **what it means changed twice.** It used to be the
+// level: the pack's skeletons were bone-white against a palette running 0.055 to 0.14, so an
+// untinted character was the brightest thing in frame — #32's mistake on the Walls, which is
+// why a colour picked against a white background is a colour picked against the wrong thing.
+// #75 moved the level into a graded atlas and left a cast here.
+//
+// Since #79 this carries the palette entry a part was **declared** as, times that cast, times
+// `WorldView.ENEMY_LIFT` — so it is a colour out of `dieselpunk_palette.json` rather than a
+// correction to somebody else's art. The lift is there because the palette is tuned for six
+// metres of Machine with sunlit horizontal faces and an Enemy is 1.6 m of vertical plate
+// between the sun and the player; at the entries' own levels the median Enemy pixel measured
+// 0.000 against a ground of 0.047. See `world_view._enemy_tint` and CLAUDE.md.
 uniform vec4 albedo_tint : source_color = vec4(1.0);
 uniform float metallic : hint_range(0.0, 1.0) = 0.0;
 uniform float roughness : hint_range(0.0, 1.0) = 0.8;
@@ -123,10 +144,12 @@ uniform float hit_flash_whiteness : hint_range(0.0, 1.0) = 0.65;
 // Crawler's whole thigh samples one of them, so graded or not an Enemy renders as a
 // *shape* with no surface inside it — which is half of what #75 was opened about.
 //
-// The props had an answer in hand and these characters do not: heyheythere bakes its
-// ambient occlusion into `COLOR_0`, so `prop_grade.deepen_grime` had per-prop geometric
-// information about where dirt collects. KayKit's six characters carry **no `COLOR_0` at
-// all**, measured — `JOINTS_0, NORMAL, POSITION, TEXCOORD_0, WEIGHTS_0` and nothing more.
+// The props had an answer in hand and these bodies do not: heyheythere bakes its ambient
+// occlusion into `COLOR_0`, so `prop_grade.deepen_grime` had per-prop geometric information
+// about where dirt collects. The KayKit cast carried **no `COLOR_0` at all**, measured, and
+// the generated bodies that replaced it in #79 do not carry one either — `machine_parts`
+// writes a position, a normal and one UV, and baking occlusion into a procedural body would
+// be a second pass over geometry the declaration can change on any run.
 //
 // So the grime is derived, which is exactly `ground.gdshader`'s answer to the same
 // complaint about the yard: *"the ground should be slightly bumpy/textured like real
@@ -260,13 +283,15 @@ void vertex() {
 void fragment() {
 	vec4 colour = albedo_tint;
 	if (has_albedo_texture) {
-		colour *= texture(albedo_texture, UV);
+		colour *= texture(albedo_texture, UV * uv_scale);
 	}
 
 	// Four evaluations: the value, and one forward difference an axis. `ground.gdshader`
 	// pays the same four for the yard's relief and for the same reason — it needs no tangent
-	// frame and no UVs, and a `NORMAL_MAP` would need both. These characters have UVs, and
-	// they point at a 64-pixel swatch, so a normal map through them would be a flat colour.
+	// frame and no UVs, and a `NORMAL_MAP` would need both. **A generated body does have UVs
+	// worth sampling** since #79 — box-projected at one unit to the body — so a `NORMAL_MAP`
+	// is now merely unavailable rather than useless: `assets/generated/` is albedo-only and
+	// there is no normal map to load, which is #42's premise on the ground exactly.
 	float dirt = grime_at(rest);
 	vec3 slope = vec3(
 		grime_at(rest + vec3(grime_step, 0.0, 0.0)) - dirt,
@@ -285,14 +310,35 @@ void fragment() {
 	float threshold = mix(wound_closed_at, wound_open_at, hurt);
 	float opened = smoothstep(threshold, threshold + wound_edge, seam);
 
+	// **How much of the grime survives this far out**, and #79 found that #75 computed this
+	// and then applied it to only one of the three things that need it.
+	//
+	// The field is procedural, so it has **no mip chain** — which is `ground.gdshader`'s own
+	// reason for fading the relief, and the reason is about sampling rather than about
+	// normals: past the range where one feature is under a pixel, a field stops being detail
+	// and becomes noise. `grime_metres` is 0.034 of a body, which on a 1.6 m Crawler is 5.4 cm
+	// features, and the screen resolves about 49 px a metre at twelve metres — so the field is
+	// aliasing from about there on. The relief faded and the **albedo** and the **roughness**
+	// did not.
+	//
+	// The roughness one is the damaging half on a metal, and it is what #79's renders came
+	// back as. A metal's reflection *is* its surface, so a per-fragment roughness is a
+	// per-fragment change of what the body reflects — and this sky is a bright ochre at the
+	// horizon and dark blue at the zenith, so an aliasing field turns a Breaker into blue and
+	// white confetti. On #75's smooth skinned characters neighbouring fragments faced almost
+	// the same way and the spread only blurred a reflection; on hard-edged plate it swaps it.
+	float near = 1.0 - smoothstep(relief_fade_begin, relief_fade_end, length(VERTEX));
+
 	ALBEDO = (
 		colour.rgb
-		* mix(1.0 - grime_depth, 1.0, dirt)
+		* mix(1.0, mix(1.0 - grime_depth, 1.0, dirt), near)
 		* mix(1.0 - wound_darkening, 1.0, clamp(health, 0.0, 1.0))
 	);
 	ALPHA = colour.a;
 	METALLIC = metallic;
-	ROUGHNESS = clamp(roughness + (0.5 - dirt) * 2.0 * roughness_spread, 0.04, 1.0);
+	ROUGHNESS = clamp(
+		roughness + (0.5 - dirt) * 2.0 * roughness_spread * near, 0.04, 1.0
+	);
 
 	// The wound itself, and the flash of a round arriving. One emission, two contributions:
 	// the cracks are steady and belong to how hurt the body is, and the flash is whole-body
@@ -308,7 +354,6 @@ void fragment() {
 
 	// Bend the normal down the slope, with the component along it taken out first so that
 	// the field tilts the surface rather than inflating it.
-	float near = 1.0 - smoothstep(relief_fade_begin, relief_fade_end, length(VERTEX));
 	// A height field's normal, with the component along the surface normal taken out first
 	// so the field tilts the surface rather than inflating it. The gradient is **not**
 	// normalised: a flat patch of the field has to stay a flat patch of the body, and

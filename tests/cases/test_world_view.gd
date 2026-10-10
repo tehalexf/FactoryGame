@@ -2753,21 +2753,91 @@ func test_cargo_rides_on_the_deck_the_simulation_says_a_player_stands_on() -> vo
 	view.free()
 
 
-func test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own() -> void:
-	# #75. The committed KayKit atlas is a cold bone-white at eight times the luminance of the
-	# darkest cell a Crawler wears, and #38's answer was one dark tint per kind — which cannot
-	# change a ratio, so what shipped was a pale skull on a near-black body. The surface is
-	# `tools/assets/enemy_grade.py`'s graded copy now, and the assertion is that the graded
-	# file is what actually reaches the shader: a grade nothing samples is `prop_grade.py`'s
-	# own opening defect, and the only way to catch it is from this side of the seam.
+func test_every_enemy_surface_is_painted_out_of_the_palette_by_its_own_name() -> void:
+	# #79. This assertion used to read "wears the graded atlas rather than the pack's own",
+	# and it was #75's answer to a problem the asset created: the committed KayKit atlas is a
+	# cold bone-white at eight times the luminance of the darkest cell a Crawler wears, so
+	# `enemy_grade.py` remapped the pixels onto the palette's ramps and this checked that the
+	# graded file was what actually reached the shader.
+	#
+	# A declared body needs no grade, because a part is **assigned** its palette entry in
+	# `tools/assets/enemy_recipe.py` rather than having one inferred from a pixel. So the
+	# claim is the same one in the other direction, and it is made of **every** surface
+	# rather than of the first: each one is named after a palette entry, and the texture on
+	# it is that entry's own. A surface whose name resolves to nothing is a part drawn in
+	# flat white, and the only way to catch that is from this side of the seam.
+	#
+	# **An entry with no texture is an ordinary state and the first version of this test did
+	# not know it.** `DullBrass` and `Copper` are flat colours in `dieselpunk_palette.json`,
+	# and a Crawler's first surface *is* `DullBrass` — its mandibles — so asserting a texture
+	# path on surface 0 would have failed on a correct Enemy.
 	var sim: Simulation = _threatened_sim()
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
-		assert_eq(
-			view.enemy_surface_texture_path(kind),
-			WorldView.ENEMY_GRADED_ATLAS,
-			"kind %d is painted with %s" % [kind, view.enemy_surface_texture_path(kind)]
+	var textured: int = 0
+	for kind: int in [
+		Simulation.ENEMY_KIND_CRAWLER,
+		Simulation.ENEMY_KIND_BREAKER,
+		Simulation.ENEMY_KIND_SIEGE_HULK,
+	]:
+		assert_true(
+			view.enemy_surface_count(kind) > 1,
+			"kind %d is drawn in several palette entries rather than one" % kind
+		)
+		for surface: int in range(view.enemy_surface_count(kind)):
+			var name: String = view.enemy_surface_name(kind, surface)
+			var entry: StandardMaterial3D = load(
+				WorldView.PALETTE_MATERIALS + name + ".tres"
+			) as StandardMaterial3D
+			assert_true(
+				entry != null,
+				"kind %d surface %d (%s) is a palette entry" % [kind, surface, name]
+			)
+			if entry == null:
+				continue
+			var wanted: String = (
+				"" if entry.albedo_texture == null else entry.albedo_texture.resource_path
+			)
+			assert_eq(
+				view.enemy_surface_texture_path_at(kind, surface),
+				wanted,
+				"kind %d surface %s wears the palette's own map" % [kind, name]
+			)
+			if not wanted.is_empty():
+				textured += 1
+	assert_true(textured > 0, "at least one surface really does carry a palette texture")
+	view.free()
+
+
+func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal() -> void:
+	# `_sync_scenery` takes ambient and reflections off the sky precisely because the generated
+	# surfaces are mostly metal. #75 made the Enemies metal on the argument that a **dielectric
+	# at 0.17 albedo has nothing to reflect**, and #79 was asked to re-derive that for a chitin
+	# shell, which really is a glossy dielectric.
+	#
+	# **It was re-derived, shipped into a render, and rejected by the picture.** At `metallic
+	# = 0` and roughness 0.45 a Crawler came back as pale tan limbs under a crawling white
+	# speckle: the palette runs 0.055 to 0.14 albedo, so a dielectric here is a body whose own
+	# colour is a twentieth of the specular sitting on top of it. The durable form of #75's
+	# claim is therefore about the **lighting** rather than about the albedo — this world's
+	# light is tuned for metal, and anything in it that is not metal reads as a smear — which
+	# is why this assertion survives a ticket that set out to reverse it.
+	#
+	# Asserted as a pair, because either half alone is satisfiable by the wrong answer: a
+	# dielectric at any roughness, or a metal polished to a mirror.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for kind: int in [
+		Simulation.ENEMY_KIND_CRAWLER,
+		Simulation.ENEMY_KIND_BREAKER,
+		Simulation.ENEMY_KIND_SIEGE_HULK,
+	]:
+		assert_eq(view.enemy_surface_metallic(kind), 1.0, "kind %d is metal" % kind)
+		assert_true(
+			view.enemy_surface_roughness(kind) >= 0.4,
+			"kind %d is cast and worn rather than polished: %f"
+			% [kind, view.enemy_surface_roughness(kind)]
 		)
 	view.free()
 
@@ -3172,22 +3242,6 @@ func test_a_hot_reload_redraws_cargo_that_changed_what_it_is() -> void:
 	)
 	view.free()
 
-
-func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal() -> void:
-	# `_sync_scenery` takes ambient and reflections off the sky precisely because the generated
-	# surfaces are mostly metal and a metal lit by an ambient *colour* has nothing to reflect.
-	# Until #75 a Crawler was the one thing in the world that was not metal — 0.05 metallic at
-	# 0.88 roughness — so it had nothing to catch, and measured off a `swarm bare` render it sat
-	# at a seventh of the luminance of the ground it was standing on.
-	var sim: Simulation = _threatened_sim()
-	var view: WorldView = WorldView.new()
-	view.sync(sim)
-	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
-		assert_true(
-			view.enemy_surface_metallic(kind) >= 0.5,
-			"kind %d is %f metallic" % [kind, view.enemy_surface_metallic(kind)]
-		)
-	view.free()
 
 
 ## ── An Enemy at one hit point, and a death that leaves something behind (#70) ────────────
