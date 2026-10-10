@@ -207,6 +207,17 @@ const NEST_BODY: String = "nest"
 ## output south — so a tile is turned by the direction its run goes in.
 const BELT_BODY: String = "belt_straight"
 
+## The material the mesh generator gives a Belt's running surface, and the one the scrolling
+## deck shader replaces. The generator's own name for it — see `_make_the_deck_run`.
+const BELT_DECK_MATERIAL: String = "BeltRubber"
+
+const BELT_DECK_SHADER: String = "res://game/belt_deck.gdshader"
+
+## What a Belt's cleats are made of. The palette's own plate — the same file the Walls wear,
+## named separately here because "the Wall's material" is the wrong sentence to read at the
+## place a conveyor's slats are being coloured.
+const BELT_CLEAT_MATERIAL: String = "res://assets/machines/materials/WeldedSteel.tres"
+
 ## How many cells the Telegraph's gauge is drawn with. A rising bar of text, because there
 ## is no audio yet and a countdown alone does not read as a klaxon.
 const TELEGRAPH_GAUGE_CELLS: int = 20
@@ -510,14 +521,68 @@ var _belt_meshes: MultiMeshInstance3D = null
 ## the Items use, with a yaw in the basis because a tile of Belt points somewhere.
 var _belt_transforms: PackedFloat32Array = PackedFloat32Array()
 
-## Every Item on every Belt, as instances of one mesh.
+## The shader painting the generated Belt's deck, or null where this checkout has no trestle.
+##
+## Held so the scroll can be handed to it every sync. It is the one piece of renderer state in
+## the Belt drawing, and it is the same category of thing as the cached bodies: a property of
+## the *asset*, resolved once, rather than anything about the Run.
+var _belt_deck_material: ShaderMaterial = null
+
+## Which surface of the generated Belt body the deck shader replaced, or -1 for none.
+var _belt_deck_surface: int = -1
+
+## How far along one cleat pitch the deck has travelled, 0 to 1. A function of the tick.
+var _belt_deck_scroll: float = 0.0
+
+## Every Item on every Belt, as instances of one mesh **per `ItemAppearance` form**.
 ##
 ## Deliberately a MultiMesh rather than a node each. ADR 0002 makes Items derived state
 ## that is recomputed rather than replicated, and ADR 0001 keeps Godot a renderer: an
 ## Item must therefore never be a node, and at the scale this system reaches — the
 ## genre's reference implementation spends most of a late-game frame on Belts and their
 ## Items — one node per Item would be the first thing to fall over.
-var _item_meshes: MultiMeshInstance3D = null
+##
+## **One a form rather than one in total, which is #73.** Until then there was a single
+## buffer drawing a single brown box, so iron ore, coal, plate and Ammunition were the same
+## picture — and a player looking at two Belts could not tell which carried the Boiler's fuel
+## and which the Press's plate. That contradicts the standard this project holds Machine
+## silhouettes to (`machine_silhouette.py` fails the asset suite if any two converge) on the
+## argument that reading your own production line at a glance is the core skill in a factory
+## game. The **Items are the content of that line** and had none of that care.
+##
+## **What it costs is four buffers and four draw calls instead of one**, and the count is a
+## constant rather than a function of the content — which is the whole reason the look is keyed
+## on a *form* rather than on an Item. `ItemAppearance.FORM_COUNT` is closed (fired, burned,
+## dug, made), so this is `EnemyKind.KIND_NAMES`' bargain exactly: built eagerly on the first
+## sync, before a Belt has anything on it, so `test_cargo_is_never_a_node_however_much_of_it_there_is`
+## asserts **zero** node growth rather than "no more than one per form". A MultiMesh per *Item
+## id* would have grown the scene tree with `content/recipes.csv`, which is the one thing the
+## absence of an Item table is there to prevent.
+##
+## Per-instance colour was #73's stated minimum and a material per form is strictly better
+## here — see `ItemAppearance.FORM_MATERIALS` for why albedo alone cannot say what brass is.
+var _cargo_meshes: Array[MultiMeshInstance3D] = []
+
+## The instance transforms handed to each form's MultiMesh, in the flat twelve-floats layout.
+##
+## Parallel to `_cargo_meshes`, so index is form. Rebuilt every sync like every other buffer in
+## this file; a MultiMesh keeps its own copy on the rendering server where a headless test
+## cannot read it back, which is why `_item_transforms` below exists as well.
+var _cargo_transforms: Array[PackedFloat32Array] = []
+
+## Every Item's form, indexed by the definition set's own Item index, resolved once per
+## content change rather than per Item per frame. See `_resolve_cargo_forms`.
+var _cargo_forms: PackedInt64Array = PackedInt64Array()
+
+## The definition digest `_cargo_forms` was resolved against, so a hot-reload re-derives it.
+var _cargo_forms_digest: int = 0
+
+## Which form each Item was drawn as, in the Simulation's own order.
+##
+## Parallel to `_item_transforms` — one entry per Item, Belt by Belt and slot by slot — so a
+## test can ask what the renderer decided about the Item the Simulation calls *this* one,
+## rather than inferring it from which buffer happens to hold it.
+var _item_forms: PackedInt64Array = PackedInt64Array()
 
 ## Every Enemy on the Map, as instances of one mesh **per kind**.
 ##
@@ -1332,6 +1397,81 @@ func item_instance_count() -> int:
 ## later that needs to point at a specific Item.
 func item_instance_position(instance: int) -> Vector3:
 	return _instance_position(_item_transforms, instance)
+
+
+## How far along one cleat pitch the Belt deck has travelled, 0 to 1 (#73).
+##
+## Reported whether or not this checkout has a generated trestle to put it on, because the
+## claim it exists for — that the deck is a function of the tick and of nothing else — is about
+## the arithmetic rather than about the asset.
+func belt_deck_scroll() -> float:
+	return _belt_deck_scroll
+
+
+## Whether the generated Belt trestle resolved, as against the placeholder slab.
+func belt_has_a_generated_body() -> bool:
+	return _body(BELT_BODY) != null
+
+
+## Which surface of that body the scrolling deck was put on, or -1 if none was found.
+func belt_deck_surface() -> int:
+	return _belt_deck_surface
+
+
+## How many of the Belt body's surfaces scroll. One — the rubber, and not the frame.
+func belt_surfaces_that_scroll() -> int:
+	var body: Mesh = _body(BELT_BODY)
+	if body == null:
+		return 0
+	var scrolling: int = 0
+	for surface: int in range(body.get_surface_count()):
+		if body.surface_get_material(surface) is ShaderMaterial:
+			scrolling += 1
+	return scrolling
+
+
+## How many Items of one form were drawn. One per form's own MultiMesh (#73).
+func cargo_instance_count(form: int) -> int:
+	if form < 0 or form >= _cargo_transforms.size():
+		return 0
+	return _cargo_meshes[form].multimesh.instance_count
+
+
+## Where one instance of a form's cargo was actually written into that form's own buffer.
+##
+## The read-back that makes the per-form drawing assertable rather than inferred: the buffer a
+## MultiMesh is handed lives on the rendering server, so without this a test could only check
+## that the *count* was right and would miss cargo written to the wrong place — or to a copy.
+func cargo_instance_position(form: int, instance: int) -> Vector3:
+	if form < 0 or form >= _cargo_transforms.size():
+		return Vector3.ZERO
+	return _instance_position(_cargo_transforms[form], instance)
+
+
+## The palette material one form's cargo is wearing, by name, as the renderer actually
+## resolved it — so a test reads what was drawn rather than what was asked for.
+func cargo_material_name(form: int) -> String:
+	if form < 0 or form >= _cargo_meshes.size():
+		return ""
+	var mesh: Mesh = _cargo_meshes[form].multimesh.mesh
+	if mesh == null or mesh.get_surface_count() == 0:
+		return ""
+	var skin: Material = mesh.surface_get_material(0)
+	return "" if skin == null else skin.resource_name
+
+
+## Which form the renderer drew the Item the Simulation calls this Belt's `slot`th.
+##
+## Keyed by the Simulation's own coordinates rather than by a flat index, because that is the
+## question a caller actually has — "what did you make of the thing on *this* Belt" — and
+## because the flat order is this file's business and not a contract.
+func cargo_form_of_belt_item(sim: Simulation, belt: int, slot: int) -> int:
+	var flat: int = slot
+	for index: int in range(belt):
+		flat += sim.query_belt_item_count(index)
+	if flat < 0 or flat >= _item_forms.size():
+		return -1
+	return _item_forms[flat]
 
 
 ## Where a Machine's placeholder stands, in metres. For the smoke test, and for
@@ -2978,6 +3118,26 @@ func _sync_belts(sim: Simulation) -> void:
 			_belt_meshes.material_override = skin
 		_belt_meshes.multimesh = instanced
 		add_child(_belt_meshes)
+		_make_the_deck_run(instanced.mesh)
+
+	# **How far the cleats have travelled, and it is a function of the tick.** The deck advances
+	# one cleat pitch every `ticks_per_item` ticks, and a pitch is one Item slot wide — so the
+	# surface runs at *exactly* the speed of the cargo on it, for any Belt rating, without a
+	# second number anywhere to disagree with `belt.items_per_second` and `belt.items_per_tile`.
+	# On the shipped rating that is 0.5 m every 15 ticks, which is the Belt's own 2 m/s.
+	#
+	# Counted in ticks rather than seconds for `SCANNER_PERIOD_TICKS`' reason, which is a hard
+	# rule here and not a preference: two Runs down the same script have to look the same, and
+	# `test_the_deck_scrolls_and_nothing_about_it_is_timed_by_a_clock` asserts it from both
+	# sides — a frame that stepped nothing draws the same deck, and one whole period on it is
+	# back where it was.
+	var period: int = maxi(sim.query_belt_ticks_per_item(), 1)
+	_belt_deck_scroll = float(posmod(sim.query_tick(), period)) / float(period)
+	if _belt_deck_material != null:
+		_belt_deck_material.set_shader_parameter("scroll", _belt_deck_scroll)
+		_belt_deck_material.set_shader_parameter(
+			"cleat_pitch_metres", tile_size / float(maxi(sim.query_belt_items_per_tile(), 1))
+		)
 
 	# A placeholder slab is modelled about its own centre, so it alone has to be lifted
 	# onto its feet; a generated tile of trestle already stands on the ground.
@@ -3015,6 +3175,55 @@ func _sync_belts(sim: Simulation) -> void:
 	_belt_meshes.multimesh.instance_count = tiles
 	if tiles > 0:
 		_belt_meshes.multimesh.buffer = _belt_transforms
+
+
+## Puts the scrolling shader on the generated Belt body's own deck surface.
+##
+## **Found by material name, and the name is the generator's.** `tools/assets/machine_recipes.py`
+## adds the running surface as `BeltRubber` and the frame, legs, rollers and hazard stripes as
+## other palette materials, and `_merged_body` keeps one surface per material — so "the deck" is
+## a surface this can ask for by name rather than a guess at an index. Checked rather than
+## assumed: `test_the_deck_that_scrolls_is_the_belts_own_rubber_and_not_its_frame` asserts the
+## surface is found and that **exactly one** scrolls, because #49 is what an unchecked claim
+## about a named surface costs — a branch written against geometry nobody had looked at sat in
+## the docs as a fact for a whole ticket.
+##
+## The `BeltRubber` material's own albedo, texture, scale, metallic and roughness are carried
+## across into the shader rather than replaced, so the deck keeps the generated surface it had
+## and gains cleats. A shader that painted its own colour would be a second authority on what
+## rubber looks like, with the palette as the first.
+##
+## A checkout with no generated trestle draws the placeholder slab and gets no deck and no
+## scroll, which is the ordinary state a missing body already has everywhere else in this file.
+func _make_the_deck_run(body: Mesh) -> void:
+	if body == null:
+		return
+	for surface: int in range(body.get_surface_count()):
+		var skin: StandardMaterial3D = body.surface_get_material(surface) as StandardMaterial3D
+		if skin == null or skin.resource_name != BELT_DECK_MATERIAL:
+			continue
+		var running: ShaderMaterial = ShaderMaterial.new()
+		running.shader = load(BELT_DECK_SHADER)
+		if running.shader == null:
+			return
+		running.set_shader_parameter("deck_colour", skin.albedo_color)
+		running.set_shader_parameter("deck_metallic", skin.metallic)
+		running.set_shader_parameter("deck_roughness", skin.roughness)
+		running.set_shader_parameter(
+			"deck_map_scale", Vector2(skin.uv1_scale.x, skin.uv1_scale.y)
+		)
+		if skin.albedo_texture != null:
+			running.set_shader_parameter("deck_map", skin.albedo_texture)
+		# The palette's own plate for the cleats, so the one bright thing on a Belt is a colour
+		# the Factory already wears — #42's lesson about a colour picked against the wrong
+		# background, which this project has now paid for five times.
+		var plate: StandardMaterial3D = load(BELT_CLEAT_MATERIAL) as StandardMaterial3D
+		if plate != null:
+			running.set_shader_parameter("cleat_colour", plate.albedo_color)
+		body.surface_set_material(surface, running)
+		_belt_deck_material = running
+		_belt_deck_surface = surface
+		return
 
 
 ## Every Wall on the Map, as one block a tile.
@@ -3098,22 +3307,9 @@ func _sync_walls(sim: Simulation) -> void:
 ## -up line diagnosable by looking at it — the queue of Items on screen is the queue in
 ## the state, down to the sub-unit.
 func _sync_items(sim: Simulation) -> void:
-	if _item_meshes == null:
-		_item_meshes = MultiMeshInstance3D.new()
-		var instanced: MultiMesh = MultiMesh.new()
-		instanced.transform_format = MultiMesh.TRANSFORM_3D
-		var box: BoxMesh = BoxMesh.new()
-		box.size = Vector3(ITEM_SIZE_METRES, ITEM_SIZE_METRES, ITEM_SIZE_METRES)
-		instanced.mesh = box
-		_item_meshes.multimesh = instanced
-		var material: StandardMaterial3D = StandardMaterial3D.new()
-		material.albedo_color = Color(0.62, 0.36, 0.20)
-		_item_meshes.material_override = material
-		add_child(_item_meshes)
-
-	var total: int = 0
-	for index: int in range(sim.query_belt_count()):
-		total += sim.query_belt_item_count(index)
+	var definitions: Definitions = sim.query_definitions()
+	_build_cargo_meshes()
+	_resolve_cargo_forms(sim, definitions)
 
 	# How high the deck is comes from the Simulation, because #30 made a Belt solid and
 	# `belt.deck_height_metres` is what a player stands on — an Item riding 10 cm above or
@@ -3124,26 +3320,191 @@ func _sync_items(sim: Simulation) -> void:
 		if _body(BELT_BODY) != null
 		else BELT_HEIGHT_METRES
 	)
+
+	var total: int = 0
+	for index: int in range(sim.query_belt_count()):
+		total += sim.query_belt_item_count(index)
+
+	# `_item_transforms` stays the flat array in the Simulation's own order — every Item, Belt
+	# by Belt and slot by slot — because that is what `item_instance_count` and
+	# `item_instance_position` have always meant and what a MultiMesh buffer cannot be read
+	# back out of. The per-form buffers below are what is actually drawn. The same arrangement
+	# `_belt_transforms` has, one system down.
 	_item_transforms.resize(total * FLOATS_PER_INSTANCE)
+	_item_forms.resize(total)
+	var drawn: PackedInt64Array = PackedInt64Array()
+	drawn.resize(ItemAppearance.FORM_COUNT)
+	# **Grown and never shrunk**, because a form's share of the cargo is not known until the
+	# walk is done and this is the hottest loop in the project: sizing each buffer to the whole
+	# Map every frame and back down again would reallocate four arrays a frame for a Factory
+	# whose Item count barely moves. What is handed to the MultiMesh is a slice of exactly the
+	# length it carries, which is the one allocation this has to make.
+	for form: int in range(ItemAppearance.FORM_COUNT):
+		if _cargo_transforms[form].size() < total * FLOATS_PER_INSTANCE:
+			_cargo_transforms[form].resize(total * FLOATS_PER_INSTANCE)
+
 	var instance: int = 0
 	for index: int in range(sim.query_belt_count()):
 		var layer: int = sim.query_belt_tile(index, 0).y
-		var height: float = (
-			Fixed.to_float(sim.query_layer_height_metres(layer)) + deck + ITEM_SIZE_METRES * 0.5
-		)
+		# On the deck exactly, because every cargo mesh is modelled standing on its own
+		# zero — `_cargo_mesh`'s note. Lifting by half a box is what the single cube needed
+		# and would now bury the tall forms' feet or float the flat ones.
+		var height: float = Fixed.to_float(sim.query_layer_height_metres(layer)) + deck
 		for slot: int in range(sim.query_belt_item_count(index)):
 			var where: FixedVec2 = sim.query_belt_item_position_metres(index, slot)
-			_write_instance(
-				_item_transforms,
-				instance,
-				Vector3(Fixed.to_float(where.x), height, Fixed.to_float(where.z)),
-				0.0
+			var at: Vector3 = Vector3(
+				Fixed.to_float(where.x), height, Fixed.to_float(where.z)
 			)
+			# **What it is decides which buffer it goes in**, read off the table resolved at
+			# the top of this sync rather than derived here — see `_resolve_cargo_forms`.
+			var form: int = _cargo_form_of(definitions, sim.query_belt_item_id(index, slot))
+			_write_instance(_item_transforms, instance, at, 0.0)
+			_item_forms[instance] = form
+			_write_instance(_cargo_transforms[form], drawn[form], at, 0.0)
+			drawn[form] += 1
 			instance += 1
 
-	_item_meshes.multimesh.instance_count = total
-	if total > 0:
-		_item_meshes.multimesh.buffer = _item_transforms
+	for form: int in range(ItemAppearance.FORM_COUNT):
+		var node: MultiMeshInstance3D = _cargo_meshes[form]
+		node.multimesh.instance_count = drawn[form]
+		if drawn[form] > 0:
+			# A MultiMesh refuses a buffer longer than its instance count, so what crosses is
+			# a slice of the working array rather than the array.
+			node.multimesh.buffer = _cargo_transforms[form].slice(
+				0, drawn[form] * FLOATS_PER_INSTANCE
+			)
+
+
+## Resolves every Item's form once a sync, and only when the content could have changed.
+##
+## **This is a performance decision and it is not a small one.** `ItemAppearance.form_of` walks
+## the Recipes and the Machines to answer, which is the right shape for a question asked about
+## the definition set — and asking it per Item per frame would make the hottest loop in the
+## project O(Items x (Recipes + Machines)), on the one system whose scale this whole data layout
+## exists to protect. The answer is a property of the **content** rather than of the Run, so it
+## is resolved once for every Item the Recipes mention — four, on the shipped set — and read
+## back per Item as an array index.
+##
+## Keyed on `query_definition_digest`, which is the number that moves when a hot-reload changes
+## what the Run is playing by, so an Item interned by an edit mid-Run is picked up on the next
+## frame rather than drawn as whatever happened to sort there before.
+func _resolve_cargo_forms(sim: Simulation, definitions: Definitions) -> void:
+	var digest: int = sim.query_definition_digest()
+	if digest == _cargo_forms_digest and _cargo_forms.size() == definitions.item_count():
+		return
+	_cargo_forms_digest = digest
+	_cargo_forms.resize(definitions.item_count())
+	for item: int in range(definitions.item_count()):
+		_cargo_forms[item] = ItemAppearance.form_of(definitions, item)
+
+
+## The form of one Item by id, off that table.
+func _cargo_form_of(definitions: Definitions, item_id: String) -> int:
+	var item: int = definitions.item_index(item_id)
+	if item < 0 or item >= _cargo_forms.size():
+		return ItemAppearance.FORM_ORE
+	return _cargo_forms[item]
+
+
+## One MultiMesh per form, built once, on the first sync.
+##
+## Eagerly rather than on the first Item of a kind, for `_build_swarm_meshes`' reason: it is
+## what lets the node-count assertion be *zero growth* rather than a bound, and it pays the
+## mesh building at load rather than on the frame a line starts running.
+func _build_cargo_meshes() -> void:
+	if not _cargo_meshes.is_empty():
+		return
+	for form: int in range(ItemAppearance.FORM_COUNT):
+		var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+		var instanced: MultiMesh = MultiMesh.new()
+		instanced.transform_format = MultiMesh.TRANSFORM_3D
+		instanced.mesh = _cargo_mesh(form)
+		node.multimesh = instanced
+		_cargo_meshes.append(node)
+		_cargo_transforms.append(PackedFloat32Array())
+		add_child(node)
+
+
+## The mesh one form of cargo is drawn as, wearing that form's palette material.
+##
+## **Shape as well as colour**, because colour alone is the weaker half of the claim: #52
+## settled that nothing wins a contrast fight on brightness alone, and a silhouette survives
+## distance where a hue does not. A slab, a bundle of rounds and a cluster of rubble read apart
+## at the thirty metres a player triages a Factory from; so the two mineral forms, which share
+## a build, are separated by the strongest colour pair in the set instead — `OxideRed` rust
+## against near-black `Soot`.
+##
+## Built here rather than generated, for the reason the Crawler's carapace is: this is the one
+## category of mesh that has to go in a MultiMesh in the thousands, so it is a handful of boxes
+## and stays a handful of boxes. No material is set per *instance* and none is overridden on the
+## node — the surface carries it, which is what lets brass be metallic and soot be matte.
+func _cargo_mesh(form: int) -> Mesh:
+	var built: SurfaceTool = SurfaceTool.new()
+	built.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var size: float = ITEM_SIZE_METRES
+	var block: BoxMesh = BoxMesh.new()
+	block.size = Vector3.ONE
+
+	# **Modelled with its feet on the deck and filling its envelope**, and both halves of that
+	# were a render finding rather than a plan. A body is *placed, never measured* here — the
+	# rule every Machine body obeys — so a form whose geometry straddled the origin would have
+	# floated a stacked slab 9 cm over the surface a player walks on, which is exactly the "an
+	# Item riding above the deck reads as a bug" #30 warns about. And the first pass spanned
+	# about 0.7 of `ITEM_SIZE_METRES` against the solid box it replaced, which measured as half
+	# the screen area from Survey View: the colour was right and the cargo had got *quieter*,
+	# which is the opposite of the ticket. Every form now spans the full width and stands on 0.
+	var parts: Array = []
+	match form:
+		ItemAppearance.FORM_STOCK:
+			# Finished stock: a flat stack, wide and thin, lying the way plate is stacked. The
+			# one form whose outline is unmistakable from above, which is what Survey View sees.
+			for layer: int in range(3):
+				parts.append([
+					Vector3(1.00, 0.16, 0.80), Vector3(0.0, 0.08 + float(layer) * 0.17, 0.0), 0.0
+				])
+		ItemAppearance.FORM_MUNITION:
+			# Rounds, stood on end in a row: a vertical, regular, man-made silhouette against
+			# the irregular mineral forms, and the one thing in the set that is *tall*.
+			for round_index: int in range(3):
+				parts.append([
+					Vector3(0.22, 0.92, 0.22),
+					Vector3((float(round_index) - 1.0) * 0.30, 0.46, 0.0),
+					0.0
+				])
+		ItemAppearance.FORM_FUEL:
+			# Fuel: a low, broad scatter of broken flakes, flatter than ore, because coal breaks
+			# into flakes and because the two mineral forms want different outlines as well as
+			# the strongest colour pair in the set.
+			parts = [
+				[Vector3(0.70, 0.30, 0.58), Vector3(-0.16, 0.15, 0.10), 0.07],
+				[Vector3(0.50, 0.26, 0.46), Vector3(0.26, 0.13, -0.20), 0.07],
+				[Vector3(0.38, 0.20, 0.34), Vector3(-0.04, 0.32, -0.24), 0.07],
+				[Vector3(0.30, 0.16, 0.30), Vector3(0.22, 0.30, 0.26), 0.07],
+			]
+		_:
+			# Ore, and anything a later form has not been drawn for: a chunky three-lump
+			# cluster. The fallback is the raw one deliberately — an Item the Factory cannot
+			# make is one that arrived from outside it, which is what `FORM_ORE` already means.
+			parts = [
+				[Vector3(0.72, 0.60, 0.64), Vector3(-0.12, 0.30, 0.07), 0.12],
+				[Vector3(0.52, 0.46, 0.50), Vector3(0.26, 0.23, -0.16), 0.12],
+				[Vector3(0.34, 0.32, 0.36), Vector3(-0.20, 0.58, -0.23), 0.12],
+			]
+
+	for part: Array in parts:
+		built.append_from(block, 0, Transform3D(
+			Basis.from_euler(Vector3(0.0, TAU * float(part[2]), 0.0)).scaled(
+				(part[0] as Vector3) * size
+			),
+			(part[1] as Vector3) * size
+		))
+
+	built.index()
+	var merged: ArrayMesh = built.commit()
+	var skin: Material = load(ItemAppearance.material_path_of(form)) as Material
+	if skin != null:
+		merged.surface_set_material(0, skin)
+	return merged
 
 
 ## The one number this ticket exists to make visible: what the Factory has extracted.
