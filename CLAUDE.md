@@ -7879,12 +7879,15 @@ one sharing an edge with it** — so the tile a refusal leaves a body on is a ti
 from, at the rate it bit at before. The sixteen tiles a Wave used to stand on were never where
 the damage was decided; they were only where the bodies were drawn.
 
-**It is worth knowing how much bigger the effect is where melee against the Nest really is the
-clock.** On `test_enemy_collision`'s own fixture — eight Crawlers, no Factory, nothing shooting
-at them — the Nest falls at tick 5637 against 4765 before, **18% later**, because there the
-whole Run is a pile chewing one building and the pile is now outside it rather than spread
-across it. No shipped scenario looks like that: fifteen of the seventeen end swarmed or with a
-Siege Hulk standing, and the Turret kills most of the Chaff before it is at anybody's wall.
+**It holds where melee against the Nest really is the clock, which is the sharper test.** On
+`test_enemy_collision`'s own fixture — eight Crawlers, no Factory, nothing shooting at them, so
+the whole Run is a pile chewing one building — the Nest falls at tick **4737 against 4765
+before**, half a second *sooner*. So the rate is not merely preserved; it is marginally faster,
+and the reason is `_squeezed_along_the_wall`: a crowd fanned out along a face has more of
+itself within biting range than a crowd compressed into one lane. Measured on the intermediate
+build that had the refusal and **not** the squeeze, the same fixture took 5637 ticks — 18%
+longer — which is what a crush that cannot spread costs and is the second reason that change
+had to be made rather than deferred.
 
 Three smaller things the figures say. `sealed_breach` absorbed **960** hit points against
 #60's 980 across the same 7 Walls built and 3 standing, which is the one row where a crowd
