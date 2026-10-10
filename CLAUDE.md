@@ -792,7 +792,12 @@ Every one of these was drawn, was the right colour, was in the right place and w
    the Crawlers, which is #69's own finding about a 0.75 m impact and #56's about a red post, a
    third time. A **flat disc** cannot read as an object, because nothing in this world is a metre
    across and six centimetres thick — and it needed a cylinder rather than the shared box, since
-   at ten metres a flat *square* reads as a plate somebody put there.
+   at ten metres a flat *square* reads as a plate somebody put there. The third shape was the
+   obvious correction to the second and is also wrong: seen from eye level a flat disc on the
+   floor is nearly edge-on and reads as a **bar**, so it was given three tenths of a body's
+   height to read as a puff — and came back as a pale slab two metres wide standing in front of
+   the Chaff and hiding one of them. **A mark on the ground is allowed to look like a mark on
+   the ground**; what it may not do is look like something somebody put there.
 2. **The stain at three centimetres read as a plinth.** #52's rule for the one mark that lies on
    the floor — paint, not a plinth — and one centimetre is what makes it paint.
 3. **Thresholding the wound against 1.0 opened nothing at all.** The arithmetically tidy version

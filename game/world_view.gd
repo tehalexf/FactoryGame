@@ -482,6 +482,13 @@ const DEATH_BURST_TICKS: int = 15
 ## about a 0.75 m impact burst and #56's about a red post, a third time. A flat ring expanding
 ## outward cannot read as an object, because nothing in this world is a metre across and six
 ## centimetres thick.
+##
+## **A thin disc and not a squat one, and that was the third shape tried.** Seen from eye level
+## a flat disc on the floor is nearly edge-on, so it reads as a bright *bar* rather than as a
+## ring — and the obvious answer, giving it three tenths of a body's height so it reads as a
+## puff, brings the crate straight back: rendered, it is a pale slab two metres wide standing
+## in front of the Chaff and hiding one of them. **A mark on the ground is allowed to look like
+## a mark on the ground**; what it may not do is look like something somebody put there.
 const DEATH_BURST_SPREAD: float = 2.4
 const DEATH_BURST_THICKNESS: float = 0.06
 const DEATH_STAIN_SPREAD: float = 1.6
