@@ -81,7 +81,7 @@ func test_a_body_is_modelled_one_metre_tall_so_the_simulation_decides_how_big_it
 			continue
 		# Frame 0 of the move clip, which is a stride rather than the rest pose — so the
 		# tolerance is a quarter of a metre rather than a millimetre. That is still tight
-		# enough to catch any scale error worth the name: an unnormalised Golem would
+		# enough to catch any scale error worth the name: an unnormalised body would
 		# measure three and a half.
 		var extent: Vector2 = body.drawn_extent_metres(body.row_of(EnemyAnimator.MOVE, 0))
 		assert_true(

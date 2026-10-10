@@ -28,19 +28,21 @@ extends TestCase
 ##
 ## **Where the number comes from, measured rather than chosen.** On the casting #38 shipped,
 ## the Crawler and the Breaker sat at **0.42**, against 0.83 and 0.79 for either of them
-## against the Siege Hulk — the Minion and the Warrior are the same KayKit rig at the same
-## declared 1.6 m, so they have the same arm span, the same shoulders and the same head, and
-## what separates them is armour that is gone by about twelve metres. With the Breaker given
-## its own 2.2 m the three pairs measure **0.58, 0.83 and 0.67**.
+## against the Siege Hulk — the Minion and the Warrior were the same KayKit rig at the same
+## declared 1.6 m, so they had the same arm span, the same shoulders and the same head, and
+## what separated them was armour that is gone by about twelve metres. #49 gave the Breaker
+## its own 2.2 m and the three pairs measured **0.58, 0.83 and 0.67**.
 ##
 ## 0.50 is below the closest of those with room to tune a kind, and well above the 0.42 this
 ## gate was written to reject — so it fails the geometry it was written against and passes
 ## the geometry that replaced it, which is the only way a threshold means anything.
 ##
-## Note which pair is now the binding one: the Breaker against the **boss**, at 0.67, where
-## it was 0.79 before. Making a Breaker bigger walks it toward the Siege Hulk as fast as it
-## walks it away from the Crawler, so this gate is what stops the obvious next tuning step
-## from quietly trading one unreadable pair for another.
+## **#79 replaced the cast with three generated insects and this gate is why it could be
+## trusted to.** Three bugs are far more alike than a skeleton, a knight and a golem, so the
+## declaration separates them by gross form on purpose — leg count, how high the body is
+## slung, and where the mass sits — rather than by detail that distance takes first. The
+## measured figures are in CLAUDE.md; what matters here is that the threshold did not move
+## for the new bodies, because a gate rewritten to admit what it was measuring is not a gate.
 const MINIMUM_SEPARATION: float = 0.50
 
 ## How many poses of each kind's walk are measured. A silhouette is a moving thing, so one

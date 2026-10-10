@@ -145,7 +145,6 @@ the three things that go wrong:
 | `quaternius_universal_humanoid.json` | The reference rig: Unreal-style names (`pelvis`, `spine_01`, `clavicle_l`) onto the profile |
 | `quaternius_monsters_skeleton.json` | The artist built the arms by duplicating the leg chains, so they arrive as `L.UpperLeg.001`. Bone positions, not names, identify them |
 | `quaternius_knight.json` | Names must be mapped by **position in the hierarchy**, not by name: the source `Body` is the parent of both spine and legs, so it is the profile's `Hips`, and the source `Hips` becomes `Spine` |
-| `kaykit_skeletons.json` | **Bone lengths** decide which joint is which where a chain has more joints than the profile. The arm is `upperarm → lowerarm → wrist → hand`, and the offsets say `wrist` is the profile's `Hand` (the forearm is 0.260 long) while `hand` is only 0.074 further on, a palm bone. The weapon sockets `handslot.l/.r` are deliberately left unmapped, because the profile has no slot for them and game code looks them up by that name |
 
 The converter renames in two passes through temporary names, so a map that
 shifts names along a chain (`Hips` → `Spine` while another bone becomes `Hips`)
@@ -185,11 +184,19 @@ Because every rig is converted onto the same names, retargeting is mostly
 3. **Keep shared animation in one place.** Animation that is meant for every
    humanoid belongs in its own `.glb` of animation-only clips on the shared
    skeleton, loaded into an `AnimationLibrary`, rather than duplicated per
-   character. `assets/characters/kaykit_skeletons/` is the worked example: six
-   characters carrying no animation at all, and four libraries of 35 clips beside
-   them. A corollary for scale — every file in such a pack must be scaled by the
-   *same* factor as its characters, not normalised to a height per file, or
-   borrowed root and hips translation lands in the wrong place.
+   character. The worked example was `assets/characters/kaykit_skeletons/` — six
+   characters carrying no animation at all and four libraries of 35 clips beside
+   them — and #79 deleted it with the cast it existed for, so the rule is recorded
+   here without a committed example of it. The corollary for scale is the part worth
+   keeping: every file in such a pack must be scaled by the *same* factor as its
+   characters, not normalised to a height per file, or borrowed root and hips
+   translation lands in the wrong place.
+
+   **And it is the right arrangement for a pack rather than for every asset.** The
+   three Enemy bodies (section 11) each carry their own four clips inside their own
+   `.glb`, because they are three *different* rigs: a library between them could only
+   hold the bones they have in common, which is the root. Share a library when the
+   rig is shared; keep the clips with the body when it is not.
 4. **When a rig cannot be renamed** — a licensed pack you must not modify, or a
    rig whose hierarchy differs structurally — fall back to Godot's `BoneMap`
    with `SkeletonProfileHumanoid` on the import, which is the same mapping
@@ -830,13 +837,114 @@ neighbourhood and the seed decides whether the roll is any good — and judge th
 `assets/generated/icons/_contact_sheet.png` rather than on its own, because an icon set is
 judged as a set.
 
-## 11. The Enemies, which are skinned in a shader out of a texture of bone poses
+## 11. The Enemies, which are generated like the Machines and skinned in a shader
 
-#18 built the intake, retargeted thirteen CC0 characters onto one shared skeleton and
-proved animation interchanges between rigs — and then nothing put a character on screen
-for twenty tickets. Every Enemy in the game was a procedurally built carapace of boxes
-sliding across the ground, and the Crawler and the Breaker were **the same mesh**. #38 is
-where that pipeline finally reaches the renderer.
+**Two tickets own this section and they are about different halves.** #38 built the
+*mechanism*: an Enemy is never a node (ADR 0001), so its animation lives in a texture the
+vertex shader samples and which row it is on arrives as per-instance custom data. All of that
+is unchanged and is most of what follows. #79 replaced the *asset*: the three kinds were
+KayKit CC0 characters, cast because #18 had already retargeted thirteen of them onto one
+shared skeleton, and they were fantasy skeletons in a game of grimy interwar industry. The
+user said so — *"can we not do skeletons…? have an agent use blender headless and make
+helldivers 2-esque bugs (not too detailed)"*.
+
+So the bodies joined the Machine meshes (section 6) and the Build Gun (section 7a): declared
+in `tools/assets/enemy_recipe.py`, assembled by `generate_enemies.sh` driving Blender
+headless, **committed** to `assets/characters/insects/`, and proved by regeneration rather
+than dated against a recipe (section 12). There is no intake file, because the declaration
+*is* the asset.
+
+### What the declaration says, and the three numbers that matter
+
+`enemy_recipe.py` is one `Insect` dataclass per kind and **one builder for all three**, which
+is the load-bearing decision rather than a saving: an insect is a thorax, an abdomen, a head,
+mandibles and some legs, so the difference between a Crawler and a Siege Hulk is *numbers* —
+which means `tests/cases/test_enemy_silhouette.gd` is measuring a declaration a person can
+edit instead of three separate piles of geometry.
+
+Everything is in **body heights**, because `EnemyBodies` bakes a body one metre tall and
+`WorldView` scales it by `query_enemy_hit_height_metres`: a declaration in metres would be a
+declaration in units nothing uses, where `thorax_centre = 0.40` reads as *"slung at two
+fifths of the Enemy's height"*, which is the sentence somebody editing it is trying to write.
+The generator scales the finished assembly so its vertical extent is exactly 1.0, so the
+numbers are proportions and their sum is not a constraint.
+
+**Three insects are far more alike than a skeleton, a knight and a golem**, which is the real
+risk the ticket named. What separates them is gross form and not detail:
+
+| | legs | body slung at | the mass is | carapace |
+|---|---|---|---|---|
+| Crawler | 6 | 0.40 | spread down a long thin body | none — bare chitin |
+| Breaker | 4 | 0.52 | a shield at the front | 0.94, the tallest thing on it |
+| Siege Hulk | 6 | 0.66 | a raised tail at the back | 0.86 |
+
+A four-legged body has gaps a six-legged one fills, which is most of the front-view
+difference; the sling height is what makes a Crawler scuttle under its own knees and a Hulk
+stride over them. Measured separations are in CLAUDE.md.
+
+### Axes, which is the one fact to get right
+
+Blender's, like everywhere else in this pipeline: +X east, +Y north, +Z up, origin on the
+ground under the body's centre. The exporter's Y-up conversion sends Blender +Y to glTF -Z,
+and `WorldView._write_instance` maps a body's local +Z to its facing — so **an insect is built
+facing -Y** and its abdomen trails off towards +Y. That is why `head_forward` is negative.
+`test_generated_enemies.test_every_body_faces_its_own_positive_z` is the check, and it is read
+off the **mandible geometry** rather than off the head bone: a bone node's translation is local
+to its parent and in the parent bone's own axes, so the Head bone sits at +y along the Thorax
+whichever way the body faces and every kind reported exactly 0 on z. A test that passes while
+measuring nothing is worse than none.
+
+### The rig fits inside the bake, by construction
+
+The bake writes `bone_count * 3` texels across one row a frame, and its whole argument is that
+the texture is a property of the **rig** rather than of the model. So the declaration stays
+inside what #38 measured:
+
+- **19 bones for a six-legged body, 15 for the four-legged one**, against the 23 the KayKit
+  cast used. Two segments a leg and no more — a coxa out to the knee and a tibia down to the
+  foot — because six legs at three segments would be 25 bones of leg alone, and because two is
+  what an insect looks like at the only range this matters at.
+- **One influence a vertex, at weight 1.** `EnemyBodies.INFLUENCES` is 4 and keeps the four
+  heaviest, so a fifth would be dropped in silence; there is nothing to drop, because a chitin
+  plate is **rigid**. That is not a shortcut: a smooth-skinned insect leg is a rubber tube, and
+  plates sliding over one another at the joint is what an exoskeleton is.
+- **824, 612 and 848 triangles**, against the cast's 4,858 vertices apiece. "Not too detailed"
+  is the user's own instruction and `TRIANGLE_BUDGET` is it as a number. Limbs are tapered
+  boxes rather than cylinders for the same reason: a 16-segment cylinder is 96 triangles a
+  segment, which on six legs of two is 1,152 triangles of leg on a body a player sees twenty
+  of at once.
+
+### The gaits are a function of phase, not eight keyframes
+
+`enemy_recipe.pose_at` takes a clip name and a phase and returns bone-local Euler angles;
+`generate_enemies.author_clips` plants a key on **every** frame with linear interpolation. An
+animator would author eight keys and let the curve do the rest, and those eight are eight
+numbers somebody editing a leg length would have to re-derive — a function of phase follows
+the declaration for free, and what Godot imports is exactly what the declaration says rather
+than what a Bezier handle did to it.
+
+A **tripod gait** is most of what makes these read as insects rather than as dogs: a
+six-legged insect carries its weight on front-left, middle-right and rear-left while the other
+three swing, so `tripod_phase` takes the pair index *and the side*. Get it from the pair alone
+and both sides step in unison, which is a pace and reads as a pantomime horse — the first
+version did exactly that. With two pairs it degenerates to a diagonal trot, which is what a
+four-legged body does, so the Breaker needs no case of its own.
+
+Two thirds of each step is the stance and one third the swing, because that ratio is what a
+walk *is*; an even split reads as paddling. Four clips a body — `walk`, `run`, `idle`,
+`attack` — and the cycle closes on itself, which `test_a_cycle_closes_on_itself` checks on the
+declaration because the bake samples `[0, length)` and wraps.
+
+### A stale `.pyc` generates the wrong body
+
+Worth knowing rather than rediscovering, because it is silent and it cost a wrong test.
+`enemy_recipe` is an ordinary Python module and CPython reuses a cached `.pyc` when the
+source's mtime **second** and byte count both match — which is exactly what bracketing a
+proportion does: `foot_out=0.66` for `foot_out=0.96` is the same length, and a developer
+trying three values does three of those in a few seconds. Measured: the generator assembled
+the body the *previous* value describes, wrote it, and reported success. `generate_enemies.py`
+sets `sys.dont_write_bytecode` before importing the declaration, which covers a person as well
+as the suite.
 
 ### The constraint, and why it rules out the obvious answer
 
@@ -908,35 +1016,59 @@ holds it.
 
 ### The casting
 
-`EnemyBodies.recipe_for` is the one place a kind and an asset meet, and it names the KayKit
-pack only — six characters on one rig with four libraries of 35 clips beside them, which
-section 4 already calls the worked example of keeping shared animation in one place.
+`EnemyBodies.recipe_for` is the one place a kind and an asset meet, and since #79 it names the
+generated body and that body's own clips — `libraries` is the character itself, because these
+are three different rigs and a library between them could only carry the bones they have in
+common.
 
-| Kind | Character | move | idle | attack |
+| Kind | Body | move | idle | attack |
 |---|---|---|---|---|
-| Crawler | `Skeleton_Minion` | `Running_A` | `Idle_A` | `Throw` |
-| Breaker | `Skeleton_Warrior` | `Walking_A` | `Idle_B` | `Throw` |
-| Siege Hulk | `Skeleton_Golem` | `Walking_A` | `Idle_A` | `Hit_A` |
+| Crawler | `crawler.glb` | `run` | `idle` | `attack` |
+| Breaker | `breaker.glb` | `walk` | `idle` | `attack` |
+| Siege Hulk | `siege_hulk.glb` | `walk` | `idle` | `attack` |
 
-The Warrior is the Breaker because it is the one committed character that is visibly
-*armoured and carrying something*, which is what has to separate "the threat" from "the sense
-of threat" at thirty metres — and `Walking_A` against the Crawlers' `Running_A` is #34's
-sentence as motion: a deliberate advance down the road a player defended, against the Chaff
-sprinting past it.
+**The choice of gait per kind is #38's and survives unchanged, because it was never about the
+art.** Chaff has to read as *numerous and coming*, so a Crawler runs; a Breaker marches the
+Nest's own lane under fire (#34), so it walks, and that contrast is the clearest thing
+separating the sense of threat from the threat in motion. Every body carries all four clips
+and `walk` and `run` are both read by some kind, which is what keeps a clip from being the
+asset-pipeline version of a tuning key nothing reads —
+`test_no_declared_clip_is_read_by_nobody` is that check, and it reads the casting table out of
+the GDScript the way `machine_specs.footprint_authorities` reads a constant out of
+`sim/map_layout.gd`.
 
-**Two stand-ins, named rather than hidden.** `Rig_Large` carries no attack take at all,
-because the pack's melee libraries were never intaken in #18, so a Siege Hulk's stomp plays
-`Hit_A` — a lurch rather than a swing. And `Throw` is an overarm hurl standing in for a bite.
+**The two stand-ins #38 named are gone.** `Rig_Large` carried no attack take at all, so a
+Siege Hulk's stomp played `Hit_A` — a lurch rather than a swing — and `Throw` was an overarm
+hurl standing in for a bite. A declared body declares its own, so the boss bites with the same
+authored gesture the other two do.
 
-**`UAL1.glb` is still unused, and the reason is measured rather than assumed.** It carries
-120 clips including `Crawl_Fwd`, `Sprint`, `Sword_Attack` and `Punch_Cross` — exactly the
-takes this casting is short of — but its 65 bones arrive under **raw Unreal names**
-(`pelvis`, `spine_01`, `thigh_l`): of the Minion's 23 bones, exactly **one** (`Head`) matches
-by name. `tools/assets/bone_maps/quaternius_universal_humanoid.json` is the map that would
-fix it, and applying it is a small change to `EnemyBodies._pose`. What is *not* small is that
-a genuine cross-rig retarget cannot take the donor's translations: UAL's hips sit at 0.95 m
-and the Minion's at 0.34 m, so a rotation-only retarget with a hip-height ratio is wanted,
-and that is a ticket with its own renders rather than a corner of this one.
+**`UAL1.glb` is still unused and the reason has changed rather than gone.** It carries 120
+clips including `Crawl_Fwd` and `Sword_Attack`, and #38 could not use them because its 65
+bones arrive under raw Unreal names of which exactly one matches the Minion's. That is now
+beside the point: nothing in the Enemy pipeline has a humanoid rig for a humanoid clip to drive.
+It remains a demonstration asset beside the Quaternius Skeleton and Knight, which #18's
+`AnimationIsInterchangeable` still asserts a clip crossing between.
+
+### The weak point is in the mesh
+
+A Siege Hulk's vent is **the only place in this project where geometry carries a rule**: the
+front shrugs off `siege_hulk.frontal_armour_percent` of a hit and the back does not, nothing
+tells a player that in words, so the glowing end is the end that is not armoured.
+
+Until #79 it was placed by two constants in `world_view.gd` while the body it is an opening in
+was somebody else's art, so the two could come apart with nothing saying so. **An insect
+abdomen is a better home for it than a golem's back was**, and the arrangement is now a
+Machine's: `enemy_recipe` derives the tail's far face from the abdomen's own declaration,
+`generate_enemies` exports it as a marker node named `Vent` — which carries no mesh and falls
+out of `_flatten` by itself, exactly as a `Port_*` marker does — `EnemyBodies` reads it back
+through the same normalisation the bone matrices get, and `WorldView` builds the grille there.
+Editing `abdomen_rise` moves the glow with the tail. The old constants are the fallback for a
+kind drawn through the procedural hull, which is what they were measured against.
+
+On the shipped declaration the vent lands at **(0, 0.84, -0.85)** in body heights, against the
+golem's (0, 0.50, -0.30): the tail cocks up and away from the body, which is the one part of
+the silhouette a player cannot mistake for armour and the one part they can only see from
+behind.
 
 ### Scale comes from the Simulation, not from the artist's file
 
@@ -1044,58 +1176,68 @@ Wave that is spread out down a lane rather than posed. The gait difference is re
 deliberate — the Crawler runs where the Breaker walks — and no render has an opinion about
 it.
 
-### The surface is graded, and the atlas is the thing to grade (#75)
+### The surface is the palette's own, resolved by the name of the surface (#79)
 
-**The pack ships one 1024-square swatch atlas and all six characters share it.** It is flat
-cells with a vertical gradient: a whole thigh samples one of them, so there is no detail in
-it at any density. #38 painted it with one dark multiply per kind and #75 is the user looking
-at the result.
+**Three tickets answered this question and only the third is not a repaint.** #38 drew the
+pack's one 1024-square swatch atlas — flat cells with a vertical gradient, a whole thigh
+samples one of them — through a dark multiply per kind. #75 measured that a multiply cannot
+change a ratio: the Minion's skull cell is linear 0.551 against its boot at 0.067, so any tint
+leaves a bright skull over a dark smudge, and it graded the atlas onto the palette's ramps
+with `enemy_grade.py` instead.
 
-`tools/assets/enemy_grade.py` is `prop_grade.py`'s rule pointed at it — section 8's grade,
-with this atlas's hue arcs and a shoulder tuned for a subject seen against the *ground*
-rather than against a Machine. It reads
-`assets/characters/kaykit_skeletons/intake_textures/skeleton_texture_A.png` and writes
-`assets/characters/kaykit_skeletons/graded/skeleton_texture_A.png`.
+A declared body needs no grade, because a part is **assigned** its palette entry in
+`enemy_recipe.py` rather than having one inferred from a pixel. There is no ratio left to
+fight: a Crawler's carapace is `OxideRed` because somebody wrote that down.
 
-**The graded atlas is committed**, which puts it on section 12's *prove it* side rather than
-its *date it* side: both ends are in the repository and the recipe is deterministic, so
-`tools/assets/tests/test_enemy_grade.py` regrades and compares the bytes, the way
-`test_generated_machines` does for a Machine mesh. It is therefore deliberately **absent from
-`asset_staleness.py`**. KayKit is CC0, so a derived copy is as redistributable as the source
-and a clone with no purchased packs has it.
+So the surface is resolved by **the name of the surface**. The declaration names a palette
+entry per part, the generator emits one glTF primitive a material, `EnemyBodies._flatten` names
+each surface after it, and `WorldView._skinned_mesh` loads
+`assets/machines/materials/<name>.tres` — the very `StandardMaterial3D` the Walls, every
+Machine body and #73's cargo already draw. One declaration, four runtimes, and nothing in the
+renderer invents a hue.
 
-**Only atlas A is graded.** All six committed characters reference it — checked by hashing
-the six copies `--texture-dir` left beside the `.glb`s, which are byte-identical to the
-intake file — and a graded copy of a map nothing samples is the defect `prop_grade.py`'s own
-docstring opens with.
+| Kind | carapace / plate | abdomen | joints and legs | mandibles |
+|---|---|---|---|---|
+| Crawler | — | `OxideRed` | `Soot` | `DullBrass` |
+| Breaker | `WeldedSteel` | `CastIron` | `Soot` | `DullBrass` |
+| Siege Hulk | `CastIron` | `OxideRed` | `Soot` | `DullBrass` |
 
-**And the six copies beside the `.glb`s are read by nothing**, which is the trap in this
-area. `gltf_info` reports `images: [None]` for every character: the converted `.glb` carries
-its image **inside its own buffer**, so grading those files would have changed nothing on
-screen. The graded atlas is loaded by `WorldView._skinned_mesh` and put on the material
-instead, and the assertion that it arrives lives on the renderer's side of that seam —
-`test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own`. A grade is
-invisible from the grading side.
+The glTF embeds **no image at all** (`export_image_format='NONE'`), for section 6's reason:
+the generated set is eight 1024-square PNGs and embedding them in three committed bodies would
+put megabytes of duplicated pixels in a public repository to say something `world_view.gd` says
+once. `test_no_body_embeds_an_image` pins it.
 
-The other half of the surface is not in this pipeline at all, because it cannot be: these
-characters carry **no `COLOR_0`**, so `prop_grade.deepen_grime`'s free baked occlusion has no
-counterpart here and the grime and relief are derived at runtime from the rest pose. See
-`game/enemy_skin.gdshader` and CLAUDE.md.
+**The UVs are worth sampling now, which they were not before.** The characters' unwrap pointed
+every limb at one cell of a swatch sheet, so there was no detail in it at any density and the
+shader's own note said a normal map through them would be a flat colour. A generated body is
+box-projected at one UV unit to the authored metre, which is one unit to the *body height* — so
+the palette's real tiling map repeats across it, and how finely is one uniform, `uv_scale`,
+expressed as a fraction of a body for `grime_metres`' reason.
 
-### What is still placeholder-grade
+**`enemy_grade.py` is deleted rather than left unread**, and so are the six KayKit characters,
+their four animation libraries, the intake FBX and the bone map — 14 MB and 55 tracked files. A
+generator whose output nothing samples is `prop_grade.py`'s own opening defect and the rule
+`Definitions` applies to a tuning key nothing reads.
 
-The KayKit characters are **stylised with oversized skulls**, which at 1.6 m reads closer to
-grotesque-cartoon than to the grimy interwar industry the rest of the palette is. #75 took
-the *surface* as far as a grade and a shader can take it — graded into the palette, metal,
-pitted and worn — and left the **proportions** exactly where they were, because they are
-geometry and `tests/cases/test_enemy_silhouette.gd` is what owns geometry. That is still a
-property of the committed art rather than of this pipeline, and the fix is a different CC0
-pack, a body built out of `machine_parts` the way the Build Gun is (section 7a), or a human
-deciding it is fine.
+**What #75 built and #79 kept is the shader.** The grime field, the derived relief and the
+roughness spread are about a *surface* rather than about a source, and chitin wants them as
+much as iron did — and the premise still holds, because `assets/generated/` is albedo-only and
+there is no normal map to load. See `game/enemy_skin.gdshader` and CLAUDE.md.
 
-And **a still image cannot tell you whether a walk cycle reads as a walk.** Everything above
-is silhouette, scale, grade and pose — enough to catch a character that is the wrong size,
-the wrong colour or inside out, and not enough to catch one that merely moves badly.
+### What is still a judgement for a human
+
+The bodies are boxes, tapered boxes and prisms, which is what this kit is good at and is also
+the whole of "not too detailed". What that cannot be is *organic*: a Terminid in the game the
+user named has curved chitin and a lot of it, and these have faceted plate and chamfered edges
+— which is defensible here, because every other surface in this world is welded plate, and is
+not the same thing as looking right.
+
+And **a still image cannot tell you whether a gait reads as a gait.** Everything measurable is
+measured — silhouette separation, luminance, triangles, the frame and tick cost — and none of
+it has an opinion about whether a tripod walk looks like an insect walking. The levers are the
+two numbers in `leg_pose` (the stance fraction and the lift) and the clip lengths in
+`enemy_recipe.CLIPS`, and all of them are in the declaration rather than in tuning, because the
+Simulation reads none of them.
 
 ## 12. Staleness: is the output older than the recipe?
 

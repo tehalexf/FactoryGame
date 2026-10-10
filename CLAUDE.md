@@ -13,7 +13,7 @@ tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion
 python3 tools/assets/asset_staleness.py  # is any generated asset older than its recipe?
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/generate_build_gun.sh # regenerate the Build Gun viewmodel. Committed, unlike the weapons
-python3 tools/assets/enemy_grade.py  # regrade the Enemy atlas into the palette. Committed, like the meshes
+tools/assets/generate_enemies.sh   # regenerate every Enemy body from its declaration. Committed, like the meshes
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
