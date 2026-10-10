@@ -134,11 +134,31 @@ what ubuntu-24.04 ships — `wav_to_cue.py --mode loop` **exits 0 and writes a
 0.048-second file where twenty-four seconds were asked for**: something in the
 `asplit`/`atrim`/`asetpts`/`amix` seam behaves differently, so an ambience bed comes
 out almost empty rather than wrong and obvious. #40 found it by turning CI on and
-pinned 8.1.3 in `.github/ci/toolchain.env`; `wav_to_cue.FFMPEG_MINIMUM_MAJOR` then
+pinned a static build in `.github/ci/toolchain.env`; `wav_to_cue.FFMPEG_MINIMUM_MAJOR` then
 makes it a property of the **tool** rather than of CI, because a requirement that
 lives only in a workflow file is one a developer runs straight past. The cutter now
 refuses a 6.x by name on every invocation, and a build with no release number — a
 nightly — is allowed through as "cannot tell" rather than guessed at.
+
+**And a dated autobuild is not a pin, which cost every branch a red CI at once.**
+The ffmpeg pin named `autobuild-2026-09-23-14-55`, chosen over `latest` on the correct
+argument that a moving pointer is not a pin — and BtbN **prunes** dated autobuilds,
+keeping the last fortnight of dailies and the last build of each month. The tag stopped
+existing, the fetch 404'd, the toolchain job failed, and because every suite is
+`needs:` that job, all three were **skipped** and the single `all suites green` check
+reported "a suite did not pass" on branches whose suites were green locally. So the
+failure named nothing that was wrong with any tree, and it fired on every push until the
+pin was fixed rather than on the one that broke it.
+
+`FFMPEG_CANDIDATES` is the fix and the shape is the lesson: **a list of month-end
+artifacts, newest first, each carrying its own checksum** — they are different builds
+rather than mirrors of one, so the checksum travels with the URL. The installer takes
+the first that answers and says in the log when it has fallen through. The fallback was
+**seen to fire** rather than assumed, by pointing the head of the list at a tag that
+never existed: it reports `that candidate is gone; trying an older month-end build` and
+installs the next. A fallback nobody has watched work is indistinguishable from one that
+cannot. Refresh the head of the list whenever you are in that file anyway; an entry
+whose month has passed out of BtbN's retention is a silent half of a two-entry list.
 
 GDScript, not C#. C++ via GDExtension only when profiling demands it.
 

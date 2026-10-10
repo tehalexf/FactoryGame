@@ -51,7 +51,7 @@ jobs:
   # download nothing; on a cold one they wait for this job instead of racing
   # each other for the same three archives.
   toolchain:
-    name: toolchain (godot 4.7.2, blender 5.2.2, ffmpeg 8.1.3, jj 0.46.0)
+    name: toolchain (godot 4.7.2, blender 5.2.2, ffmpeg 8.1.2, jj 0.46.0)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

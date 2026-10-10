@@ -113,22 +113,45 @@ install_blender() {
 }
 
 install_ffmpeg() {
-	local root="$TOOLCHAIN_DIR/$FFMPEG_DIRNAME"
-	if [ -x "$root/bin/ffmpeg" ]; then
-		say "ffmpeg $FFMPEG_VERSION already installed"
-	else
-		local archive="$TOOLCHAIN_CACHE/$FFMPEG_ARCHIVE"
-		fetch_verified "$archive" "$FFMPEG_SHA256" "$FFMPEG_URL"
+	# The pin is a list of candidate artifacts rather than one URL, because BtbN
+	# prunes dated autobuilds — see the long note in toolchain.env. Each record is
+	# url|sha256 and they are *different builds*, so the checksum travels with the
+	# URL instead of being one answer for several mirrors.
+	local record url sha archive root
+	for record in $FFMPEG_CANDIDATES; do
+		url="${record%%|*}"
+		sha="${record##*|}"
+		archive="$TOOLCHAIN_CACHE/$(basename "$url")"
+		root="$TOOLCHAIN_DIR/$(basename "$url" .tar.xz)"
+
+		if [ -x "$root/bin/ffmpeg" ]; then
+			say "ffmpeg $FFMPEG_VERSION already installed"
+			ln -sfn "$root/bin/ffmpeg" "$TOOLCHAIN_BIN/ffmpeg"
+			ln -sfn "$root/bin/ffprobe" "$TOOLCHAIN_BIN/ffprobe"
+			return 0
+		fi
+
+		if ! fetch_verified "$archive" "$sha" "$url"; then
+			say "that candidate is gone; trying an older month-end build"
+			continue
+		fi
+
 		rm -rf "$root" "$root.part"
 		mkdir -p "$root.part"
 		tar -xJf "$archive" -C "$root.part" --strip-components=1
 		mv "$root.part" "$root"
-	fi
-	# Both binaries: the tests shell out to ffprobe as well as ffmpeg, and a
-	# half-installed pair is a confusing skip rather than a clear error.
-	ln -sfn "$root/bin/ffmpeg" "$TOOLCHAIN_BIN/ffmpeg"
-	ln -sfn "$root/bin/ffprobe" "$TOOLCHAIN_BIN/ffprobe"
+		# Both binaries: the tests shell out to ffprobe as well as ffmpeg, and a
+		# half-installed pair is a confusing skip rather than a clear error.
+		ln -sfn "$root/bin/ffmpeg" "$TOOLCHAIN_BIN/ffmpeg"
+		ln -sfn "$root/bin/ffprobe" "$TOOLCHAIN_BIN/ffprobe"
+		return 0
+	done
+
+	echo "error: every pinned ffmpeg candidate is gone — refresh FFMPEG_CANDIDATES" >&2
+	echo "       with a month-end tag from https://github.com/BtbN/FFmpeg-Builds/releases" >&2
+	return 1
 }
+
 
 install_jj() {
 	local root="$TOOLCHAIN_DIR/jj-$JJ_VERSION"
