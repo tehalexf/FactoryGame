@@ -13,7 +13,7 @@ tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion
 python3 tools/assets/asset_staleness.py  # is any generated asset older than its recipe?
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/generate_build_gun.sh # regenerate the Build Gun viewmodel. Committed, unlike the weapons
-python3 tools/assets/enemy_grade.py  # regrade the Enemy atlas into the palette. Committed, like the meshes
+tools/assets/generate_enemies.sh   # regenerate every Enemy body from its declaration. Committed, like the meshes
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
@@ -410,7 +410,13 @@ Three rules the renderer holds to, each with a test:
   reach the thousands — `test_world_view` asserts the scene tree does not grow by a node
   for any of them.
 
-### The Enemies wear characters now, and the animation is in a texture
+### The animation is in a texture, and the bodies are generated
+
+**Two tickets own this section and they are about different halves, which is the thing to
+hold on to while reading it.** #38 built the *mechanism* and none of it changed; #79 replaced
+the *asset* it was pointed at. Everything below about the bake, the pose texture, the
+normalisation and the per-kind MultiMesh is #38's and is current. Everything about which
+character a kind wears is history — see "The bodies are declared, not cast", below.
 
 #38, and the ticket's own complaint was that the thing a player spends a whole Run shooting
 at was the least finished thing in frame: a procedurally built carapace of boxes, sliding
@@ -428,7 +434,11 @@ data. There is nothing per Crawler anywhere on this side of the boundary.
 - **It bakes bone poses, not vertex positions**, which is the one real engineering decision
   in it. A vertex animation texture is 4858 vertices by ninety frames — 437,000 texels a
   kind, growing with the model. Skinning matrices are 23 bones by ninety frames: about two
-  thousand texels, and it does not grow by one texel if the mesh triples. The price is that
+  thousand texels, and it does not grow by one texel if the mesh triples. (Those are the
+  **cast's** figures, which is the comparison the decision was made against. The generated
+  bodies are 19 bones a kind over 104 frames, so #79
+  made the texture smaller rather than larger — the budget was a constraint on the
+  declaration and `test_generated_enemies` holds it there.) The price is that
   `ARRAY_BONES` is only readable through a `Skeleton3D`, so `EnemyBodies` moves the indices
   and weights into `CUSTOM0` and `CUSTOM1` and drops the skinning declaration.
 - **The bake is at load time and commits nothing**, because `world_view.gd` already
@@ -458,12 +468,14 @@ data. There is nothing per Crawler anywhere on this side of the boundary.
   and a row, and it is never blocked on art.
 - **The Siege Hulk's vent survived, and it is still the only place geometry carries a
   rule.** It is modelled in body heights with its offset in the mesh, so it is placed with
-  exactly the transform the body is placed with.
+  exactly the transform the body is placed with — and since #79 the *offset itself* comes out
+  of the mesh too, as a marker node the declaration derives from the abdomen's own numbers.
+  See "The bodies are declared, not cast", below.
 
 **What reads at thirty metres, and the one thing that did not.** #38 measured rather than
-hoped, and the answer was split: a Siege Hulk is unmistakable at any range and a swarm reads
+hoped, and the answer was split: a Siege Hulk was unmistakable at any range and a swarm read
 as a crowd of bodies rather than a row of boxes — but **a Crawler and a Breaker were the same
-dark silhouette** past about twelve metres, because they are the same KayKit rig at the same
+dark silhouette** past about twelve metres, because they were the same KayKit rig at the same
 declared height and what separated them was armour detail that distance takes first. The
 mitigation was to have been the characters' own glowing eyes, and it rendered nothing.
 
@@ -475,73 +487,245 @@ over the 1.5 m Smelter it is eating and breaks the skyline a Crawler walks under
 the Breaker a player shoots at are one thing**; the radius moved with the height for that
 reason, since the drawn body is scaled uniformly and a capsule that kept the Crawler's width
 would be narrower than what is on screen. Its one balance consequence is that a Breaker bites
-from 0.2 m further out, because reach is measured from the hull.
+from 0.2 m further out, because reach is measured from the hull. **#79 did not touch any of
+those six numbers**, and could not have without moving what a player shoots at.
 
-**The claim is a test now rather than a sentence, and that is the durable half of #49.**
+**The claim is a test rather than a sentence, and that is the durable half of #49.**
 `tests/cases/test_enemy_silhouette.gd` is `machine_silhouette.py`'s gate pointed at Enemies —
 it rasterises each kind's *posed, scaled* outline into an occupancy grid and fails if any two
-kinds converge. Enemies had no such check, which is exactly how a false claim about glowing
-eyes sat in the docs unnoticed. Measured, the three pairs were 0.42, 0.83 and 0.79 and are
-now **0.58, 0.83 and 0.67** — so the pair that binds is now the Breaker against the **boss**,
-and the gate is what stops the obvious next tuning step trading one unreadable pair for
-another. The grid is rasterised at **one cell per player pixel at thirty metres**, which is
-what makes it ungameable: detail finer than a cell is detail a player at that range cannot
-see either.
+kinds converge below 0.50. Enemies had no such check, which is exactly how a false claim about
+glowing eyes sat in the docs unnoticed. The grid is rasterised at **one cell per player pixel
+at thirty metres**, which is what makes it ungameable: detail finer than a cell is detail a
+player at that range cannot see either. On the cast the three pairs went 0.42 before #49 and
+0.58, 0.83 and 0.67 after it; what they are now is under "The bodies are declared, not cast".
 
-**The glow wiring is gone rather than kept.** The plumbing was never at fault and #49 checked
-rather than assumed it — the baked mesh really does carry a surface named `Glow`, the branch
-really did fire, and the same emission on the body renders a glowing skeleton with full
-bloom. The geometry is simply inside the skull. #38 left the branch against a future
-character with exposed glow geometry; that is an untested claim about art nobody has, and an
-untested claim in a comment is what produced the ticket. Both workarounds stay refused for
-#38's reasons: moving an artist's vertices is the renderer editing the model, and
-`depth_test_disabled` would draw a Crawler's eyes through a wall. `WorldView._skinned_mesh`
-carries the note. The Siege Hulk's vent is untouched and is still the only place geometry
-carries a rule — and it is **built** here, sized against the body it sits on, rather than
-hoped for in an asset.
+**The glow wiring is gone rather than kept, and the note outlived the asset.** The plumbing
+was never at fault and #49 checked rather than assumed it — the baked mesh really did carry a
+surface named `Glow`, the branch really did fire, and the same emission on the body rendered a
+glowing skeleton with full bloom. The geometry was simply inside the skull. #38 had left the
+branch against a future character with exposed glow geometry; that is an untested claim about
+art nobody has, and an untested claim in a comment is what produced the ticket. Both
+workarounds stayed refused for #38's reasons: moving an artist's vertices is the renderer
+editing the model, and `depth_test_disabled` would draw a Crawler's eyes through a wall. **The
+generalisation is what survives the cast**: emission is not the answer to two kinds reading
+alike, and gross form is.
 
-**What a still image cannot settle** is whether the size difference reads *in motion*, in a
-Wave spread down a lane rather than posed. The gait difference is deliberate — the Crawler
-runs where the Breaker walks — and no render has an opinion about it.
+### The bodies are declared, not cast
 
-**What #38 and #49 both left alone was the *surface*, and #75 is that.** Both tickets are
-about shape — the animation, then the per-kind size that makes two kinds readable — and the
-thing a Crawler is actually painted with stayed a flat per-kind multiply over the pack's own
-bone-white atlas for the whole of both. See "What an Enemy is made of, and why the tint was
-never going to do it", below.
+**#79, and the user's own words: *"can we not do skeletons…? have an agent use blender
+headless and make helldivers 2-esque bugs (not too detailed)"*.** #38 cast three KayKit CC0
+characters because they existed and shared a rig, #49 made them tellable apart by size, and
+#75 graded their atlas into the palette and gave them metal and grime. Every one of those was
+the right move for the asset it had. The asset was still a fantasy skeleton whose skull is a third
+of its own height, and #75's closing note had already said so without acting on it.
 
-Full pipeline, the casting table, why `UAL1.glb` is still unused and what three renders
-caught are in [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 11. The before and
-after are `docs/images/enemies_{pair,wave,boss,triage}_{before,after}.png`, rebuilt with
-`SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png <preset>`.
+So the three kinds joined the Machine meshes and the Build Gun: **declared, generated,
+committed.** `tools/assets/enemy_recipe.py` holds the geometry and the gaits,
+`tools/assets/generate_enemies.sh` drives Blender headless, and
+`assets/characters/insects/*.glb` is in git — so a clone with no purchased packs holds the
+real thing, and what a player shoots at is this project's own work rather than somebody
+else's art direction. **Change a proportion by editing the declaration and re-running, never
+by editing a `.glb`**, which is the rule every Machine mesh already obeys and which
+`test_generated_enemies.RegeneratingFromTheDeclaration` is the proof of rather than the hope.
 
-**`triage` is #49's preset and it exists because neither of the others asked its question.**
-`pair` stands six to twelve metres off, which is inside the range where the two kinds
-separated anyway; `distance` frames the **Crawler** swarm's centre, so a Breaker is routinely
-not in the frame at all — which a render showed immediately and which is why the ticket's own
-acceptance criterion could not have been settled with it. `triage` is `pair`'s subject at
-`distance`'s range: the closest Crawler-and-Breaker pair, square on, at thirty metres, at eye
-height, in the player's own 75-degree field rather than a cinematic one.
+#### One builder, three kinds, and what actually separates them
 
-**What it costs**, measured with `ENEMY_COUNT=<n> tools/visual/frame_cost.sh` against the
-same scenario with and without the renderer half: `WorldView.sync` goes from 3.16 ms to
-4.34 ms at 18 Enemies and from 3.76 ms to 4.44 ms at 71, so about **a millisecond of a
-16.67 ms frame**, plus 1.4 M primitives and 17 MB of video memory. That is the CPU rebuild only — the skinning is
-in a vertex shader and Xvfb is llvmpipe, so **the GPU half of this is unmeasured here** and
-wants a machine with a real card.
+`enemy_recipe.py` is one `Insect` dataclass per kind and **one builder for all three**, which
+is load-bearing rather than a saving: an insect is a thorax, an abdomen, a head, mandibles and
+some legs, so the difference between a Crawler and a Siege Hulk is *numbers* — which means the
+silhouette gate is measuring a declaration a person can edit instead of three separate piles of
+geometry. Everything is in **body heights**, because the bake normalises to one metre and
+`WorldView` scales by the Simulation's figure; a declaration in metres would be in units
+nothing uses.
 
-### What an Enemy is made of, and why the tint was never going to do it
+**Three insects are far more alike than a skeleton, a knight and a golem**, which is the real
+risk the ticket named, so they are separated by gross form and never by detail:
 
-**#75, and it is the user looking at what #38 and #49 left: *"the enemies look like shit
-honestly"*.** They were right, and the file already carried the diagnosis without having
-acted on it — `WorldView._skinned_mesh`'s own comment said *clean fantasy skeletons in a
-world of grimy cast iron* and then named **one dark tint per kind** as the answer to that.
-It is `prop_grade.py`'s first attempt arriving a second time, and it fails the same way for
-a reason that is arithmetic rather than taste.
+| | legs | body slung at | the mass is | carapace |
+|---|---|---|---|---|
+| Crawler | 6 | 0.30 | spread down a long low body | none — bare chitin |
+| Breaker | 6 | 0.50 | a shield at the front, head carried low | 0.96, the tallest thing on it |
+| Siege Hulk | 6 | 0.58 | a raised tail at the back | 0.94 |
+
+**All three walk on six since #79's second look**, and the leg *count* is deliberately no
+longer one of the separators: four legs under a body carried high is a quadruped silhouette,
+and at thirty metres a Breaker read as a horse. What separates them is the body — a long low
+narrow wedge against a wide plate carried high against a hull slung over a raised tail — which
+is the thing that should be separating them.
+
+#### The rig fits inside #38's bake, and that was a constraint rather than an outcome
+
+- **19 bones a body, every kind, against the cast's 23.**
+  Two segments a leg and no more, because six legs at three would be 25 bones of leg alone —
+  and because two is what an insect looks like at the only range this matters at.
+- **One influence a vertex, at weight 1.** `EnemyBodies.INFLUENCES` keeps the four heaviest, so
+  a fifth would be dropped in silence; there is nothing to drop, because a chitin plate is
+  **rigid**. Not a shortcut: a smooth-skinned insect leg is a rubber tube, and plates sliding
+  over one another at the joint is what an exoskeleton is.
+- **Four clips inside each body's own `.glb`**, so a recipe's `libraries` names the character
+  itself. The cast resolved against shared-rig libraries, which is the right arrangement for a
+  pack of thirteen characters on one rig and the wrong one for three different rigs — a library
+  between them could only carry the bones they have in common, which is the root.
+- **The gait is a function of phase rather than eight keyframes**, sampled on every frame with
+  linear interpolation. Eight keys are eight numbers somebody editing a leg length would have to
+  re-derive; a function follows the declaration for free, and what Godot imports is what the
+  declaration says rather than what a Bezier handle did to it.
+- **A tripod gait is most of what makes these read as insects**, and `tripod_phase` takes the
+  pair index *and the side* for that reason. From the pair alone both sides step in unison,
+  which is a pace and reads as a pantomime horse — the first version did exactly that.
+- **One of #38's tests now passes trivially, and that is worth saying rather than hiding.**
+  `test_a_clip_never_walks_the_body_away_from_where_the_simulation_put_it` exists because a
+  forward-travelling walk cycle baked as authored would slide a Crawler out of its own
+  instance transform, so `_pose` replaces the root's horizontal translation with its rest on
+  every frame. A declared gait **authors no root translation at all** — the legs move and the
+  body does not — so there is nothing left for that rule to undo and the test asserts a
+  property of the declaration rather than of the bake. The rule stays, because the bake is
+  what would have to survive somebody authoring a travelling cycle, and because a kind with
+  no body still falls back through it.
+
+**The casting itself is unchanged in the one way that matters.** A Crawler *runs* and the other
+two *walk*, which was #38's decision and was never about the art: Chaff has to read as
+numerous and coming, and a Breaker marches the Nest's own lane under fire (#34). What is gone
+are #38's two named stand-ins — `Rig_Large` carried no attack take at all, so a Siege Hulk's
+stomp played `Hit_A`, a lurch rather than a swing. A declared body declares its own.
+
+#### What the gate says, and it is the one number that got better on its own
+
+`tests/cases/test_enemy_silhouette.gd` was **not touched** — the threshold is still 0.50, and a
+gate rewritten to admit what it is measuring is not a gate. Measured on the generated bodies,
+posed and scaled exactly as `WorldView` draws them:
+
+| pair | the cast (#49) | first pass | **shipped** |
+|---|---|---|---|
+| Crawler vs Breaker | 0.58 | 0.655 | **0.538** |
+| Crawler vs Siege Hulk | 0.83 | 0.989 | **0.878** |
+| Breaker vs Siege Hulk | 0.67 | 0.868 | **0.794** |
+
+**Every pair is further apart than the cast managed**, which is the declaration working rather
+than luck: the cast was three humanoids of the same proportions at three heights, so #49 could
+only separate them by size, and that walked the Breaker toward the boss as fast as it walked it
+away from the Crawler. A body slung at 0.30 against 0.50 against 0.58, a bare back against a
+plate at 0.96, and mass spread down a long tail against massed in a front shield are
+independent differences, so the pairs no longer trade against one another.
+
+> ### ⚠️ The Crawler-against-Breaker pair has about four hundredths of headroom
+>
+> **0.538 against a 0.50 floor.** If you are about to move a Crawler or a Breaker proportion —
+> a width, a depth, a sling height, a tail length — that is your whole budget, and
+> `test_enemy_silhouette` is what will tell you. **Re-measure after
+> `godot --headless --path . --import`**, for the reason two paragraphs down, and read "leg
+> thinning is free against this gate and body bulk is not" before you pick which number to
+> move.
+
+**The third column is #79's second look and it cost real margin — 0.655 to 0.538 on the
+binding pair — which is reported rather than hidden.** The Breaker went from four legs to six,
+because four under a body carried high is a *quadruped* silhouette and at `triage`'s thirty
+metres it read as a horse; six legs splayed low is the cue that says insect at range. Leg count
+was carrying 0.12 of that separation and is now carrying none of it, so the body is carrying all
+of it. The gate was **not touched** — the threshold is still 0.50, and a gate rewritten to admit
+what it is measuring is not a gate.
+
+**Six legs were kept at 0.538 over four at 0.655 deliberately, and the rule is #68's own.**
+*Separation is a floor to clear, not a quantity to maximise* — that ticket measured a saturated
+green at ΔE 73 and threw it away, because clearing the floor was the whole requirement and the
+rest was a neon slab in a dark palette. The same trade is here in geometry: the four-legged
+Breaker buys 0.12 of margin **on the instrument** at the cost of the thing the instrument exists
+to serve, because the gate rasterises an outline and cannot see that the outline is a *horse*.
+When a gate and the judgement it stands in for disagree, the gate is the thing that is wrong
+about the world — and the right response is to spend its margin, not to protect it.
+
+**And the re-tune had to be driven back and forth across that floor to land, which is worth
+knowing before somebody repeats it.** Bodies widened and legs shrunk to kill the fence took the
+pair to **0.385**, *below* the floor, because a fat Crawler is a small Breaker. What bought it
+back was pushing the two the opposite ways at once — the Crawler longer, lower and narrower
+(0.44 wide, slung at 0.30, an 0.88 tail) and the Breaker wider and higher (0.88 wide, slung at
+0.50, a 1.02 plate at 0.96). **Leg thinning is free against this gate and body bulk is not.**
+
+The Crawler against the Siege Hulk at 0.878 is nearly disjoint, which is the expected answer
+rather than a suspicious one: a 1.6 m body slung low and a 3.2 m one slung high share almost no
+cell of a grid rasterised at one cell per player pixel at thirty metres.
+
+**⚠️ Every one of these numbers must be taken after `godot --headless --path . --import`, and
+three readings in this ticket were taken without it and were lies.** The measurement loads the
+`.glb` through `res://`, so it gets whatever the **import cache** holds — and regenerating a
+body does not refresh that. Three separate geometry changes reported *byte-identical*
+separations, which is how it was caught: a figure that does not move when the mesh does is the
+symptom. `tools/run_tests.sh` runs `--import` on every invocation for exactly this reason, so
+the suite is safe; a one-off script is not. It is the `.pyc` trap below in a second costume —
+**a generated asset has two caches between the declaration and the answer, and both will lie
+quietly.**
+
+#### The legs were the subject and the body was the background, and a render is the only thing that said so
+
+**#79's second look, and it is #41's rule arriving from a direction this file had not met: a
+mark can be in the right place, the right colour and the right size and still be wrong because
+it is *bigger than the thing it is attached to*.** The first pass put a Crawler's knee at 0.95
+against a back at 0.59 — so the leg arc was the top of the silhouette, the normalisation
+measured *it*, and the body was a small lump inside a cage. At the `pair` camera's six to twelve
+metres a rank of them read as a **picket fence with no bodies behind it**, which is a worse
+failure than the one it was solving: the thing a player has to shoot had gone missing.
+
+Three changes, and the order they had to be made in is the finding:
+
+- **The knee comes down to just over the back.** Measured on the shipped bodies, a Crawler's
+  legs top out 0.161 of its height above its back against the first pass's 0.36 — so the arch
+  is still there, which is what reads as splayed rather than as a quadruped, and it is no
+  longer the subject. **The Breaker and the Siege Hulk are now crowned by their own bodies
+  instead** (−0.337 and −0.122), which is a separator in its own right and falls out of the
+  carapace rather than being tuned for: the kind a player ignores is the one whose legs you
+  see first, and the two that matter are a plate and a hull.
+- **The legs are blades and are much thinner.** `Leg.blade` is #79's one new field: a square
+  section is the same width from every angle, so a leg thin enough not to be the mass is a thin
+  dark rod from *every* angle too, which is the "flat planes" half of the complaint. 1.6 deep in
+  the plane it swings through against its across-swing width gives it a lit face and a shaded
+  one. Thickness went from 0.075 of a body to 0.038 on the Crawler at the same time, and
+  **that** is what took the fence away rather than the cross-section.
+- **The body got the room the legs gave up**, and then had to give some of it back. See the
+  gate section above: widening both bodies took the Crawler-against-Breaker pair *below the
+  floor*, and what landed was pushing the two opposite ways rather than both outward.
+
+**And the Breaker's legs are `Soot` rather than `CastIron`, which is a one-line content change
+that a render forced.** Every surface of a kind takes that kind's single roughness, and the
+Breaker's is `WeldedSteel`'s 0.45 — so at metallic 1 under this project's bright ochre sky its
+*legs*, of the identical material a Crawler's dark legs are made of, came back as **pale planks
+brighter than the carapace they hang from**. A limb that is the brightest thing on a body reads
+before the body does. It costs no silhouette, because a material cannot move an outline.
+
+**What the pair of renders settles**, and both are committed: a Breaker that was a pile of white
+planks is a heavy plated mass on thin dark limbs, and a Crawler rank that was a fence is a row of
+low dark bodies with an oxide tail. **What it does not settle** is the honest limit already
+recorded below — these are chamfered boxes, and whether that reads as *this game's* bug or as a
+Machine with legs is a judgement for somebody with a mouse.
+
+#### The weak point is in the mesh now, which closes the one disagreement it could have
+
+A Siege Hulk's vent is the only place in this project where geometry carries a rule. It used
+to be placed by two constants in `world_view.gd` while the body it is an opening in was
+somebody else's art, so editing one could not move the other and **nothing would have said
+so**. `enemy_recipe` derives the tail's far face from the abdomen's own declaration,
+`generate_enemies` exports it as a marker node — carrying no mesh, so it falls out of
+`_flatten` by itself exactly as a Machine's `Port_*` marker does — `EnemyBodies.Body.vent_offset`
+reads it back through the same normalisation the bone matrices get, and `WorldView` builds the
+grille there. Editing `abdomen_rise` moves the glow with the tail.
+
+**An insect abdomen is a better home for it than a golem's back was.** The tail cocks *up and
+away* from the body, so the vent lands at (0, 0.84, -0.85) in body heights against the golem's
+(0, 0.50, -0.30): it is the one part of the silhouette a player cannot mistake for armour and
+the one part they can only see from behind. The constants remain as the fallback for a kind
+drawn through the procedural hull, which is what they were measured against, and
+`test_only_the_boss_declares_a_weak_point_and_it_is_behind_and_above_it` asserts the body's
+answer **differs** from them — because a declaration that happened to land on the old pair
+would leave the test unable to tell the mesh's answer from the renderer's.
+
+### What an Enemy is painted with, and why neither a tint nor a grade is the answer any more
+
+**Three tickets answered this and only the third stops being a repaint.** #38 drew the pack's
+one 1024-square swatch atlas — flat cells with a vertical gradient, a whole thigh samples one
+of them — through a dark multiply per kind. #75 is the user looking at that: *"the enemies look
+like shit honestly"*. They were right, and the reason is arithmetic rather than taste.
 
 **A multiply cannot change a ratio.** Measured off the committed atlas by sampling
-`Skeleton_Minion`'s own UVs — which is the only honest way to ask what a Crawler is actually
-wearing, because the pack embeds one shared swatch sheet and a limb samples one cell of it:
+`Skeleton_Minion`'s own UVs, which was the only honest way to ask what a Crawler was wearing:
 
 | what | cell | linear albedo |
 |---|---|---|
@@ -549,49 +733,300 @@ wearing, because the pack embeds one shared swatch sheet and a limb samples one 
 | ribs, pelvis | (161, 95, 72), a warm red-brown | 0.162 |
 | boots | (83, 71, 65) | **0.067** |
 
-Eight to one between the skull and the boot, and one tint scales both by the same number.
-So whatever the tint is, a Crawler is a bright skull with a dark smudge under it; turning it
-down only moves the whole thing toward black, which is exactly what shipped. **Measured off
-the `swarm bare` render that opened the ticket — over the Enemy pixels themselves rather
-than a window, because a box drawn round a Crawler is mostly ground — the median came to a
-linear luminance of 0.009 against a ground at 0.046**, a fifth of the thing it is standing
-on, which is not a dark Enemy, it is a hole in the floor. And the hue was wrong in a direction no
-multiply reaches: bone is a cold blue at about 200 degrees and **there is no blue anywhere in
-this palette**.
+Eight to one between the skull and the boot, and one tint scales both by the same number — so
+whatever the tint was, a Crawler was a bright skull with a dark smudge under it, and turning it
+down only moved the whole thing toward black. Measured off the `swarm bare` render that opened
+#75, the median Enemy pixel came to a linear luminance of **0.009 against a ground at 0.046**,
+a fifth of the thing it was standing on. #75's answer was `enemy_grade.py`, which remapped the
+*atlas* onto the palette's ramps and closed the ratio from 8.2:1 to 3.6:1.
 
-Three things replaced it and none of them is a tint.
+**#79 does not need a grade, because a part is assigned its palette entry rather than having
+one inferred from a pixel.** There is no ratio left to fight: a Crawler's carapace is
+`OxideRed` because somebody wrote that down. So the surface is resolved by **the name of the
+surface** — the declaration names an entry per part, the generator emits one glTF primitive a
+material, `EnemyBodies._flatten` names each surface after it, and `WorldView._skinned_mesh`
+loads `assets/machines/materials/<name>.tres`, which is the very `StandardMaterial3D` the
+Walls, every Machine body and #73's cargo already draw. One declaration, four runtimes.
 
-- **A graded atlas, committed.** `tools/assets/enemy_grade.py` is `prop_grade.grade_colour`'s
-  rule — family by hue and saturation, pulled toward that family's palette material, luminance
-  through a `ceiling * L / (L + knee)` shoulder — with this atlas's arcs and a shoulder tuned
-  for this subject. Bone, steel and the pack's purples and turquoises become iron, because the
-  palette has no cold hue to send them to; the red-browns stay oxide, because it has one. The
-  shoulder is what closes the ratio: **8.2:1 becomes 3.6:1**, enough that a skull still reads
-  as the brightest part of a Crawler and not enough that it reads as a separate object.
-- **Metal.** `_sync_scenery` takes ambient and reflections off the sky *because* the generated
-  surfaces are mostly metal and a metal lit by an ambient colour has nothing to reflect — and
-  until #75 an Enemy was the one thing in the world that was not one. A Crawler was 0.05
-  metallic at 0.88 roughness, so a Wave arriving out of the sun had only the sky's flat
-  ambient on its front, which is most of why it rendered as a silhouette. All three kinds are
-  metal at the palette's own roughness now: `CastIron`'s 0.62 for the Crawler and the boss,
-  `WeldedSteel`'s 0.45 for the Breaker.
-- **Grime and relief the atlas cannot carry**, derived in `game/enemy_skin.gdshader` from the
-  **rest pose**. The props had this for free and these characters do not: heyheythere bakes
-  ambient occlusion into `COLOR_0`, so `prop_grade.deepen_grime` had per-prop geometric
-  information about where dirt collects, where KayKit's six characters carry **no `COLOR_0` at
-  all** — measured, their primitives are `JOINTS_0, NORMAL, POSITION, TEXCOORD_0, WEIGHTS_0`
-  and nothing else. So it is #42's answer to the same complaint about the yard, which had the
-  same premise: an albedo-only source with no normal map to load and no relief, lit by a
-  23-degree sun that finds nothing.
+| Kind | carapace / plate | abdomen | joints and legs | mandibles |
+|---|---|---|---|---|
+| Crawler | — | `OxideRed` | `Soot` | `DullBrass` |
+| Breaker | `WeldedSteel` | `CastIron` | `Soot` | `DullBrass` |
+| Siege Hulk | `CastIron` | `OxideRed` | `Soot` | `DullBrass` |
 
-**The per-kind tint survives and its job changed, which is the part worth knowing.** It no
-longer carries the *level* — the grade does — so it is near white and carries only a cast:
-warm for the Crawler, cold for the Breaker, neutral for the boss. That is a readability cue
-the Wave did not have, because before this everything was uniformly dark and **size was
-carrying the entire distinction** (#49). It is still a multiply and it still cannot change a
-ratio, which is precisely why it is no longer asked to.
+**`tools/assets/enemy_grade.py` is deleted rather than left unread**, along with the six KayKit
+characters, their four animation libraries, the intake FBX, the atlas copies and the bone map —
+14 MB and 55 tracked files. A generator whose output nothing samples is `prop_grade.py`'s own
+opening defect and the rule `Definitions` applies to a tuning key nothing reads.
+
+**The UVs are worth sampling now, which they were not before.** The cast's unwrap pointed every
+limb at one cell of a swatch sheet, and the shader's own note said a normal map through them
+would be a flat colour. A generated body is box-projected at one UV unit to the authored metre,
+which is one unit to the *body height* — so the palette's real tiling map repeats across it, and
+how finely is one uniform, `uv_scale`, written as a fraction of a body for `grime_metres`' reason.
+
+**The per-kind tint survives and has lost its last job but one.** Before #75 it carried the
+whole level; #75 left it carrying a cast; #79 takes the hue as well, because the declaration
+assigns it. What is left is near white and says only *which kind* — warm for the Crawler, cold
+for the Breaker, neutral for the boss — which is the readability cue #49's sizing was carrying
+alone.
+
+#### Chitin is a glossy dielectric, and two renders rejected it anyway
+
+**#79's ticket asked for #75's `metallic = 1` to be re-derived and measured rather than
+inherited, and it was — by shipping the other answer into a render and looking at it.** The
+ticket's reasoning is fair and its physics is right: #75's figure was defended as *a dielectric
+at 0.17 albedo has nothing to reflect under a sky dome*, that premise is about the pack's
+graded atlas rather than about a declared body, and a plated insect shell really is a glossy
+dielectric with a bright specular of its own.
+
+**The picture says no.** At `metallic = 0` and roughness 0.45 a Crawler came back as pale tan
+limbs with a white speckle crawling over them and the Breaker's legs as chrome. The reason is
+the palette rather than the biology: it runs **0.055 to 0.14 albedo**, and `_sync_scenery`
+takes ambient *and* reflections off a bright ochre sky precisely because the generated
+surfaces are metal. A dielectric at that albedo under that sky is a body whose own colour is a
+twentieth of the specular sitting on top of it — so what a player sees is the sky with a
+silhouette cut out of it, which is #75's own sentence about a rough-plastic highlight arriving
+from the opposite direction.
+
+So the Enemies are metal, at the palette's own figures: `WeldedSteel`'s 0.45 for the Breaker,
+`CastIron`'s 0.62 for the boss, and 0.55 for the Crawler between them. **#75's number survives
+its own argument being superseded**, and the durable form is worth more than the number: not
+*a dark dielectric has nothing to reflect*, but **this world's light is tuned for metal, so
+anything in it that is not metal reads as a smear**. The dielectric is the honest physical
+answer and the wrong rendering answer, and that distinction is the whole of what this
+sub-section is for.
+
+**And it was tested a second time, on a surface that had been fixed in the meantime**, which
+is the right thing to do once the first rejection's evidence turns out to have had another
+cause — the white speckle that helped convict the dielectric was `relief` on faceted plate, not
+the material. Re-rendered with the relief and the lift corrected, it comes back **chalky**:
+pale grey plate with safety-orange abdomens, reading as painted concrete rather than as a
+shell. A dielectric's diffuse is flat and carries none of the sky's gradient, and the metal's
+reflection is exactly what gives plate its sheen. So metal stands on better evidence than it
+did, and the honest summary is that the ticket's physics is right about chitin and wrong about
+this renderer.
+
+`test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal` therefore survives
+a ticket that set out to reverse it, with the reason rewritten and a second clause added —
+the pair is asserted together, because a dielectric at any roughness and a metal polished to a
+mirror each satisfy one half.
+
+#### What it costs, and "not too detailed" as a number
+
+The user's instruction was *"not too detailed"*, which is a performance instruction as much as
+a style one — these are drawn through one MultiMesh a kind in the thousands. Measured with
+`ENEMY_COUNT=<n> tools/visual/frame_cost.sh` on the same scenario, the cast against the
+declaration:
+
+| | the cast (#38) | declared (#79) |
+|---|---|---|
+| primitives, 18 Enemies | 4,291,354 | **3,994,066** |
+| primitives, 71 Enemies | 5,505,532 | **4,158,192** |
+| video memory, 18 / 71 | 265.4 / 265.9 MB | **259.2 / 259.7 MB** |
+| `WorldView.sync`, 18 | 16.76 ms | 17.22 ms |
+| `WorldView.sync`, 71 | 20.76 ms | 20.25 ms |
+
+**The declaration is cheaper on the figures that are properties of the asset, and the gap
+widens with the Wave** — which is the half that matters, because the Wave is what grows. 297,000
+fewer primitives at 18 Enemies and **1.35 million fewer at 71, a quarter of the frame's total**,
+because 788, 588 and 812 triangles a body replace 4,858 *vertices* apiece. Six megabytes less
+texture, because the glTF embeds no image and the palette's maps were already resident for the
+Machines. `test_generated_enemies.test_not_too_detailed_is_a_number`
+is the ceiling that keeps it so when somebody adds a part.
+
+**The sync figure is not a finding and should not be read as one.** Half a millisecond on a
+17 ms rebuild, measured on a machine running five other Godot processes at load 11, is inside
+the noise of the instrument — and both columns are far above the figures this file quotes for
+#38, because the Factory the harness builds has grown since. What the measurement is for is
+the two columns above it, which are counts rather than timings.
+
+**The pose texture went down too**, which is the half #38's architecture actually cares about:
+19 bones a kind against the cast's 23, over 104
+frames rather than 90. `test_generated_enemies` holds the bone budget at 23 so a later
+declaration cannot quietly walk past it.
+
+**And the Simulation's own tick is untouched by construction.** `ENEMY_COUNT=2000
+enemy_tick_cost.gd` times `Simulation.step`, and #79 changed no file under `sim/` at all — the
+bodies are an asset and the surface is a renderer decision, so a difference there would have
+been a bug rather than a cost. Measured at 2000 Enemies on this machine it is about 300 ms a
+step either way, which is #76's crush figure inflated by the same contention the sync column
+carries; the quiet-machine figure that file quotes is 94 ms and is the one to trust.
+
+**The GPU half is unmeasured, exactly as #38's and #75's were.** `frame_cost.sh` measures the
+CPU rebuild, the skinning is in a vertex shader, and Xvfb is llvmpipe. The levers if it ever
+bites are the same two: `relief_fade_end`, and dropping the grime field's second octave.
+
+#### Four things a second look found, and only one of them was what it looked like
+
+**The first pass measured a histogram and shipped a broken surface**, which is this file's own
+lesson arriving again: the medians were defensible and the Breakers were blue-and-white
+confetti. Four faults, and the order they were *found* in is not the order they were guessed
+in — each was isolated by rendering one probe.
+
+1. **It was `relief`, not the roughness spread.** The obvious suspect is #75's per-fragment
+   roughness, because a metal's reflection *is* its surface. Probed at `roughness_spread = 0`
+   and **the confetti was unchanged**; probed at `relief = 0` and it vanished completely. The
+   mechanism is the derived normal: on #75's smooth skinned characters the base normal already
+   varies across a face, so bending it a little bends it a little, where a generated body is
+   **flat-shaded faceted plate** whose facet normal is constant — so the field is the *only*
+   variation on that facet, and on a metal it swings the reflected direction across a sky that
+   is bright ochre at the horizon and dark blue at the zenith. Hence blue and white. `#79`
+   ships 0.003, a quarter of #75's 0.012, bracketed at 0, 0.003 and 0.012 by looking.
+2. **The lift was applied in the wrong space and was clipping past a physical albedo.** It
+   multiplied the palette entry's **sRGB** colour and handed the product to a `source_color`
+   uniform, and that conversion is a 2.4 power — so 1.6 on `CastIron`'s 0.52 became
+   `srgb_to_linear(0.83) = 0.66` against the 0.23 a Machine gets, an effective **2.9x**. On the
+   Breaker's cold cast it took `WeldedSteel` to a **linear albedo of 1.13 in blue**: over one,
+   a surface returning more light than it receives. It is applied in linear now and clamped at
+   `ALBEDO_CEILING = 0.80`, and bracketed at 1.0 / 1.8 / 2.6 — 1.8 reaches `triage` parity with
+   the cast and 2.6 adds 0.002, so 1.8.
+3. **The dielectric was re-tested on the fixed surface and is still wrong, for a new reason.**
+   That was the right thing to check: with the speckle traced to `relief` rather than to the
+   material, the first rejection might have been convicting the wrong thing. Rendered at
+   `metallic = 0` with the relief and the lift corrected, the bodies come back **chalky** —
+   pale grey plate with safety-orange abdomens, reading as painted concrete. A dielectric's
+   diffuse is flat, so it carries none of the sky's gradient; the metal's reflection is what
+   gives plate its sheen. Metal stands, and now for a better reason than "the dielectric was
+   speckled".
+4. **The texture density is fine, and that was measured rather than argued.** Texels per real
+   metre, #65's own figure: **Crawler 1455, Breaker 1058, Siege Hulk 727, against a Machine's
+   931**. So the Crawler is 1.56x a Machine and the boss is *below* one — not the order of
+   magnitude it was suspected of, and `filter_linear_mipmap` handles the minification anyway.
+   What has no mip chain is the **procedural** field, which is why (1) was the fault and this
+   was not.
+
+**And a structural fix that (1) uncovered.** `relief` fades over 14-34 m because a procedural
+field past the range where one feature is under a pixel stops being detail and becomes noise.
+`grime_depth` and `roughness_spread` are the same field and **did not fade** — #75 computed
+`near` and applied it to one of the three. Both fade now, which is #75's own argument finished
+rather than a new idea.
+
+#### What the measurement says, and the two frames where it says the wrong thing
+
+#75's method: linear luminance over the pixels the change moved, against the ground in the
+same picture.
+
+| frame | before, median | after, median | ground | after / ground |
+|---|---|---|---|---|
+| `triage` — thirty metres, the readability shot | 0.091 | **0.078** | 0.049 | **1.61x** |
+| `boss` | 0.049 | **0.051** | 0.046 | 1.11x |
+| `pair` — six to twelve metres | 0.074 | 0.031 | 0.052 | 0.58x |
+| `crush` — from above, in the Nest's shadow | 0.021 | 0.014 | 0.042 | 0.33x |
+| `swarm` — six metres, **into the sun** | 0.058 | **0.004** | 0.046 | **0.09x** |
+
+**At the two vantages that decide whether a Wave is readable the bodies are at parity with the
+cast** — `triage` at 1.61 times the ground where #75 left an Enemy at 0.46 times, and `boss`
+fractionally *above* the cast. Re-measured after #79's geometry second look and they moved by
+hundredths, which is the expected answer rather than a lucky one: that pass changed proportions
+and a leg count and touched no material, and these are a property of the surface.
+
+**`swarm` and `crush` are still below the ground and that is said plainly rather than
+defended.** `swarm` is a *ninth* of the floor, which is worse than the fifth #75 called "not a
+dark Enemy, it is a hole in the floor". Both are the cases where the body is between the camera
+and the light or inside the Nest's shadow, and **neither is a lift problem**: bracketed at 1.0,
+1.8 and 2.6, `swarm`'s median moved 0.000 → 0.0041 → 0.0042 and then stopped, because a backlit
+metal in shadow has almost nothing to return whatever its albedo says. Buying it with more lift
+was offered and refused.
+
+**Part of `swarm`'s figure is the mask rather than the bodies, and that is the sixth time this
+file has paid for a vantage — the first time as a *measurement* rather than as a missing
+subject.** The preset stands at about forty-five metres looking down a lane at bodies a few
+pixels wide, so most of the pixels #75's method selects are **edge** pixels; and an edge pixel
+on a thin dark leg against bright ground is mostly ground, which drags a median toward the
+ground's value from below rather than reporting what a body returns. Every other instance of
+this hazard has been a camera that could not see its subject (#48's split marks, #49's `triage`,
+#52's survey ore, #56's dock posts, #76's `crush`, #79's own `wounded`). This one frames the
+subject correctly and is a bad *instrument* at that range.
+
+**It is not only the mask, and #79's second look is the evidence.** That pass halved every leg's
+thickness and enlarged every body — which changes the edge fraction of the `swarm` mask
+materially and in the direction that should have made an edge artefact *worse* — and the median
+came back at **0.0041 against 0.0041**, unmoved to the fourth decimal. So whatever dominates
+that number is not leg width, which is what an edge-pixel artefact would be most sensitive to.
+**Read it as a real loss with a measurement artefact on top of it, and not as either one
+alone.**
+
+What it actually wants is either a fill light reaching the Enemies or an emissive cue on a kind
+— and the second is newly *possible* rather than merely proposed, because #75 refused
+`depth_test_disabled` for its own reasons and found the KayKit eye geometry was inside the
+skull, so a generated body is the first thing in this project that could place one. Both are
+their own ticket. A `swarm` figure that is honest about the bodies wants a vantage nearer than
+forty-five metres, which is a third thing and is a change to the preset rather than to the game.
+
+#### What the pictures settle, and what they do not
+
+Six pairs are committed, `bare` throughout because the yard is drawn out of the purchased packs
+and this repository is public:
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "<preset> bare"
+```
+
+`docs/images/enemies_insect_{swarm,pair,triage,boss,crush}_{before,after}.png`, plus
+`enemies_insect_wounded_before.png`.
+
+- **`triage` is the one that carries the ticket**, because thirty metres is where a player
+  decides what a Wave is. Before: three humanoid silhouettes in three sizes, the Crawler and the
+  Breaker separated by height alone. After: a line of low six-legged bodies with oxide tails
+  against the iron of their own thorax and legs, and a wide plated thing standing over
+  them. The oxide tail is a second cue beside height, which is the thing #49 recorded as missing
+  and #75 could not buy with a tint.
+- **`crush` answers #76's question for the new bodies**, and it answers it better than the cast
+  did: eight insects pressed into the Nest's corner read as eight bodies with legs interleaved,
+  where eight skeletons read as a heap. Legs splayed wide is a silhouette that *shows* a crowd.
+- **`swarm` is the honest loss.** Six metres, into the sun: the generated bodies are
+  silhouettes where the cast was pale. Some of that is a chitin bug doing what a chitin bug
+  should do between you and a low sun, and some of it is a real step backwards; the measurement
+  above says which frames it costs and the lever is `ENEMY_LIFT`.
+- **`wounded`'s after is committed and it is a bad picture, which is worth recording.** That
+  preset frames the spot where the last Enemy died, and the composer drives the kill by aiming
+  the player at a target read back out of the queries — so where the camera ends up is a
+  function of where the Wave happened to be. On the generated bodies it came to rest about
+  forty metres from its subject and the Enemies are a smudge on the horizon. That is the
+  vantage hazard this file has now paid for six times (#48's split marks, #49's `triage`,
+  #52's survey ore, #56's dock posts, #76's `crush`, and `swarm`'s own luminance above):
+  **a composer that frames from what it meant to produce is a composer that cannot see what it
+  produced.** `swarm` is the odd one of the six and is worth reading beside this one — its
+  camera frames the subject correctly and is still the wrong instrument, because at
+  forty-five metres the thing it measures is mostly edges. Nothing here chased it,
+  because #70's glowing cracks are drawn by the shader off `INSTANCE_CUSTOM` and #79 did not
+  touch that path — so the surface claim is carried by `pair` and `triage`, and re-aiming
+  `compose_wave_shot`'s `wounded` camera is a job for whoever next has a reason to look at a
+  wound.
+
+**What no still image settles**, and it is the question the whole ticket is really about:
+whether a tripod walk reads as an insect walking. Everything measurable is measured —
+silhouette separation, luminance, triangles, texels, video memory — and none of it has an
+opinion about gait. The levers are the two numbers in `enemy_recipe.leg_pose` (the stance
+fraction and the lift) and the clip lengths in `CLIPS`, all in the declaration rather than in
+tuning, because the Simulation reads none of them.
+
+**And the bodies are faceted plate rather than organic**, which is the honest limit of this kit.
+A Terminid has curved chitin and a lot of it; these have chamfered boxes, because that is what
+`machine_parts` is good at and what every other surface in this world is made of.
+
+**That was looked at rather than left as a worry, and the answer splits by range.** At thirty
+metres it works and is the read the ticket was for: a low dark line with a taller plated thing
+standing over it. At the `pair` camera's six to twelve metres it does not — the Breaker is a
+boxy mass on thin legs and the Crawler's abdomen is a saturated orange block, and the whole
+reads as **a machine with legs rather than as a bug**. That is a real gap and it is recorded as
+one; it was not grounds to hold the branch, because the geometry is separated, the frame is a
+quarter cheaper, the surface is fixed, the licence position is strictly better than a CC0 cast,
+and it is emphatically not a skeleton — and a long-lived art branch against three other agents
+in `world_view.gd` costs more than it buys.
+
+**The shape the renders suggest, for whoever picks the close range up**: a *segmented* body —
+thorax and abdomen as two masses with a narrow waist between them rather than one run of boxes —
+**arched** legs rather than straight ones, and a front feature where a head would be. And the
+orange abdomen wants measuring: at `pair` it is the brightest thing in frame, which is adjacent
+to #80's finding about the Nest and may share a cause.
 
 #### Five things about the shader, three of them carried over from the ground
+
+**All five are #75's and all five are current**, because every one of them is about a
+surface rather than about where the albedo came from. #79 changed one thing in this file:
+`uv_scale`, which the cast's swatch UVs could not have used.
 
 - **It is sampled in the rest pose, not in world space.** The yard's noise is a function of
   where you are standing because the yard does not move; an Enemy does, and a world-space read
@@ -607,7 +1042,9 @@ ratio, which is precisely why it is no longer asked to.
   — and the useful half of the failure is that it settled the plumbing in one glance, which is
   the question #42 needed two diagnostic renders to answer. `relief` is written as a fraction
   of the Enemy's own height for `bump_height_metres`' reason, so 0.012 on a 1.6 m Crawler is
-  two centimetres of pitting over three-centimetre features.
+  two centimetres of pitting over three-centimetre features. A generated body is faceted
+  plate with chamfered edges rather than a smooth cast, so the field now reads **over** a
+  silhouette that already has structure in it instead of supplying all of it.
 - **The gradient is not normalised, and that is what the chrome render was really about.**
   Normalising it turns the knob into "how far to rotate toward the gradient", which tilts
   every fragment by the same amount whatever the field is doing — so a flat patch of the field
@@ -623,122 +1060,6 @@ ratio, which is precisely why it is no longer asked to.
   crease is matte where a worn edge is polished. That difference is most of what says "metal
   that has been outside" rather than "grey plastic", and it costs nothing — the field is
   already sampled for the albedo.
-
-The old note saying the Crawler was pushed to 0.88 roughness because the skulls "caught a hard
-specular off a low sun and read as glazed pottery" is **corrected rather than deleted**, and
-the correction generalises. That was a true observation about a *dielectric* at 0.17 albedo: a
-rough-plastic highlight on a near-black body is a bright smear with nothing under it. At
-metallic 1 the same highlight **is** the surface, because a metal's reflection is coloured by
-its own albedo rather than sitting white on top of it — so the fix was the material model and
-not the number, and 0.88 on a metal is a grey felt Crawler.
-
-#### What the measurement says, and what the gate says
-
-Masked to the pixels the change actually moved — which is the right denominator, because a
-window over an Enemy is mostly ground — before against after on the same `swarm bare` frame:
-
-| | median | mean | p90 |
-|---|---|---|---|
-| before | 0.0092 | 0.051 | 0.185 |
-| **after** | **0.0212** | **0.108** | **0.382** |
-| the ground it stands on | 0.0458 | — | — |
-
-So the median Enemy pixel went from a fifth of the ground to about half of it, and the mean
-from just over the ground to two and a half times it — the second figure being the highlights
-that only exist because the surface is metal now.
-
-**`test_enemy_silhouette` is unmoved at 0.58, 0.83 and 0.67**, re-measured rather than
-assumed, and that is the expected answer rather than a lucky one: #75 changed no geometry at
-all, and the gate rasterises a posed, scaled outline. The binding pair is still the Breaker
-against the boss.
-
-**No balance number moved, and none could have.** The capsule a round is resolved against is
-`enemy.*_hit_height_metres` and `*_hit_radius_metres`, which this ticket did not touch — and
-since #49 those are also what the drawn body is *scaled* by, so a surface change cannot reach
-them in either direction.
-
-#### What the pictures settle and what they do not
-
-[`docs/images/enemies_surface_before.png`](docs/images/enemies_surface_before.png) against
-[`_after`](docs/images/enemies_surface_after.png) is the frame the complaint was made about,
-and the triage pair beside it is the same claim at thirty metres:
-
-```bash
-SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "swarm bare"
-SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "triage bare"
-```
-
-Before: pale skulls floating over bodies with nothing in them, every kind the same value, and
-the brightest thing on a Crawler being the one part that should read last. After: pitted dark
-iron, oxide-red ribcages, a rim off the low sun, and a Breaker that is cold where a Crawler is
-warm. At thirty metres the gain is narrower and real — the Crawler's oxide torso against its
-iron limbs is a second cue beside height, where before the two kinds were one value in two
-sizes.
-
-**What is left for a ticket about damage, which is the question this one was asked and
-should answer rather than leave to be rediscovered.** Nothing here spent the channel such a
-ticket needs. `INSTANCE_CUSTOM` is four floats: `.x` is the animation row and `.y` is the
-health fraction `wound_darkening` already reads — so a Crawler a Turret has been working on
-is *already* drawn darker — and **`.z` and `.w` are written as zero by
-`_write_skinned_instance` and read by nothing.** The stride is sixteen whatever is in them,
-so two channels are paid for and free. Three things follow:
-
-- **Prefer a free channel to `use_colors`.** Turning that on widens the stride to twenty and
-  with it the writer, `_stride_for` and every accessor that divides by one. Per-instance
-  colour buys nothing a channel cannot, because the shader is this project's own.
-- **A mark that has to be in a *place* needs a per-instance seed, and that is what `.z` is
-  for.** The grime field is a function of the rest pose alone, so it is identical on every
-  Enemy of a kind — which is right for wear and wrong for a wound. `grime_at(rest +
-  vec3(seed))` offsets the field per Enemy for one float.
-- **A death is the one thing the custom data cannot carry, and the reason is the
-  Simulation.** `_remove_enemy` closes the gap the tick a Crawler dies, so there is no
-  instance left to blend out — the fact that it died is a *change* rather than a condition,
-  which is `game/audio_director.gd`'s whole shape and the thing `game/combat_events.gd` is
-  being built for in #69. A death wants that diff, not a channel.
-
-**Three more things are recorded rather than fixed, and the first is the honest limit of this
-ticket.**
-
-- **The proportions are still a cartoon's.** A Crawler's skull is a third of its height and
-  nothing here changed that, because it is geometry and geometry is what
-  `test_enemy_silhouette` measures: the three pairs are at 0.58, 0.83 and 0.67 against a 0.50
-  floor, so reshaping a body is a decision that has to be re-measured rather than made in
-  passing. The ticket's own alternative — build an Enemy out of `machine_parts` and
-  `dieselpunk_palette.json`, which is #64's answer for the Build Gun — remains open and is the
-  obvious next step if the surface is not enough. It was not taken here because it is a
-  different and much larger ticket: it throws away six committed CC0 characters, the shared rig
-  that makes a clip authored for the Minion play on the Golem, and the whole of #38's bake,
-  and it would have to re-derive the silhouette numbers from scratch rather than leave them
-  untouched.
-- **The GPU cost is unmeasured, exactly as #38's was.** The shader now evaluates the grime
-  field four times a fragment — the value and one forward difference an axis, which is
-  `ground.gdshader`'s own arrangement — and `tools/visual/frame_cost.sh` measures
-  `WorldView.sync`, which is the CPU rebuild. Xvfb is llvmpipe, so the half of this that
-  matters wants a machine with a real card. The levers if it ever bites are `relief_fade_end`
-  and dropping the second octave.
-- **A Breaker at close range reads as blued gun-steel, and that may be a degree too
-  polished.** `WeldedSteel`'s own roughness is 0.45 and on a *full* metal under a bright
-  ochre sky that picks up a lot of sky — so at the `pair` preset's six to twelve metres the
-  armoured kind has a distinctly cold sheen where a Crawler has none. It is in the palette by
-  construction and it is the clearest thing separating the two kinds at range, which is why
-  it was left; whether it reads as armour or as chrome is a judgement for somebody with a
-  mouse, and the lever is `_enemy_roughness` rather than the tint.
-- **Only atlas A is graded, and atlas B is deliberately left alone.** All six committed
-  characters reference A — checked, not assumed; the six copies beside the `.glb`s are
-  byte-identical to the intake file. A graded copy of a map nothing samples is
-  `prop_grade.py`'s own opening defect in the other direction.
-
-**And the one trap worth naming, because it nearly swallowed this ticket.** The six
-`Skeleton_*_skeleton_texture_A.png` files sitting beside the characters are **read by
-nothing**: `gltf_info` reports `images: [None]`, which means the pack's converted `.glb`
-carries its image **inside its own buffer**. Grading those six files would have changed
-nothing on screen — which is literally `prop_grade.py`'s opening paragraph, *"it did nothing
-at all for the props a player actually stands among"*, arriving again in a different costume.
-So the graded atlas is **loaded by `_skinned_mesh` and put on the material**, the artist's own
-material is no longer read at all, and
-`test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own` asserts from the
-renderer's side that the graded file is what reaches the shader. A grade is invisible from the
-grading side of that seam.
 
 ### An Enemy that takes damage, and a death that leaves something behind
 
