@@ -455,6 +455,50 @@ const IMPACT_SIZE_METRES: float = 0.5
 ## and a cloud of red sparks over a Wave would drown all three.
 const IMPACT_COLOUR: Color = Color(1.0, 0.88, 0.58, 0.9)
 
+## ── An Enemy that takes damage, and a death that reads as one (#70) ─────────────────────
+##
+## How long a body stays lit after a round lands on it. Eight ticks is 133 ms — longer than a
+## muzzle flash, because a flash is seen at the gun a player is standing beside and this is
+## seen thirty metres away on a body in a crowd, and short enough that an MG at four rounds a
+## second reads as four flickers rather than as a lamp.
+const HIT_FLASH_TICKS: int = 8
+
+## How long the ground remembers a death. Two and a half seconds: long enough that a player
+## sweeping a swarm sees what they have already killed, short enough that a Factory which has
+## held a lane for twenty minutes is not standing in a field of stains.
+const DEATH_MARK_TICKS: int = 150
+
+## How long the body's own burst lasts, inside that. Fifteen ticks is a quarter of a second —
+## the thing that says *now*, where the stain says *here*.
+const DEATH_BURST_TICKS: int = 15
+
+## How wide the burst gets, as a fraction of the body that died, and how wide the stain on the
+## ground is. Measured against the body rather than set as a constant, for #41's reason: a
+## Siege Hulk is twice a Crawler and a mark that is one size for both belongs to neither.
+##
+## **The burst is a disc and not a cube, and only a render said so.** The first version was the
+## unit box scaled evenly, which is what #69 draws a muzzle flash and an impact with — and at
+## a death's size it is a 1.3 m pale **crate standing in the Wave**, which is #69's own finding
+## about a 0.75 m impact burst and #56's about a red post, a third time. A flat ring expanding
+## outward cannot read as an object, because nothing in this world is a metre across and six
+## centimetres thick.
+const DEATH_BURST_SPREAD: float = 2.4
+const DEATH_BURST_THICKNESS: float = 0.06
+const DEATH_STAIN_SPREAD: float = 1.6
+
+## How thin the stain is. **Paint and not a plinth**, which is #52's rule for the one mark in
+## this file that lies on the floor: at three centimetres the first render had it reading as a
+## dark box standing at the Enemy's feet rather than as a mark on the ground.
+const DEATH_STAIN_THICKNESS_METRES: float = 0.01
+
+## The colours. The burst is the hot ember a wound glows with, so what a player sees when a
+## body comes apart is the same fire they have been watching grow inside it; the stain is
+## soot, which is `Soot`'s own albedo out of `dieselpunk_palette.json` — a dark patch on the
+## ground is the one mark in this file that may not be bright, because it is the only one that
+## is still there ten seconds later.
+const DEATH_BURST_COLOUR: Color = Color(1.0, 0.42, 0.12, 0.9)
+const DEATH_STAIN_COLOUR: Color = Color(0.04, 0.035, 0.032, 0.85)
+
 ## How long the crosshair wears a mark after the player's own round connects. A fifth of a
 ## second: long enough to register at sixteen rounds a magazine, short enough that a held
 ## trigger reads as a flicker rather than as a permanent change to the reticle.
@@ -512,6 +556,22 @@ var _tracer_colours: Array[Color] = []
 var _tracer_widths: Array[float] = []
 var _impact_positions: Array[Vector3] = []
 var _impact_colours: Array[Color] = []
+
+## Every death the fight has left on the ground, and the readable record of it. Two marks per
+## death at most — a burst while it is fresh and a stain for as long as `DEATH_MARK_TICKS` —
+## through the very MultiMesh #69 draws every round through, because a mark per death is
+## exactly the shape that ends up as a node per death.
+## Its own MultiMesh of flat discs, because the one thing a death mark may not read as is an
+## object standing in the Wave — see `DEATH_BURST_SPREAD`. Built on the first sync, so the
+## scene tree does not grow when something dies.
+var _death_marks: MultiMeshInstance3D = null
+var _death_mark_bases: Array[Basis] = []
+var _death_mark_positions: Array[Vector3] = []
+var _death_mark_colours: Array[Color] = []
+
+## Enemy serial -> how lit its body is by a round that has just landed, 0 to 1. Rebuilt every
+## frame out of `CombatEvents`, held for no longer than the frame it is drawn on.
+var _enemy_hit_flashes: Dictionary = {}
 
 ## What has happened in the fight since the last frame. See `game/combat_events.gd`: the
 ## snapshot it holds is the same category of thing as `AudioDirector`'s and `TickPump`'s
@@ -1332,6 +1392,13 @@ func sync(sim: Simulation) -> void:
 		_machine_roofs_digest = sim.query_definition_digest()
 		_machine_roofs.clear()
 
+	# **Before anything that draws off it**, which since #70 includes the Enemies themselves:
+	# a round landing is a change rather than a condition, so the body it landed on wears its
+	# flash out of this diff and not out of a query. Observing is idempotent within a tick —
+	# `CombatEvents.observe` returns at once on a frame that stepped nothing — so `_sync_shots`
+	# asking again later costs a comparison.
+	_combat.observe(sim)
+
 	_sync_scenery(sim)
 	_sync_nodes(sim)
 	_sync_nest(sim)
@@ -1500,6 +1567,47 @@ func enemy_instance_pose_row(kind: int, instance: int) -> int:
 	if instance < 0 or base + FLOATS_PER_SKINNED_INSTANCE > buffer.size():
 		return -1
 	return int(buffer[base + 12])
+
+
+## What fraction of its health one instance was drawn with, out of `query_enemy_health` against
+## `query_enemy_max_health`. 1.0 for a kind drawn through the procedural fallback, which carries
+## no custom data at all — a Machine with no generated body draws a box, and an Enemy with no
+## baked character wears no wound.
+func enemy_instance_health_fraction(kind: int, instance: int) -> float:
+	return _skinned_channel(kind, instance, 13, 1.0)
+
+
+## Where in the grime field this instance's damage sits. See `_wound_seed`.
+func enemy_instance_wound_seed(kind: int, instance: int) -> float:
+	return _skinned_channel(kind, instance, 14, 0.0)
+
+
+## How lit one instance is by a round that has just landed, 0 to 1. See `_hit_flash`.
+func enemy_instance_hit_flash(kind: int, instance: int) -> float:
+	return _skinned_channel(kind, instance, 15, 0.0)
+
+
+## One float of one instance's custom data, or a stated default where there is none to read.
+func _skinned_channel(kind: int, instance: int, offset: int, absent: float) -> float:
+	if not _swarm_uploads.has(kind) or _stride_for(kind) != FLOATS_PER_SKINNED_INSTANCE:
+		return absent
+	var buffer: PackedFloat32Array = _swarm_uploads[kind]
+	var base: int = instance * FLOATS_PER_SKINNED_INSTANCE
+	if instance < 0 or base + FLOATS_PER_SKINNED_INSTANCE > buffer.size():
+		return absent
+	return buffer[base + offset]
+
+
+## How many marks a death has left on the ground, and where each one is. The readable record of
+## what was drawn, because a MultiMesh keeps its buffer on the rendering server.
+func death_mark_count() -> int:
+	return _death_mark_positions.size()
+
+
+func death_mark_position(mark: int) -> Vector3:
+	if mark < 0 or mark >= _death_mark_positions.size():
+		return Vector3.ZERO
+	return _death_mark_positions[mark]
 
 
 ## How wide one kind's instance data is. Sixteen floats where a baked body gave it a skinning
@@ -1920,12 +2028,13 @@ static func _write_scaled_instance(
 ## a frame. The custom data carries the animation frame and the Enemy's remaining health, and
 ## nothing else: there is no per-Crawler object anywhere for anything else to live in.
 ##
-## **The last two floats are written as zero and read by nothing, and that is deliberate
-## headroom rather than slack.** `INSTANCE_CUSTOM.z` and `.w` cost nothing to carry — the
-## stride is sixteen whatever is in them — so the next thing that wants to say something per
-## Enemy has two channels without widening anything. Turning on `use_colors` instead would
-## take the stride to twenty and with it this function, `_stride_for` and every accessor that
-## divides by one.
+## **All four floats are spoken for since #70, and nothing widened.** #38 left `.z` and `.w`
+## written as zero against exactly this ticket, and it is what they went to: `.z` is a seed
+## that moves this Enemy's damage somewhere of its own in a field that is otherwise identical
+## on every body of a kind, and `.w` is how lit the body is by a round that has just landed.
+## Turning on `use_colors` instead would have taken the stride to twenty and with it this
+## function, `_stride_for` and every accessor that divides by one; a free channel was the much
+## cheaper door, which is what #38's note said it was for.
 static func _write_skinned_instance(
 	buffer: PackedFloat32Array,
 	instance: int,
@@ -1933,7 +2042,9 @@ static func _write_skinned_instance(
 	yaw: float,
 	scale: float,
 	pose_row: int,
-	health: float
+	health: float,
+	wound_seed: float,
+	hit_flash: float
 ) -> void:
 	var base: int = instance * FLOATS_PER_SKINNED_INSTANCE
 	var along: float = sin(yaw) * scale
@@ -1952,8 +2063,8 @@ static func _write_skinned_instance(
 	buffer[base + 11] = where.z
 	buffer[base + 12] = float(pose_row)
 	buffer[base + 13] = health
-	buffer[base + 14] = 0.0
-	buffer[base + 15] = 0.0
+	buffer[base + 14] = wound_seed
+	buffer[base + 15] = hit_flash
 
 
 ## The position an instance was drawn at, out of a MultiMesh buffer. A MultiMesh keeps its
@@ -2690,6 +2801,7 @@ func _sync_pending_breaches(sim: Simulation) -> void:
 ## animation obeys the same rule from the other direction — `EnemyAnimator` derives the frame
 ## from the tick, the Enemy's spawn tick and its serial, so nothing here is timed by a clock.
 func _sync_enemies(sim: Simulation) -> void:
+	_read_the_hits(sim)
 	var kinds: int = EnemyKind.KIND_NAMES.size()
 	var counts: PackedInt32Array = PackedInt32Array()
 	counts.resize(kinds)
@@ -2753,7 +2865,9 @@ func _sync_enemies(sim: Simulation) -> void:
 				yaw,
 				height,
 				_pose_row(sim, index, kind),
-				_health_fraction(sim, index)
+				_health_fraction(sim, index),
+				_wound_seed(sim.query_enemy_serial(index)),
+				_hit_flash(sim, index)
 			)
 		else:
 			# The procedural fallback is modelled at its own size rather than normalised, so
@@ -2825,6 +2939,58 @@ func _health_fraction(sim: Simulation, index: int) -> float:
 	if most <= 0:
 		return 1.0
 	return clampf(float(sim.query_enemy_health(index)) / float(most), 0.0, 1.0)
+
+
+## Where this Enemy's damage sits, as an offset into the grime field its surface is already
+## derived from.
+##
+## **The field is a function of the rest pose alone**, which is right for dirt and wrong for a
+## wound: six Crawlers scorched in exactly the same place read as six copies of one Crawler,
+## which is the defect `machine_silhouette.py` exists to prevent one scale up. The offset is
+## the Enemy's own **serial** — issued once and never reused (#9), so it is a Simulation
+## quantity like the animation row beside it and two Runs down the same script wear the same
+## marks on the same bodies. Taken modulo a prime and scaled well past `grime_metres`, so two
+## consecutive serials land in unrelated parts of the field rather than next door.
+const WOUND_SEEDS: int = 97
+const WOUND_SEED_SPACING: float = 0.41
+
+
+static func _wound_seed(serial: int) -> float:
+	if serial < 0:
+		return 0.0
+	return float(serial % WOUND_SEEDS) * WOUND_SEED_SPACING
+
+
+## How lit an Enemy's body is by a round that has just landed, 0 to 1.
+##
+## **A health fraction is a condition and a hit is a change**, which is the whole of why this
+## comes off `CombatEvents` and the fraction beside it does not: an Enemy at 40% health looks
+## the same on the tick a round lands and on the tick after, and what a player firing at a
+## Siege Hulk's armour needs to know is that *this round* connected. Aged by subtracting the
+## tick it happened on from `query_tick`, so a frame that stepped nothing draws the same flash
+## and nothing here is timed by a clock.
+func _hit_flash(sim: Simulation, index: int) -> float:
+	var serial: int = sim.query_enemy_serial(index)
+	if not _enemy_hit_flashes.has(serial):
+		return 0.0
+	return _enemy_hit_flashes[serial] as float
+
+
+## Rebuilds that map, once a frame, out of the hits `CombatEvents` reported. The brightest
+## claim wins where two rounds land within a flash of each other, because a body is lit or it
+## is not and two overlapping flashes are not twice as lit.
+func _read_the_hits(sim: Simulation) -> void:
+	_enemy_hit_flashes.clear()
+	var tick: int = sim.query_tick()
+	for event: CombatEvents.Event in _combat.events():
+		if event.kind != CombatEvents.Kind.HIT:
+			continue
+		var age: int = tick - event.tick
+		if age < 0 or age >= HIT_FLASH_TICKS:
+			continue
+		var lit: float = _fading(age, HIT_FLASH_TICKS)
+		if lit > float(_enemy_hit_flashes.get(event.serial, 0.0)):
+			_enemy_hit_flashes[event.serial] = lit
 
 
 ## The MultiMesh one kind of Enemy is drawn through, created on the first one to arrive.
@@ -3742,6 +3908,10 @@ func _sync_shots(sim: Simulation) -> void:
 	if _shot_marks == null:
 		_shot_marks = _unshaded_instances()
 		add_child(_shot_marks)
+	if _death_marks == null:
+		_death_marks = _unshaded_instances()
+		_death_marks.multimesh.mesh = _disc_mesh()
+		add_child(_death_marks)
 
 	_combat.observe(sim)
 
@@ -3753,9 +3923,13 @@ func _sync_shots(sim: Simulation) -> void:
 	_tracer_widths.clear()
 	_impact_positions.clear()
 	_impact_colours.clear()
+	_death_mark_bases.clear()
+	_death_mark_positions.clear()
+	_death_mark_colours.clear()
 
 	_lay_the_muzzle_flashes(sim)
 	_lay_the_rounds_that_landed(sim)
+	_lay_the_deaths(sim)
 	_upload_the_shot_marks()
 
 
@@ -3854,6 +4028,23 @@ func _unshaded_instances() -> MultiMeshInstance3D:
 	return marks
 
 
+## A unit disc, one metre across and lying flat, for the two marks a death leaves.
+##
+## A cylinder rather than the unit box every other mark in this file is scaled out of, and the
+## render is the reason: the box version read as a pale **square plate** laid in the grass at
+## ten metres and as a bar through the bodies at thirty. Nothing in this world is a flat square
+## a metre across, so it reads as an object that has been put there — which is the one thing a
+## scorch mark and a shockwave must not do.
+func _disc_mesh() -> CylinderMesh:
+	var disc: CylinderMesh = CylinderMesh.new()
+	disc.top_radius = 0.5
+	disc.bottom_radius = 0.5
+	disc.height = 1.0
+	disc.radial_segments = 16
+	disc.rings = 0
+	return disc
+
+
 ## Four short diagonals around the crosshair: the mark a player's own round leaving a mark on
 ## something puts there.
 ##
@@ -3945,6 +4136,74 @@ func _lay_the_rounds_that_landed(sim: Simulation) -> void:
 			_impact_colours.append(spark)
 
 
+## A burst and then a stain for every Enemy `CombatEvents` says has gone.
+##
+## **This is the one thing in a fight no query can report**, which is the whole reason #70 had
+## to wait for #69: `_remove_enemy` closes the gap on the tick a Crawler dies, so by the time
+## anything outside the façade can look there is no serial to resolve, no position to read and
+## no health to compare against. A serial that was in the array last frame and is not in it now
+## is the only evidence a death leaves, and `KILLED` carries **where the body was last seen
+## alive** — which is why the mark can stand where the Enemy was rather than somewhere near it.
+##
+## Two marks rather than one, because they answer different questions. The burst says *now* and
+## is gone in a quarter of a second; the stain says *here* and is still on the ground when a
+## player sweeps back across the lane. Both are sized off the body that died — `_enemy_size`,
+## out of the kind the event carries — for #41's reason: a Siege Hulk is twice a Crawler, and a
+## mark that is one size for both belongs to neither.
+func _lay_the_deaths(sim: Simulation) -> void:
+	var tick: int = sim.query_tick()
+	for event: CombatEvents.Event in _combat.events():
+		if event.kind != CombatEvents.Kind.KILLED:
+			continue
+		var age: int = tick - event.tick
+		if age < 0 or age >= DEATH_MARK_TICKS:
+			continue
+		var size: float = _enemy_size(sim, event.enemy_kind)
+		var on_the_ground: Vector3 = Vector3(event.at.x, 0.0, event.at.z)
+
+		# The stain first, so the burst is laid over it rather than under it. It arrives at its
+		# full width — a soot mark does not grow — and fades over the whole window.
+		var soot: Color = DEATH_STAIN_COLOUR
+		soot.a = DEATH_STAIN_COLOUR.a * _fading(age, DEATH_MARK_TICKS)
+		var across: float = size * DEATH_STAIN_SPREAD
+		_death_mark_bases.append(
+			Basis.IDENTITY.scaled(Vector3(across, DEATH_STAIN_THICKNESS_METRES, across))
+		)
+		_death_mark_positions.append(
+			on_the_ground + Vector3.UP * DEATH_STAIN_THICKNESS_METRES * 0.5
+		)
+		_death_mark_colours.append(soot)
+
+		if age >= DEATH_BURST_TICKS:
+			continue
+		# And the burst, which **expands** as it fades. A mark that only fades reads as a light
+		# being turned down; one that opens out reads as a body coming apart, and it is the
+		# half of this that carries at thirty metres where the stain is a few dark pixels.
+		var spread: float = lerpf(0.5, DEATH_BURST_SPREAD, 1.0 - _fading(age, DEATH_BURST_TICKS))
+		var ember: Color = DEATH_BURST_COLOUR
+		ember.a = DEATH_BURST_COLOUR.a * _fading(age, DEATH_BURST_TICKS)
+		_death_mark_bases.append(
+			Basis.IDENTITY.scaled(
+				Vector3(size * spread, size * DEATH_BURST_THICKNESS, size * spread)
+			)
+		)
+		_death_mark_positions.append(Vector3(event.at.x, size * 0.5, event.at.z))
+		_death_mark_colours.append(ember)
+
+
+## How tall a kind of Enemy stands, in metres — the very number `_sync_enemies` scales the drawn
+## body by, so a mark about a death is the size of the thing that died. Asked of the Simulation
+## rather than remembered, and falling back to the drawn default for a kind nothing is left of.
+func _enemy_size(sim: Simulation, kind: int) -> float:
+	for index: int in range(sim.query_enemy_count()):
+		if sim.query_enemy_kind(index) != kind:
+			continue
+		var height: float = Fixed.to_float(sim.query_enemy_hit_height_metres(index))
+		if height > 0.0:
+			return height
+	return ENEMY_SIZE_METRES
+
+
 ## Where the round that caused an event left from, or `Vector3.ZERO` for one that cannot be
 ## traced back to a gun at all.
 ##
@@ -4030,6 +4289,16 @@ func _upload_the_shot_marks() -> void:
 		marks.set_instance_transform(instance, Transform3D(spark, _impact_positions[mark]))
 		marks.set_instance_color(instance, _impact_colours[mark])
 		instance += 1
+
+	# And the deaths, through their own buffer: they are discs rather than boxes, and they
+	# bring their own basis because a stain lies still while a burst opens out.
+	var deaths: MultiMesh = _death_marks.multimesh
+	deaths.instance_count = _death_mark_positions.size()
+	for mark: int in range(_death_mark_positions.size()):
+		deaths.set_instance_transform(
+			mark, Transform3D(_death_mark_bases[mark], _death_mark_positions[mark])
+		)
+		deaths.set_instance_color(mark, _death_mark_colours[mark])
 
 
 ## The unit box stretched into a thin rod from one point to another, centred on the midpoint.
