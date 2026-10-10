@@ -2753,6 +2753,25 @@ func test_cargo_rides_on_the_deck_the_simulation_says_a_player_stands_on() -> vo
 	view.free()
 
 
+func test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own() -> void:
+	# #75. The committed KayKit atlas is a cold bone-white at eight times the luminance of the
+	# darkest cell a Crawler wears, and #38's answer was one dark tint per kind — which cannot
+	# change a ratio, so what shipped was a pale skull on a near-black body. The surface is
+	# `tools/assets/enemy_grade.py`'s graded copy now, and the assertion is that the graded
+	# file is what actually reaches the shader: a grade nothing samples is `prop_grade.py`'s
+	# own opening defect, and the only way to catch it is from this side of the seam.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
+		assert_eq(
+			view.enemy_surface_texture_path(kind),
+			WorldView.ENEMY_GRADED_ATLAS,
+			"kind %d is painted with %s" % [kind, view.enemy_surface_texture_path(kind)]
+		)
+	view.free()
+
+
 # ── A Belt that is running looks like it is running (#73) ─────────────────────
 # The deck was static, so the only motion on a line was its cargo sliding along a surface
 # that never moved — which reads as scenery with boxes on it rather than as a machine doing
@@ -3152,3 +3171,19 @@ func test_a_hot_reload_redraws_cargo_that_changed_what_it_is() -> void:
 		"ore a Boiler now burns is drawn as fuel, without the view being told to forget"
 	)
 	view.free()
+
+
+func test_an_enemy_is_metal_because_the_light_in_this_world_is_tuned_for_metal() -> void:
+	# `_sync_scenery` takes ambient and reflections off the sky precisely because the generated
+	# surfaces are mostly metal and a metal lit by an ambient *colour* has nothing to reflect.
+	# Until #75 a Crawler was the one thing in the world that was not metal — 0.05 metallic at
+	# 0.88 roughness — so it had nothing to catch, and measured off a `swarm bare` render it sat
+	# at a seventh of the luminance of the ground it was standing on.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
+		assert_true(
+			view.enemy_surface_metallic(kind) >= 0.5,
+			"kind %d is %f metallic" % [kind, view.enemy_surface_metallic(kind)]
+		)

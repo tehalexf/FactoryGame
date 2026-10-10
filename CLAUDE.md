@@ -13,6 +13,7 @@ tools/assets/run_tests.sh        # asset pipeline: licence guard, FBX conversion
 python3 tools/assets/asset_staleness.py  # is any generated asset older than its recipe?
 tools/assets/generate_machines.sh  # regenerate every Machine mesh from its declaration
 tools/assets/generate_build_gun.sh # regenerate the Build Gun viewmodel. Committed, unlike the weapons
+python3 tools/assets/enemy_grade.py  # regrade the Enemy atlas into the palette. Committed, like the meshes
 tools/assets/convert_weapons.sh  # first-person viewmodels, OUT of the repo; no-op without the packs
 tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op without the packs
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
@@ -478,6 +479,12 @@ hoped for in an asset.
 Wave spread down a lane rather than posed. The gait difference is deliberate — the Crawler
 runs where the Breaker walks — and no render has an opinion about it.
 
+**What #38 and #49 both left alone was the *surface*, and #75 is that.** Both tickets are
+about shape — the animation, then the per-kind size that makes two kinds readable — and the
+thing a Crawler is actually painted with stayed a flat per-kind multiply over the pack's own
+bone-white atlas for the whole of both. See "What an Enemy is made of, and why the tint was
+never going to do it", below.
+
 Full pipeline, the casting table, why `UAL1.glb` is still unused and what three renders
 caught are in [docs/ASSET_PIPELINE.md](docs/ASSET_PIPELINE.md) section 11. The before and
 after are `docs/images/enemies_{pair,wave,boss,triage}_{before,after}.png`, rebuilt with
@@ -497,6 +504,216 @@ same scenario with and without the renderer half: `WorldView.sync` goes from 3.1
 16.67 ms frame**, plus 1.4 M primitives and 17 MB of video memory. That is the CPU rebuild only — the skinning is
 in a vertex shader and Xvfb is llvmpipe, so **the GPU half of this is unmeasured here** and
 wants a machine with a real card.
+
+### What an Enemy is made of, and why the tint was never going to do it
+
+**#75, and it is the user looking at what #38 and #49 left: *"the enemies look like shit
+honestly"*.** They were right, and the file already carried the diagnosis without having
+acted on it — `WorldView._skinned_mesh`'s own comment said *clean fantasy skeletons in a
+world of grimy cast iron* and then named **one dark tint per kind** as the answer to that.
+It is `prop_grade.py`'s first attempt arriving a second time, and it fails the same way for
+a reason that is arithmetic rather than taste.
+
+**A multiply cannot change a ratio.** Measured off the committed atlas by sampling
+`Skeleton_Minion`'s own UVs — which is the only honest way to ask what a Crawler is actually
+wearing, because the pack embeds one shared swatch sheet and a limb samples one cell of it:
+
+| what | cell | linear albedo |
+|---|---|---|
+| skull, limbs | (174, 200, 212), a cold blue-white | **0.551** |
+| ribs, pelvis | (161, 95, 72), a warm red-brown | 0.162 |
+| boots | (83, 71, 65) | **0.067** |
+
+Eight to one between the skull and the boot, and one tint scales both by the same number.
+So whatever the tint is, a Crawler is a bright skull with a dark smudge under it; turning it
+down only moves the whole thing toward black, which is exactly what shipped. **Measured off
+the `swarm bare` render that opened the ticket — over the Enemy pixels themselves rather
+than a window, because a box drawn round a Crawler is mostly ground — the median came to a
+linear luminance of 0.009 against a ground at 0.046**, a fifth of the thing it is standing
+on, which is not a dark Enemy, it is a hole in the floor. And the hue was wrong in a direction no
+multiply reaches: bone is a cold blue at about 200 degrees and **there is no blue anywhere in
+this palette**.
+
+Three things replaced it and none of them is a tint.
+
+- **A graded atlas, committed.** `tools/assets/enemy_grade.py` is `prop_grade.grade_colour`'s
+  rule — family by hue and saturation, pulled toward that family's palette material, luminance
+  through a `ceiling * L / (L + knee)` shoulder — with this atlas's arcs and a shoulder tuned
+  for this subject. Bone, steel and the pack's purples and turquoises become iron, because the
+  palette has no cold hue to send them to; the red-browns stay oxide, because it has one. The
+  shoulder is what closes the ratio: **8.2:1 becomes 3.6:1**, enough that a skull still reads
+  as the brightest part of a Crawler and not enough that it reads as a separate object.
+- **Metal.** `_sync_scenery` takes ambient and reflections off the sky *because* the generated
+  surfaces are mostly metal and a metal lit by an ambient colour has nothing to reflect — and
+  until #75 an Enemy was the one thing in the world that was not one. A Crawler was 0.05
+  metallic at 0.88 roughness, so a Wave arriving out of the sun had only the sky's flat
+  ambient on its front, which is most of why it rendered as a silhouette. All three kinds are
+  metal at the palette's own roughness now: `CastIron`'s 0.62 for the Crawler and the boss,
+  `WeldedSteel`'s 0.45 for the Breaker.
+- **Grime and relief the atlas cannot carry**, derived in `game/enemy_skin.gdshader` from the
+  **rest pose**. The props had this for free and these characters do not: heyheythere bakes
+  ambient occlusion into `COLOR_0`, so `prop_grade.deepen_grime` had per-prop geometric
+  information about where dirt collects, where KayKit's six characters carry **no `COLOR_0` at
+  all** — measured, their primitives are `JOINTS_0, NORMAL, POSITION, TEXCOORD_0, WEIGHTS_0`
+  and nothing else. So it is #42's answer to the same complaint about the yard, which had the
+  same premise: an albedo-only source with no normal map to load and no relief, lit by a
+  23-degree sun that finds nothing.
+
+**The per-kind tint survives and its job changed, which is the part worth knowing.** It no
+longer carries the *level* — the grade does — so it is near white and carries only a cast:
+warm for the Crawler, cold for the Breaker, neutral for the boss. That is a readability cue
+the Wave did not have, because before this everything was uniformly dark and **size was
+carrying the entire distinction** (#49). It is still a multiply and it still cannot change a
+ratio, which is precisely why it is no longer asked to.
+
+#### Five things about the shader, three of them carried over from the ground
+
+- **It is sampled in the rest pose, not in world space.** The yard's noise is a function of
+  where you are standing because the yard does not move; an Enemy does, and a world-space read
+  makes the grime swim over a walking Crawler like a projector. The rest position is the one
+  coordinate fixed to the body and it costs one varying — it is the pre-skin `VERTEX`, which
+  this shader already has in hand. It is in the normalised units `EnemyBodies` bakes a body
+  into, so `grime_metres` is a *fraction of a body* and the same number gives a 3.2 m Siege
+  Hulk coarser pitting than a 1.6 m Crawler in absolute terms, which is the right way round.
+- **What is visible is the slope, not the height**, and the first render proved it the other
+  way about. #42 found that a physically reasoned two centimetres over a metre is a one-degree
+  tilt the sun cannot find; here the first numbers were far too *large* and produced a swarm of
+  chrome camouflage blobs. Both are the same lesson — the knob is `relief` over `grime_metres`
+  — and the useful half of the failure is that it settled the plumbing in one glance, which is
+  the question #42 needed two diagnostic renders to answer. `relief` is written as a fraction
+  of the Enemy's own height for `bump_height_metres`' reason, so 0.012 on a 1.6 m Crawler is
+  two centimetres of pitting over three-centimetre features.
+- **The gradient is not normalised, and that is what the chrome render was really about.**
+  Normalising it turns the knob into "how far to rotate toward the gradient", which tilts
+  every fragment by the same amount whatever the field is doing — so a flat patch of the field
+  stops being a flat patch of the body. Unnormalised it is an ordinary height-field normal and
+  a smooth region stays smooth, which is most of the difference between a casting and a
+  camouflage pattern.
+- **The relief fades out with distance**, over 14 to 34 m, for `ground.gdshader`'s two reasons:
+  a procedural field has no mip chain, so past the range where one feature is under a pixel it
+  stops being relief and becomes noise; and a Crawler at forty metres is a silhouette with a
+  highlight on it, which is what a player is reading at that range anyway.
+- **The roughness is spread either side of the material's own figure by the same field.** A
+  surface whose roughness is one number is a surface with one highlight on it, and dirt in a
+  crease is matte where a worn edge is polished. That difference is most of what says "metal
+  that has been outside" rather than "grey plastic", and it costs nothing — the field is
+  already sampled for the albedo.
+
+The old note saying the Crawler was pushed to 0.88 roughness because the skulls "caught a hard
+specular off a low sun and read as glazed pottery" is **corrected rather than deleted**, and
+the correction generalises. That was a true observation about a *dielectric* at 0.17 albedo: a
+rough-plastic highlight on a near-black body is a bright smear with nothing under it. At
+metallic 1 the same highlight **is** the surface, because a metal's reflection is coloured by
+its own albedo rather than sitting white on top of it — so the fix was the material model and
+not the number, and 0.88 on a metal is a grey felt Crawler.
+
+#### What the measurement says, and what the gate says
+
+Masked to the pixels the change actually moved — which is the right denominator, because a
+window over an Enemy is mostly ground — before against after on the same `swarm bare` frame:
+
+| | median | mean | p90 |
+|---|---|---|---|
+| before | 0.0092 | 0.051 | 0.185 |
+| **after** | **0.0212** | **0.108** | **0.382** |
+| the ground it stands on | 0.0458 | — | — |
+
+So the median Enemy pixel went from a fifth of the ground to about half of it, and the mean
+from just over the ground to two and a half times it — the second figure being the highlights
+that only exist because the surface is metal now.
+
+**`test_enemy_silhouette` is unmoved at 0.58, 0.83 and 0.67**, re-measured rather than
+assumed, and that is the expected answer rather than a lucky one: #75 changed no geometry at
+all, and the gate rasterises a posed, scaled outline. The binding pair is still the Breaker
+against the boss.
+
+**No balance number moved, and none could have.** The capsule a round is resolved against is
+`enemy.*_hit_height_metres` and `*_hit_radius_metres`, which this ticket did not touch — and
+since #49 those are also what the drawn body is *scaled* by, so a surface change cannot reach
+them in either direction.
+
+#### What the pictures settle and what they do not
+
+[`docs/images/enemies_surface_before.png`](docs/images/enemies_surface_before.png) against
+[`_after`](docs/images/enemies_surface_after.png) is the frame the complaint was made about,
+and the triage pair beside it is the same claim at thirty metres:
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "swarm bare"
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "triage bare"
+```
+
+Before: pale skulls floating over bodies with nothing in them, every kind the same value, and
+the brightest thing on a Crawler being the one part that should read last. After: pitted dark
+iron, oxide-red ribcages, a rim off the low sun, and a Breaker that is cold where a Crawler is
+warm. At thirty metres the gain is narrower and real — the Crawler's oxide torso against its
+iron limbs is a second cue beside height, where before the two kinds were one value in two
+sizes.
+
+**What is left for a ticket about damage, which is the question this one was asked and
+should answer rather than leave to be rediscovered.** Nothing here spent the channel such a
+ticket needs. `INSTANCE_CUSTOM` is four floats: `.x` is the animation row and `.y` is the
+health fraction `wound_darkening` already reads — so a Crawler a Turret has been working on
+is *already* drawn darker — and **`.z` and `.w` are written as zero by
+`_write_skinned_instance` and read by nothing.** The stride is sixteen whatever is in them,
+so two channels are paid for and free. Three things follow:
+
+- **Prefer a free channel to `use_colors`.** Turning that on widens the stride to twenty and
+  with it the writer, `_stride_for` and every accessor that divides by one. Per-instance
+  colour buys nothing a channel cannot, because the shader is this project's own.
+- **A mark that has to be in a *place* needs a per-instance seed, and that is what `.z` is
+  for.** The grime field is a function of the rest pose alone, so it is identical on every
+  Enemy of a kind — which is right for wear and wrong for a wound. `grime_at(rest +
+  vec3(seed))` offsets the field per Enemy for one float.
+- **A death is the one thing the custom data cannot carry, and the reason is the
+  Simulation.** `_remove_enemy` closes the gap the tick a Crawler dies, so there is no
+  instance left to blend out — the fact that it died is a *change* rather than a condition,
+  which is `game/audio_director.gd`'s whole shape and the thing `game/combat_events.gd` is
+  being built for in #69. A death wants that diff, not a channel.
+
+**Three more things are recorded rather than fixed, and the first is the honest limit of this
+ticket.**
+
+- **The proportions are still a cartoon's.** A Crawler's skull is a third of its height and
+  nothing here changed that, because it is geometry and geometry is what
+  `test_enemy_silhouette` measures: the three pairs are at 0.58, 0.83 and 0.67 against a 0.50
+  floor, so reshaping a body is a decision that has to be re-measured rather than made in
+  passing. The ticket's own alternative — build an Enemy out of `machine_parts` and
+  `dieselpunk_palette.json`, which is #64's answer for the Build Gun — remains open and is the
+  obvious next step if the surface is not enough. It was not taken here because it is a
+  different and much larger ticket: it throws away six committed CC0 characters, the shared rig
+  that makes a clip authored for the Minion play on the Golem, and the whole of #38's bake,
+  and it would have to re-derive the silhouette numbers from scratch rather than leave them
+  untouched.
+- **The GPU cost is unmeasured, exactly as #38's was.** The shader now evaluates the grime
+  field four times a fragment — the value and one forward difference an axis, which is
+  `ground.gdshader`'s own arrangement — and `tools/visual/frame_cost.sh` measures
+  `WorldView.sync`, which is the CPU rebuild. Xvfb is llvmpipe, so the half of this that
+  matters wants a machine with a real card. The levers if it ever bites are `relief_fade_end`
+  and dropping the second octave.
+- **A Breaker at close range reads as blued gun-steel, and that may be a degree too
+  polished.** `WeldedSteel`'s own roughness is 0.45 and on a *full* metal under a bright
+  ochre sky that picks up a lot of sky — so at the `pair` preset's six to twelve metres the
+  armoured kind has a distinctly cold sheen where a Crawler has none. It is in the palette by
+  construction and it is the clearest thing separating the two kinds at range, which is why
+  it was left; whether it reads as armour or as chrome is a judgement for somebody with a
+  mouse, and the lever is `_enemy_roughness` rather than the tint.
+- **Only atlas A is graded, and atlas B is deliberately left alone.** All six committed
+  characters reference A — checked, not assumed; the six copies beside the `.glb`s are
+  byte-identical to the intake file. A graded copy of a map nothing samples is
+  `prop_grade.py`'s own opening defect in the other direction.
+
+**And the one trap worth naming, because it nearly swallowed this ticket.** The six
+`Skeleton_*_skeleton_texture_A.png` files sitting beside the characters are **read by
+nothing**: `gltf_info` reports `images: [None]`, which means the pack's converted `.glb`
+carries its image **inside its own buffer**. Grading those six files would have changed
+nothing on screen — which is literally `prop_grade.py`'s opening paragraph, *"it did nothing
+at all for the props a player actually stands among"*, arriving again in a different costume.
+So the graded atlas is **loaded by `_skinned_mesh` and put on the material**, the artist's own
+material is no longer read at all, and
+`test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own` asserts from the
+renderer's side that the graded file is what reaches the shader. A grade is invisible from the
+grading side of that seam.
 
 The lighting is the other half of the art pipeline. The generated surfaces are physically
 based and mostly metal, and a metal lit by an ambient *colour* has nothing to reflect, so
