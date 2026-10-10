@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://dtqjqxy8f2kc5"
-path="res://.godot/imported/Skeleton_Warrior.glb-0e9982d71a1aaf3860e10b950fe05468.scn"
+uid="uid://dowfflnlwkurg"
+path="res://.godot/imported/siege_hulk.glb-1da35718ccb1bf3d7451dc3c091f4f55.scn"
 
 [deps]
 
-source_file="res://assets/characters/kaykit_skeletons/warrior/Skeleton_Warrior.glb"
-dest_files=["res://.godot/imported/Skeleton_Warrior.glb-0e9982d71a1aaf3860e10b950fe05468.scn"]
+source_file="res://assets/characters/insects/siege_hulk.glb"
+dest_files=["res://.godot/imported/siege_hulk.glb-1da35718ccb1bf3d7451dc3c091f4f55.scn"]
 
 [params]
 

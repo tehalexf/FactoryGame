@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://clcqfb765rj3b"
-path="res://.godot/imported/Rig_Medium_MovementBasic.glb-39df5907bfe5b5dea7da79b0a9652ec0.scn"
+uid="uid://dyh1evy1e4l4b"
+path="res://.godot/imported/crawler.glb-506f0d6b76d30270ab6c6cc23c97ff85.scn"
 
 [deps]
 
-source_file="res://assets/characters/kaykit_skeletons/animations/Rig_Medium_MovementBasic.glb"
-dest_files=["res://.godot/imported/Rig_Medium_MovementBasic.glb-39df5907bfe5b5dea7da79b0a9652ec0.scn"]
+source_file="res://assets/characters/insects/crawler.glb"
+dest_files=["res://.godot/imported/crawler.glb-506f0d6b76d30270ab6c6cc23c97ff85.scn"]
 
 [params]
 

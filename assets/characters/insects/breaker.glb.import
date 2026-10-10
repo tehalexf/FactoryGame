@@ -3,13 +3,13 @@
 importer="scene"
 importer_version=1
 type="PackedScene"
-uid="uid://drk548jq3pdjv"
-path="res://.godot/imported/Skeleton_Golem.glb-44bedf2251b465575d6130e326a384f6.scn"
+uid="uid://de12ankexk7wa"
+path="res://.godot/imported/breaker.glb-ff7ecc9e78465770ee04e5565c6208f1.scn"
 
 [deps]
 
-source_file="res://assets/characters/kaykit_skeletons/golem/Skeleton_Golem.glb"
-dest_files=["res://.godot/imported/Skeleton_Golem.glb-44bedf2251b465575d6130e326a384f6.scn"]
+source_file="res://assets/characters/insects/breaker.glb"
+dest_files=["res://.godot/imported/breaker.glb-ff7ecc9e78465770ee04e5565c6208f1.scn"]
 
 [params]
 
