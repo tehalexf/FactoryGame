@@ -345,6 +345,15 @@ var _machine_meshes: Array[MeshInstance3D] = []
 ## and nothing reads it to decide anything about the Run.
 var _machine_dressing: PackedStringArray = PackedStringArray()
 
+## How high the drawn body of each Machine id reaches, cached because `_machine_roof` is now
+## asked per Machine per frame (#68) and `Mesh.get_aabb()` walks the body to answer.
+##
+## Thrown away whenever the definition digest moves, because `height_metres` is one of the
+## numbers a hot-reload may change and a cached roof is the kind of thing that would quietly
+## go on being the old answer for the rest of the Run.
+var _machine_roofs: Dictionary = {}
+var _machine_roofs_digest: int = 0
+
 var _node_meshes: Array[MeshInstance3D] = []
 
 ## The marks over the Map's ore, and the readable record of where they went and what colour
@@ -803,7 +812,7 @@ const LINE_WORKS_PULSE_GAP_TILES: int = 3
 ## Clear of the deck, the cream flow arrow at 0.08 m over it, and an Item riding at deck
 ## height — all three of which are on the very tiles this is drawn along, so this is the one
 ## mark in the file guaranteed to share its tile with three others.
-const LINE_WORKS_PULSE_SIZE_METRES: float = 0.75
+const LINE_WORKS_PULSE_SIZE_METRES: float = 0.75  # bracketed at 0.5 and 0.75 by rendering
 const LINE_WORKS_PULSE_LIFT_METRES: float = 0.55
 
 ## How high the chain's tag floats over each of its Machines, and how big it is.
@@ -1090,6 +1099,12 @@ const MORTALITY_LINE_GAP_PIXELS: int = 14
 func sync(sim: Simulation) -> void:
 	if sim == null:
 		return
+
+	# A hot-reload may have moved `height_metres`, and the roof cache below would otherwise go
+	# on answering with the number the Run stopped playing by.
+	if sim.query_definition_digest() != _machine_roofs_digest:
+		_machine_roofs_digest = sim.query_definition_digest()
+		_machine_roofs.clear()
 
 	_sync_scenery(sim)
 	_sync_nodes(sim)
@@ -6021,12 +6036,25 @@ func _machine_roof(sim: Simulation, index: int) -> float:
 	var mesh: Mesh = _machine_meshes[index].mesh
 	if mesh == null:
 		return housing
+	# **Cached by Machine id, which is what both halves of the answer are a property of** —
+	# the housing comes out of that Machine's row and the body out of the one `.glb` every
+	# Machine of that id shares, so two Smelters cannot have different roofs. It is a cache
+	# rather than a tidy-up: `Mesh.get_aabb()` walks the merged body, and #68 draws a mark
+	# over **every** Machine of a working chain every frame where #48 and #50 only ever drew
+	# one over a Machine serving a split. Measured on the 33-Machine Factory
+	# `tools/visual/frame_cost.sh` builds, asking per Machine per frame cost 2.2 ms of a
+	# 16.67 ms frame and this takes nearly all of it back.
+	var id: String = sim.query_machine_id(index)
+	if _machine_roofs.has(id):
+		return _machine_roofs[id]
 	# A body is modelled about the centre of its footprint with its feet on the ground, so its
 	# own AABB already runs from zero to its full height. A placeholder box is modelled about
 	# its centre and lifted, which is why that case falls back to the declared figure.
-	if not machine_body_path(index).begins_with("res://"):
-		return housing
-	return maxf(housing, mesh.get_aabb().end.y)
+	var roof: float = housing
+	if machine_body_path(index).begins_with("res://"):
+		roof = maxf(housing, mesh.get_aabb().end.y)
+	_machine_roofs[id] = roof
+	return roof
 
 
 ## How high the top of the body drawn for a Machine is, in metres. For the smoke test, which

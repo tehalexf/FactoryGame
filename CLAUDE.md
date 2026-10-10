@@ -3364,7 +3364,7 @@ what back-pressure *is* — so requiring "not stalled" would switch the signal o
 lines that are working hardest. #48 needed the stable fact because it was marking a *fault*; this
 is marking a success and wants the opposite.
 
-#### It is not a second opinion, and three projections are what make that true
+#### It is not a second opinion, and four projections are what make that true
 
 Whatever says "connected" has to be the same thing that decides whether an Item really hands over,
 or a line can read as working and starve. `query_belt_end_is_connected` already was that — the
@@ -3376,17 +3376,25 @@ So three projections, one line each over the function the hand-off itself goes t
 its own question rather than a case of the first, because the Nest is not a Machine and a Belt
 docks anywhere on its 4x4 wall (GLOSSARY.md). **`query_belt_end_is_connected` is now literally
 the disjunction of the three**, where it used to spell those three branches out a second time, so
-there is one authority rather than four. `query_belt_feeds_machine` is also
-`query_machine_branch_belt`'s exact mirror: that one answers "which Belts does this Machine load"
-per Machine, this one "which Machine does this Belt reach" per Belt, and a chain needs both ends.
+there is one authority rather than four.
+
+A fourth projection is about the *other* end. `query_belt_loaded_by_machine` is one line over
+`_machine_behind_belt` — the function
+`_load_from_port` asks and the one `_branch_belts` groups a Machine's branch by — so it and
+`query_machine_branch_belt` are **the same answer read from the two ends**, which
+`test_which_machine_loads_a_belt_is_the_branch_list_read_from_the_other_end` asserts rather than
+assumes. It exists for cost as much as for symmetry: finding every Belt's loader off the branch
+lists means walking every Machine's whole list, and each of those is itself a walk of every
+Belt, where asking per Belt is one pass. `_sync_split_marks` already pays the quadratic version
+every frame and this deliberately does not add a second one.
 
 Nothing else behind the façade changed, which is why there is no new determinism fixture:
 `test_declared_ports` and `test_belts` already replay the Factories this walks.
 
 #### What it draws, and the one piece of memory in the renderer
 
-Two marks, two MultiMeshes, and `test_the_signal_adds_no_node_per_belt_or_per_machine` asserts the
-scene tree does not grow for either.
+Two marks and a tether, three MultiMeshes, and `test_the_signal_adds_no_node_per_belt_or_per_machine`
+asserts the scene tree does not grow for any of them.
 
 - **A train of lights down the Belts**, in flow order, at `LINE_WORKS_PULSE_TICKS_PER_TILE` — six
   ticks a tile, which is **faster than the goods on purpose**. A Belt carries one Item a tile
@@ -3398,9 +3406,12 @@ scene tree does not grow for either.
   mark since #50, one step above the split tag so the order is Ammunition gauge → starved tag →
   split tag → this. It cannot collide with the starved tag by construction — a chain is not whole
   while anything in it is starved — but a branch can be whole *and* splitting, so the split tag is
-  a real neighbour.
+  a real neighbour. **Each tag is tethered to the body under it**, which is #66's answer to #41
+  and which the first render said this needed too — see the renders below.
 
-**`_line_works_since` is the only memory in `WorldView` and it is the same category of thing as
+**`_line_works_since` is the only state in `WorldView` that is about the Run** — `_machine_roofs`
+beside it is a cache of a fact about *content*, keyed by Machine id and thrown away on a reload —
+**and it is the same category of thing as
 `AudioDirector`'s snapshot and `TickPump`'s leftover frame time** — a reading on its way in, not a
 fact about the world. It maps a chain's **geographic signature** to the tick it was first seen
 whole. Geography and not indices, for the reason a Turret holds a serial: a Machine index shifts
@@ -3485,6 +3496,34 @@ them green. The one green in the project is `HOLOGRAM_ALLOWED`, and it is transl
 ground and only on screen with the Machine tool out, where this is opaque, head-high and fires on
 the frame a *drag* has just paid off. The after images have the amber starved tag in the same frame
 and the two do not read alike.
+
+#### What it costs, and the cache a measurement forced
+
+Measured with `tools/visual/frame_cost.sh` against the same scenario with and without the call,
+on the 33-Machine, 9-Belt, 53-Wall Factory it builds: `WorldView.sync` goes from **11.64 ms to
+13.60 ms**, so about **two milliseconds of a 16.67 ms frame** — roughly 1.4 ms deriving the
+chains and 0.6 ms drawing the marks. That is the **worst case rather than the resting one**: it
+is a Factory whose every Machine is inside a lit chain at once, which happens in the seconds
+after a whole line comes up and not again, and past the window the derivation still runs while
+nothing is drawn.
+
+**It cost 3.6 ms before the measurement found where the first half of that was going, and the
+answer was not in this ticket's own code.** `_machine_roof` ends in `Mesh.get_aabb()`, which
+walks the merged body — and #48 and #50 only ever asked it for a Machine serving a **split**,
+which is rare, where this asks it for **every** Machine of a working chain **every frame**. So
+it is memoised by Machine id, which is what both halves of its answer are a property of: the
+housing comes out of that Machine's row and the body out of the one `.glb` every Machine of
+that id shares, so two Smelters cannot have different roofs. The cache is thrown away whenever
+`query_definition_digest` moves, because `height_metres` is hot-reloadable and a cached roof is
+exactly the kind of thing that would go on quietly answering with the number the Run stopped
+playing by. Every mark in the file got faster, not only this one.
+
+**Two milliseconds was taken rather than engineered away, and that is a decision.** Deriving
+every few ticks instead of every frame would cut it by an order of magnitude and would mean
+drawing from a cached chain whose Machine **indices** have shifted — `_remove_machine` closes
+the gap — so a tag could stand over the wrong Machine for a quarter of a second. A mark in the
+wrong place is the failure this whole area of the file is a record of (#41, #48, #50, #66), and
+it is not worth buying a millisecond with.
 
 **What no render can settle** is whether five seconds is the right length, and whether a Factory of
 a dozen lines being extended one at a time reads as encouragement or as flicker. `LINE_WORKS_TICKS`

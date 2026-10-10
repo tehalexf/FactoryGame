@@ -19,10 +19,11 @@
 ## **Nothing here is a second opinion about connectedness.** Every question it asks is one of
 ## the projections the hand-off itself goes through — `query_belt_feeds_machine`,
 ## `query_belt_feeds_belt` and `query_belt_feeds_the_nest` are one line each over
-## `_machine_a_belt_feeds`, `_belt_downstream` and `_hand_off`'s Nest clause;
-## `query_machine_branch_belt` is the same rule asked per Machine; and `query_machine_is_starved`
-## is the Simulation's own answer about whether a Machine is doing anything. So a line cannot
-## read as working and starve.
+## `_machine_a_belt_feeds`, `_belt_downstream` and `_hand_off`'s Nest clause,
+## `query_belt_loaded_by_machine` is one over `_machine_behind_belt`, which is what
+## `_load_from_port` asks and what `_branch_belts` groups a Machine's branch by, and
+## `query_machine_is_starved` is the Simulation's own answer about whether a Machine is doing
+## anything. So a line cannot read as working and starve.
 class_name LineWorks
 extends RefCounted
 
@@ -30,10 +31,11 @@ extends RefCounted
 ## A maximal group of Machines joined by Belt runs, plus whether that group reaches the Nest.
 ##
 ## It carries two lists of Belts on purpose. `links` are the runs that **join** two ends of the
-## chain, in flow order, which is what a travelling mark runs along; `belts` is every Belt that
-## touches any of the chain's Machines at either end, which is what wholeness is judged over —
-## a chain with a dangling Belt hanging off one of its Machines is a chain standing next to a
-## red post, and a positive signal must never contradict a complaint.
+## chain, in flow order, which is what a travelling mark runs along; `belts` is every Belt in
+## one of those runs **and** every Belt attached to one of the chain's Machines at either end,
+## which is what wholeness is judged over — a chain with a dangling Belt hanging off one of its
+## Machines is a chain standing next to a red post, and a positive signal must never contradict
+## a complaint.
 class Chain:
 	extends RefCounted
 
@@ -64,22 +66,22 @@ class Chain:
 
 ## Every chain on the Map, in ascending order of their first Machine.
 ##
-## O(Machines + Belts) with one walk down each link, which is why it is safe to ask every
-## frame — `_mark_obstructions`' lesson about per-thing questions over a whole Factory.
+## One pass over the Belts, one walk down each link — the runs do not overlap, since a Belt
+## hands on to at most one other — and one pass over the Machines per chain. Nothing here asks
+## a question per Belt *per Machine*, which is `_mark_obstructions`' lesson and the reason this
+## is safe to ask every frame.
 static func chains(sim: Simulation) -> Array[Chain]:
 	var machine_count: int = sim.query_machine_count()
 	var belt_count: int = sim.query_belt_count()
 
-	# Which Machine loads each Belt, read off the Machine's own branch list rather than asked
-	# per Belt, so the membership is exactly the group `_load_the_ports` serves in rotation.
+	# Which Machine loads each Belt. Asked per Belt rather than read off each Machine's branch
+	# list, which is the same answer out of the same function — `_branch_belts` groups by
+	# exactly this — and is the difference between walking the Belts once and walking every
+	# Machine's whole branch list, which is itself a walk of every Belt.
 	var loader: PackedInt64Array = PackedInt64Array()
 	loader.resize(belt_count)
-	loader.fill(-1)
-	for machine: int in range(machine_count):
-		for which: int in range(sim.query_machine_branch_count(machine)):
-			var belt: int = sim.query_machine_branch_belt(machine, which)
-			if belt >= 0 and belt < belt_count:
-				loader[belt] = machine
+	for belt: int in range(belt_count):
+		loader[belt] = sim.query_belt_loaded_by_machine(belt)
 
 	# One extra member for the Nest, so a Miner belting ore straight to the counter is a
 	# chain rather than a lone Machine. That is the opening Delivery, which is the first
@@ -108,11 +110,20 @@ static func chains(sim: Simulation) -> Array[Chain]:
 		links.append(run)
 		link_owner.append(loader[belt])
 
-	# A Belt belongs to the chain of whichever end of it is attached. Both ends dangling is a
-	# Belt that belongs to nobody — it wears two red posts and is nothing's line.
+	# A Belt belongs to the chain of whichever end of it is attached, and a Belt in the middle
+	# of a run is attached at neither — it is fed by the Belt behind it and feeds the one
+	# ahead. So membership is taken off the **runs** first, which is the only thing that knows
+	# about a middle; the two ends are what is left over, and a Belt with neither belongs to
+	# nobody, because it wears two red posts and is nothing's line.
 	var belt_member: PackedInt64Array = PackedInt64Array()
 	belt_member.resize(belt_count)
+	belt_member.fill(-1)
+	for link: int in range(links.size()):
+		for belt: int in links[link]:
+			belt_member[belt] = link_owner[link]
 	for belt: int in range(belt_count):
+		if belt_member[belt] != -1:
+			continue
 		if loader[belt] != -1:
 			belt_member[belt] = loader[belt]
 		else:

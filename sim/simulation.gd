@@ -10970,6 +10970,20 @@ func query_belt_feeds_machine(index: int) -> int:
 	return _machine_a_belt_feeds(index)
 
 
+## The Machine whose declared output port loads a Belt at its entry, or -1.
+##
+## **One line over `_machine_behind_belt`, which is the function `_load_from_port` asks and the
+## one `_branch_belts` groups a Machine's branch by** — so this and `query_machine_branch_belt`
+## are the same answer read from the two ends, and a caller that wants the loader of one Belt
+## need not walk every Machine's branch list to find it. `query_belt_start_is_fed` is its
+## weaker twin: that one says *whether* anything feeds an entry, counting an upstream Belt,
+## where this names the Machine or nothing.
+func query_belt_loaded_by_machine(index: int) -> int:
+	if not _is_belt(index):
+		return -1
+	return _machine_behind_belt(index)
+
+
 ## The Belt a Belt hands its Items on to, or -1. One line over `_belt_downstream`, which is the
 ## same function the downstream-first update order is chased down.
 func query_belt_feeds_belt(index: int) -> int:

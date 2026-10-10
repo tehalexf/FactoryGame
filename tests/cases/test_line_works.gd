@@ -3,9 +3,9 @@
 ## Everything this project draws about a line is a complaint — a red post where a Belt leads
 ## nowhere, an amber tag over a starved Machine, a post at a blocked branch, a sentence about
 ## a bad dock. Nothing said the line *works*, and "no red posts" is not a signal, it is the
-## lack of one. These are the tests for the three far-end projections that say what a Belt
-## reaches, for `LineWorks`, which assembles those answers into a chain, and for the renderer
-## that draws one completing and then stops.
+## lack of one. These are the tests for the four projections that say what each end of a Belt
+## is attached to, for `LineWorks`, which assembles those answers into a chain, and for the
+## renderer that draws one completing and then stops.
 extends TestCase
 
 
@@ -78,6 +78,22 @@ func test_a_belts_far_end_names_the_belt_it_hands_on_to_and_the_nest_it_reaches(
 	assert_true(sim.query_belt_end_is_connected(1))
 
 
+func test_which_machine_loads_a_belt_is_the_branch_list_read_from_the_other_end() -> void:
+	# The two have to be one answer, or a chain could be walked into a group the rotation is
+	# not over. Asserted against `query_machine_branch_belt` rather than against a literal,
+	# because what is being claimed is that they agree.
+	var sim: Simulation = _sim_on_one_node()
+	_mining_line(sim)
+	var named: int = 0
+	for machine: int in range(sim.query_machine_count()):
+		for which: int in range(sim.query_machine_branch_count(machine)):
+			var belt: int = sim.query_machine_branch_belt(machine, which)
+			assert_eq(sim.query_belt_loaded_by_machine(belt), machine)
+			named += 1
+	assert_eq(named, 1, "the premise: the Miner loads the one Belt")
+	assert_eq(sim.query_belt_loaded_by_machine(99), -1, "and an unknown Belt is loaded by none")
+
+
 func test_asking_what_a_belts_far_end_is_leaves_the_run_exactly_where_it_was() -> void:
 	var sim: Simulation = _sim_on_one_node()
 	_mining_line(sim)
@@ -87,6 +103,7 @@ func test_asking_what_a_belts_far_end_is_leaves_the_run_exactly_where_it_was() -
 		sim.query_belt_feeds_machine(index)
 		sim.query_belt_feeds_belt(index)
 		sim.query_belt_feeds_the_nest(index)
+		sim.query_belt_loaded_by_machine(index)
 		sim.query_belt_end_is_connected(index)
 	assert_eq(sim.hash(), before, "a projection the Simulation never reads back")
 
@@ -118,6 +135,32 @@ func test_a_mining_line_carrying_ore_reads_as_one_whole_chain() -> void:
 	assert_eq(chain.belts, PackedInt64Array([0]), "and the one Belt between them")
 	assert_eq(chain.links.size(), 1, "joined by one link")
 	assert_false(chain.reaches_the_nest, "no Belt of it points at the Nest")
+
+
+func test_a_belt_in_the_middle_of_a_run_is_part_of_the_chain_it_carries_for() -> void:
+	# A middle Belt is attached at neither end — fed by the Belt behind it and feeding the one
+	# ahead — so membership taken off the two ends alone would leave it out, and a chain could
+	# read as whole with an empty Belt in the middle of it.
+	var sim: Simulation = _sim_on_one_node()
+	sim.step([
+		InputAction.build_machine(0, _miner_index(sim), Vector3i(0, 0, 0)),
+		InputAction.build_belt(0, Vector3i(2, 0, 0), Vector3i(3, 0, 0)),
+		InputAction.build_belt(0, Vector3i(4, 0, 0), Vector3i(5, 0, 0)),
+		InputAction.build_belt(0, Vector3i(6, 0, 0), Vector3i(7, 0, 0)),
+		InputAction.build_machine(0, _smelter_index(sim), Vector3i(8, 0, 0)),
+	])
+	assert_eq(sim.query_belt_loaded_by_machine(1), -1, "the premise: nothing loads the middle")
+	assert_eq(sim.query_belt_feeds_machine(1), -1, "and it reaches no Machine")
+
+	_run(sim, 700)
+	var whole: Array = _whole_chains(sim)
+	if not assert_eq(whole.size(), 1, "three runs end to end are one chain"):
+		return
+	assert_eq(
+		(whole[0] as LineWorks.Chain).belts,
+		PackedInt64Array([0, 1, 2]),
+		"and every Belt of it is in it, middle included"
+	)
 
 
 func test_a_chain_with_a_dangling_belt_off_one_of_its_machines_is_not_whole() -> void:
