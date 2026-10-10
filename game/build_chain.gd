@@ -101,6 +101,41 @@ static func first_unlocked_of_role(sim: Simulation, role: MachineDefinition.Role
 	return -1
 
 
+## The first Machine in chain order whose Recipe produces an Item and that this Run can
+## actually build, or -1 when there is none.
+##
+## **`first_unlocked_of_role`'s sibling, and #71 is what it is for.** The objective line's
+## last step is about the goods the open Delivery tier is waiting for, and "which cell makes
+## coal" is the same category of question as "which cell is the Miner": a fact about the
+## content, answered off the chain order so that a Map whose chain opens differently points at
+## a different cell and nothing here names a row. The lock is asked of the Simulation for
+## `first_unlocked_of_role`'s reason — a player must not be pointed at a cell a Delivery has
+## shut.
+##
+## A Role would not have answered it. Coal and ore are both mined, plate and Ammunition are
+## both crafted, and what separates the Machine a player needs from the one beside it is the
+## Item it puts out.
+static func first_unlocked_producer_of(sim: Simulation, item_index: int) -> int:
+	if item_index < 0:
+		return -1
+	var definitions: Definitions = sim.query_definitions()
+	for machine_index: int in order(definitions):
+		var machine: MachineDefinition = definitions.machine_at(machine_index)
+		if machine == null or not sim.query_machine_is_unlocked(machine_index):
+			continue
+		var recipe: RecipeDefinition = definitions.recipe_at(machine.recipe_index)
+		if recipe != null and _produces(recipe, item_index):
+			return machine_index
+	return -1
+
+
+static func _produces(recipe: RecipeDefinition, item: int) -> bool:
+	for slot: int in range(recipe.output_count()):
+		if recipe.output_item(slot) == item:
+			return true
+	return false
+
+
 ## Which group a cell is in: the chain itself, or what a Delivery tier gates. Parallel to
 ## `order`.
 static func group_of(definitions: Definitions) -> PackedInt64Array:
