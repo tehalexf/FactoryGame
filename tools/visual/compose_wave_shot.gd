@@ -23,6 +23,12 @@
 ## * `boss` — a Siege Hulk from behind and to one side, which is where its glowing vent is.
 ## * `distance` — the whole yard with the Wave crossing it, at the thirty metres a player
 ##   actually triages from.
+## * `crush` — the Wave arrived, pressed against the Nest it came to eat, from above and to
+##   one side. **#76's preset, and it exists because none of the others can see its
+##   question.** Separation is a rule about bodies that want the same ground, and a Wave on
+##   the shipped half-second trickle walks a lane in single file already more than a body's
+##   width apart — so `swarm` renders identically with the pass on and off, which was checked
+##   rather than assumed. The crowd only exists where the lane ends.
 ##
 ## Two extra words on the command line: `hud` keeps the overlay, and `bare` hides the set
 ## dressing. `bare` is for the close-ups only, and it earns its place honestly: the yard is
@@ -64,7 +70,13 @@ func _initialize() -> void:
 	# and short enough that they are still bunched together near it — which is what makes a
 	# close shot of two kinds side by side possible at all. A scenario cannot place an Enemy;
 	# the only lever on where they are is how long you wait.
-	for tick: int in range(7 * Simulation.TICKS_PER_SECOND):
+	#
+	# **`crush` waits for the other end of that walk**, because the one thing a lane does not
+	# contain is a crowd: a Wave trickling out half a second apart is strung out along the
+	# road by its own walking, and only bunches up where the road stops. So it steps until the
+	# leaders are chewing the Nest and the rest have walked into the back of them.
+	var seconds: int = 40 if preset == "crush" else 7
+	for tick: int in range(seconds * Simulation.TICKS_PER_SECOND):
 		sim.step([])
 	view.sync(sim)
 
@@ -249,6 +261,26 @@ func _frame(camera: Camera3D, sim: Simulation, preset: String) -> void:
 			far + road.normalized() * 30.0 + road.normalized().cross(Vector3.UP) * 10.0
 				+ Vector3(0.0, 1.7, 0.0),
 			far + Vector3(0.0, 1.0, 0.0),
+			Vector3.UP
+		)
+		return
+
+	if preset == "crush":
+		# Above and to one side, looking down into the press. **Down rather than along, which
+		# is the whole of what this vantage is for**: separation is a fact about the *plan* —
+		# who is standing where on the ground — and a camera at head height reads a crowd as
+		# one silhouette in front of another whether or not any of them are inside each
+		# other. The first attempt stood on the lane at eye level and could not tell the two
+		# builds apart; this is the same finding #48's fourth and #49's `triage` each hit, a
+		# vantage that cannot see the subject.
+		var pressed: Vector3 = _swarm_centre(sim, Simulation.ENEMY_KIND_CRAWLER)
+		var toward: Vector3 = (pressed - _nest_centre(sim))
+		if toward.length() < 0.01:
+			toward = Vector3.BACK
+		camera.fov = 58.0
+		camera.look_at_from_position(
+			pressed + toward.normalized() * 9.0 + Vector3(0.0, 7.5, 0.0),
+			pressed,
 			Vector3.UP
 		)
 		return
