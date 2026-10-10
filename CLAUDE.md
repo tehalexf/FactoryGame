@@ -907,11 +907,35 @@ and a leg count and touched no material, and these are a property of the surface
 **`swarm` and `crush` are still below the ground and that is said plainly rather than
 defended.** `swarm` is a *ninth* of the floor, which is worse than the fifth #75 called "not a
 dark Enemy, it is a hole in the floor". Both are the cases where the body is between the camera
-and the light or inside the Nest's shadow, and neither is a lift problem: bracketed at 1.0, 1.8
-and 2.6, `swarm`'s median moved 0.000 → 0.0041 → 0.0042 and then stopped, because a backlit
+and the light or inside the Nest's shadow, and **neither is a lift problem**: bracketed at 1.0,
+1.8 and 2.6, `swarm`'s median moved 0.000 → 0.0041 → 0.0042 and then stopped, because a backlit
 metal in shadow has almost nothing to return whatever its albedo says. Buying it with more lift
-was offered and refused; what it actually wants is either a fill light reaching the Enemies or
-an emissive cue on a kind, and both are their own ticket.
+was offered and refused.
+
+**Part of `swarm`'s figure is the mask rather than the bodies, and that is the sixth time this
+file has paid for a vantage — the first time as a *measurement* rather than as a missing
+subject.** The preset stands at about forty-five metres looking down a lane at bodies a few
+pixels wide, so most of the pixels #75's method selects are **edge** pixels; and an edge pixel
+on a thin dark leg against bright ground is mostly ground, which drags a median toward the
+ground's value from below rather than reporting what a body returns. Every other instance of
+this hazard has been a camera that could not see its subject (#48's split marks, #49's `triage`,
+#52's survey ore, #56's dock posts, #76's `crush`, #79's own `wounded`). This one frames the
+subject correctly and is a bad *instrument* at that range.
+
+**It is not only the mask, and #79's second look is the evidence.** That pass halved every leg's
+thickness and enlarged every body — which changes the edge fraction of the `swarm` mask
+materially and in the direction that should have made an edge artefact *worse* — and the median
+came back at **0.0041 against 0.0041**, unmoved to the fourth decimal. So whatever dominates
+that number is not leg width, which is what an edge-pixel artefact would be most sensitive to.
+**Read it as a real loss with a measurement artefact on top of it, and not as either one
+alone.**
+
+What it actually wants is either a fill light reaching the Enemies or an emissive cue on a kind
+— and the second is newly *possible* rather than merely proposed, because #75 refused
+`depth_test_disabled` for its own reasons and found the KayKit eye geometry was inside the
+skull, so a generated body is the first thing in this project that could place one. Both are
+their own ticket. A `swarm` figure that is honest about the bodies wants a vantage nearer than
+forty-five metres, which is a third thing and is a change to the preset rather than to the game.
 
 #### What the pictures settle, and what they do not
 
@@ -943,9 +967,12 @@ SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "<pre
   the player at a target read back out of the queries — so where the camera ends up is a
   function of where the Wave happened to be. On the generated bodies it came to rest about
   forty metres from its subject and the Enemies are a smudge on the horizon. That is the
-  vantage hazard this file has now paid for five times (#48's split marks, #49's `triage`,
-  #52's survey ore, #56's dock posts, #76's `crush`): **a composer that frames from what it
-  meant to produce is a composer that cannot see what it produced.** Nothing here chased it,
+  vantage hazard this file has now paid for six times (#48's split marks, #49's `triage`,
+  #52's survey ore, #56's dock posts, #76's `crush`, and `swarm`'s own luminance above):
+  **a composer that frames from what it meant to produce is a composer that cannot see what it
+  produced.** `swarm` is the odd one of the six and is worth reading beside this one — its
+  camera frames the subject correctly and is still the wrong instrument, because at
+  forty-five metres the thing it measures is mostly edges. Nothing here chased it,
   because #70's glowing cracks are drawn by the shader off `INSTANCE_CUSTOM` and #79 did not
   touch that path — so the surface claim is carried by `pair` and `triage`, and re-aiming
   `compose_wave_shot`'s `wounded` camera is a job for whoever next has a reason to look at a
