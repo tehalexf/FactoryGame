@@ -1439,6 +1439,153 @@ arrays, never as an object per Item.
   GLOSSARY.md keeps the two apart and so does the code; `InputAction.Kind.BUILD_BELT`
   carries two tiles rather than a definition index.
 
+### What is on the Belt, and that it is running
+
+#73, and the complaint is this file's own standard turned on the one system it had never been
+applied to. A Machine's **silhouette is a gameplay requirement, not polish** — the core skill in
+a factory game is reading your own production line at a glance, and `machine_silhouette.py`
+fails the asset suite if any two Machines converge. The **Items are the content of that line**,
+and `_sync_items` drew every one of them as the same `BoxMesh` painted
+`Color(0.62, 0.36, 0.20)` through one `material_override`: iron ore, coal, plate and Ammunition
+were one picture, so a player looking at two Belts could not tell which carried the Boiler's
+fuel and which the Press's plate. And the deck never moved, so the only motion on a working
+line was its cargo sliding along a surface that was scenery.
+
+**`game/item_appearance.gd` decides what an Item looks like, and it is not an Item table.** That
+is the whole design problem: the set of Items is exactly what `content/recipes.csv` mentions,
+interned in sorted order, and nothing in `sim/` names one — so a list of ids with colours
+against them would be the second content table the project refuses. What is derived instead is
+an Item's **standing**: what the Factory *does* with it.
+
+- **fired** — a weapon frame names it in `ammunition_item`. Brass-cased rounds.
+- **burned** — some `role=generator` Machine's Recipe eats it. A generator is a crafter that
+  makes nothing, so "a Boiler eats it" is the whole definition of fuel and it needs no column.
+- **dug** — every Recipe that yields it yields it out of nothing, because a Miner's input is the
+  ground under it. That *absence* is the definition; nothing reads the word "ore".
+- **made** — anything else.
+
+Four facts about the Recipes, the Machine roles and the Gear table, and
+`test_asking_what_an_item_looks_like_names_no_item_id` asserts the absence of an id in that file
+the way build mode's criterion is written as the absence of code. Add an Item to the Recipes and
+it is drawn correctly with no edit here and none in `world_view.gd`. It lives in `game/` for the
+reason `BuildChain` and `Objective` do, and asking any of it leaves the state hash alone.
+
+**The shipped four land one in each form**, which is what makes a Belt readable rather than
+merely painted, and `test_the_shipped_items_land_one_in_each_form` is that claim — a derivation
+that collapsed any pair would pass every other test in the file and fail that one. The
+precedence is load-bearing in both directions and each arm has its own test, because the shipped
+content exercises one of them *silently*: coal is both dug and burned, so one answer is right
+for two reasons, and the test that isolates it points the Boiler at iron ore instead.
+
+**A form wears one of the palette's own committed materials** — `DullBrass`, `Soot`, `OxideRed`,
+`WeldedSteel`, through the `assets/machines/materials/*.tres` the Walls and every Machine body
+already draw. Per-instance colour was the ticket's stated minimum and a material is strictly
+better: an instance colour multiplies **albedo** and says nothing else, and these surfaces are
+physically based and mostly metal — the lighting takes ambient and reflections off the sky
+precisely because a metal lit by an ambient colour renders as a dark smear whatever its albedo
+says. Brass has to be metallic and smooth and soot has to be matte and black, and only
+`metallic` and `roughness` can say so.
+
+**One MultiMesh a form, built eagerly on the first sync**, so the scene tree does not grow by a
+node for any amount of cargo — and that is the reason the look is keyed on a *form* rather than
+on an Item. The form set is **closed**, so this is `EnemyKind.KIND_NAMES`' bargain exactly:
+`test_cargo_is_never_a_node_however_much_of_it_there_is` asserts **zero** growth rather than "no
+more than one per form". A MultiMesh per Item **id** would have grown the scene tree with
+`content/recipes.csv`, which is the one thing the absence of an Item table exists to prevent.
+What it costs is four buffers and four draw calls where there was one. `_item_transforms` stays
+the flat array in the Simulation's own order, because that is what `item_instance_position` has
+always meant and what a MultiMesh buffer cannot be read back out of — the arrangement
+`_belt_transforms` already has.
+
+**The deck runs on `game/belt_deck.gdshader`, and its speed is the Belt's own.** Cleats advance
+**one Item slot every `ticks_per_item` ticks**, both read off the queries, so the surface moves
+at exactly the speed of the cargo on it for any rating — 0.5 m every 15 ticks on the shipped
+numbers, which is the Belt's 2 m/s — with no second number anywhere to disagree with
+`belt.items_per_second` and `belt.items_per_tile`. Counted in **ticks**, which is the hard rule
+the ore scanner's sweep and `WeaponViewmodel`'s clip time already obey, and
+`test_the_deck_scrolls_and_nothing_about_it_is_timed_by_a_clock` asserts it from both sides: a
+frame that stepped nothing draws the same deck, and one whole period on it is back.
+
+Three things about the shader worth knowing rather than rediscovering:
+
+- **The cleats are read in object space.** Every Belt body is modelled running along its own +Z
+  and placed by a yaw, so `VERTEX` is distance along the run whichever way the line points. A
+  world-space read would have made a north-south line and an east-west line scroll in unrelated
+  directions, and a UV read would have depended on an unwrap the mesh generator may change.
+  **Every tile is the same mesh instanced, so that coordinate restarts at every tile boundary**
+  — which means the pattern is continuous along a run only because the pitch divides the tile
+  exactly. It does by construction rather than by luck, since the pitch is `tile_size /
+  items_per_tile`; a pitch picked by eye would have put a visible seam at every tile join. That
+  is the second reason to derive it from the Belt's rating, beside matching the cargo's speed.
+- **It is a shader and not geometry**, because a Belt tile is one instance in one MultiMesh
+  shared by every Belt on the Map. Moving slats would be moving slats per tile, which is the one
+  thing this system's data layout exists to avoid.
+- **The deck surface is found by material name**, `BeltRubber`, which is what
+  `machine_recipes.py` calls the running surface — so "the deck" is a surface this can ask for
+  rather than an index to guess at, and the `BeltRubber` material's own albedo, texture, scale,
+  metallic and roughness are carried *into* the shader rather than painted over. Asserted rather
+  than assumed, because #49 is what an unchecked claim about a named surface costs: a branch
+  written against geometry nobody had looked at sat in these notes as a fact for a whole ticket.
+  `test_the_deck_that_scrolls_is_the_belts_own_rubber_and_not_its_frame` checks that the surface
+  resolves and that **exactly one** scrolls — the rubber, not the frame, the legs or the stripes.
+
+#### What the renders found, and the two plans they killed
+
+The pair is [`docs/images/belt_cargo_survey_before.png`](docs/images/belt_cargo_survey_before.png)
+against [`_after`](docs/images/belt_cargo_survey_after.png), and
+[`belt_cargo_eye_before.png`](docs/images/belt_cargo_eye_before.png) against
+[`_after`](docs/images/belt_cargo_eye_after.png), rebuilt with
+
+```bash
+tools/visual/shot.sh out.png survey
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "running bare"
+```
+
+**The first plan was to sample the Item's own committed icon, and measuring it is what killed
+it.** It is the elegant answer and the one the ticket points at — #59 committed a picture of
+every Item and `WorldView.icon_path_for_item` is the one authority on whether it resolves, so
+the cargo and the hotbar cell would have been the *same art* and could never disagree. Measured,
+the mean of the opaque pixels is **(81, 69, 70) for iron ore, (59, 59, 61) for coal, (76, 76, 78)
+for plate and (89, 90, 93) for Ammunition** — four near-identical greys, because the icons are
+monochrome industrial art. Ore against plate is eight parts in 255 summed over three channels.
+**The art cannot carry the signal**, and amplifying chroma from a near-neutral sample amplifies
+noise rather than hue. That is the third time this project has been wrong about a colour it had
+not measured, and the first time the measurement arrived before the render rather than after.
+
+**The second was the geometry, and the render caught it.** The first pass spanned about 0.7 of
+`ITEM_SIZE_METRES` against the solid box it replaced, which is half the screen area: from Survey
+View the colour was right and the cargo had got *quieter*, which is the opposite of the ticket.
+Worse, the forms straddled their own origin, so a stacked slab floated 9 cm over the surface a
+player walks on — exactly the "an Item riding above the deck reads as a bug" #30 warns about.
+Every form now **fills its envelope and stands on its own zero**, so it is *placed and never
+measured*, the rule every Machine body already obeys, and the test asserts the drawn origin is
+the deck to the centimetre rather than inside a band.
+
+Two things the pictures settle, and one they do not:
+
+- **From Survey View both halves land.** The deck reads as a cleated conveyor rather than a
+  plank, and the ore is unmistakable rust-red rubble where it used to be an orange box in very
+  nearly the port arrows' own colour — which is the same ambiguity #56 recorded for its red
+  posts, freight and marks sharing a palette.
+- **The cleats read brighter than their albedo, and that is the lighting working.** `WeldedSteel`
+  is 0.14 against `BeltRubber`'s 0.3, so on paper the cleats are the *darker* material; they
+  render as the lighter bands because they are `metallic = 1` at roughness 0.38 under a sky this
+  project deliberately takes its ambient and reflections from. A cleat picked on albedo alone
+  would have been picked on the wrong number.
+- **At eye level the deck is not the read, and the cargo is.** Standing beside a line at the
+  distance `running` frames, a Belt is seen edge-on: what fills the frame is its side trestle and
+  the wall of port arrows above it, and the deck is a few pixels of grazing surface. The colour
+  change carries that view on its own and the scroll does not reach it. That is honest rather
+  than a defect to fix — a player walking their own line looks down at it — but it does mean
+  **the scrolling deck is a Survey View and close-quarters read**, and nothing has watched a
+  person decide whether it reads as motion rather than as a texture.
+
+**What no still can settle** is the one thing the second half of this ticket is for: whether a
+deck that scrolls reads as a machine doing work. A strip, one frame per tick, would show the
+cleats advancing; it would not show whether the speed feels like the Belt's. The levers are
+`cleat_width` and the cleat material, and both are in the shader rather than in tuning, because
+the Simulation does not read either.
+
 ### Why a Belt will not dock, and the two answers
 
 #56, and it is the half #47 shipped without. #19 declared every port, #36 drew an arrow on
