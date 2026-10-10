@@ -16,6 +16,7 @@
 ##   routing   a Belt drag in flight, cornering, with a refused tile in it
 ##   running   a fed line, flowing, with the Machines reading as fed
 ##   delivering  the same line, at the tick the objective line asks for the Delivery
+##   nest        the far end of that drag: the Nest, with a route in flight aimed at it
 ##
 ## `delivering` is #71's and exists for the reason `opening` does: none of the others can see
 ## its question. The claim is about the **last** step of the opening loop — the one a playtest
@@ -277,6 +278,18 @@ func _what_the_shot_is_about(sim: Simulation, preset: String) -> Vector3:
 			1.6,
 			(float(_smelter_tile().z) + 0.5) * tile_size
 		)
+	if preset == "nest":
+		# **#72's subject: the Nest's eastern wall, which is the tile a Belt out of the
+		# opening line actually ends against.** Its own dock ring rather than its middle,
+		# because what the shot is about is the mark on the wall and a crosshair on the crown
+		# puts the camera looking down at a roof.
+		var nest: Vector3i = sim.query_nest_tile()
+		var footprint: Vector2i = sim.query_nest_footprint()
+		return Vector3(
+			(float(nest.x + footprint.x) + 0.5) * tile_size,
+			0.0,
+			(float(nest.z) + 1.5) * tile_size
+		)
 	if preset == "placing":
 		# Clear ground beside the line, which is where a Machine actually gets placed.
 		return Vector3(
@@ -381,9 +394,16 @@ func _set_up_the_shot(sim: Simulation, view: WorldView, preset: String) -> Array
 	if _is_a_running_line(preset):
 		return [false, Vector3i.ZERO, BeltRoute.ALONG_X]
 
+	_step(sim, [InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	# **#72: a route in flight whose far end is the Nest**, which is the one frame the step
+	# that pays for a Run is actually acted on in. The anchor is the Smelter's southern
+	# output dock, so the drag is the drag the objective line asks for rather than a line
+	# drawn from nowhere — and the aim is already on the Nest's wall.
+	if preset == "nest":
+		return [true, _smelter_tile() + Vector3i(1, 0, 3), BeltRoute.ALONG_X]
+
 	# Routing: the Belt tool out and a drag anchored back at the Miner's output, so the
 	# previewed route is a real L.
-	_step(sim, [InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
 	var anchor: Vector3i = _node_tile + Vector3i(1, 0, 2)
 	# Something squarely in the way, on a tile of the route as it actually came out, so the
 	# shot shows a refusal marked **on the preview** rather than only a clear one. Worked out

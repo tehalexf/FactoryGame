@@ -19,7 +19,8 @@ tools/assets/convert_props.sh    # set-dressing props, OUT of the repo; no-op wi
 tools/assets/convert_audio.sh    # hero sound cues, OUT of the repo; no-op without the bundle
 tools/visual/shot.sh out.png eye # screenshot a working Factory (eye|survey|ground). Needs Xvfb.
 SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png routing
-                                 # the same, through the player's own camera (placing|routing|running)
+                                 # the same, through the player's own camera
+                                 # (opening|placing|routing|running|delivering|nest; + bare)
 SHOT_SCRIPT=tools/visual/compose_swing_shot.gd tools/visual/shot.sh out.png
                                  # a strip, one frame per tick, of the weapon in frame mid-swing
 SHOT_SCRIPT=tools/visual/compose_tool_shot.gd tools/visual/shot.sh out.png "tool bare"
@@ -4236,10 +4237,10 @@ because the mechanic **competes with the Belt as the answer to the same problem*
 is twenty coal, which is three trips on foot, and `content/deliveries.csv`'s own comment says the
 first thing a player should do is *"run a Belt out of the coal Miner and into the Nest and watch
 the Factory pay for its own progression"*. A faucet that bypasses Belts for small amounts teaches
-a new player they do not need one yet, at the moment it is cheapest to learn. #72 is the decision,
-with both cases written out and a third option on the table — that the lever may be the **Nest's
-own legibility** rather than a new verb, since a player who has learnt to aim a Belt at an arrow
-has nothing to aim at when the target is the Nest.
+a new player they do not need one yet, at the moment it is cheapest to learn. **#72 took that decision and the answer was no**, with the
+Nest's own legibility built in its place — since a player who has learnt to aim a Belt at an arrow
+had nothing to aim at when the target is the Nest. See "No hand hauling, and the Nest says where
+goods go instead", below.
 
 **And it turned up a live defect in the step above it, which was filed rather than patched and
 is now fixed.** `Objective._anything_is_starved` asked `query_machine_is_starved`, so a player who
@@ -4354,6 +4355,154 @@ Four things worth knowing rather than rediscovering:
   The assertion that replaces it is over a **window** of six hundred ticks rather than at one of
   them, because a single-tick assertion on an intermittent fault is a coin toss and is exactly how
   this shipped.
+
+### No hand hauling, and the Nest says where goods go instead
+
+**#72, and it is a decision before it is a mark.** #71 corrected a false instruction — the
+objective line told a player to carry ingots to the Nest and there is no way to carry anything —
+and left the evidence standing: the player's *mental model* was hand hauling and they reached
+for it unprompted. *"its not clear how to carry ingots to the nest"* is not "I did not know a
+Belt could do that". The ticket asked whether this game wants the verb, and the answer is **no**,
+with the Nest's own legibility built in its place.
+
+#### Why the verb is refused, in this project's own terms
+
+The mechanic's shape was never in question — `aimed_tile_at_height` is the wrench's aim at a
+Machine's body, `_within_wrench_reach` is the reach, `query_withdraw_refusal` is the shape of the
+refusal, and `_refund_machine` already moves an output buffer into a player's pockets on a
+demolish. It would have cost a `Kind`, a `Refusal` or two and, very likely, no new hashed state
+at all. It is refused on four grounds and the first two are the load-bearing ones.
+
+- **It is a second way to do a thing, and this project has consistently refused those.** There is
+  no inserter entity (DESIGN.md). There is no build mode — `_player_build_mode` is a hand and the
+  criterion is written as the absence of code. There is one Power grid and no topology. **A
+  Machine's output leaves by a Belt** is the same kind of rule, and the cost of a second answer is
+  not the code: it is that every later question about moving goods then has two answers that have
+  to be kept in agreement, which is the disagreement `query_build_refusal` and `_dock_refusal`
+  each exist to prevent one of.
+- **It makes `t01_munitions` payable without a Factory.** The first tier is twenty coal, which is
+  three trips on foot, and `content/deliveries.csv`'s own comment says the first thing a player
+  should do is *"run a Belt out of the coal Miner and into the Nest and watch the Factory pay for
+  its own progression"*. A faucet that bypasses Belts for small amounts teaches a new player they
+  do not need one yet — **at the one moment in a Run when learning it is cheapest**, because the
+  line is two Machines long and nothing is shooting at them. It is #60's `second_press` as a
+  teaching problem rather than a balance one: the build that looks sensible is the one that
+  quietly costs you the lesson.
+- **Its own failure mode is the thing IRON NEST is most criticised for.** DESIGN.md is explicit
+  that the line between satisfying friction and tedium is whether the machine answers you, and
+  hauling twenty coal by hand is four round trips of nothing. The Silo's dial is the diegetic
+  control this game wants: an irreversible commitment made once, under pressure. A hauling trip is
+  transcription.
+- **And the one thing it would genuinely have bought is bought more cheaply.** The honest case for
+  it was that the opening is brittle — a Belt that will not dock is the commonest mistake there is
+  (#47, #56) and a pickup is a way through that does not need the ports right first. But that is
+  an argument about the Belt being hard to aim, and the answer to a hard-to-aim Belt is to make
+  the target legible, not to add a route around it.
+
+**What is being given up is real and is recorded rather than waved off.** A player reached for
+this unprompted, in a playtest, and nothing here makes them right. There is no wrench-and-pockets
+playstyle in the opening five minutes and there will not be one; a Factory that cannot run a Belt
+produces nothing a player can hold. If a second playtest reaches for hauling again *after* the
+mark below, that is evidence the decision is wrong rather than evidence the mark needs to be
+bigger — and the thing to reach for then is #71's own filed argument, which is still intact.
+
+#### The mark: four bands, one a wall, saying "anywhere along here"
+
+**The Nest is deliberately not port-enforced (#47)** — it is not a Machine (GLOSSARY.md), so
+`_hand_off` reaches it through a clause of its own and a Belt docks anywhere on its 4x4 wall. So
+it carries no row anything draws and, until #72, **nothing marked it at all**. Every Machine in
+the Factory wears arrows on every declared port; the one target the opening loop ends at wore
+nothing, and a player who has learnt to aim a Belt at an arrow had nothing to aim at.
+
+`WorldView._sync_nest_delivery_marks` is the whole of it: four bands, one a wall, each a
+continuous run of chevrons pointing inward, at `PORT_MARKER_HEIGHT_METRES` — the Belt deck height
+the port arrows already use, because a Belt really will end there.
+
+- **Continuous, not one arrow a dock tile, and that is the entire design rather than a styling
+  choice.** #47 declared the ports table tile by tile precisely so that *which tile a player aimed
+  at* could never be the difference between a line that works and one that does not — so an arrow
+  is a promise about **that tile**. The Nest's rule is weaker: any tile of any wall. A mark that
+  claimed the stronger promise would be the renderer telling a player a rule the Simulation does
+  not keep, which is #47's own complaint about the three tickets before it, inverted. Sixteen
+  chevrons on sixteen dock tiles was the easy reuse and is exactly that mark.
+- **The teeth are coprime with the footprint.** Five across a four-tile face, so no chevron lands
+  on a tile boundary and no tile has one to itself — the geometry says "along here" rather than
+  "here" even before the shape does.
+- **It is drawn with the Build Gun in hand and nowhere else**, through
+  `_ports_are_advice_right_now` — #66's one home for "is this player in a position to build", so
+  the hologram, the HUD panel, the port arrows and this cannot disagree about what is in a
+  player's hands. And it goes when the Run is over, because a fallen Nest is not a counter
+  (`_nest_store_room` is zero and a withdrawal is refused) and a mark promising a hand-over there
+  is a promise nobody can keep.
+- **Placed off `query_nest_tile` and `query_nest_footprint`, never off a constant.**
+  `MapLayout.NEST_FOOTPRINT_TILES` is the one authority on that square (#61) and a mark measured
+  against a second copy of 4x4 is exactly the disagreement that cross-check exists to catch.
+- **It is presentation and the Simulation never hears about it.** No new query, no new state, and
+  `test_asking_where_goods_enter_the_nest_leaves_the_run_exactly_where_it_was` says so. One
+  MultiMesh for all four bands, so the scene tree does not grow —
+  `test_the_nests_delivery_marks_are_never_nodes_however_often_the_view_is_synced`.
+
+#### The one rule that departs from the port arrows, and why
+
+**`PORT_ARROW_RANGE_TILES` is deliberately not applied here.** #66's range is a **count**
+argument: eight of the ten shipped Machines declare every tile of every face, so a Factory wearing
+all of them at once is a hedge, and the fix is to draw the ring around the one Machine being asked
+about. The Nest's count is **one**, for ever — four bands on a square that cannot multiply however
+big the Factory gets — so the hedge this mark could form is four bands, which is not a hedge.
+
+And filtering on the aim would answer the wrong player. **The mark exists for somebody who does
+not know where to send their Belt**, and a mark that appears only once the gun is already pointed
+at the right place is a mark only the player who already knew will ever see. It was implemented
+with the range first, which is how that came out: it is invisible in exactly the frame #71's
+playtest got stuck in. `test_the_nest_keeps_its_mark_wherever_the_build_gun_is_pointing` is the
+rule, with the reason written next to it so nobody tidies it back into consistency.
+
+#### What the renders found, and the candidate they threw away
+
+The pair is [`docs/images/nest_delivery_before.png`](docs/images/nest_delivery_before.png) against
+[`_after`](docs/images/nest_delivery_after.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "nest bare"
+```
+
+**`nest` is #72's preset and it exists for the reason `triage`, `opening` and `delivering` do:
+none of the others can see the subject.** Every building shot frames the opening line, which
+stands twenty-odd metres east of the Nest — `delivering` renders #71's own step and **the Nest is
+not in the frame at all**, which was checked rather than assumed. This one puts the crosshair on
+the Nest's eastern dock ring with a route in flight anchored at the Smelter's output, which is
+literally the drag the objective line asks for.
+
+1. **A row of separate chevrons reads as sixteen arrows, however few of them there are.** The
+   first implementation spaced five discrete arrowheads along each wall, and from Survey View the
+   gaps between them were as wide as the teeth: what came out was a ring of discrete arrows round
+   a square, which is a picture of a tile-by-tile declaration — the one thing this mark must not
+   claim. **Continuity has to be in the geometry and not in the count.** The teeth share their
+   edges now: one solid strip with a serrated leading edge, which reads as an apron.
+2. **The colour was checked against what the frame guarantees, which is #48's and #52's finding
+   both times.** It is the input ports' own cool blue, because it means the input ports' own thing
+   and a player who learnt that off a Smelter has learnt it here; what says "not a declared port"
+   is the shape. The frame this mark exists for is a Belt drag ending at the Nest, so what it is
+   certainly beside is the route in flight (green, or red when refused), the cream flow arrows on
+   it, and the warm orange output arrow at the far end. Rendered, it is the only cool thing in the
+   picture and nothing in it reads alike. **A third colour was not taken**, for #67's reason: this
+   game teaches as few colours as it can, and a new one to answer a question the existing pair
+   already answers is a new thing to learn.
+3. **It reads at both distances and differently at each**, which was checked by rendering the
+   preset at eye level as well. From the lift the apron is a blue ring round a square and is what
+   finds the Nest; standing at the wall it is a wide band at deck height on the face in front of
+   you and is what says *this* wall will take it. Neither vantage carries the other, which is the
+   argument for a band on every face rather than one mark.
+
+#### What no render can settle
+
+Whether a player who has never laid a Belt reads an inward chevron as "goods go in" rather than as
+decoration — and whether four bands worn permanently by the Nest, for as long as the Build Gun is
+out, read as a target or become wallpaper over a forty-hour Run. That second one is #66's own
+question asked about a structure whose count is one, and the honest answer is that the count
+argument makes a hedge impossible and says nothing about whether a player stops seeing it. The
+lever if it does is the range this section argues against, and the argument against it should be
+read again before anybody reaches for it.
 
 ### The hotbar states the chain
 

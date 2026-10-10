@@ -836,6 +836,8 @@ var _belt_preview_arrow_transforms: PackedFloat32Array = PackedFloat32Array()
 ## which is why a player could not tell which face of a Smelter takes ore. The arrow points
 ## the way goods travel — into the body for an input, out of it for an output — because which
 ## way to point a Belt is the actual question being asked.
+var _nest_delivery_marks: MultiMeshInstance3D = null
+var _nest_delivery_transforms: PackedFloat32Array = PackedFloat32Array()
 var _input_ports: MultiMeshInstance3D = null
 var _output_ports: MultiMeshInstance3D = null
 var _input_port_transforms: PackedFloat32Array = PackedFloat32Array()
@@ -1132,6 +1134,42 @@ const PORT_MARKER_SCALE: float = 1.6
 ## declares, so an arrow is at the height the Belt that docks there will be.
 const PORT_MARKER_HEIGHT_METRES: float = 0.9
 
+## How many chevrons a wall of the Nest wears, and how deep the band they make is.
+##
+## **#72, and the count is the whole of why this is not a port arrow.** A declared port is a
+## promise about *that tile* — #47 made the table tile by tile precisely so that which tile a
+## player aimed at could never be the difference between a line that works and one that does
+## not. The Nest is deliberately **not** port-enforced: it is not a Machine (GLOSSARY.md), so
+## `_hand_off` reaches it through a clause of its own and a Belt docks anywhere on its 4x4
+## wall. The rule is weaker, so the mark has to be weaker, and the way a mark says "anywhere
+## along here" rather than "here" is to be **continuous**.
+##
+## So each wall is **one mesh**, a run of chevrons, and the run is deliberately *not* tile
+## aligned: five chevrons across a four-tile face, which is coprime with the footprint, so no
+## chevron sits on a tile boundary and none of them is on a tile of its own. Sixteen arrows
+## on sixteen dock tiles would have been the easy reuse and would have claimed a promise the
+## Simulation does not keep.
+const NEST_DELIVERY_CHEVRONS_PER_WALL: int = 5
+const NEST_DELIVERY_BAND_DEPTH_TILES: float = 0.55
+
+## The colour the Nest's walls are marked in, and the one decision here that had to be made
+## by looking rather than by reasoning.
+##
+## **It is the input ports' own colour**, because it means the input ports' own thing: cool is
+## what goes in, and a player who has learnt that off a Smelter has learnt it here. What says
+## "this is not a declared port" is the **shape** — a continuous band against a discrete
+## arrow — and not a third colour, because this game teaches a player as few colours as it
+## can get away with and a new one would be a new thing to learn in order to answer a
+## question they can already answer.
+##
+## Checked against what it is **guaranteed** to be seen beside rather than against what it
+## shares a file with, which is #48's and #52's finding both times: the frame this mark exists
+## for is a Belt drag that ends at the Nest, so the things it is certainly next to are the
+## route in flight (`HOLOGRAM_ALLOWED` green or the refused red), the cream flow arrows on it,
+## and the warm orange output arrow at the Miner the drag started from. It is the only cool
+## thing in that frame, which is what a render confirmed.
+const NEST_DELIVERY_COLOUR: Color = Color(0.45, 0.72, 1.0, 0.9)
+
 ## How far from where the Build Gun is pointing a port arrow is still worth drawing, in
 ## tiles, measured to the arrow's own dock tile.
 ##
@@ -1355,6 +1393,9 @@ func sync(sim: Simulation) -> void:
 	# After the hologram, because it draws the hologram's ports too and has to know whether
 	# there is one.
 	_sync_ports(sim)
+	# After the ports, because it is the same advice about the one thing in the Factory that
+	# declares none and it reads the same rule about whether advice is wanted at all.
+	_sync_nest_delivery_marks(sim)
 	_sync_connection_marks(sim)
 	_sync_split_marks(sim)
 	# After both, because it is the one mark that says a line is *right* and it has to stand
@@ -6495,6 +6536,96 @@ func _sync_ports(sim: Simulation) -> void:
 	_upload(_output_ports, out_of)
 
 
+## The Nest's walls, marked so that a Belt has something to aim at.
+##
+## **#72 is the decision that produced this and the decision was "no new verb".** #71's
+## playtest reached for carrying ingots by hand; the answer is to teach the Belt harder rather
+## than to add a second way to move goods, and the lever the ticket itself named is that the
+## Nest has **no mark on it at all**. Every Machine declares ports and wears arrows; the Nest
+## declares none, because it is not a Machine and a Belt docks anywhere on its wall — so the
+## one target the opening loop ends at is the one target with nothing to aim at.
+##
+## Four bands, one a wall, each a continuous run of chevrons pointing **inward** — see
+## `NEST_DELIVERY_CHEVRONS_PER_WALL` for why continuity rather than one arrow a dock tile is
+## the whole design. Placed off `query_nest_tile` and `query_nest_footprint`, never off a
+## constant: `MapLayout.NEST_FOOTPRINT_TILES` is the one authority on that square (#61) and a
+## mark measured against a second copy of 4x4 is exactly the disagreement that check exists
+## to catch.
+##
+## Two things decide whether it is drawn, and **`PORT_ARROW_RANGE_TILES` is deliberately not
+## one of them**, which is the one rule here that departs from the port arrows rather than
+## copying them. The Build Gun has to be in hand — `_ports_are_advice_right_now`, #66's one
+## home for that question, because a mark saying where to put a Belt is advice a player
+## holding a rifle cannot act on — and the Run has to still be running, because a fallen Nest
+## is not a counter (`_nest_store_room` is zero and a withdrawal is refused) and a mark
+## promising a hand-over there is a promise nobody can keep.
+##
+## **Why no range, when every arrow in the frame has one.** #66's range is a *count* argument:
+## eight of the ten shipped Machines declare every tile of every face, so a Factory wearing
+## all of them at once is a hedge, and the fix is to draw the ring around the one Machine
+## being asked about. The Nest's count is **one**, for ever — four bands on a 4x4 square that
+## cannot multiply however big the Factory gets — so the hedge this mark could form is four
+## bands, which is not a hedge. And filtering on the aim would answer the wrong player: the
+## mark exists for somebody who does **not** know where to send their Belt, and a mark that
+## appears only once the gun is pointed at the right place is a mark only the player who
+## already knew will ever see. Drawn around the aim it would have been invisible in exactly
+## the frame #71's playtest got stuck in.
+func _sync_nest_delivery_marks(sim: Simulation) -> void:
+	var tile_size: float = Fixed.to_float(sim.query_tile_size_metres())
+	var footprint: Vector2i = sim.query_nest_footprint()
+	if _nest_delivery_marks == null:
+		_nest_delivery_marks = _wall_chevron_band(
+			float(footprint.x) * tile_size, tile_size, NEST_DELIVERY_COLOUR
+		)
+
+	var marks: PackedFloat32Array = PackedFloat32Array()
+	if not sim.query_run_is_over() and _ports_are_advice_right_now(sim):
+		var anchor: Vector3i = sim.query_nest_tile()
+		var centre: Vector3 = _footprint_centre(sim, anchor, footprint)
+		var half: float = float(footprint.x) * tile_size * 0.5
+		var stand_off: float = half + tile_size * 0.5
+		for outward: int in range(WorldGrid.DIRECTION_STEPS.size()):
+			var step: Vector3i = WorldGrid.direction_step(outward)
+			var at: Vector3 = Vector3(
+				centre.x + float(step.x) * stand_off,
+				Fixed.to_float(sim.query_layer_height_metres(anchor.y))
+					+ PORT_MARKER_HEIGHT_METRES,
+				centre.z + float(step.z) * stand_off
+			)
+			marks.resize(marks.size() + FLOATS_PER_INSTANCE)
+			@warning_ignore("integer_division")
+			_write_instance(
+				marks,
+				marks.size() / FLOATS_PER_INSTANCE - 1,
+				at,
+				# The chevrons are modelled pointing along their own +z, which is where a yaw
+				# out of `_yaw_for_direction` puts forward — so the band standing outside a
+				# wall is turned to point *in*, against the face's outward direction.
+				_yaw_for_direction(WorldGrid.wrap_rotation(outward + 2))
+			)
+
+	_nest_delivery_transforms = marks
+	_upload(_nest_delivery_marks, marks)
+
+
+## How many walls of the Nest are marked as taking goods. For the smoke test, and the number
+## a player reads off the screen as "any of these".
+func nest_delivery_marker_count() -> int:
+	@warning_ignore("integer_division")
+	return _nest_delivery_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where one of those marks was drawn, in metres. For the smoke test: a band inside the
+## footprint is a band inside the Nest, and only reading back where it went can say so.
+func nest_delivery_marker_position(index: int) -> Vector3:
+	var base: int = index * FLOATS_PER_INSTANCE
+	return Vector3(
+		_nest_delivery_transforms[base + 3],
+		_nest_delivery_transforms[base + 7],
+		_nest_delivery_transforms[base + 11]
+	)
+
+
 ## Whether a port arrow is advice this player could act on, which is the whole of #66's
 ## first fault.
 ##
@@ -7317,6 +7448,77 @@ func _chevron_mesh(reach: float) -> Mesh:
 	var mesh: ArrayMesh = ArrayMesh.new()
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 	return mesh
+
+
+## A MultiMesh of **bands**: one instance a wall, each a run of flat chevrons pointing along
+## its own local +z, as a single mesh.
+##
+## One mesh rather than one instance a chevron, which is the point rather than an
+## optimisation: what makes this mark say "anywhere along this wall" is that it is continuous,
+## and a run of instances is a run of marks that each stand somewhere. The pitch is the wall
+## divided by `NEST_DELIVERY_CHEVRONS_PER_WALL`, which is coprime with the footprint, so no
+## chevron lands on a tile boundary and no tile has one to itself.
+func _wall_chevron_band(width: float, tile_size: float, colour: Color) -> MultiMeshInstance3D:
+	var node: MultiMeshInstance3D = MultiMeshInstance3D.new()
+	var instanced: MultiMesh = MultiMesh.new()
+	instanced.transform_format = MultiMesh.TRANSFORM_3D
+	instanced.mesh = _chevron_band_mesh(
+		width, tile_size * NEST_DELIVERY_BAND_DEPTH_TILES, NEST_DELIVERY_CHEVRONS_PER_WALL
+	)
+	node.multimesh = instanced
+	var skin: StandardMaterial3D = StandardMaterial3D.new()
+	skin.albedo_color = colour
+	skin.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	skin.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	node.material_override = skin
+	add_child(node)
+	return node
+
+
+## A solid strip along local x whose leading edge is serrated into `count` teeth pointing at
+## +z. Drawn both ways round for `_chevron_mesh`'s reason: it has to read from above and from
+## under a Belt deck.
+##
+## **A strip with a serrated edge rather than a row of arrowheads, and a render decided it.**
+## The first pass was literally `count` separate chevrons spaced along the wall, and from
+## Survey View the gaps between them were as wide as the teeth: what came out was sixteen
+## discrete arrows standing round a square — which is a picture of a tile-by-tile declaration,
+## the one thing this mark must not claim. The teeth share their edges now, so the band is one
+## unbroken thing that happens to point somewhere.
+func _chevron_band_mesh(width: float, reach: float, count: int) -> Mesh:
+	var pitch: float = width / float(count)
+	var back: float = -reach * 0.5
+	var vertices: PackedVector3Array = PackedVector3Array()
+	# The solid half, as two triangles across the whole wall.
+	var left_back: Vector3 = Vector3(-width * 0.5, 0.0, back)
+	var right_back: Vector3 = Vector3(width * 0.5, 0.0, back)
+	var left_front: Vector3 = Vector3(-width * 0.5, 0.0, 0.0)
+	var right_front: Vector3 = Vector3(width * 0.5, 0.0, 0.0)
+	_both_ways(vertices, left_back, left_front, right_front)
+	_both_ways(vertices, left_back, right_front, right_back)
+	# And the teeth on the front of it, each sharing its base with its neighbours.
+	for index: int in range(count):
+		var from: float = -width * 0.5 + pitch * float(index)
+		_both_ways(
+			vertices,
+			Vector3(from, 0.0, 0.0),
+			Vector3(from + pitch * 0.5, 0.0, reach * 0.5),
+			Vector3(from + pitch, 0.0, 0.0)
+		)
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	var mesh: ArrayMesh = ArrayMesh.new()
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+## One triangle, wound both ways, so a flat mark lying in the xz plane is visible from above
+## and from below without a two-sided material.
+static func _both_ways(
+	into: PackedVector3Array, first: Vector3, second: Vector3, third: Vector3
+) -> void:
+	into.append_array([first, second, third, first, third, second])
 
 
 ## How many tiles of route are being previewed. For the smoke test, and the number the HUD
