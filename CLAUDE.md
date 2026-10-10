@@ -2252,6 +2252,13 @@ distance the tag sits on the derrick's cap with about a tag's height of gap, whi
 resting on it; `STARVED_MARK_LIFT_METRES` is 1.2 m and the silhouette is directly underneath.
 What would have been unreadable is candidate 2, where the gap is metres of nothing.
 
+**#66 found the one case the third render could not show, and it is about the shape of the top
+rather than about the height.** A tag rests a tag's height over the silhouette, which on a
+Miner's wide derrick cap reads as resting on it — and on a Steam Boiler's **narrow chimney** is
+1.2 m of open sky over a pipe. The lift was not moved; the tag was given a tether down to the
+body, which is #52's answer to the same complaint. See "The floating yellow mark was the Steam
+Boiler's starved tag, and it was in the right place", above.
+
 **The assertion was rewritten so that it can fail**, which is the durable half of #50. It now
 builds a Turret that **has a body** — a row borrowing `press_mk1`, which the repository already
 carries at 2.4 m with a superstructure over it, under a declared 1.2 m housing — so the two
@@ -3159,6 +3166,8 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   the Belt goes. **Since #47 the arrow is a promise the Simulation keeps**: a Belt docks against
   a declared port and nowhere else, so the dock tile the arrow stands on is literally the tile a
   Belt has to start on or end against. Until then it was a drawing of a rule nobody enforced.
+  **Since #66 they are drawn only while the Build Gun is in hand and only around where it is
+  pointing** — see "An arrow is advice, and advice nobody asked for is a hedge", below.
 - **What is not connected is marked where it is not connected.** `query_belt_end_is_connected`
   and `query_belt_start_is_fed` are the geometry halves of `_hand_off` and `_load_from_port`,
   so a Belt drawn as connected is one that would really hand an Item over; a red post stands
@@ -3195,6 +3204,108 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   for good once a Delivery tier has landed. It names roles and states rather than Machine
   ids, because a line that named `smelter_mk1` would be a second content table written in
   GDScript. It lives in `game/` for the reason `BuildGun.refusal_text` does.
+
+### An arrow is advice, and advice nobody asked for is a hedge
+
+#66, and the evidence is one picture. The three building renders were rebuilt on the tip and
+`running.png` — a player walking their own line with the Build Gun **holstered** — had its
+whole mid-band filled with warm-orange quads at deck height, in front of the Belt and the
+Machines they are about. **The Belt the arrows exist to help you lay was harder to see than
+the arrows.** Two faults, and they wanted separate answers.
+
+- **They were drawn when nobody was building.** Since #42 the weapon is the default hand, so
+  the state a player spends most of a Run in was the state the whole Factory wore a hedge in.
+  **`BuildGun.hand_refusal` is the one home for "is this player in a position to build"** and
+  the arrows had never asked it — the same shape #35 found in the hologram, four inline checks
+  on one side and none on the other. `_ports_are_advice_right_now` asks it and nothing else,
+  so the rule has one home and the HUD panel, the hologram and the arrows cannot disagree
+  about what is in a player's hands. Deliberately the **hand** and not the tool: the Machine
+  tool is how a player decides which way round to turn the thing they are placing, which is a
+  question entirely about ports, and the Belt tool is how they act on the answer.
+- **At twelve to a Machine they had stopped saying "this tile".** Eight of the ten shipped
+  Machines declare every tile of every face, so a square Smelter wears twelve arrows and the
+  93-row table puts a ring around every Machine on the Map — and a ring pointing outward in
+  all four directions carries no tile in it, which is the exact promise #47 declared the table
+  tile by tile to keep. So arrows are drawn within `PORT_ARROW_RANGE_TILES` of what the Build
+  Gun is asking about, which is where it is pointing **and**, with a drag in flight, the tile
+  the drag was anchored on. That last clause is not a nicety: a route has two ends and the far
+  one is the one a player committed to several seconds ago, so without it the arrow that
+  started the drag goes out at the one moment it is being read.
+
+**#47's tile-by-tile promise is kept in full and is not weakened by one word.** Nothing about
+`content/machine_ports.csv` changed and nothing about what the Simulation enforces changed; a
+Belt still docks against a declared port and nowhere else. What changed is *when* the
+declaration is on screen — and around the aim, the same ring of twelve that read as a starburst
+reads as a legend for the one Machine a player is deciding about, because they aimed at it.
+
+**Four things the renders found, and the first is the one no test could have.**
+
+1. **Filtered tile by tile, a Machine straddling the range shows half a ring.** The first
+   implementation measured the range to each arrow's own dock tile, which is the obvious
+   reading, and the render of it has the Miner beside the hologram wearing the arrows on its
+   near face and none on its far one — **which reads as "those are all the ports it has"**, and
+   is a worse thing to tell a player than nothing at all. So the range decides *which Machine
+   is being asked about* and the answer is always that Machine's whole declaration.
+   `test_a_machine_near_the_aim_wears_every_port_it_has_or_none_of_them` is the pin, built on a
+   3x3 Smelter with one corner inside the range and the opposite one outside it.
+2. **6 tiles, bracketed at 4, 6 and 9.** At 4 the Machine a player is placing *beside* loses
+   its arrows — which is the one Machine whose output port they are lining the hologram up
+   against, so 4 answers the wrong question. At 9 the picture on the opening line is identical
+   to 6, so the extra reach buys nothing and only widens the band a late Factory draws a hedge
+   in. 6 is a Belt run's worth of ground and about one Machine either side of the aim.
+3. **`routing` did not change at all, and that is the control.** The drag is anchored at the
+   Miner and aimed at the Smelter, so both wear their full rings and nothing else in the yard
+   does — which is the picture the rule was designed to produce, arrived at without the
+   composer being touched.
+4. **The floating mark was not an arrow.** See below.
+
+#### The floating yellow mark was the Steam Boiler's starved tag, and it was in the right place
+
+The ticket reported "a lone yellow arrow in the sky at the right of frame with nothing visibly
+under it" and asked for a diagnosis rather than a fix. It is **not an arrow and not a port
+mark**: it is the amber `query_machine_is_starved` tag, over the Steam Boiler, which the Run in
+that shot never gives any coal. Measured, standing the shot's own Factory up and reading the
+buffers:
+
+| | housing | body drawn | tag at |
+|---|---|---|---|
+| `steam_boiler_mk1` | 2.20 | **5.05** | 6.25 |
+
+So it is exactly where #50 says it should be — `_machine_roof` plus `STARVED_MARK_LIFT_METRES`,
+a tag's height over the silhouette — and taking the arrows away made it *more* conspicuous
+rather than less, because it became the only loud thing in a calm frame.
+
+**What #50's render could not see is the shape of the top it measures.** That ticket rendered a
+posed row of a starved Miner, Smelter and dry Turret and judged the lift against a Miner's
+derrick, whose **cap is wide**: a tag a tag's height over it reads as resting on it. A Steam
+Boiler's body tops out in a **narrow chimney**, so the same 1.2 m is 1.2 m of open sky over a
+pipe, and at the distance a player reads a Factory from the eye joins the tag to nothing. #41's
+rule — a bright mark with nothing under it belongs to nobody — bites a fourth time, and the
+lift is not what is wrong with it.
+
+**So the fix says whose mark it is rather than moving it**, which is the answer #52 already
+reached for an ore beacon floating over the ground: "the marking is also what gives the
+floating stack an owner". A thin unshaded line in the tag's own colour spans the gap, from the
+top of the body a player can see up to the tag resting over it. Three things about it worth
+knowing:
+
+- **Its length is `STARVED_MARK_LIFT_METRES` exactly**, so one mesh serves every Machine
+  however tall — the gap it fills is the same gap everywhere by construction, and there is no
+  per-instance scale to get wrong.
+- **It is punctuation, not a second mark.** `STARVED_TETHER_THICKNESS_TILES` is 0.06, wide
+  enough to survive a pixel at thirty metres and narrow enough that a Factory with six starved
+  Machines is not six amber columns.
+- **One tether per tag, asserted as a count rather than as a position.**
+  `test_a_starved_tag_is_tethered_to_the_body_it_is_about` checks `starved_tether_count()`
+  against `starved_marker_count()` and that the tether's middle lies between the drawn roof and
+  the tag, so a tag that ever gets drawn without one fails rather than floats.
+
+Rendered, the Boiler's tag now plants on its chimney and reads as a flag on a mast. **The
+Ammunition gauge and the three split tags hang off the same `_machine_roof` and have the same
+exposure on a narrow-topped body**, and they are deliberately untouched here: that is a
+behaviour change to three shipped marks with assertions pinning them, which is exactly the
+standing #48 gave the starved tag before #50 picked it up, and it wants the same treatment in
+its own ticket.
 
 ### The hotbar states the chain
 
