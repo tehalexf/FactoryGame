@@ -1016,11 +1016,233 @@ quarter cheaper, the surface is fixed, the licence position is strictly better t
 and it is emphatically not a skeleton — and a long-lived art branch against three other agents
 in `world_view.gd` costs more than it buys.
 
-**The shape the renders suggest, for whoever picks the close range up**: a *segmented* body —
+**The shape the renders suggested, for whoever picked the close range up**: a *segmented* body —
 thorax and abdomen as two masses with a narrow waist between them rather than one run of boxes —
 **arched** legs rather than straight ones, and a front feature where a head would be. And the
-orange abdomen wants measuring: at `pair` it is the brightest thing in frame, which is adjacent
-to #80's finding about the Nest and may share a cause.
+orange abdomen wanted measuring: at `pair` it was the brightest thing in frame, which is
+adjacent to #80's finding about the Nest and may share a cause. **That is #81, and the section
+below is it.**
+
+### Shape at the range a fight happens at
+
+**#81, and it is the half of #79 that did not land.** That ticket's own closing note is the
+brief above, and all four of its items turned out to be right about the symptom. What the work
+found is that only two of the four were about the thing the complaint named, and the largest
+single win was a one-word content change #79 had already argued for and applied to one kind out
+of three.
+
+#### The three the ticket asked for
+
+- **A waist.** `waist_length` and `waist_width` put a narrow `Soot` collar between the thorax
+  and the abdomen, where #79 butted the abdomen's first box straight onto the back of the
+  thorax. It is one `limb` rather than a chamfered box — **twelve triangles against
+  forty-four** — and it is `joint` rather than a body material because what separates two
+  masses at six metres is a *dark gap* rather than a change of width the eye has to measure.
+- **Arched legs.** `Leg.bow` and `Leg.sections` bend each segment off its own chord along a
+  quadratic Bezier whose control point is pushed **perpendicular to the segment**, so a bow is
+  an arch however the declaration aims the limb and there is no sign to maintain. The coxa
+  arches *up* over the back and the tibia bows *outward*, which is what brings the foot down
+  nearer vertical than the chord — bow them the same way and a leg is a banana. At
+  `sections = 1` the control point is the chord's own midpoint and the output is #79's straight
+  rod exactly, which is what made the change safe to make inside one function.
+- **A front.** The head and the mandibles were **both already there**, which is the finding:
+  what no kind had was a front *angle*. A wedge carried low under the thorax's own dome is a nub
+  at six metres whatever its dimensions. `brow_rise` is one twelve-triangle plate sloping
+  forward and down over the face, and the heads and mandibles grew to match it.
+
+**None of the three cost a bone, and that was a constraint rather than an outcome.** `bow` is
+rigid plate about the segment's existing bone — which is what an exoskeleton is — the waist is
+weighted to `Abdomen` and the brow to `Head`, so the rig is **19 bones a kind** exactly as #79
+left it, against #38's budget of 23. The one thing that moves with the waist is where the
+`Abdomen` bone's *head* sits: at the thorax rather than past the collar, because a body that
+lags its thorax should swing **from** the joint and an abdomen hinged behind its own waist slides
+the waist through the thorax on every stride.
+
+#### Two the renders added, and the second is the one that mattered
+
+- **`abdomen_swell`, because a waist alone leaves a staircase.** The first render with the collar
+  in had the pinch and still read as a crate, and the reason is arithmetic: a linear taper makes
+  the **widest** segment the one touching the waist, so the pinch is a cliff with a box standing
+  on its edge behind it. Drawing the first segment in and letting the body swell to its fullest
+  about a third of the way back is what makes the same three boxes a teardrop. It **costs no
+  geometry at all** — the segments were always sized from a profile and this changes the
+  profile — and `SWELL_PEAK` is deliberately not a field, because a kind that wanted its widest
+  point somewhere else would be a different animal rather than a different number.
+- **The thorax is two frusta rather than a chamfered box, and it is cheaper.** 24 triangles
+  against 44, for a hexagonal cross-section drawn in under the belly and widest at the shoulder
+  the legs hang from. A rectangle from all four of the directions a player walks round it from is
+  the single loudest thing saying *crate*, so part of this ticket's shape is paid for out of the
+  shape it replaces.
+
+#### The largest single change was one word, and #79 had already written the argument for it
+
+**The Crawler's and the Siege Hulk's legs are `Soot`.** #79 moved the *Breaker's* legs off
+`CastIron` and said why in as many words: every surface of a kind takes that kind's one
+roughness, so at metallic 1 under this project's bright ochre sky `CastIron` limbs come back as
+**pale planks brighter than the carapace they hang from**, and a limb that is the brightest
+thing on a body reads before the body does. It then left the other two kinds carrying the
+identical defect, and the Crawler is the kind a player sees most of.
+
+Measured on the `pair` frame it is the biggest thing in this ticket by a distance, and the
+before and after say it plainly: a rank of Crawlers at six metres went from **a thicket of
+bright blades with the bodies lost behind them** to a row of distinct dark bodies with their
+legs arching round them. It costs no silhouette, because a material cannot move an outline —
+the three gate figures are identical with it in and out.
+
+**The generalisation is worth more than the fix**: #79's note was written as a fact about the
+Breaker and is a fact about the *material model*, so it applies to every surface of every kind
+and nothing was checking that it had been. A finding recorded against one subject is a finding
+nobody applies to the next one.
+
+#### What the gate says, and it got better rather than worse
+
+Re-measured after `godot --headless --path . --import`, for the reason #79's own block quote
+gives:
+
+| pair | #79 | **#81** |
+|---|---|---|
+| Crawler vs Breaker | 0.538 | **0.565** |
+| Crawler vs Siege Hulk | 0.878 | **0.870** |
+| Breaker vs Siege Hulk | 0.794 | **0.790** |
+
+**The binding pair gained about three hundredths against a budget of four**, which was not the
+plan and is worth explaining rather than banking. #79's warning is that body bulk is the
+expensive currency and a fat Crawler is a small Breaker — and the waist and the swell both
+*remove* bulk, from the one dimension the two kinds were most alike in. The Breaker's legs were
+splayed further out at the same time (`knee_out` 0.32 to 0.40, `foot_out` 0.50 to 0.64), which
+widens the kind that is supposed to be wide. So the ticket spent nothing: **the shapes that make
+an insect read as an insect are the same shapes that separate three insects from one another**,
+which is #79's own argument about gross form arriving from the other direction.
+
+The threshold was **not touched** and is still 0.50.
+
+#### The orange abdomen: measured, and it does not share #80's cause
+
+The ticket asked for a reading rather than a change, and the reading is this, over the `pair`
+frame's Crawler rank, classified by hue and reported as median linear luminance:
+
+| | before (#79) | after (#81) | the ground |
+|---|---|---|---|
+| abdomen (`OxideRed`) | **0.1218** | **0.0706** | 0.0513 |
+| thorax and legs (iron) | 0.0688 | 0.0392 | — |
+| abdomen against the ground | **2.37x** | **1.38x** | — |
+
+So the complaint was exact: the abdomen was **two and a third times the thing the Crawler stands
+on** and 1.8 times its own thorax, in a palette whose `base_color` entries run 0.055 to 0.14.
+
+**It does not share #80's cause, and the reason is a line in the renderer.** #80 separates the
+Nest's brightness into three terms and names the **material model** as one of them, worth about
+1.4x, because `OliveDrab` and `OxideRed` are the palette's dielectrics and `_sync_scenery` takes
+ambient and reflections off the sky precisely because the generated surfaces are mostly metal.
+`OxideRed.tres` really is `metallic = 0` — but **`WorldView._enemy_metallic` ignores the entry
+and draws every surface of every kind at #79's `metallic = 1`**, so on an Enemy that term is
+unreachable. What the abdomen *did* share with the Nest is #80's other kept term, the **rake**: a
+large flat slab presented nearly face-on to a 23-degree sun. That is geometry, which is this
+ticket's own subject, and **the shape change alone took it from 2.37x the ground to 1.38x with
+the colour untouched.**
+
+Three things follow and none of them is a colour change. The entry is unchanged and so is
+`ENEMY_LIFT`. If #80 lands a fix to the dielectric path it will **not** move an Enemy, and a
+later ticket that makes `_enemy_metallic` read the palette entry per surface would hand the
+abdomen #80's 1.4x on the spot — so that is the change to measure this against rather than the
+colour.
+
+#### What it costs
+
+Triangles a kind, which is "not too detailed" as a number:
+
+| | #79 | **#81** |
+|---|---|---|
+| Crawler | 788 | **888** |
+| Breaker | 724 | **824** |
+| Siege Hulk | 812 | **912** |
+
+About **+13%**, and the frame figure says what that is worth. Measured with
+`tools/visual/frame_cost.sh` on the **same tip**, against a checkout of `61f041d` in a second
+worktree, because #79's own `18 / 71` column headings no longer describe what the harness
+produces — the default scenario yields **6** Enemies on this tip and `ENEMY_COUNT=71` yields
+**69**, so its primitive numbers are not comparable and a before had to be re-measured rather
+than read off:
+
+| | before, 6 | after, 6 | before, 69 | after, 69 |
+|---|---|---|---|---|
+| primitives in frame | 3,964,568 | **3,966,968** | 4,210,080 | **4,244,580** |
+| video memory | 258.9 MB | **259.0 MB** | 259.7 MB | **259.7 MB** |
+| `WorldView.sync` | 15.031 ms | 14.768 ms | 19.805 ms | 20.239 ms |
+
+**+34,500 primitives at 69 Enemies, against the 1.35 M #79 bought back — 2.6% of the saving
+spent**, and 0.8% of the frame's own total. Video memory does not move at all, because the
+glTF embeds no image and the palette's maps were resident for the Machines already. The sync
+column is **not a finding and should not be read as one**: it moves by a quarter of a
+millisecond in *both* directions on a 15-to-20 ms rebuild, which is inside the spread of the
+instrument — #79 recorded the same thing about the same column.
+
+`TRIANGLE_BUDGET` is 1200 and is untouched.
+
+**And the Simulation's tick is untouched by construction**, exactly as #79's was: this ticket
+changed no file under `sim/` at all, so a difference there would be a bug rather than a cost.
+`ENEMY_COUNT=2000 enemy_tick_cost.gd` measured **61.8 ms a step** here against #77's 29.3 ms;
+that gap is the machine rather than the change, and #77's figure on a quiet machine is the one
+to trust.
+
+(#79's note recorded the Breaker at **588** triangles and the rig at **19/15/19 bones**. Both
+figures are from its *first* pass and did not survive its own second look, which took the
+Breaker from four legs to six — measured on the tip before this ticket, it was **724 triangles
+and 19 bones**, the same as the other two. Corrected here rather than carried, because the whole
+value of a recorded number is that somebody can re-derive it.)
+
+**The pose texture is unchanged**, which is the figure #38's architecture actually cares about:
+19 bones over 104 frames, exactly as before.
+
+#### What a still image cannot settle
+
+**Whether a gait reads as an insect walking**, which is #79's own open question and is now the
+whole of what is left. The legs arch and the arch is in the rest geometry, so every frame of
+`leg_pose`'s tripod cycle carries it — and nothing here, and nothing any still can do, says
+whether a Crawler at a run looks like a thing with legs or like a thing being slid. The levers
+are the two numbers in `enemy_recipe.leg_pose`, the clip lengths in `CLIPS`, and `Leg.bow`, all
+in the declaration rather than in tuning because the Simulation reads none of them.
+
+Two more, recorded rather than fixed:
+
+- **The Breaker's legs are `Soot` and still render pale**, which is a *roughness* finding rather
+  than an albedo one and is #79's own: `_enemy_roughness` gives that kind `WeldedSteel`'s 0.45,
+  and a matte-black surface at metallic 1 and that roughness is a mirror of a bright sky. #79
+  left "whether it reads as armour or as chrome" to somebody with a mouse and that is still the
+  right place for it; what is new is that the Crawler at 0.55 does **not** show it, so the two
+  kinds are now a controlled pair and the lever is the one number between them.
+- **`compose_wave_shot.gd`'s `triage` preset no longer frames what its name says.** CLAUDE.md
+  describes it as the closest Crawler-and-Breaker pair square on at thirty metres; on this tip
+  both the before and the after put the Wave in a distant band across the middle of the frame
+  with the Nest filling the left third. The preset was not touched, because the before and the
+  after are framed identically and the comparison is therefore sound — but it is **the seventh
+  time this file has recorded a vantage that cannot see its subject**, and the cause this time is
+  that #76, #77 and #78 all moved where a Wave stands and nothing re-checked the camera that was
+  aimed at it.
+
+#### The pictures
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "pair bare"
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "triage bare"
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+```
+
+`docs/images/enemies_shape_{pair,triage,crush}_{before,after}.png`, `bare` throughout because
+the yard is drawn out of the purchased packs and this repository is public.
+
+- **`pair` is the one that carries the ticket.** Before: a wall of pale leg blades with one
+  saturated orange crate behind it, and no body visible on any of six Crawlers. After: six low
+  dark bodies, each with a pinched waist, a swelling oxide tail and dark legs arching over its
+  own back.
+- **`triage` says the close-range fix did not cost the distance read**, which was the risk —
+  #79's whole claim is that thirty metres already worked. The rank goes from a comb of bright
+  verticals to a row of dark bodies with an oxide mark each, and the Siege Hulk's raised tail is
+  more legible rather than less.
+- **`crush` says a crowd still reads as a crowd**, which is #76's question asked of a new body.
+  Before, the press at the Nest's corner is a tangle of pale blades; after, it is distinct bodies
+  with their legs splayed round the outside of the pile, which is what #76 wanted the preset to
+  be able to show.
 
 #### Five things about the shader, three of them carried over from the ground
 
@@ -9185,6 +9407,20 @@ chain from a mouse to a state hash is.
 - **A method cut off by a runtime error fails, however far it got.** See the
   runtime-error guard below. A test that triggers one deliberately must claim it
   with `engine_log.drain()`, which is also the assertion that it happened.
+- **A ticket that changes its mind mid-flight updates its prose and forgets its
+  tables, and this file is mostly tables.** That is a rule about writing *here*
+  rather than about code, and it is worth stating because the failure is invisible
+  to its own author: somebody who has just rewritten a paragraph knows the old
+  figures are dead, so they do not re-read the table that still carries them. The
+  worked example is #79. Its second look took the Breaker from four legs to six
+  and is written up at length — and **two paragraphs below that account, the cost
+  table still said 588 triangles and 15 bones**, which were the four-legged body's
+  numbers. Both were wrong for a whole ticket, nothing marked them superseded, and
+  #81 found them only by re-deriving them. So: when a ticket reverses a decision,
+  **grep its own section for every number that decision produced** before closing
+  it, and say in the prose that a figure is a *revised* one. A measured number is
+  only worth having because somebody can re-derive it, and a stale one spends that
+  credit without anybody noticing.
 
 ## Test runner
 
