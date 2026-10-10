@@ -468,15 +468,23 @@ def _nest(machine, a: parts.Assembly, hx: float, hy: float) -> None:
     industrial. Three raked tiers: nothing else in the Factory steps, so the Nest
     is identifiable from any direction and at any distance, which matters because
     it is both the thing to defend and the point to run back to.
+
+    **The tier walls are cast iron and only the caps are oxide, which is #80.**
+    Two of the three used to be `OliveDrab` and every cap `OxideRed`, which made
+    the Nest 55% painted surface — and because a tier wall is *raked*, those two
+    bands are the one large thing in the game turned face-on to a 23-degree sun.
+    Measured at eye level it rendered at 6.4 times the ground it stands on. A
+    fortification is iron, not paint, so the walls carry `CastIron` and the caps
+    keep `OxideRed` as the rust on the capping plates — which is what holds the
+    three steps apart from above, where the caps are most of what is visible.
     """
     top = housing_height(machine)
     tiers = ((0.26, 1.7, hx * 2 - 0.3, hx * 2 - 0.9),
              (1.7, 3.2, hx * 2 - 1.6, hx * 2 - 2.2),
              (3.2, top, hx * 2 - 2.9, hx * 2 - 3.5))
-    for index, (base, head, wide, narrow) in enumerate(tiers):
-        material = "CastIron" if index == 0 else "OliveDrab"
-        a.add(material, parts.prism((0.0, 0.0, base), (wide, wide),
-                                    (0.0, 0.0, head), (narrow, narrow)))
+    for base, head, wide, narrow in tiers:
+        a.add("CastIron", parts.prism((0.0, 0.0, base), (wide, wide),
+                                      (0.0, 0.0, head), (narrow, narrow)))
         a.add("OxideRed", parts.box((narrow + 0.3, narrow + 0.3, 0.2),
                                     center=(0.0, 0.0, head + 0.08), chamfer=0.04))
     # Observation slits, as recessed dark bands rather than as real holes.
