@@ -7064,6 +7064,76 @@ func _separation_reach_cells() -> int:
 	return maxi(Fixed.ceil_to_int(Fixed.div(widest * 2, tile)), 1)
 
 
+## How many equal bodies can be in contact with one body at once, which is a fact of plane
+## geometry rather than a number anybody tuned.
+##
+## Six, and not approximately six: six unit discs can be laid around a seventh all touching
+## it and none overlapping another, and a seventh will not fit. It is the quantity
+## `_separation_neighbour_cap` needs because it is the most contributors a body can have at
+## the configuration separation is driving *towards* — everybody tangent, nobody inside
+## anybody — so a cap there gives up nothing at all.
+const SEPARATION_KISSING_NUMBER: int = 6
+
+
+## How many neighbours in one cell one Enemy may be pushed by on one tick.
+##
+## **#77, and it is the half #76 deliberately left.** That pass is linear in the number of
+## Enemies and quadratic in the *density* of a crush: the bucketing is O(1) neighbours at
+## bounded density and a crush is not bounded density — when a whole Wave presses onto one
+## 4x4 Nest the bodies genuinely are all one another's neighbours, a cell holds O(n) of them,
+## and the search found every one. Measured, `step` went 0.44 ms at 24 Enemies, 8.5 ms at 200
+## and **95.7 ms at 1000**, against a 16.67 ms frame.
+##
+## The cap rests on an argument that was already true of the code. `_apply_separation` clamps
+## the displacement to half a tick's travel — a whole one across the march — **whatever
+## contributed to it**, so past a handful of contributors the extra pairs cannot change how
+## far a body moves. They only refine the direction. Paying O(n) per body to refine a
+## direction that is already clamped is the trade this stops making.
+##
+## **What it is derived from, because no number in this pass is written down.** The reach is
+## derived from the largest radius any separating kind declares, the lane corridor from two
+## body widths, and the room a pair needs from `_enemy_hit_radius` — the one authority on how
+## big a kind is, and the very number `WorldView` scales the drawn body by. A tuning key was
+## the obvious alternative and is refused for the reason `[enemy] speed_variation_percent`
+## was: this is not a feel number, it is a count of bodies, and the geometry knows it.
+##
+## So: `SEPARATION_KISSING_NUMBER` is the count for equal bodies. A body wider than its
+## neighbours has proportionally more room around it, so the count scales with the ratio of
+## the room this content's widest-and-narrowest pair asks for to the room an equal pair of the
+## narrowest asks for. That is two integer divisions and no transcendental — which matters,
+## because the exact count is `PI / asin(r / (R + r))` and this Simulation has neither a PI
+## nor an arc-sine, by the same rule that puts yaw in turns rather than radians.
+##
+## It is not an approximation anybody has to take on trust: against that arc-sine it is
+## **exact to the integer at every size this content could plausibly carry** — 6 against 6.00
+## for two Crawlers, 7 against 7.09 for the shipped Breaker-and-Crawler pair, and 13 against
+## 13.55 for a hypothetical two-metre kind. It errs low, which is the safe direction for a
+## cost ceiling and the direction the clamp makes cheap.
+##
+## **Per cell rather than per body, and that is deliberate.** A running total over a body's
+## whole nine-cell neighbourhood would make *which cell was walked first* decide who got to
+## contribute, which is precisely the order-dependence accumulating the displacements exists
+## to remove. Per cell, each cell contributes its own share and the walk order cannot reach
+## the answer — at the price that a body in nine crowded cells may be pushed by nine caps'
+## worth of neighbours. That is generous against the kissing number and still a constant,
+## and what had to be bounded was the work.
+func _separation_neighbour_cap() -> int:
+	var widest: int = 0
+	var narrowest: int = 0
+	for kind: int in range(EnemyKind.KIND_NAMES.size()):
+		if not _kind_separates(kind):
+			continue
+		var radius: int = _enemy_hit_radius(kind)
+		widest = maxi(widest, radius)
+		if narrowest == 0 or radius < narrowest:
+			narrowest = radius
+	if narrowest <= 0:
+		return SEPARATION_KISSING_NUMBER
+	@warning_ignore("integer_division")
+	var scaled: int = SEPARATION_KISSING_NUMBER * (widest + narrowest) / (narrowest * 2)
+	return maxi(scaled, 1)
+
+
 ## Pushes apart every pair of Enemies standing inside the room their own two bodies ask for.
 ##
 ## **The pass is bucketed and the buckets are a sorted array of packed keys.** Each
@@ -7137,22 +7207,52 @@ func _separate_the_crowd(marched: PackedInt64Array) -> void:
 	push_z.fill(0)
 
 	var reach: int = _separation_reach_cells()
+	# The neighbourhood as a flat count of cells, so it can be walked from a rotating start
+	# rather than from its north-west corner. `span` is the side of the square the reach
+	# describes and the whole of the arithmetic that turns one of those counts back into an
+	# offset in tiles.
+	var span: int = reach * 2 + 1
+	var cells: int = span * span
+	# **How many neighbours one body may be pushed by on one tick**, which is what makes the
+	# pass linear in a crush as well as in the open (#77). Derived from the radii and read
+	# once for the whole pass, like the reach above.
+	var cap: int = _separation_neighbour_cap()
 	for slot: int in range(buckets.size()):
 		var key: int = buckets[slot]
 		var a: int = key % SEPARATION_CELL_STRIDE
 		@warning_ignore("integer_division")
 		var cell: int = key / SEPARATION_CELL_STRIDE
 		var tile: Vector3i = _field_tile(cell)
-		# Break any exact tie before the pairs are summed, because a pair cannot break one.
-		_fan_out_of_coincidence(a, cell, buckets, radius, push_x, push_z)
-		for dz: int in range(-reach, reach + 1):
-			for dx: int in range(-reach, reach + 1):
-				var neighbour: int = _field_index(
-					Vector3i(tile.x + dx, WorldGrid.GROUND_LAYER, tile.z + dz)
-				)
-				if neighbour == -1:
-					continue
-				_separate_against_cell(a, neighbour, buckets, radius, push_x, push_z)
+		# **Where this body starts reading its neighbourhood, and it is deliberately not the
+		# same place twice and not the same place as anybody else.** The cap means a body in
+		# a crush is pushed by a *sample* of its neighbours, so what has to be prevented is a
+		# sample that is always drawn from the same place: a fixed start would privilege one
+		# corner of every body's neighbourhood permanently, and a start that moved only with
+		# the tick would privilege the same corner of *every* body's neighbourhood on the
+		# same tick, which is a crowd-wide shimmy with the period of the walk.
+		#
+		# So it is the tick **and the serial**, which is the identity this project already
+		# uses to de-lockstep a crowd — `game/enemy_animator.gd` picks an animation frame off
+		# the tick, the spawn tick and the serial for exactly this reason, and a serial is
+		# issued once and never reused (#9) where an index shifts the moment anything dies.
+		# It costs the Run no RNG draw and it costs the Simulation no state.
+		var turn: int = _tick + _enemy_serial[a]
+		var budget: int = cap
+		for n: int in range(cells):
+			var at: int = (turn + n) % cells
+			@warning_ignore("integer_division")
+			var dz: int = at / span - reach
+			var dx: int = at % span - reach
+			var neighbour: int = _field_index(
+				Vector3i(tile.x + dx, WorldGrid.GROUND_LAYER, tile.z + dz)
+			)
+			if neighbour == -1:
+				continue
+			budget -= _separate_against_cell(
+				a, neighbour, budget, turn, buckets, radius, push_x, push_z
+			)
+			if budget <= 0:
+				break
 
 	for index: int in range(count):
 		# **An Enemy that arrived this tick is not moved**, for the reason it does not walk
@@ -7168,89 +7268,261 @@ func _separate_the_crowd(marched: PackedInt64Array) -> void:
 		var axis: int = marched[index] if index < marched.size() else MARCHED_NOWHERE
 		_apply_separation(index, push_x[index], push_z[index], axis)
 
+	# **The exact tie is broken last, against the positions the pass has just produced.** A
+	# pair standing in the same place has no gap direction, so no amount of pairwise
+	# arithmetic can take it apart — and the pass is capable of *creating* one, because a
+	# crush saturates the clamp and two bodies whose displacements both saturate the same way
+	# stay exactly as far apart as they were. See `_break_coincidence`.
+	_break_coincidence()
 
-## Pushes one Enemy apart from every member of one bucket cell.
+
+## Pushes one Enemy apart from as many members of one bucket cell as its budget allows, and
+## reports how much of that budget it spent.
 ##
-## Walks only the run of the sorted bucket array that belongs to that cell, found by binary
-## search, so a cell nobody is standing in costs one search and nothing else. **Each
-## unordered pair is considered exactly once**, by taking only neighbours of a higher index
-## than the Enemy being pushed — which is what makes the push symmetric rather than applied
-## twice from two directions.
+## Reaches the cell's own run of the sorted bucket array by binary search, so a cell nobody
+## is standing in costs two searches and nothing else — and, since #77, **the run is never
+## walked as a whole**: the two searches bracket exactly the entries of this cell whose index
+## is higher than the Enemy being pushed, and a window out of that bracket is taken by
+## arithmetic. So the work one body does in one cell is bounded by the budget it arrived
+## with, however many bodies are standing in the cell, which is the whole of the answer to
+## the crush.
+##
+## **Each unordered pair is still considered exactly once**, by taking only neighbours of a
+## higher index — which is what makes the push symmetric rather than applied twice from two
+## directions — and the first of the two searches is what makes "higher index" free rather
+## than a filter applied to a walk.
+##
+## **Which members of the cell, which is the decision this ticket turns on.** Two candidates
+## were on the table and only one of them is affordable:
+##
+## - **The nearest.** The honest answer to the bias objection and the one that cannot be had:
+##   ranking the neighbours by distance means examining all of them, and the examination *is*
+##   the cost. A partial sort does not give back some of the saving, it gives back the whole
+##   of it, so "the nearest" is a thing this pass can want and can never afford to ask for.
+## - **A contiguous window of the cell's own index order, its start rotated.** What is here.
+##   Index order is ascending spawn serial by construction, so every client takes the same
+##   window and the determinism is not in question. What *would* have been wrong is taking
+##   the window from a fixed start: a body's partners would then be the same bodies every
+##   tick, so one whose index-neighbours happened to lie on one side of it would be pushed
+##   off true in that direction for as long as the crowd held its shape — a standing artefact
+##   rather than one that averages out.
+##
+## **The rotation is `_machine_port_cursor`'s argument.** A Machine with more Belts than
+## output rotates which one gets first claim, so a share that cannot be given to everybody at
+## once is fair over time rather than decided by order. Here the scarce thing is a body's
+## attention, and `turn` — the tick plus the body's own serial — is the cursor. See
+## `_separate_the_crowd`, which is where it is built and where the "and the serial" half is
+## argued.
+##
+## What that buys is worth stating exactly rather than overclaiming. One tick's **direction**
+## is a sample of the configuration rather than the whole of it, and the direction averaged
+## over the ticks the rotation covers is the configuration. The **magnitude** was never a
+## function of the sample at all, because `_apply_separation` clamps it whatever contributed
+## — which is the argument the cap rests on and the reason sampling a direction is a cheap
+## thing to do. And nothing here is a function of the order the Enemies were *walked* in,
+## which is the order #76 went to the trouble of accumulating the displacements to escape:
+## every push is computed off the positions the crowd held before the pass began.
 func _separate_against_cell(
 	a: int,
 	cell: int,
+	budget: int,
+	turn: int,
 	buckets: PackedInt64Array,
 	radius: PackedInt64Array,
 	push_x: PackedInt64Array,
 	push_z: PackedInt64Array
-) -> void:
-	var first: int = buckets.bsearch(cell * SEPARATION_CELL_STRIDE, true)
-	for slot: int in range(first, buckets.size()):
-		var key: int = buckets[slot]
-		@warning_ignore("integer_division")
-		var of_cell: int = key / SEPARATION_CELL_STRIDE
-		if of_cell != cell:
-			return
-		var b: int = key % SEPARATION_CELL_STRIDE
-		if b <= a:
-			continue
+) -> int:
+	# The first entry of this cell whose index is above `a`, and one past the cell's last. A
+	# cell with no such entry gives `first == end` by itself, because the leftmost insertion
+	# point for a key past every member of a cell is the start of the next one.
+	var first: int = buckets.bsearch(cell * SEPARATION_CELL_STRIDE + a + 1, true)
+	var end: int = buckets.bsearch((cell + 1) * SEPARATION_CELL_STRIDE, true)
+	var candidates: int = end - first
+	if candidates <= 0:
+		return 0
+	var taken: int = mini(budget, candidates)
+	var offset: int = turn % candidates
+	for n: int in range(taken):
+		var b: int = buckets[first + (offset + n) % candidates] % SEPARATION_CELL_STRIDE
 		_separate_one_pair(a, b, radius, push_x, push_z)
+	return taken
 
 
-## Nudges an Enemy out of a pile of bodies standing in exactly the same place.
+## How many times the tie-break is allowed to go round before it gives up on a tick.
 ##
-## **The one case a pairwise rule cannot answer, and it is the case a Breach actually
-## produces** — Enemies are released at the centre of a Breach tile, so a Wave coming out of
-## one hole is a stack of bodies with identical coordinates. Two coincident bodies have no
-## gap direction to be pushed along, and the obvious fix of giving each *pair* an axis of its
-## own was written first and measured failing: over three coincident bodies the pair pushes
-## **cancel exactly**, and the pile sat there for the whole Run. Three Crawlers out of eight
-## were still standing in one place at (21.05, 3.00) when it was tried.
+## **A round can create the pile the next round takes apart, which is why there is more than
+## one.** The nudges *inside* one pile are distinct by construction — every rank is given its
+## own magnitude — but nothing stops a nudged body landing on the exact coordinate of a body
+## that was standing somewhere else entirely, and in a crush that is far likelier than it
+## sounds: a saturated crowd moves by whole steps, so its coordinates sit on a lattice and
+## there are only so many points to land on.
 ##
-## So the tie is broken **per body rather than per pair**, by how many bodies it is stacked
-## behind: the first of a pile stays put, the next three take the four grid axes in turn, and
-## a deeper pile walks the same four axes again further out. Nothing can cancel, because no
-## two bodies in a pile are given the same nudge.
+## **Measured rather than reasoned, and the honest statement is that this is a stop and not a
+## proof.** A sixty-Crawler crush on the Nest is clean in one round; at a hundred and at two
+## hundred, one tick a minute needs a third; at four it is clean up to five hundred Crawlers
+## with a hundred and eighty-two of them standing on one tile, which is five times the
+## thickest crowd any shipped Wave produces. What a bound cannot do is promise; what
+## `tests/cases/test_enemy_separation.gd` does instead is assert the outcome on every tick of
+## a crush, which is the treatment this project gives every claim of this shape.
+##
+## The cost of the bound is nothing on an ordinary tick: the loop leaves the moment a round
+## finds no pile at all, so a Wave with no two bodies stacked — which is almost every tick of
+## almost every Run — pays one sort over the Enemies that exist and no nudges.
+const SEPARATION_TIE_BREAK_ROUNDS: int = 4
+
+
+## Takes apart every pile of bodies standing in exactly the same place, going round until
+## there is none left or the bound above is reached.
+func _break_coincidence() -> void:
+	for round_number: int in range(SEPARATION_TIE_BREAK_ROUNDS):
+		if not _break_one_round_of_coincidence():
+			return
+
+
+## One round of taking apart every pile of bodies standing in exactly the same place,
+## reporting whether it found one. Run after the pass that pushed them, not before.
+##
+## **The one case a pairwise rule cannot answer, and the two reasons a Run produces one.**
+## Enemies are released at the centre of a Breach tile, so a Wave out of one hole is a stack
+## of bodies at identical coordinates; and a crush **saturates the clamp**, so two bodies
+## whose displacements both come out at exactly one tick of travel in the same axes end the
+## tick exactly as far apart as they began — which, for a pair that began one step apart, is
+## nowhere apart at all. Two coincident bodies have no gap direction to be pushed along, so
+## `_separate_one_pair` can only return and the pile would stand there for the whole Run.
+##
+## **#77 moved it from before the pairwise pass to after it, and that is two fixes in one.**
+##
+## 1. **It can now see what the pass itself creates.** Run before, it compared the positions
+##    the crowd walked into and was therefore a tick behind its own cause: the saturation case
+##    above was produced, observed by nothing, and corrected on the following tick. That was
+##    invisible while every overlapping pair was visited — the pair that would merge was
+##    always pushed apart first — and #77's cap is exactly what stops guaranteeing that.
+##    Measured: with the cap and without this move, a twenty-four-body release pile ended one
+##    tick in twelve hundred with two Crawlers at one coordinate.
+## 2. **It is no longer the one part of the pass that walks a cell as a whole.** The old
+##    version searched its own bucket cell for lower-indexed bodies at the same coordinate,
+##    which is O(members) per body — a second quadratic hiding behind the one this ticket is
+##    about, and 2.5 ms of the ninety-five at a thousand Enemies. Coincidence does not care
+##    about cells, so this keys on the **x coordinate** instead: one sorted array of
+##    `(x, index)`, a binary search, and then a walk of the bodies sharing that exact x, which
+##    is the set a Breach released together and is bounded by the spawn trickle rather than by
+##    the crowd.
+##
+## **Ranks are counted first and nudges applied afterwards**, the same discipline the pairwise
+## pass keeps and for the same reason: nudging inside the counting loop would rank a later body
+## against positions earlier bodies had already been moved to, so the result would be a
+## property of the walk rather than of the pile.
+##
+## **How a pile is taken apart.** The nudge is per body rather than per pair, because the
+## per-pair version was written first and measured failing: over three coincident bodies the
+## pair pushes **cancel exactly** and the pile sits there — three Crawlers out of eight were
+## still standing at (21.05, 3.00) when it was tried. So a body's nudge is decided by how many
+## bodies it is stacked behind: the first of a pile stays put and the rest take the four grid
+## axes in turn, each a fixed-point unit shorter than the one before, so that no two bodies in
+## a pile can be given the same displacement. The arithmetic of that, and the one thing about
+## it that had to be measured, is on the line that does it.
 ##
 ## **Rank is a count of lower-indexed bodies, which is a canonical order rather than an
 ## incidental one.** Index order is ascending spawn serial by construction, so every client
-## ranks a pile identically — and a tie has to be broken by *something*, so it is broken by
-## the identity this project already uses for exactly this purpose: `game/enemy_animator.gd`
-## de-locksteps a crowd's animation off the serial, and it costs the Run no RNG draw either.
+## ranks a pile identically — and a tie has to be broken by *something*, so it is broken by the
+## identity this project already uses for the purpose: `game/enemy_animator.gd` de-locksteps a
+## crowd off the serial, and it costs the Run no RNG draw either.
 ##
-## The nudge goes into the same accumulators as every pairwise push rather than straight onto
-## the position, so it is bounded by one tick of walking and refused into an obstruction like
-## everything else. It only has to create a gap direction; the ordinary maths does the rest on
-## the next tick.
-func _fan_out_of_coincidence(
-	a: int,
-	cell: int,
-	buckets: PackedInt64Array,
-	radius: PackedInt64Array,
-	push_x: PackedInt64Array,
-	push_z: PackedInt64Array
-) -> void:
-	var rank: int = 0
-	var first: int = buckets.bsearch(cell * SEPARATION_CELL_STRIDE, true)
-	for slot: int in range(first, buckets.size()):
-		var key: int = buckets[slot]
-		@warning_ignore("integer_division")
-		var of_cell: int = key / SEPARATION_CELL_STRIDE
-		if of_cell != cell:
+## A body that arrived this tick is ranked and not moved, for the reason it does not walk and
+## does not bite. So a pile whose only coincidence is a fresh body standing where an older one
+## already was waits a tick, which is the standing #76 had and is unreachable from a release:
+## the body already on the tile has walked off its centre by the time the next one lands.
+func _break_one_round_of_coincidence() -> bool:
+	var count: int = query_enemy_count()
+	# One sorted array of `(x, index)`, keyed on the x coordinate rather than on a bucket
+	# cell. **Offset by the westmost body rather than by a constant**, so the key is a
+	# property of where the crowd is standing and cannot be reached by how big the Map is:
+	# the Map is 129 tiles across, so a span is under 2^25 fixed-point units and the
+	# million-Enemy stride leaves the product far inside 64 bits.
+	var westmost: int = 0
+	var any: bool = false
+	for index: int in range(count):
+		if not _kind_separates(_enemy_kind[index]):
+			continue
+		if not any or _enemy_x[index] < westmost:
+			westmost = _enemy_x[index]
+		any = true
+	if not any:
+		return false
+	var order: PackedInt64Array = PackedInt64Array()
+	for index: int in range(count):
+		if not _kind_separates(_enemy_kind[index]):
+			continue
+		order.append((_enemy_x[index] - westmost) * SEPARATION_CELL_STRIDE + index)
+	if order.size() < 2:
+		return false
+	order.sort()
+
+	var ranks: PackedInt64Array = PackedInt64Array()
+	ranks.resize(count)
+	ranks.fill(0)
+	var piled: bool = false
+	for index: int in range(count):
+		if not _kind_separates(_enemy_kind[index]):
+			continue
+		var key: int = (_enemy_x[index] - westmost) * SEPARATION_CELL_STRIDE
+		var first: int = order.bsearch(key, true)
+		var rank: int = 0
+		for slot: int in range(first, order.size()):
+			var other: int = order[slot] % SEPARATION_CELL_STRIDE
+			if _enemy_x[other] != _enemy_x[index]:
+				break
+			if other < index and _enemy_z[other] == _enemy_z[index]:
+				rank += 1
+		ranks[index] = rank
+		piled = piled or rank > 0
+	if not piled:
+		return false
+
+	for index: int in range(count):
+		var rank: int = ranks[index]
+		if rank == 0 or _enemy_spawn_tick[index] == _tick:
+			continue
+		var step_metres: int = _enemy_step_metres(_enemy_kind[index])
+		if step_metres <= 0:
+			continue
+		# **One magnitude per rank rather than one per ring**, which is what takes a pile
+		# apart rather than halving it. Every body in a pile has to receive a *different*
+		# displacement and the axis alone cannot carry that: there are four axes, so the
+		# fifth body would otherwise be handed the first body's push. #76's ring scheme
+		# scaled the magnitude by the radius and was then clamped, so beyond the fourth
+		# body every ring saturated to exactly one step and the distinctness was lost. A
+		# step is 3,277 fixed-point units for a Crawler, so a unit off per rank is three
+		# thousand distinct pushes against four directions.
+		#
+		# **And the first of them is deliberately not a whole step, which was measured.** A
+		# saturated crowd moves by whole steps, so its coordinates lie on a lattice of them
+		# — and a nudge of exactly one step from a lattice point lands on another lattice
+		# point, which is to say on top of somebody. Starting the subtraction at one rather
+		# than at zero puts every nudge off that lattice, and it is worth about a factor of
+		# three in how many rounds a crush needs: one, where `step - (rank - 1)` needed
+		# three at the same counts.
+		var apart: int = maxi(step_metres - rank, 1)
+		# **And it takes the first axis that is not into a wall.** A pile pressed against the
+		# Nest is standing on an obstruction on one side, so a nudge that was refused for
+		# being blocked would leave the body exactly where it was and the pile exactly as it
+		# was — which is measured rather than reasoned: at sixty Crawlers crushed onto the
+		# Nest, one tick in a minute still ended with two bodies at one coordinate until this
+		# fell through. Distinctness survives the fall-through because the magnitude carries
+		# it, not the direction: two bodies that end up on the same axis arrived there with
+		# different ranks and therefore move different distances.
+		for turn: int in range(WorldGrid.DIRECTION_COUNT):
+			var axis: Vector3i = WorldGrid.direction_step(
+				(rank - 1 + turn) % WorldGrid.DIRECTION_COUNT
+			)
+			var moved_x: int = _enemy_x[index] + axis.x * apart
+			var moved_z: int = _enemy_z[index] + axis.z * apart
+			if _tile_is_blocked(WorldGrid.tile_at_metres(moved_x, moved_z)):
+				continue
+			_enemy_x[index] = moved_x
+			_enemy_z[index] = moved_z
 			break
-		var b: int = key % SEPARATION_CELL_STRIDE
-		if b >= a:
-			break
-		if _enemy_x[b] == _enemy_x[a] and _enemy_z[b] == _enemy_z[a]:
-			rank += 1
-	if rank == 0:
-		return
-	@warning_ignore("integer_division")
-	var ring: int = 1 + (rank - 1) / 4
-	var step: Vector3i = WorldGrid.direction_step((rank - 1) % 4)
-	var apart: int = radius[a] * ring
-	push_x[a] += step.x * apart
-	push_z[a] += step.z * apart
+	return true
 
 
 ## Accumulates the equal and opposite push that takes one pair of Enemies off one another.
@@ -7282,8 +7554,8 @@ func _separate_one_pair(
 
 	if gap_x == 0 and gap_z == 0:
 		# Exactly coincident, so there is no gap direction to push along at all. Handled by
-		# `_fan_out_of_coincidence` instead of here, and the comment on that function says
-		# why it could not be done pairwise.
+		# `_break_coincidence`, after the pass, and the comment on that function says both
+		# why it could not be done pairwise and why it could not be done before.
 		return
 
 	var distance: int = Fixed.sqrt(span)
