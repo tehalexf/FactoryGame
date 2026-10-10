@@ -88,7 +88,12 @@ uniform float wound_darkening : hint_range(0.0, 1.0) = 0.45;
 uniform float grime_depth : hint_range(0.0, 1.0) = 0.30;
 uniform float grime_metres = 0.034;
 uniform float grime_step = 0.008;
-uniform float relief : hint_range(0.0, 4.0) = 0.22;
+// How deep the pitting is, as a fraction of the Enemy's own height — the same shape
+// `ground.bump_height_metres` has, and read against `grime_metres` rather than on its own,
+// because what a 23-degree sun finds is the **slope** and the slope is this over that (#42).
+// 0.012 of a 1.6 m Crawler is about two centimetres of relief over three-centimetre
+// features, which is a casting that has been outside.
+uniform float relief : hint_range(0.0, 0.2) = 0.012;
 // Where the relief stops being paid for, in metres from the eye. `ground.gdshader` fades
 // its own bump out over 26 to 70 m for the same two reasons: a procedural field has no mip
 // chain, so past the distance where one feature is under a pixel it stops being relief and
@@ -208,6 +213,11 @@ void fragment() {
 	// Bend the normal down the slope, with the component along it taken out first so that
 	// the field tilts the surface rather than inflating it.
 	float near = 1.0 - smoothstep(relief_fade_begin, relief_fade_end, length(VERTEX));
-	vec3 bent = normalize(surface_basis * slope + vec3(0.0, 0.0, 0.0001));
-	NORMAL = normalize(NORMAL - relief * near * (bent - dot(bent, NORMAL) * NORMAL));
+	// A height field's normal, with the component along the surface normal taken out first
+	// so the field tilts the surface rather than inflating it. The gradient is **not**
+	// normalised: a flat patch of the field has to stay a flat patch of the body, and
+	// normalising would tilt every fragment by the same amount whatever the field is doing
+	// — which is what the first render of this looked like, a swarm in chrome camouflage.
+	vec3 tilt = surface_basis * slope;
+	NORMAL = normalize(NORMAL - relief * near * (tilt - dot(tilt, NORMAL) * NORMAL));
 }

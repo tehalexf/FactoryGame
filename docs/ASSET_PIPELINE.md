@@ -1044,12 +1044,54 @@ Wave that is spread out down a lane rather than posed. The gait difference is re
 deliberate — the Crawler runs where the Breaker walks — and no render has an opinion about
 it.
 
+### The surface is graded, and the atlas is the thing to grade (#75)
+
+**The pack ships one 1024-square swatch atlas and all six characters share it.** It is flat
+cells with a vertical gradient: a whole thigh samples one of them, so there is no detail in
+it at any density. #38 painted it with one dark multiply per kind and #75 is the user looking
+at the result.
+
+`tools/assets/enemy_grade.py` is `prop_grade.py`'s rule pointed at it — section 8's grade,
+with this atlas's hue arcs and a shoulder tuned for a subject seen against the *ground*
+rather than against a Machine. It reads
+`assets/characters/kaykit_skeletons/intake_textures/skeleton_texture_A.png` and writes
+`assets/characters/kaykit_skeletons/graded/skeleton_texture_A.png`.
+
+**The graded atlas is committed**, which puts it on section 12's *prove it* side rather than
+its *date it* side: both ends are in the repository and the recipe is deterministic, so
+`tools/assets/tests/test_enemy_grade.py` regrades and compares the bytes, the way
+`test_generated_machines` does for a Machine mesh. It is therefore deliberately **absent from
+`asset_staleness.py`**. KayKit is CC0, so a derived copy is as redistributable as the source
+and a clone with no purchased packs has it.
+
+**Only atlas A is graded.** All six committed characters reference it — checked by hashing
+the six copies `--texture-dir` left beside the `.glb`s, which are byte-identical to the
+intake file — and a graded copy of a map nothing samples is the defect `prop_grade.py`'s own
+docstring opens with.
+
+**And the six copies beside the `.glb`s are read by nothing**, which is the trap in this
+area. `gltf_info` reports `images: [None]` for every character: the converted `.glb` carries
+its image **inside its own buffer**, so grading those files would have changed nothing on
+screen. The graded atlas is loaded by `WorldView._skinned_mesh` and put on the material
+instead, and the assertion that it arrives lives on the renderer's side of that seam —
+`test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own`. A grade is
+invisible from the grading side.
+
+The other half of the surface is not in this pipeline at all, because it cannot be: these
+characters carry **no `COLOR_0`**, so `prop_grade.deepen_grime`'s free baked occlusion has no
+counterpart here and the grime and relief are derived at runtime from the rest pose. See
+`game/enemy_skin.gdshader` and CLAUDE.md.
+
 ### What is still placeholder-grade
 
 The KayKit characters are **stylised with oversized skulls**, which at 1.6 m reads closer to
-grotesque-cartoon than to the grimy interwar industry the rest of the palette is. That is a
-property of the committed art rather than of this pipeline, and the fix is either a different
-CC0 pack or a human deciding it is fine.
+grotesque-cartoon than to the grimy interwar industry the rest of the palette is. #75 took
+the *surface* as far as a grade and a shader can take it — graded into the palette, metal,
+pitted and worn — and left the **proportions** exactly where they were, because they are
+geometry and `tests/cases/test_enemy_silhouette.gd` is what owns geometry. That is still a
+property of the committed art rather than of this pipeline, and the fix is a different CC0
+pack, a body built out of `machine_parts` the way the Build Gun is (section 7a), or a human
+deciding it is fine.
 
 And **a still image cannot tell you whether a walk cycle reads as a walk.** Everything above
 is silhouette, scale, grade and pose — enough to catch a character that is the wrong size,
