@@ -1602,6 +1602,88 @@ that owns both — see "What a Belt and a Wall cost", below. The length was alwa
 player decides on; now the bill beside it is the consequence of that decision, which is what
 makes laying out a Factory a question of routing rather than of taste.
 
+#### What colour a route is, and the three places that disagreed about it
+
+**#67, and it is #35's defect arriving in the Belt tool a ticket at a time.** The render that
+opened it is one frame of a drag in flight, and three things in it contradicted one another:
+
+```
+aimed at -6, 10 — cannot build there — something is already standing
+belt: release to lay — 10 tiles — iron_plate 10 — cannot build there — something is already standing
+```
+
+— under a route drawn in **green**, which is `HOLOGRAM_ALLOWED`, the colour a player learns off
+the Machine hologram as *click and it goes down*. All three faults were real and all three were
+different, which is why the first job was separating them.
+
+- **The preview was the liar, and the rule it had was only part of the rule.** A route **lands
+  whole or not at all** — `_apply_build_belt` consults `_belt_route_refusal` over every tile
+  before the first Belt appears — and the preview tinted **tile by tile** off
+  `query_belt_tile_refusal`, which is one clause of that function. So a ten-tile route with one
+  blocked tile drew nine tiles in the allowed colour and laid **nothing**. The colour now comes
+  off `query_belt_route_refusal`, the same door the release goes through, which is the one home
+  #35 bought and the Belt tool had never been given.
+  - **`MISSING_MATERIALS` is the proof the per-tile tint could never have been enough**, and it
+    is the purest version of the bug rather than an edge case: every tile is clear ground, no
+    tile is markable, and the release is refused for the plate. Before #67 that drew a full
+    route in green and laid not one tile.
+  - **The per-tile red stays, and the two marks answer two different questions.** The colour of
+    the route says *whether*; the standing red volume says *where*. A blocked tile is a place, a
+    refused route is a verdict, and collapsing either into the other loses the half a player
+    acts on.
+  - **The dock refusals are still not consulted, and that is deliberate rather than an
+    oversight.** A route whose far end will not hand its goods over lays perfectly well, because
+    a player routes a line in stages past where a Machine is going to stand every day (#56).
+    Advice before the release, never a veto — and therefore never a colour.
+    `test_a_route_whose_end_will_not_dock_still_previews_as_one_that_lays` is that sentence from
+    the renderer's side, beside the Simulation-side test #56 left.
+- **The belt line's verdict was right and its invitation was printed beside it unconditionally.**
+  `release to lay` and `cannot build there` cannot both be true of one route, so the lead clause
+  reads off the same refusal the verdict does and says `will not lay` when it will not. One
+  function, two clauses of one sentence, rather than two opinions.
+- **The `aimed at` line was about the wrong tool entirely**, and so was the `build gun:` line
+  over it. Both asked `BuildGun.placement` about the Machine on the gun whichever tool was out,
+  so a player mid-drag read a Miner's name, a rotation nothing would turn, and a refusal about
+  ground they were not asking about — sitting directly above the route line, where it reads as
+  the route's. **The panel describes the tool in hand**: with the Belt tool out those two stand
+  down and `_belt_route_lines` answers, which is the question actually being asked.
+- **And the objective line named a key for a tool already in hand.** `Press C for the Belt tool`
+  in a frame where the Belt tool is out is an instruction to do a thing already done.
+  `_with_the_belt_tool` is `_with_the_build_gun`'s shape one step further — a step's *wording*
+  changing off a query rather than a step of its own, because "press C" is not a thing to
+  achieve and a player who swaps back an hour in must be told the key again. The two clauses
+  compose rather than race: a holstered player is told about `B` first, whatever is on the gun.
+
+**The pair is committed and it is the argument.**
+[`docs/images/building_routing_before.png`](docs/images/building_routing_before.png) against
+[`building_routing.png`](docs/images/building_routing.png), rebuilt with
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh out.png "routing bare"
+```
+
+The `routing` preset has deliberately put a Wall on a tile of its own route since #36, so the
+subject was always a refused route — what changed is that the picture now says so. Before: a
+green run of tiles with flow arrows on it, one red marker in the middle, and two HUD lines that
+contradict both the colour and each other. After: the whole route in the refused colour, the
+marker still standing over the Wall that is in the way, and one line that says `will not lay`.
+
+**And the render found the one cost of the fix, which is recorded rather than patched.** The
+standing red volume that marks the blocked tile is now **red standing on red**: against nine
+green slabs it was the only warm thing in the picture, and against nine refused ones it is
+distinguishable only by being a box rather than a slab. It is still findable at the distance
+the shot is taken from — the volume is 2.6 m against a 6 cm slab, so it has a silhouette and a
+shadow — but the *where* is read second now where it used to be read first. Giving it a third
+colour was the obvious answer and was not taken: this game has two hologram colours and a
+player learns them off the Machine, and a third would be a new thing to learn in order to
+answer a question — *will this go down* — that has two answers. If the render is wrong about
+findability the lever is `BELT_REFUSED_HEIGHT_METRES`, not a third colour.
+
+**What no render can settle** is whether a whole route going red the moment a drag crosses one
+bad tile reads as informative or as nagging, over the hundreds of drags a Run actually
+contains. That is the same category as whether a priced Belt makes routing interesting or
+fiddly, and it wants somebody with a mouse.
+
 ### The update order, and the bias it avoids
 
 Advancing Belts in index order would make a line's throughput depend on the order it was
@@ -3111,7 +3193,9 @@ opinion about the Factory, which is the rule that makes all of this safe to add.
   `building_routing.png` and `building_running.png`, and
   `SHOT_SCRIPT=tools/visual/compose_building_shot.gd tools/visual/shot.sh` rebuilds them.
   They are the same claim as the contact sheets: the only honest way to judge what a player
-  is told is to look at it.
+  is told is to look at it. **`building_routing_before.png` sits beside them as #67's
+  argument** — the same frame when the preview and the two HUD lines above it still
+  contradicted one another; see "What colour a route is", above.
 - **One objective line, and it is not a tutorial.** `game/objective.gd` is a pure function
   of the Run's state — place a Miner on a Node, place a Smelter, drag a Belt between them,
   deliver — with nothing to enter, nothing to skip and nothing remembered. A player who

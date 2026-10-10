@@ -83,6 +83,193 @@ func test_the_preview_marks_the_tiles_that_would_be_refused_and_not_the_others()
 	view.free()
 
 
+## **#67, and it is #35's defect in the Belt tool.** A route lands whole or not at all —
+## `_apply_build_belt` consults `_belt_route_refusal` over every tile before the first Belt
+## appears — so a route with one blocked tile lays **nothing**. The preview tinted tile by
+## tile off `query_belt_tile_refusal`, which is only part of that rule, so nine tiles of a
+## ten-tile route wore `HOLOGRAM_ALLOWED` and the release did not put one of them down.
+##
+## The per-tile red is kept and is not what this is about: it says *where* the trouble is.
+## What the colour of the route says is whether the release will be kept.
+func test_a_route_that_would_be_refused_is_not_drawn_in_the_colour_that_promises_a_lay() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var view: WorldView = WorldView.new()
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+	var anchor: Vector3i = Vector3i(aimed.x + 4, aimed.y, aimed.z)
+
+	view.note_belt_drag(true, anchor, BeltRoute.ALONG_X)
+	view.sync(sim)
+	assert_true(view.belt_preview_promises_a_lay(), "open ground: the release is kept")
+
+	sim.step([InputAction.build_wall(0, Vector3i(anchor.x - 1, anchor.y, anchor.z))])
+	view.sync(sim)
+	assert_eq(
+		sim.query_belt_route_refusal(0, anchor, aimed, BeltRoute.ALONG_X),
+		Simulation.Refusal.OCCUPIED,
+		"the route under test really is one the release would refuse whole"
+	)
+	assert_false(
+		view.belt_preview_promises_a_lay(),
+		"so not one tile of it may wear the colour that invites the release"
+	)
+	assert_true(
+		view.belt_preview_refused_tile_count() > 0,
+		"and the tile in the way is still marked, because the colour says whether and the"
+			+ " mark says where"
+	)
+	view.free()
+
+
+## The purest version of the same fault, and the one no per-tile tint could ever have
+## caught: every tile is clear ground and the wallet cannot pay for them. Before #67 this
+## drew a full route in green and laid nothing at all.
+func test_a_route_the_wallet_cannot_pay_for_previews_as_refused_though_every_tile_is_clear() -> void:
+	# Three plate in the pockets against a four-tile route, so the refusal is the wallet and
+	# nothing else. Shrinking the bill rather than lengthening the drag keeps the premise
+	# independent of how wide the Map happens to be.
+	var fixture: ContentFixture = ContentFixture.for_case(self).stock("iron_plate:3")
+	# A fixture that supplies no structures table gets structures that are **free** (#47's
+	# escape), so a test about the wallet has to ask for the shipped prices by name.
+	fixture.structures = ContentFixture.shipped(Definitions.STRUCTURES_FILE)
+	var definitions: Definitions = fixture.definitions()
+	assert_false(definitions.has_errors(), definitions.describe_errors())
+	var sim: Simulation = Simulation.new(1, 1, definitions)
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var view: WorldView = WorldView.new()
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+	var anchor: Vector3i = Vector3i(aimed.x + 3, aimed.y, aimed.z)
+
+	view.note_belt_drag(true, anchor, BeltRoute.ALONG_X)
+	view.sync(sim)
+	assert_eq(
+		sim.query_belt_route_refusal(0, anchor, aimed, BeltRoute.ALONG_X),
+		Simulation.Refusal.MISSING_MATERIALS,
+		"the premise: refused for the plate rather than for the ground"
+	)
+	assert_eq(
+		view.belt_preview_refused_tile_count(), 0, "and no tile of it is individually blocked"
+	)
+	assert_false(
+		view.belt_preview_promises_a_lay(),
+		"so the only thing that can say so is the colour of the route"
+	)
+	view.free()
+
+
+## The rule #56 settled, pinned from the renderer's side: **dock advice is advice and never
+## a veto**. A route whose far end will not hand its goods over lays perfectly well — a
+## player routes a line in stages past where the Machine is going to stand every day — so it
+## must still preview in the colour that says the release will be kept.
+func test_a_route_whose_end_will_not_dock_still_previews_as_one_that_lays() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var view: WorldView = WorldView.new()
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+	var anchor: Vector3i = Vector3i(aimed.x + 4, aimed.y, aimed.z)
+
+	view.note_belt_drag(true, anchor, BeltRoute.ALONG_X)
+	view.sync(sim)
+	assert_eq(
+		sim.query_belt_route_refusal(0, anchor, aimed, BeltRoute.ALONG_X),
+		Simulation.Refusal.NONE,
+		"nothing is in the way and the plate is there"
+	)
+	assert_true(
+		view.belt_preview_promises_a_lay(),
+		"whatever either end would or would not dock against"
+	)
+	view.free()
+
+
+## A line cannot mean "release it" and "cannot build there" at once, and the shot in #67 had
+## one that said both: the lead clause was printed unconditionally beside a verdict that was
+## perfectly correct. So the lead is the liar, and it is the half that moves.
+func test_the_belt_line_does_not_invite_a_release_it_says_in_the_same_breath_is_refused() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var view: WorldView = WorldView.new()
+	var aimed: Vector3i = BuildGun.aimed_tile(sim, 0)
+	var anchor: Vector3i = Vector3i(aimed.x + 4, aimed.y, aimed.z)
+
+	view.note_belt_drag(true, anchor, BeltRoute.ALONG_X)
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("release to lay"),
+		"a route that lays invites the release: %s" % view.hud_text()
+	)
+
+	sim.step([InputAction.build_wall(0, Vector3i(anchor.x - 1, anchor.y, anchor.z))])
+	view.sync(sim)
+	var refused: String = view.hud_text()
+	assert_true(
+		refused.contains(BuildGun.refusal_text(Simulation.Refusal.OCCUPIED)),
+		"the reason is still said: %s" % refused
+	)
+	assert_false(
+		refused.contains("release to lay"),
+		"and the same line no longer invites the release it is refusing: %s" % refused
+	)
+	view.free()
+
+
+## **The panel describes the tool in hand.** `_build_gun_lines` asked `BuildGun.placement`
+## about the Machine on the gun and printed its refusal unconditionally, so #67's shot read
+## `aimed at -6, 10 — cannot build there — something is already standing` directly above the
+## route line — a sentence about where a Miner could stand, in a frame where the player was
+## dragging a Belt, which reads as being about the route.
+##
+## Where a Machine would or would not go is simply not the question being asked with the
+## Belt tool out, and the route line underneath answers the one that is.
+func test_the_aim_line_is_about_the_machine_only_while_the_machine_tool_is_out() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("aimed at"),
+		"the Machine tool: where it would land is exactly the question: %s" % view.hud_text()
+	)
+
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	view.sync(sim)
+	var belting: String = view.hud_text()
+	assert_false(
+		belting.contains("aimed at"),
+		"the Belt tool: the route line is what the player is asking about: %s" % belting
+	)
+	assert_true(
+		belting.contains("belt:"), "and it is still there to answer them: %s" % belting
+	)
+	view.free()
+
+
+## The same sentence one line up. `build gun: miner_mk1 facing 0` over a Belt drag names a
+## Machine nobody is placing and a rotation nothing will be turned by, which is the fault
+## above wearing a different hat.
+func test_the_build_gun_line_names_the_tool_that_is_actually_in_hand() -> void:
+	var sim: Simulation = Simulation.new(1, 1)
+	sim.step([InputAction.set_build_mode(0, true)])
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	assert_true(
+		view.hud_text().contains("build gun: %s" % sim.query_player_selected_machine(0)),
+		"the Machine tool names the Machine: %s" % view.hud_text()
+	)
+
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	view.sync(sim)
+	var belting: String = view.hud_text()
+	assert_false(
+		belting.contains("build gun: %s" % sim.query_player_selected_machine(0)),
+		"the Belt tool does not: %s" % belting
+	)
+	assert_true(
+		belting.contains("build gun: belt"), "it names the Belt: %s" % belting
+	)
+	view.free()
+
+
 func test_the_hud_says_how_long_the_route_is_and_why_it_would_be_refused() -> void:
 	var sim: Simulation = Simulation.new(1, 1)
 	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
@@ -537,6 +724,62 @@ func test_the_line_moves_on_as_the_opening_line_gets_built() -> void:
 		Objective.line(sim, 0).contains("Belt tool"),
 		"the Belt is fed at one end and lands at the other: %s" % Objective.line(sim, 0)
 	)
+
+
+## **#67: the line does not name a key for a tool already in hand.** Both survey shots said
+## `Press C for the Belt tool, then drag from the orange arrow to the blue one` in a frame
+## where the Belt tool was out and a route was mid-drag — an instruction to do a thing the
+## player had done. It is `_with_the_build_gun`'s shape one step further: a step's *wording*
+## changing off a query, not a step of its own, because "press C" is not a thing to achieve.
+func test_the_belt_step_stops_naming_the_key_once_the_belt_tool_is_out() -> void:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([InputAction.set_build_mode(0, true)])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0))
+	])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(0, 0, 5))
+	])
+	assert_true(
+		Objective.line(sim, 0).contains("Belt tool"),
+		"the Machine tool is out, so the key is worth naming: %s" % Objective.line(sim, 0)
+	)
+
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	var holding: String = Objective.line(sim, 0)
+	assert_false(
+		holding.contains("Belt tool"), "and it stops being, the moment it is out: %s" % holding
+	)
+	assert_true(
+		holding.to_lower().contains("drag from the orange arrow"),
+		"but the act itself is still named: %s" % holding
+	)
+
+
+## And the two clauses compose rather than racing: a player holding a rifle is told about
+## the Build Gun first, whatever tool the gun happens to have on it.
+func test_the_belt_step_names_the_build_gun_first_when_it_is_holstered() -> void:
+	var layout: MapLayout = MapLayout.empty()
+	layout.add_node(Vector3i(0, 0, 0), "iron_ore", 1)
+	layout.sort_nodes()
+	var sim: Simulation = Simulation.new(1, 1, null, layout)
+	var definitions: Definitions = sim.query_definitions()
+	sim.step([InputAction.set_build_mode(0, true)])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("miner_mk1"), Vector3i(0, 0, 0))
+	])
+	sim.step([
+		InputAction.build_machine(0, definitions.machine_index("smelter_mk1"), Vector3i(0, 0, 5))
+	])
+	sim.step([InputAction.set_build_tool(0, Simulation.BUILD_TOOL_BELT)])
+	sim.step([InputAction.set_build_mode(0, false)])
+	var line: String = Objective.line(sim, 0)
+	assert_true(line.begins_with("Press B for the Build Gun"), line)
+	assert_false(line.contains("Belt tool"), "the Belt tool is already on it: %s" % line)
 
 
 func test_a_belt_laid_on_open_ground_does_not_count_as_a_connection() -> void:

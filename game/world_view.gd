@@ -4720,14 +4720,26 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 
 	var rotation: int = sim.query_player_build_rotation(VIEWED_PLAYER)
 	var selected: String = sim.query_player_selected_machine(VIEWED_PLAYER)
+
+	# **The panel describes the tool in hand, and nothing else.** #67: both of the lines
+	# below were about the Machine on the gun whichever tool was out, so a player dragging a
+	# Belt read `build gun: miner_mk1 facing 0` over `aimed at -6, 10 — cannot build there`
+	# — a Machine nobody is placing, a rotation nothing will be turned by, and a refusal
+	# about ground the player is not asking about, sitting directly above the route line and
+	# reading as if it were the route's. `_belt_route_lines` answers the question the Belt
+	# tool actually asks, so these two stand down for it rather than talking over it.
+	if sim.query_player_is_laying_belt(VIEWED_PLAYER):
+		lines.append("build gun: belt")
+		lines.append_array(_belt_route_lines(sim, BuildGun.aimed_tile(sim, VIEWED_PLAYER)))
+		lines.append_array(_carrying_lines(sim))
+		return lines
+
 	lines.append(
 		"build gun: %s facing %d" % ["nothing" if selected.is_empty() else selected, rotation]
 	)
 
 	# The tile the Machine would land on rather than the one under the crosshair, because
-	# for a Miner those are different since #42 and the useful one is the first. The Belt
-	# route below takes the *aim*: a Belt does not snap, and routing from a tile the player
-	# is not pointing at would be the bug this is otherwise fixing, upside down.
+	# for a Miner those are different since #42 and the useful one is the first.
 	var machine: int = sim.query_player_selected_machine_index(VIEWED_PLAYER)
 	var where: BuildGun.Placement = BuildGun.placement(sim, VIEWED_PLAYER, machine, rotation)
 	var tile: Vector3i = where.tile
@@ -4755,8 +4767,15 @@ func _build_gun_lines(sim: Simulation) -> PackedStringArray:
 			"aimed at %d, %d — clear%s"
 			% [tile.x, tile.z, " (snapped to the Node)" if where.snapped else ""]
 		)
-	lines.append_array(_belt_route_lines(sim, BuildGun.aimed_tile(sim, VIEWED_PLAYER)))
+	lines.append_array(_carrying_lines(sim))
+	return lines
 
+
+## What the player is holding and how they are moving — the tail of the Build Gun panel,
+## which is the same under either tool and is therefore shared by both arms above rather
+## than written twice.
+func _carrying_lines(sim: Simulation) -> PackedStringArray:
+	var lines: PackedStringArray = PackedStringArray()
 	var carried: PackedStringArray = PackedStringArray()
 	for item_id: String in sim.query_player_items(VIEWED_PLAYER):
 		carried.append("%s %d" % [item_id, sim.query_player_item(VIEWED_PLAYER, item_id)])
@@ -4795,18 +4814,20 @@ func _belt_route_lines(sim: Simulation, aimed: Vector3i) -> PackedStringArray:
 	var refusal: int = sim.query_belt_route_refusal(
 		VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
 	)
-	var verdict: String = (
-		"clear" if refusal == Simulation.Refusal.NONE else BuildGun.refusal_text(refusal)
-	)
+	var lays: bool = refusal == Simulation.Refusal.NONE
+	var verdict: String = "clear" if lays else BuildGun.refusal_text(refusal)
+	# **The lead clause reads off the same refusal the verdict does**, because a line cannot
+	# mean "release it" and "cannot build there" at once and #67's shot had one that said
+	# both. The verdict was right and the invitation was printed unconditionally beside it,
+	# so the invitation is the half that moves — and it moves off the one function the
+	# release itself goes through, which is the same bargain the preview's colour strikes
+	# three functions down.
+	var lead: String = "drag to route, right click turns the corner"
+	if _belt_drag_active:
+		lead = "release to lay" if lays else "will not lay"
 	lines.append(
 		"belt: %s — %d tiles — %s — %s"
-		% [
-			"drag to route, right click turns the corner" if not _belt_drag_active
-			else "release to lay",
-			length,
-			_route_cost_text(sim, from_tile, aimed),
-			verdict,
-		]
+		% [lead, length, _route_cost_text(sim, from_tile, aimed), verdict]
 	)
 	# And why its ends would not dock, which is advice rather than a verdict: the route lays
 	# either way (see `query_belt_route_end_dock_refusal`), so this is a second line and not
@@ -5187,6 +5208,30 @@ func _sync_belt_preview(sim: Simulation) -> void:
 	var aimed: Vector3i = BuildGun.aimed_tile(sim, VIEWED_PLAYER)
 	var from_tile: Vector3i = _belt_drag_anchor if _belt_drag_active else aimed
 	var runs: Array = BeltRoute.segments(from_tile, aimed, _belt_drag_corner_axis)
+
+	# **Whether the route lays is a property of the route, so it is the colour of the whole
+	# route** — asked of the one function the release goes through, `_belt_route_refusal`,
+	# rather than inferred from the tiles. #67, and it is #35's defect in the Belt tool: a
+	# route lands whole or not at all, so a ten-tile route with one blocked tile lays
+	# *nothing*, and tinting tile by tile painted the other nine in the green a player
+	# learns off the Machine hologram as "release it and it goes down".
+	#
+	# The two marks answer two questions and neither can answer the other's. `MISSING_MATERIALS`
+	# is the proof: every tile is clear ground, no tile is markable, and the release is
+	# refused — so only the colour of the route can say so. A blocked tile, conversely, is a
+	# place rather than a verdict, which is why the standing red volume below stays.
+	#
+	# **The dock refusals are deliberately not consulted**, exactly as `_belt_route_lines`
+	# keeps them out of its verdict: a route whose far end will not hand its goods over lays
+	# perfectly well, and a player routes a line in stages past where a Machine is going to
+	# stand every day (#56). Advice before the release, never a veto — and never a colour.
+	var lays: bool = (
+		sim.query_belt_route_refusal(
+			VIEWED_PLAYER, from_tile, aimed, _belt_drag_corner_axis
+		) == Simulation.Refusal.NONE
+	)
+	var skin: StandardMaterial3D = _belt_preview.material_override
+	skin.albedo_color = HOLOGRAM_ALLOWED if lays else HOLOGRAM_REFUSED
 
 	var clear: PackedFloat32Array = PackedFloat32Array()
 	var refused: PackedFloat32Array = PackedFloat32Array()
@@ -5937,6 +5982,19 @@ func belt_preview_tile_count() -> int:
 func belt_preview_refused_tile_count() -> int:
 	@warning_ignore("integer_division")
 	return _belt_preview_refused_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Whether the route in flight is drawn in the colour that means "release it and it goes
+## down" — `HOLOGRAM_ALLOWED`, the green a player learns off the Machine hologram.
+##
+## Read off the material the slabs are actually painted with rather than off a flag, because
+## a flag is a second opinion about what is on screen and the thing under test here is the
+## picture.
+func belt_preview_promises_a_lay() -> bool:
+	if _belt_preview == null:
+		return false
+	var skin: StandardMaterial3D = _belt_preview.material_override
+	return skin != null and skin.albedo_color == HOLOGRAM_ALLOWED
 
 
 ## Where the drag the renderer is drawing started, and which way its corner bends. Handed

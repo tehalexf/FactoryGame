@@ -54,9 +54,7 @@ static func line(sim: Simulation, player_id: int) -> String:
 			)
 		Step.BELT:
 			return _with_the_build_gun(
-				sim,
-				player_id,
-				"Press C for the Belt tool, then drag from the orange arrow to the blue one"
+				sim, player_id, _with_the_belt_tool(sim, player_id)
 			)
 		Step.UNSTARVE:
 			return "Something is starved — a Belt starts past an output arrow and ends at an input"
@@ -161,6 +159,27 @@ static func _with_the_build_gun(sim: Simulation, player_id: int, step: String) -
 		return step
 	var uncapitalised: String = step[0].to_lower() + step.substr(1)
 	return "Press B for the Build Gun — then %s" % uncapitalised
+
+
+## The Belt step, with the key that puts the Belt tool on the gun on the front of it when it
+## is not already there.
+##
+## **`_with_the_build_gun`'s shape one step further, and #67 is why it was needed.** Both of
+## that ticket's survey shots said `Press C for the Belt tool` in a frame where the Belt tool
+## was out and a route was mid-drag — an instruction to do a thing already done, which is
+## exactly what `_with_the_build_gun` exists to stop happening to `B`. A tool is not a step:
+## "press C" is not a thing to achieve, and a player who swaps back an hour in must get the
+## key named again rather than be handed a tutorial step for it. So nothing is remembered
+## here either — it is the same query the rest of this file is made of.
+##
+## The two clauses compose rather than racing, because they are about two different things:
+## a player holding a rifle is told about the Build Gun first whatever tool is on it, and
+## the capital is left to `_with_the_build_gun` to take back down.
+static func _with_the_belt_tool(sim: Simulation, player_id: int) -> String:
+	var drag: String = "Drag from the orange arrow to the blue one"
+	if sim.query_player_is_laying_belt(player_id):
+		return drag
+	return "Press C for the Belt tool, then %s" % (drag[0].to_lower() + drag.substr(1))
 
 
 ## Whether a Miner is standing on ground it can actually work. Not "is a Miner built": a
