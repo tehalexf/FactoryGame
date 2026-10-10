@@ -11057,6 +11057,31 @@ func _branch_belts(machine: int) -> PackedInt64Array:
 	return branches
 
 
+## Whether any Belt's far end docks into one of a Machine's declared input ports.
+##
+## **`query_machine_branch_count`'s mirror, and the same clause read from the other side.**
+## `_machine_a_belt_feeds` is what `_hand_off` refuses through, so a Belt counted here is a
+## Belt that would really hand an Item over, and a Belt standing against a wall whose port
+## runs the other way is not a feed that delivers nothing — it is not a feed (#47).
+##
+## **It is geometry and emphatically not "is this Machine working".**
+## `query_machine_is_starved` is that question, and the two are different in the direction
+## that matters: a saturated Smelter is briefly starved between consuming one craft's inputs
+## and holding the next craft's, and it is fed throughout. A **Miner** is the opposite case —
+## it declares no input port at all, so this is false for one working its own Node and for
+## one on bare rock alike. Reading this alone as a verdict about a Machine would be wrong
+## about both; reading the two together is #74's whole subject.
+##
+## A projection the Simulation never reads back, so asking leaves `hash()` where it was.
+func query_machine_is_fed(machine: int) -> bool:
+	if machine < 0 or machine >= query_machine_count():
+		return false
+	for index: int in range(query_belt_count()):
+		if _machine_a_belt_feeds(index) == machine:
+			return true
+	return false
+
+
 ## The Belt, if any, whose far end hands Items onto the tile given. The reverse of
 ## `_belt_downstream`, walked rather than stored for the reason nothing else here is stored.
 func _belt_at_tile_feeding(tile: Vector3i) -> int:
