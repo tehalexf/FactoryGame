@@ -2760,38 +2760,52 @@ func test_every_enemy_surface_is_painted_out_of_the_palette_by_its_own_name() ->
 	# `enemy_grade.py` remapped the pixels onto the palette's ramps and this checked that the
 	# graded file was what actually reached the shader.
 	#
-	# A declared body does not need a grade, because a part is **assigned** its palette entry
-	# in `tools/assets/enemy_recipe.py` rather than having one inferred from a pixel. So the
-	# claim this makes is the same one in the other direction: the texture on an Enemy's
-	# surface is the very texture the palette entry of that name carries, which is what
-	# `assets/machines/materials/*.tres` already puts on a Wall and on #73's cargo. A surface
-	# resolved to nothing is a part drawn in flat white, and the only way to catch that is
-	# from this side of the seam.
+	# A declared body needs no grade, because a part is **assigned** its palette entry in
+	# `tools/assets/enemy_recipe.py` rather than having one inferred from a pixel. So the
+	# claim is the same one in the other direction, and it is made of **every** surface
+	# rather than of the first: each one is named after a palette entry, and the texture on
+	# it is that entry's own. A surface whose name resolves to nothing is a part drawn in
+	# flat white, and the only way to catch that is from this side of the seam.
+	#
+	# **An entry with no texture is an ordinary state and the first version of this test did
+	# not know it.** `DullBrass` and `Copper` are flat colours in `dieselpunk_palette.json`,
+	# and a Crawler's first surface *is* `DullBrass` — its mandibles — so asserting a texture
+	# path on surface 0 would have failed on a correct Enemy.
 	var sim: Simulation = _threatened_sim()
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
+	var textured: int = 0
 	for kind: int in [
 		Simulation.ENEMY_KIND_CRAWLER,
 		Simulation.ENEMY_KIND_BREAKER,
 		Simulation.ENEMY_KIND_SIEGE_HULK,
 	]:
-		var surface: String = view.enemy_surface_name(kind)
 		assert_true(
-			not surface.is_empty(),
-			"kind %d draws a named surface rather than an anonymous one" % kind
+			view.enemy_surface_count(kind) > 1,
+			"kind %d is drawn in several palette entries rather than one" % kind
 		)
-		var entry: StandardMaterial3D = load(
-			WorldView.PALETTE_MATERIALS + surface + ".tres"
-		) as StandardMaterial3D
-		assert_true(
-			entry != null,
-			"kind %d's surface %s is a palette entry" % [kind, surface]
-		)
-		assert_eq(
-			view.enemy_surface_texture_path(kind),
-			entry.albedo_texture.resource_path,
-			"kind %d is painted with %s" % [kind, view.enemy_surface_texture_path(kind)]
-		)
+		for surface: int in range(view.enemy_surface_count(kind)):
+			var name: String = view.enemy_surface_name(kind, surface)
+			var entry: StandardMaterial3D = load(
+				WorldView.PALETTE_MATERIALS + name + ".tres"
+			) as StandardMaterial3D
+			assert_true(
+				entry != null,
+				"kind %d surface %d (%s) is a palette entry" % [kind, surface, name]
+			)
+			if entry == null:
+				continue
+			var wanted: String = (
+				"" if entry.albedo_texture == null else entry.albedo_texture.resource_path
+			)
+			assert_eq(
+				view.enemy_surface_texture_path_at(kind, surface),
+				wanted,
+				"kind %d surface %s wears the palette's own map" % [kind, name]
+			)
+			if not wanted.is_empty():
+				textured += 1
+	assert_true(textured > 0, "at least one surface really does carry a palette texture")
 	view.free()
 
 

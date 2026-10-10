@@ -178,6 +178,44 @@ func test_a_clip_never_walks_the_body_away_from_where_the_simulation_put_it() ->
 	assert_true(drift < 0.01, "the root stays put horizontally, not %f m out" % drift)
 
 
+func test_only_the_boss_declares_a_weak_point_and_it_is_behind_and_above_it() -> void:
+	# #79. A Siege Hulk's vent is the only place in this project where geometry carries a
+	# rule (#16): the front shrugs off 85% of a hit and the back does not, and nothing tells
+	# a player that in words. It used to be placed by two constants in `world_view.gd` while
+	# the body it is an opening in was somebody else's art, so editing one could not move the
+	# other and nothing would have said so. The declaration derives it from the abdomen's own
+	# numbers and exports it as a marker; this is the engine-side half of that claim.
+	var bodies: EnemyBodies = _bodies()
+	var boss: EnemyBodies.Body = bodies.body_for(Simulation.ENEMY_KIND_SIEGE_HULK)
+	if not assert_not_null(boss, "the Siege Hulk's body baked"):
+		return
+	assert_true(
+		boss.vent_offset.z < 0.0,
+		"the vent is behind the body, not on the armour it is the counterpart to: %v"
+		% boss.vent_offset
+	)
+	assert_true(
+		boss.vent_offset.y > 0.0, "and off the ground: %v" % boss.vent_offset
+	)
+	# And it is the *mesh's* answer rather than the fallback, which is the whole point of
+	# reading it out of the asset. A declaration that happened to land on the old constants
+	# would make this test unable to tell the two apart, so it is asserted as a difference.
+	assert_true(
+		absf(boss.vent_offset.z + WorldView.SIEGE_HULK_VENT_OFFSET) > 0.01
+		or absf(boss.vent_offset.y - WorldView.SIEGE_HULK_VENT_HEIGHT) > 0.01,
+		"the vent comes out of the body rather than out of the procedural hull's constants"
+	)
+
+	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
+		var body: EnemyBodies.Body = bodies.body_for(kind)
+		if not assert_not_null(body, "kind %d has a body" % kind):
+			continue
+		assert_eq(
+			body.vent_offset, Vector3.ZERO,
+			"kind %d claims no weak point: only the boss has one" % kind
+		)
+
+
 func test_a_surface_carries_the_bone_indices_and_weights_the_shader_blends_by() -> void:
 	# `ARRAY_BONES` and `ARRAY_WEIGHTS` are only readable by a shader through a
 	# `Skeleton3D`, which a `MultiMesh` has none of — so the bake moves them into

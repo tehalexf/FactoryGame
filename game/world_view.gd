@@ -1591,16 +1591,41 @@ func enemy_surface_texture_path(kind: int) -> String:
 ## or "" for a kind drawn through the procedural fallback. The seam the assertion needs:
 ## `_skinned_mesh` resolves a `.tres` by this name, so a test can resolve the same one and
 ## compare rather than restating a path.
-func enemy_surface_name(kind: int) -> String:
+func enemy_surface_name(kind: int, surface: int = 0) -> String:
+	var mesh: Mesh = _enemy_mesh(kind)
+	if mesh == null or surface >= mesh.get_surface_count():
+		return ""
+	return mesh.surface_get_name(surface)
+
+
+## How many surfaces a kind's body is drawn in — one a palette entry its declaration
+## assigns. A kind drawn through the procedural fallback has one.
+func enemy_surface_count(kind: int) -> int:
+	var mesh: Mesh = _enemy_mesh(kind)
+	return 0 if mesh == null else mesh.get_surface_count()
+
+
+## Which texture one surface is painted with, or "" where the palette entry carries none —
+## `DullBrass` and `Copper` are flat colours in `dieselpunk_palette.json`, so a mandible is
+## legitimately untextured and that is an ordinary state rather than a gap.
+func enemy_surface_texture_path_at(kind: int, surface: int) -> String:
+	var mesh: Mesh = _enemy_mesh(kind)
+	if mesh == null or surface >= mesh.get_surface_count():
+		return ""
+	var material: ShaderMaterial = mesh.surface_get_material(surface) as ShaderMaterial
+	if material == null:
+		return ""
+	var texture: Texture2D = material.get_shader_parameter("albedo_texture") as Texture2D
+	return "" if texture == null else texture.resource_path
+
+
+func _enemy_mesh(kind: int) -> Mesh:
 	if not _swarm_meshes.has(kind):
-		return ""
+		return null
 	var node: MultiMeshInstance3D = _swarm_meshes[kind]
-	if node.multimesh == null or node.multimesh.mesh == null:
-		return ""
-	var mesh: Mesh = node.multimesh.mesh
-	if mesh.get_surface_count() == 0:
-		return ""
-	return mesh.surface_get_name(0)
+	if node.multimesh == null:
+		return null
+	return node.multimesh.mesh
 
 
 ## How metallic a kind's surface is. For the assertion that an Enemy is a **dielectric**,
