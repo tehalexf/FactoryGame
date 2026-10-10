@@ -1452,7 +1452,21 @@ Nest is cast iron and steel with an oxide edge, which is `_nest`'s own docstring
 | Machine, sunlit top | 0.0804 | 1.80x | 0.0804 | 1.80x |
 
 **The Machine and the ground rows are byte-identical in both frames**, which is the control
-saying the change is the Nest's alone and not a palette edit wearing a disguise.
+saying the change is the Nest's alone and not a palette edit wearing a disguise. Both halves
+were re-rendered on the tip with #79 merged in — the Enemies in frame are its insects rather
+than the skeletons they replaced — and every figure above came back unchanged, which is the
+same control stated across a merge.
+
+```bash
+SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"
+tools/visual/shot.sh out.png survey
+```
+
+[`docs/images/nest_brightness_before.png`](docs/images/nest_brightness_before.png) against
+[`_after`](docs/images/nest_brightness_after.png) is the frame the complaint was made about;
+[`nest_brightness_survey_before.png`](docs/images/nest_brightness_survey_before.png) against
+[`_after`](docs/images/nest_brightness_survey_after.png) is the vantage that refused the
+candidate which went further.
 
 **The second vantage is what stopped this overshooting, and it very nearly did.** From Survey
 View the Nest measured **1.46x the ground against Machines at 1.59x and 1.80x** — *in family
