@@ -64,10 +64,28 @@ const FRAMES_PER_SECOND: float = 30.0
 ## but a library carrying a two-minute clip should not silently become a 3600-row texture.
 const MAX_FRAMES_PER_CLIP: int = 120
 
-## Where the committed CC0 characters live. One pack, because its six characters and four
-## animation libraries share one rig — which is what makes a clip authored for the Minion
-## play on the Golem without a `BoneMap` anywhere.
-const KAYKIT: String = "res://assets/characters/kaykit_skeletons/"
+## Where the generated bodies live.
+##
+## **#79 replaced a cast with a declaration, and that is the one change to this file's
+## premise.** #38 cast three KayKit CC0 characters because they existed and shared one rig;
+## the asset was still a fantasy skeleton in a world of cast iron, and the user said so.
+## `tools/assets/enemy_recipe.py` declares three insects as proportions and a gait and
+## `generate_enemies.sh` builds them, so these three `.glb` are this project's own work and
+## are **committed** — the arrangement the Machine meshes and the Build Gun already have,
+## proved by `tools/assets/tests/test_generated_enemies.py` regenerating and comparing the
+## bytes rather than by `asset_staleness.py` dating them (#57).
+##
+## Two consequences for the bake, and both of them make it cheaper. **Each body carries its
+## own clips**, so a recipe's `libraries` names the character itself rather than a separate
+## shared-rig library — these are three different rigs, so a library between them could only
+## carry the bones they have in common. And **every vertex has exactly one influence at
+## weight 1**: a chitin plate is rigid, so `_influences`' four-heaviest rule has nothing to
+## drop and `_merge` renormalises a sum that is already one.
+const INSECTS: String = "res://assets/characters/insects/"
+
+## The node a generated body names its weak point with. One string, read here and written
+## by `tools/assets/generate_enemies.py`.
+const VENT_MARKER: String = "Vent"
 
 ## The two views a silhouette is measured in: head-on down the lane an Enemy walks, and
 ## along it. Both, for `machine_silhouette.py`'s reason — a player moves, so two kinds that
@@ -156,6 +174,20 @@ class Body extends RefCounted:
 	var pose: ImageTexture = null
 	var bone_count: int = 0
 	var frame_total: int = 0
+
+	## Where this kind's weak point is, in the body's own normalised units and in Godot
+	## axes — `+y` up, `+z` the way it faces — or `Vector3.ZERO` for a kind whose `.glb`
+	## declares none.
+	##
+	## **It is read out of the mesh rather than held as a constant in `world_view.gd`**, and
+	## that is #79's one addition to this class. The Siege Hulk's vent is the only place in
+	## this project where geometry carries a rule (#16), and it used to be placed by a pair
+	## of numbers in the renderer while the body it is an opening in was somebody else's art
+	## — so the two could come apart with nothing saying so. `enemy_recipe` derives the tail's
+	## far face from the abdomen's own declaration and `generate_enemies` exports it as a
+	## marker node, exactly as a Machine's `Port_*` markers are exported: one authority, and
+	## editing `abdomen_rise` moves the glow with the tail.
+	var vent_offset: Vector3 = Vector3.ZERO
 
 	var _frames: Dictionary = {}
 	var _first_row: Dictionary = {}
@@ -362,61 +394,56 @@ func body_for(kind: int) -> Body:
 	return body
 
 
-## Which character and clips each kind is made of.
+## Which body and which clips each kind is made of.
 ##
 ## Static and in one place, so the casting is readable without reading the bake. A kind with
 ## no entry has no body, which is what makes adding a kind cost nothing here.
+##
+## **The three bodies are generated and committed, and the roles are the same three.** What
+## changed with #79 is only the asset: `enemy_recipe.py` declares the proportions and the
+## gaits, and the four clips travel inside each body's own `.glb`, so `libraries` names the
+## character itself. Every body carries all four clips and every one of them is read by some
+## kind, which is why `walk` and `run` are both here — a clip nothing names would be the
+## asset-pipeline version of a tuning key nothing reads.
+##
+## The *choice* of gait per kind survives #38's reasoning unchanged, because it was never
+## about the art: Chaff has to read as **numerous and coming**, so a Crawler runs; a Breaker
+## marches the Nest's own lane under fire (#34), so it walks, and that contrast is the
+## clearest thing separating the sense of threat from the threat in motion.
 static func recipe_for(kind: int) -> Recipe:
-	var medium: PackedStringArray = PackedStringArray([
-		KAYKIT + "animations/Rig_Medium_MovementBasic.glb",
-		KAYKIT + "animations/Rig_Medium_General.glb",
-	])
-	var large: PackedStringArray = PackedStringArray([
-		KAYKIT + "animations/Rig_Large_MovementBasic.glb",
-		KAYKIT + "animations/Rig_Large_General.glb",
-	])
 	match kind:
 		EnemyKind.CRAWLER:
-			# Chaff: the smallest, barest character in the pack, running. `Running_A`
-			# rather than a walk because what Chaff has to read as is *numerous and
-			# coming*, and because it is the clearest possible contrast with the Breaker
-			# marching behind it.
 			return Recipe.new(
-				KAYKIT + "minion/Skeleton_Minion.glb",
-				medium,
+				INSECTS + "crawler.glb",
+				PackedStringArray([INSECTS + "crawler.glb"]),
 				{
-					EnemyAnimator.MOVE: "Running_A",
-					EnemyAnimator.IDLE: "Idle_A",
-					EnemyAnimator.ATTACK: "Throw",
+					EnemyAnimator.MOVE: "run",
+					EnemyAnimator.IDLE: "idle",
+					EnemyAnimator.ATTACK: "attack",
 				}
 			)
 		EnemyKind.BREAKER:
-			# The threat rather than the sense of it, so: the armoured character, carrying
-			# a sword and a shield, **walking**. #34 made a Breaker march the Nest's own
-			# lane before it turns on the Factory, and `Walking_A` is that sentence as
-			# motion — a deliberate advance down the road a player defended, against the
-			# Crawlers sprinting past it.
 			return Recipe.new(
-				KAYKIT + "warrior/Skeleton_Warrior.glb",
-				medium,
+				INSECTS + "breaker.glb",
+				PackedStringArray([INSECTS + "breaker.glb"]),
 				{
-					EnemyAnimator.MOVE: "Walking_A",
-					EnemyAnimator.IDLE: "Idle_B",
-					EnemyAnimator.ATTACK: "Throw",
+					EnemyAnimator.MOVE: "walk",
+					EnemyAnimator.IDLE: "idle",
+					EnemyAnimator.ATTACK: "attack",
 				}
 			)
 		EnemyKind.SIEGE_HULK:
-			# The boss, and the Golem is four metres of it. `Rig_Large` carries no attack
-			# take at all — the pack's melee libraries were never intaken (#18) — so a
-			# stomp plays `Hit_A`, which is a lurch rather than a swing. Named here rather
-			# than hidden, because it is the one role in this file that is a stand-in.
+			# **The one role that was a stand-in is not one any more.** #38 played the
+			# Golem's `Hit_A` for a stomp because `Rig_Large` carried no attack take at
+			# all; a declared body declares its own, so the boss bites with the same
+			# authored gesture the other two do.
 			return Recipe.new(
-				KAYKIT + "golem/Skeleton_Golem.glb",
-				large,
+				INSECTS + "siege_hulk.glb",
+				PackedStringArray([INSECTS + "siege_hulk.glb"]),
 				{
-					EnemyAnimator.MOVE: "Walking_A",
-					EnemyAnimator.IDLE: "Idle_A",
-					EnemyAnimator.ATTACK: "Hit_A",
+					EnemyAnimator.MOVE: "walk",
+					EnemyAnimator.IDLE: "idle",
+					EnemyAnimator.ATTACK: "attack",
 				}
 			)
 	return null
@@ -516,6 +543,11 @@ func _bake(kind: int) -> Body:
 
 	var body: Body = Body.new()
 	body.bone_count = bones
+	# Through the same normalisation the bone matrices get, so the vent lands where the
+	# body does however the declaration moves. The marker is authored in normalised units
+	# already, so this is the identity on a body one metre tall — applied anyway, because
+	# "the same transform" is the claim rather than "the same number".
+	body.vent_offset = _vent_offset(root, normalise)
 
 	# Every clip, in a fixed order, so the texture's rows are a function of the recipe and
 	# not of whatever order a Dictionary iterates in. That is determinism rule four applied
@@ -848,6 +880,28 @@ func _influences(
 		else:
 			slots.append(0.0)
 			loads.append(1.0 if influence == 0 and total <= 0.0 else 0.0)
+
+
+## The weak-point marker a body's `.glb` declares, or `Vector3.ZERO`.
+##
+## A marker node carrying no mesh, named `Vent`, which falls out of `_flatten` by itself
+## exactly as a Machine's `Port_*` markers do. Absence is an ordinary state: two of the
+## three kinds have no weak point and say so by not exporting one.
+func _vent_offset(root: Node, normalise: Transform3D) -> Vector3:
+	var marker: Node3D = _named(root, VENT_MARKER)
+	if marker == null:
+		return Vector3.ZERO
+	return normalise * marker.position
+
+
+func _named(node: Node, wanted: String) -> Node3D:
+	if node.name == wanted and node is Node3D:
+		return node
+	for child: Node in node.get_children():
+		var found: Node3D = _named(child, wanted)
+		if found != null:
+			return found
+	return null
 
 
 func _first_skeleton(node: Node) -> Skeleton3D:

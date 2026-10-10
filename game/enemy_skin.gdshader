@@ -32,6 +32,19 @@ uniform int texels_per_bone = 3;
 
 uniform sampler2D albedo_texture : source_color, filter_linear_mipmap, repeat_enable;
 uniform bool has_albedo_texture = false;
+
+// How many times the palette's own tiling map repeats over one body height.
+//
+// **#79's bodies have UVs worth sampling, and the characters did not.** The note below used
+// to say a normal map through these UVs would be a flat colour, because KayKit's unwrap
+// points every limb at one cell of a 64-pixel swatch sheet. A generated body is
+// box-projected at one UV unit to the authored metre (`machine_parts.box_project_uvs`),
+// which is one UV unit to the *body height* here — so the palette's real 1024-square
+// `assets/generated/` map tiles across it, and this is how finely. A fraction of a body
+// rather than a count of metres, for `grime_metres`' reason: the same number gives a 3.2 m
+// Siege Hulk coarser plate than a 1.6 m Crawler in absolute terms, which is the right way
+// round.
+uniform vec2 uv_scale = vec2(1.0);
 // What the pack's own colours are multiplied by. The committed skeletons are bone-white and
 // this palette runs 0.055 to 0.14 albedo, so a character dropped in untinted is the
 // brightest thing in frame — which is the mistake #32 found on the Walls, measured rather
@@ -260,13 +273,15 @@ void vertex() {
 void fragment() {
 	vec4 colour = albedo_tint;
 	if (has_albedo_texture) {
-		colour *= texture(albedo_texture, UV);
+		colour *= texture(albedo_texture, UV * uv_scale);
 	}
 
 	// Four evaluations: the value, and one forward difference an axis. `ground.gdshader`
 	// pays the same four for the yard's relief and for the same reason — it needs no tangent
-	// frame and no UVs, and a `NORMAL_MAP` would need both. These characters have UVs, and
-	// they point at a 64-pixel swatch, so a normal map through them would be a flat colour.
+	// frame and no UVs, and a `NORMAL_MAP` would need both. **A generated body does have UVs
+	// worth sampling** since #79 — box-projected at one unit to the body — so a `NORMAL_MAP`
+	// is now merely unavailable rather than useless: `assets/generated/` is albedo-only and
+	// there is no normal map to load, which is #42's premise on the ground exactly.
 	float dirt = grime_at(rest);
 	vec3 slope = vec3(
 		grime_at(rest + vec3(grime_step, 0.0, 0.0)) - dirt,

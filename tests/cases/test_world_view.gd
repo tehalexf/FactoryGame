@@ -2753,21 +2753,73 @@ func test_cargo_rides_on_the_deck_the_simulation_says_a_player_stands_on() -> vo
 	view.free()
 
 
-func test_every_enemy_surface_wears_the_graded_atlas_rather_than_the_packs_own() -> void:
-	# #75. The committed KayKit atlas is a cold bone-white at eight times the luminance of the
-	# darkest cell a Crawler wears, and #38's answer was one dark tint per kind — which cannot
-	# change a ratio, so what shipped was a pale skull on a near-black body. The surface is
-	# `tools/assets/enemy_grade.py`'s graded copy now, and the assertion is that the graded
-	# file is what actually reaches the shader: a grade nothing samples is `prop_grade.py`'s
-	# own opening defect, and the only way to catch it is from this side of the seam.
+func test_every_enemy_surface_is_painted_out_of_the_palette_by_its_own_name() -> void:
+	# #79. This assertion used to read "wears the graded atlas rather than the pack's own",
+	# and it was #75's answer to a problem the asset created: the committed KayKit atlas is a
+	# cold bone-white at eight times the luminance of the darkest cell a Crawler wears, so
+	# `enemy_grade.py` remapped the pixels onto the palette's ramps and this checked that the
+	# graded file was what actually reached the shader.
+	#
+	# A declared body does not need a grade, because a part is **assigned** its palette entry
+	# in `tools/assets/enemy_recipe.py` rather than having one inferred from a pixel. So the
+	# claim this makes is the same one in the other direction: the texture on an Enemy's
+	# surface is the very texture the palette entry of that name carries, which is what
+	# `assets/machines/materials/*.tres` already puts on a Wall and on #73's cargo. A surface
+	# resolved to nothing is a part drawn in flat white, and the only way to catch that is
+	# from this side of the seam.
 	var sim: Simulation = _threatened_sim()
 	var view: WorldView = WorldView.new()
 	view.sync(sim)
-	for kind: int in [Simulation.ENEMY_KIND_CRAWLER, Simulation.ENEMY_KIND_BREAKER]:
+	for kind: int in [
+		Simulation.ENEMY_KIND_CRAWLER,
+		Simulation.ENEMY_KIND_BREAKER,
+		Simulation.ENEMY_KIND_SIEGE_HULK,
+	]:
+		var surface: String = view.enemy_surface_name(kind)
+		assert_true(
+			not surface.is_empty(),
+			"kind %d draws a named surface rather than an anonymous one" % kind
+		)
+		var entry: StandardMaterial3D = load(
+			WorldView.PALETTE_MATERIALS + surface + ".tres"
+		) as StandardMaterial3D
+		assert_true(
+			entry != null,
+			"kind %d's surface %s is a palette entry" % [kind, surface]
+		)
 		assert_eq(
 			view.enemy_surface_texture_path(kind),
-			WorldView.ENEMY_GRADED_ATLAS,
+			entry.albedo_texture.resource_path,
 			"kind %d is painted with %s" % [kind, view.enemy_surface_texture_path(kind)]
+		)
+	view.free()
+
+
+func test_an_enemy_is_a_glossy_dielectric_rather_than_a_metal() -> void:
+	# #79, and it is #75's own decision re-derived rather than inherited. That ticket pushed
+	# all three kinds to `metallic = 1`, correctly, for a **dielectric at 0.17 albedo** under
+	# a sky this project takes its ambient and reflections from: such a surface has almost
+	# nothing to return and rendered as a silhouette. A chitin shell is a glossy dielectric
+	# with a bright specular of its own, over a palette albedo several times that, so the
+	# premise is gone — and drawing it as metal makes a Crawler a chromed beetle.
+	#
+	# Asserted as a pair, because either half alone is satisfiable by the wrong answer: full
+	# metal at a low roughness, or a dielectric at the palette's own matte figures.
+	var sim: Simulation = _threatened_sim()
+	var view: WorldView = WorldView.new()
+	view.sync(sim)
+	for kind: int in [
+		Simulation.ENEMY_KIND_CRAWLER,
+		Simulation.ENEMY_KIND_BREAKER,
+		Simulation.ENEMY_KIND_SIEGE_HULK,
+	]:
+		assert_eq(
+			view.enemy_surface_metallic(kind), 0.0,
+			"kind %d is a dielectric" % kind
+		)
+		assert_true(
+			view.enemy_surface_roughness(kind) < 0.5,
+			"kind %d is glossier than the palette's own dielectrics, which run 0.58 up" % kind
 		)
 	view.free()
 
