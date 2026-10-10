@@ -2554,6 +2554,45 @@ exactly one tick of walking to the fixed-point unit, and a pair held at touching
 reintroduce, since a search that looked only inside one cell would separate a crowd that
 happened to share a tile and quietly stop separating one that did not.
 
+#### What it costs, and the one case where the bucketing does not save you
+
+Measured with `tools/visual/enemy_tick_cost.gd`, which times **`Simulation.step`** where
+`frame_cost.gd` times `WorldView.sync`, against the same scenario with the pass and with the
+pre-#76 Simulation. A 16.67 ms frame is the budget.
+
+| Enemies | step, before | step, with separation | separation adds |
+|---|---|---|---|
+| 24 | 0.230 ms | **0.437 ms** | +0.21 ms |
+| 200 | 2.435 ms | **9.525 ms** | +7.1 ms |
+| 1000 | 11.941 ms | **94.238 ms** | +82 ms |
+
+**The honest reading is that the pass is linear in the number of Enemies and quadratic in the
+*density* of a crush, and the harness measures the worst case of the second.** It reaches the
+Chaff tier's numbers by taking the Factory away, so nothing kills anything and the entire Wave
+ends up pressed against one 4x4 Nest — where the bucketing cannot help, because the bodies
+genuinely *are* all one another's neighbours and a cell holds O(n) of them. The baseline column
+is linear across the same three counts (5x the Enemies, 4.9x the time); the separation column
+is not.
+
+**That is not reachable from a shipped scenario, and the reason is worth knowing rather than
+assuming.** The balance rows end with **15 to 32 Enemies at the gate**, because Turrets kill
+and the population is set by the fight rather than by the harness — so the figure a played Run
+actually pays is the first row, a fifth of a millisecond. The crush grows without bound here
+only because walking beats separation by design (finding 1 above), so bodies compress until
+something kills them, and nothing does.
+
+**The constant factor was worth taking and the asymptotics were left alone.** Two changes, both
+**bit-identical** rather than approximations — the radius is read once per Enemy instead of
+twice per pair, and the rejection test inlines `Fixed.mul` as a shift, which is the same
+integer because every product in it is a square or a product of two lengths and `floor_div`
+differs from `>>` only for a negative numerator. 1000 Enemies went from 192.7 ms to 94.2 ms and
+**every hash over a 4000-tick crush was unchanged**, which is what let the balance table above
+stand rather than needing re-measuring. What would bound the crush properly is a cap on how
+many neighbours one body is pushed by — the displacement is clamped to half a step whatever
+contributed to it, so past a handful the extra pairs buy only direction — and that is a design
+decision with a real cost to argue about rather than a tidy-up, so it is named here and not
+taken.
+
 **The pair is committed and it is the argument**, and getting a picture of it at all took a
 preset that did not exist.
 [`docs/images/swarm_separation_before.png`](docs/images/swarm_separation_before.png) against
