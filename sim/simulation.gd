@@ -7105,10 +7105,19 @@ func _separate_the_crowd(marched: PackedInt64Array) -> void:
 	if count < 2:
 		return
 
+	# **How wide each body is, read once per Enemy rather than twice per pair.** The pairs in
+	# a dense crush outnumber the bodies by an order of magnitude, and `_enemy_hit_radius` is
+	# a function call and a `match`; hoisting it out of the inner loop is most of what makes
+	# the pass affordable at the Chaff tier's numbers. Per-tick scratch like the accumulators.
+	var radius: PackedInt64Array = PackedInt64Array()
+	radius.resize(count)
+	radius.fill(0)
+
 	var buckets: PackedInt64Array = PackedInt64Array()
 	for index: int in range(count):
 		if not _kind_separates(_enemy_kind[index]):
 			continue
+		radius[index] = _enemy_hit_radius(_enemy_kind[index])
 		# An Enemy that arrived this tick is in the buckets, so the crowd standing on the
 		# Breach makes room for it — and is not moved itself, which the apply loop below is
 		# where that happens and says why.
@@ -7135,7 +7144,7 @@ func _separate_the_crowd(marched: PackedInt64Array) -> void:
 		var cell: int = key / SEPARATION_CELL_STRIDE
 		var tile: Vector3i = _field_tile(cell)
 		# Break any exact tie before the pairs are summed, because a pair cannot break one.
-		_fan_out_of_coincidence(a, cell, buckets, push_x, push_z)
+		_fan_out_of_coincidence(a, cell, buckets, radius, push_x, push_z)
 		for dz: int in range(-reach, reach + 1):
 			for dx: int in range(-reach, reach + 1):
 				var neighbour: int = _field_index(
@@ -7143,7 +7152,7 @@ func _separate_the_crowd(marched: PackedInt64Array) -> void:
 				)
 				if neighbour == -1:
 					continue
-				_separate_against_cell(a, neighbour, buckets, push_x, push_z)
+				_separate_against_cell(a, neighbour, buckets, radius, push_x, push_z)
 
 	for index: int in range(count):
 		# **An Enemy that arrived this tick is not moved**, for the reason it does not walk
@@ -7171,6 +7180,7 @@ func _separate_against_cell(
 	a: int,
 	cell: int,
 	buckets: PackedInt64Array,
+	radius: PackedInt64Array,
 	push_x: PackedInt64Array,
 	push_z: PackedInt64Array
 ) -> void:
@@ -7184,7 +7194,7 @@ func _separate_against_cell(
 		var b: int = key % SEPARATION_CELL_STRIDE
 		if b <= a:
 			continue
-		_separate_one_pair(a, b, push_x, push_z)
+		_separate_one_pair(a, b, radius, push_x, push_z)
 
 
 ## Nudges an Enemy out of a pile of bodies standing in exactly the same place.
@@ -7216,6 +7226,7 @@ func _fan_out_of_coincidence(
 	a: int,
 	cell: int,
 	buckets: PackedInt64Array,
+	radius: PackedInt64Array,
 	push_x: PackedInt64Array,
 	push_z: PackedInt64Array
 ) -> void:
@@ -7237,7 +7248,7 @@ func _fan_out_of_coincidence(
 	@warning_ignore("integer_division")
 	var ring: int = 1 + (rank - 1) / 4
 	var step: Vector3i = WorldGrid.direction_step((rank - 1) % 4)
-	var apart: int = _enemy_hit_radius(_enemy_kind[a]) * ring
+	var apart: int = radius[a] * ring
 	push_x[a] += step.x * apart
 	push_z[a] += step.z * apart
 
@@ -7251,15 +7262,22 @@ func _fan_out_of_coincidence(
 ## only for a pair that really does overlap, which on a walking crowd is a small minority of
 ## the pairs examined.
 func _separate_one_pair(
-	a: int, b: int, push_x: PackedInt64Array, push_z: PackedInt64Array
+	a: int, b: int, radius: PackedInt64Array, push_x: PackedInt64Array, push_z: PackedInt64Array
 ) -> void:
 	var gap_x: int = _enemy_x[b] - _enemy_x[a]
 	var gap_z: int = _enemy_z[b] - _enemy_z[a]
-	var room: int = _enemy_hit_radius(_enemy_kind[a]) + _enemy_hit_radius(_enemy_kind[b])
+	var room: int = radius[a] + radius[b]
 	if room <= 0:
 		return
-	var span: int = Fixed.mul(gap_x, gap_x) + Fixed.mul(gap_z, gap_z)
-	if span >= Fixed.mul(room, room):
+	# **`Fixed.mul` inlined as a shift, and it is the same integer rather than a cheaper
+	# approximation of one.** `Fixed.mul(x, y)` is `floor_div(x * y, ONE)`, and `floor_div`
+	# differs from `>>` only for a negative numerator — every product here is a square or a
+	# product of two lengths, so none of them can be. This is the test that rejects the large
+	# majority of the pairs a crush examines, so it is the one place in the pass where three
+	# saved function calls are worth spelling the arithmetic out.
+	var bits: int = Fixed.FRACTIONAL_BITS
+	var span: int = ((gap_x * gap_x) >> bits) + ((gap_z * gap_z) >> bits)
+	if span >= ((room * room) >> bits):
 		return
 
 	if gap_x == 0 and gap_z == 0:

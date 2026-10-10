@@ -2501,20 +2501,49 @@ walked in.
 - **An Enemy that arrived this tick is in the buckets and is not moved**, so the crowd already
   standing on the Breach gets out of its way before it takes its first step — the rule that it
   does not act on the tick it came through, kept rather than excepted.
+- **Per-individual speed variation was deliberately not built, and the lever is recorded so
+  that it is a decision rather than an omission.** #76's title names it and its acceptance
+  criteria do not, which is the right reading: separation is what the user complained about
+  and a crowd that is correctly spaced is most of the look. What it would cost is out of
+  proportion to that — an amplitude is a feel number with **no existing authority to derive
+  it from**, unlike every other number in this section, so it needs a real key in
+  `content/tuning.toml`, which drags in a `--adopt-defaults` re-baseline and a second balance
+  pass that would leave two mechanics tangled in one table. One attributable measurement beats
+  two muddled ones. The shape, when somebody wants it: `[enemy] speed_variation_percent`, an
+  offset of `serial % (2n + 1) - n` applied in `_enemy_step_metres`, which costs the Run no
+  RNG draw for the reason `game/enemy_animator.gd` already de-locksteps a crowd off the
+  serial.
 
-#### Three things the measurements contradicted
+#### Three things the measurements contradicted, and the first is the ticket's real discovery
 
 Every one of these was reasoned out first, shipped into a probe, and found wrong by reading
 numbers. They are the ticket's real content.
 
-1. **"No further than it walks" is the obvious bound and it deadlocks.** A pair that overlaps
+1. **The game was already producing the rank the user complained about, and no amount of
+   separation would have fixed it.** `_advance_enemy` gathered every body onto the **exact
+   centre line** of its lane, by up to a whole tick's travel — which is the same per-tick
+   budget separation has. So the pass was measurably working and being undone every tick: a
+   pair pushed apart across the lane was pulled back together on the next one and settled
+   **5 cm apart against the 1.2 m their two bodies ask for**. *"The swarm arrives as a rank"*
+   was therefore not a missing feature at all; it was an existing behaviour actively making a
+   rank, and the user's one complaint was two faults wearing one coat. Nothing in the old
+   behaviour could have revealed it, because with nothing pushing sideways there was nothing
+   for the centring to undo.
+
+   So **a lane is a lane and not a line**: a body is gathered back towards the middle only
+   once it is further out than two of its own bodies, which is the distance at which it has
+   stopped walking down the lane and started walking beside it. Derived from the radius, so
+   still no new key — and a kind that does not separate keeps the old centimetre-exact
+   behaviour, which is what leaves the Siege Hulk's walk in and #16's stand-off where they
+   were.
+2. **"No further than it walks" is the obvious bound and it deadlocks.** A pair that overlaps
    wants half the overlap each, which in a queue is more than a tick's travel for everybody in
    it — so the clamp handed every body a full step of push and **the rear of a queue was pushed
    backwards exactly as fast as it walked forwards**. Four of eight Crawlers stood still for
-   the whole Run, which on screen reads as a hang and not as crowding. Separation has to be
-   *weaker* than walking, and it is: half a tick's travel, so walking wins by a factor of two
+   the whole Run, which on screen reads as a hang and not as crowding. **Separation has to be
+   weaker than walking**, and it is: half a tick's travel, so walking wins by a factor of two
    whatever the crowd is doing.
-2. **Rationing the sideways step is the same mistake pointed the other way.** With the whole
+3. **Rationing the sideways step is the same mistake pointed the other way.** With the whole
    displacement bounded at half a step, a queue in a 2 m lane plateaued at **78%** of the room
    its own bodies asked for and stayed there — because sideways was the one direction that
    could have resolved the overlap, and it was being rationed as if it competed with the walk.
@@ -2524,17 +2553,6 @@ numbers. They are the ticket's real content.
    thickest. The decomposition is free, which is what makes it affordable: a march is always
    along one of the flowfield's four directions, so "with it" and "across it" is a choice
    between two numbers rather than a projection onto a vector.
-3. **The lane-centring was itself the other half of "arrives as a rank".** `_advance_enemy`
-   pressed every body onto the exact centre line of its lane by up to a whole tick's travel —
-   the same budget separation has — so a pair pushed apart across the lane was pulled back
-   together on the next tick and settled **5 cm apart against the 1.2 m their two bodies ask
-   for**. Separation was working and being undone, and nothing in the old behaviour made that
-   visible because there was nothing to undo. So **a lane is a lane and not a line**: a body is
-   gathered back towards the middle only once it is further out than two of its own bodies,
-   which is the distance at which it has stopped walking down the lane and started walking
-   beside it. Derived from the radius again, so still no new key — and a kind that does not
-   separate keeps the old centimetre-exact behaviour, which is what leaves the Siege Hulk's
-   walk in and #16's stand-off where they were.
 
 #### What it actually does, measured
 
@@ -2554,6 +2572,47 @@ exactly one tick of walking to the fixed-point unit, and a pair held at touching
 **across a tile boundary** is found — which is the bug the bucketing could silently
 reintroduce, since a search that looked only inside one cell would separate a crowd that
 happened to share a tile and quietly stop separating one that did not.
+
+#### What it costs, and the one case where the bucketing does not save you
+
+Measured with `tools/visual/enemy_tick_cost.gd`, which times **`Simulation.step`** where
+`frame_cost.gd` times `WorldView.sync`, against the same scenario with the pass and with the
+pre-#76 Simulation. A 16.67 ms frame is the budget.
+
+| Enemies | step, before | step, with separation | separation adds |
+|---|---|---|---|
+| 24 | 0.230 ms | **0.437 ms** | +0.21 ms |
+| 200 | 2.435 ms | **9.525 ms** | +7.1 ms |
+| 1000 | 11.941 ms | **94.238 ms** | +82 ms |
+
+**The honest reading is that the pass is linear in the number of Enemies and quadratic in the
+*density* of a crush, and the harness measures the worst case of the second.** It reaches the
+Chaff tier's numbers by taking the Factory away, so nothing kills anything and the entire Wave
+ends up pressed against one 4x4 Nest — where the bucketing cannot help, because the bodies
+genuinely *are* all one another's neighbours and a cell holds O(n) of them. The baseline column
+is linear across the same three counts (5x the Enemies, 4.9x the time); the separation column
+is not.
+
+**That is not reachable from a shipped scenario, and the reason is worth knowing rather than
+assuming.** The balance rows end with **15 to 32 Enemies at the gate**, because Turrets kill
+and the population is set by the fight rather than by the harness — so the figure a played Run
+actually pays is the first row, a fifth of a millisecond. The crush grows without bound here
+only because walking beats separation by design (finding 1 above), so bodies compress until
+something kills them, and nothing does.
+
+**The constant factor was worth taking and the asymptotics were left alone.** Two changes, both
+**bit-identical** rather than approximations — the radius is read once per Enemy instead of
+twice per pair, and the rejection test inlines `Fixed.mul` as a shift, which is the same
+integer because every product in it is a square or a product of two lengths and `floor_div`
+differs from `>>` only for a negative numerator. 1000 Enemies went from 192.7 ms to 94.2 ms and
+**every hash over a 4000-tick crush was unchanged**, which is what let the balance table above
+stand rather than needing re-measuring. What would bound the crush properly is a cap on how
+many neighbours one body is pushed by — the displacement is clamped to half a step whatever
+contributed to it, so past a handful the extra pairs buy only direction — and that is a design
+decision with a real cost to argue about rather than a tidy-up. **It is #77**, with the three
+rows above, the two things that have to be decided (which neighbours, and what N is derived
+from) and the warning that unlike the pass above it is **not** bit-identical, so it moves the
+hash and the balance table has to be re-run.
 
 **The pair is committed and it is the argument**, and getting a picture of it at all took a
 preset that did not exist.
@@ -7419,8 +7478,15 @@ about this game rather than about that row.** An interpenetrating stack was seve
 standing inside it — a `gear.scatter_degrees` of 0.4 on a Bolt Rifle was being paid back by the
 pile. Spread them out and a miss is a miss. So **separation makes a crowd a worse target for
 anything that scatters**, and that is a real combat consequence of a change made for the look.
-Its peak Heat fell with it, 6051 to 5599, which says the same thing from the other end: fewer
-kills, more Enemies at the gate, a shorter Run.
+**And the probe's own figures are what separate that reading from phase noise**, which is the
+thing this row is notorious for. The rifleman's *economy is unchanged*: 468 rounds reached him
+against #62's 520, over a Run 2m15s shorter — 18.9 a minute either way, which is the Nest line's
+half-share of one Ammo Press to the round. He fired 455 of them against 520, which is the same
+18.4 shots a minute. He was **dry for 75% of it against 74%**. Same income, same discipline,
+same trigger time — and the Nest falls two minutes sooner with 27 Enemies at the gate. **Nothing
+about what he was given or what he did with it moved; only what his rounds bought.** Peak Heat
+fell with it, 6051 to 5599, which is the same sentence from the other end: fewer kills, more
+Enemies at the gate, less time to make Heat in.
 
 **`competent` did not move for the same reason `competent` never moves on this axis:** a
 Turret acquires on an Enemy's *point* against `range_tiles` and resolves against no hit volume
@@ -7429,9 +7495,17 @@ killing in fifteen of these rows cannot tell a spread crowd from a stacked one. 
 **player's** weapon reads the capsule, and only three rows have one.
 
 **`SAME_LENGTH_SECONDS` widened from 150 to 300**, and it is the first time that constant has
-moved for a reason other than phase: 25m03s against 28m51s is 228 seconds. The claim it guards
-is deliberately unchanged — a rifleman at the Nest is **neither free nor ruinous** — because
-nothing here makes the rifle pay for itself or makes standing there fatal. **No value in
+moved for a reason other than phase: 25m03s against 28m51s is 228 seconds. **Widening a guard
+until it stops failing is exactly the wrong move and is worth saying out loud**, because #47
+doing it once is precedent for the *method* and not a licence — so the test is only still worth
+having if the claim it makes is still falsifiable. It is. The band is two-sided and it is not
+the Run length: what fails here is a rifleman who **pays for himself** (within a few seconds of
+`competent`, or longer than it) or one who is **ruinous** (half the Run, which is where
+`armed_second_press` sits at 14m26s and is the shape of the thing this guard exists to catch).
+At 300 seconds a rifleman costing 13% of a twenty-nine-minute Run passes and both of those
+fail, which is the claim and all of it. If a later change needs 450, the honest response is to
+stop asserting a Run length on this row and assert the thing #62 showed it is really about —
+rounds that reach the player against rounds he spends. **No value in
 `content/` was changed**, which was the ticket's own instruction and is also the honest
 reading: this is a measurement of a mechanic, not an argument that a number is wrong.
 
@@ -7999,6 +8073,14 @@ Consequences worth knowing:
   both directions: an abort after a passing assertion must fail, and a method that
   completes must not. A guard that always fires and one that never fires are
   equally worthless, so neither case may be dropped.
+- **The guard reads `SCRIPT ERROR:` and nothing else, so a leak is invisible to it**, and #76
+  is where that cost something: `test_world_view.gd`'s last method ended the file without
+  `view.free()` and the run reported **177 leaked RIDs at exit** with every test green. A
+  suite that passes while leaking is exactly the shape this guard was built for and exactly
+  the shape it cannot see — the engine reports a leak as an `ERROR:` at *cleanup*, after the
+  runner has already counted its results. Fixed in `5936fc1`; worth knowing that **a view a
+  test builds has to be freed by the test that built it**, because nothing will tell you
+  otherwise.
 
 ### Run it through `tools/run_tests.sh`, and why that is not a convenience
 
