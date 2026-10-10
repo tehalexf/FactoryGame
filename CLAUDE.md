@@ -2838,13 +2838,12 @@ refine a direction that is already clamped is the trade this stops making, and i
 sampling a direction is a cheap thing to do here and would not be somewhere the magnitude
 depended on the sample.
 
-##### Which neighbours, and why not the nearest
-
-**"The nearest N" is the honest answer to the bias objection and it is the one answer that
-cannot be afforded.** Ranking a body's neighbours by distance means examining all of them, and
-the examination *is* the cost — a partial sort does not give back some of the saving, it gives
-back the whole of it. That settles the decision rather than merely arguing one side of it: the
-pass can want the nearest and can never ask for it.
+**Which neighbours, and why not the nearest.** "The nearest N" is the honest answer to the
+bias objection and it is the one answer that cannot be afforded: ranking a body's neighbours by
+distance means examining all of them, and the examination *is* the cost. A partial sort does
+not give back some of the saving, it gives back the whole of it. That settles the decision
+rather than merely arguing one side of it: the pass can want the nearest and can never ask for
+it.
 
 So a body takes **a contiguous window of a cell's own index order**. Index order is ascending
 spawn serial by construction, so every client takes the same window and the determinism is not
@@ -2876,10 +2875,9 @@ the sample at all. And nothing in it is a function of the order the Enemies were
 which is the order #76 went to the trouble of accumulating the displacements to escape — every
 push is still computed off the positions the crowd held before the pass began.
 
-##### What the cap is derived from, which is not a tuning key
-
-No number in this pass is written down: the reach comes from the largest radius any separating
-kind declares, the lane corridor from two body widths, the room a pair needs from
+**What the cap is derived from, which is not a tuning key.** No number in this pass is written
+down: the reach comes from the largest radius any separating kind declares, the lane corridor
+from two body widths, the room a pair needs from
 `_enemy_hit_radius` — the one authority on how big a kind is and the very number `WorldView`
 scales the drawn body by. A tuning key was the obvious alternative and is refused for the reason
 `[enemy] speed_variation_percent` was refused in #76: **this is not a feel number, it is a count
@@ -2909,7 +2907,7 @@ is nine caps' worth of pairs for a body in a crowded neighbourhood, which is 63 
 the ~6 the sparse case pays, and it took a thousand Enemies only from 95.7 ms to 68.0 ms. Per
 body it is 7, and the walk leaves the moment the budget is gone.
 
-##### The exact tie-break moved to the end of the pass, and that was two fixes in one
+#### The exact tie-break moved to the end of the pass, and that was two fixes in one
 
 **The cap cost the invariant and it was measured costing it**, which is the ticket's real
 discovery and not something either the issue or the plan anticipated. A crush **saturates the
@@ -2956,7 +2954,7 @@ bound cannot promise, so what `tests/cases/test_enemy_separation.gd` does instea
 outcome **on every tick** of a crush three times the size of the one #76 watched. The cost of
 the bound on an ordinary tick is nothing: the loop leaves the moment a round finds no pile.
 
-##### What it costs, measured back to back
+#### What a bounded crush costs, and what it did not cost the balance table
 
 `ENEMY_COUNT=<n> godot --headless --path . --script res://tools/visual/enemy_tick_cost.gd`, each
 pair of builds run one after the other on the same machine, with the pre-#76 Simulation as the
@@ -2987,10 +2985,9 @@ walk, and at twenty-four Enemies a cell holds one or two candidates so the cap n
 the search is paid for nothing. It is 0.02 ms of a 16.67 ms frame and it was not worth a special
 case.
 
-##### What it cost the balance table: nothing, and the reason is worth knowing
-
-**Every one of the seventeen rows reproduced #76's figure exactly**, on all three seeds, in the
-Run length, the Wave, the peak Heat and the list of Machines lost in the order they were lost —
+**What it cost the balance table: nothing, and the reason is worth knowing.** Every one of the
+seventeen rows reproduced #76's figure exactly, on all three seeds, in the Run length, the Wave,
+the peak Heat and the list of Machines lost in the order they were lost —
 including `rifle_picket`'s and `armed_second_press`'s own seed spreads (25m03s / 25m08s / 24m40s
 and 14m26s / 14m35s / 14m26s). So the table under "What separation cost the table" stands as
 written and no column was added, which is the fifth time it has been independently re-derived.
@@ -3013,17 +3010,16 @@ So the right statement is not "it moved nothing" but **"the only configuration i
 one no shipped Run spends more than its last three seconds in"** — which is the ticket's own
 framing (a ceiling for a tier that does not exist yet) arriving as a measurement.
 
-##### The look is unchanged, and no image was committed
-
-`SHOT_SCRIPT=tools/visual/compose_wave_shot.gd tools/visual/shot.sh out.png "crush bare"` is
-#76's own preset for exactly this subject, and the two builds render **byte-identical PNGs** —
+**The look is unchanged, and no image was committed.** `"crush bare"` on
+`tools/visual/compose_wave_shot.gd` is #76's own preset for exactly this subject, and the two
+builds render **byte-identical PNGs** —
 same MD5, nine Enemies. A committed before-and-after pair that shows no difference is worse than
 none, so there is none. The reason is the same as the hash finding: `crush` frames nine bodies
 spread over several tiles, so no cell holds more than the cap and nothing about the picture can
 differ. **A frame in which it could differ needs a Wave bigger than the content can produce**,
 which is a statement about where this ticket's effect lives rather than about the instrument.
 
-##### What is still unmeasured
+#### What is still unmeasured about a capped crowd
 
 - **Whether a sampled direction looks like the true one, in motion.** The geometry is measured —
   a crowd with road ahead still settles at tangency, a crush still has a floor, nothing ever
