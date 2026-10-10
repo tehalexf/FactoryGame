@@ -638,6 +638,8 @@ var _starved_marks: MultiMeshInstance3D = null
 var _belt_flow_arrows: MultiMeshInstance3D = null
 var _dangling_transforms: PackedFloat32Array = PackedFloat32Array()
 var _starved_transforms: PackedFloat32Array = PackedFloat32Array()
+var _starved_tethers: MultiMeshInstance3D = null
+var _starved_tether_transforms: PackedFloat32Array = PackedFloat32Array()
 var _belt_flow_transforms: PackedFloat32Array = PackedFloat32Array()
 
 ## What a split is doing, drawn where it is doing it.
@@ -693,6 +695,25 @@ const STARVED_COLOUR: Color = Color(1.0, 0.78, 0.22, 0.8)
 ## reads as a tag resting on a silhouette.
 const DANGLING_MARK_HEIGHT_METRES: float = 1.1
 const STARVED_MARK_LIFT_METRES: float = 1.2
+
+## How thick the line that tethers a starved tag to the body under it is, as a fraction of a
+## tile.
+##
+## **#66, and it is #41's rule arriving a fourth time.** #50's lift is right and was not
+## touched: the tag rests a tag's height over the silhouette, which on a Miner's wide derrick
+## cap reads as resting on it. What #50 rendered was a posed row of Machines at a composed
+## distance; what the `running` shot found is the case that reading does not cover — a Steam
+## Boiler's body tops out in a **narrow chimney**, so the same 1.2 m is 1.2 m of open sky over
+## a pipe, and at twenty metres the eye joins the tag to nothing. The answer is not to move
+## the tag, which would put it back inside something; it is to say whose it is, which is the
+## answer #52 reached for an ore beacon floating over the ground ("the marking is what gives
+## the floating stack an owner").
+##
+## Thin on purpose. A tether is punctuation and not a second mark: wide enough to survive a
+## pixel at thirty metres, narrow enough that a Factory with six starved Machines is not six
+## amber columns. Its length is `STARVED_MARK_LIFT_METRES` exactly, so one mesh serves every
+## Machine however tall — the gap it fills is the same gap everywhere by construction.
+const STARVED_TETHER_THICKNESS_TILES: float = 0.06
 
 ## How high a dangling post stands when the end it marks is **against a Machine's wall**, in
 ## metres — the branch post's clearance, for the branch post's reason.
@@ -793,6 +814,23 @@ const PORT_MARKER_SCALE: float = 1.6
 ## How high the port markers float, in metres: the standard Belt deck height the table itself
 ## declares, so an arrow is at the height the Belt that docks there will be.
 const PORT_MARKER_HEIGHT_METRES: float = 0.9
+
+## How far from where the Build Gun is pointing a port arrow is still worth drawing, in
+## tiles, measured to the arrow's own dock tile.
+##
+## **#66's second fault, and the number was bracketed by rendering.** Eight of the ten
+## shipped Machines declare every tile of every face, so a Machine wearing all of them is a
+## ring of arrows pointing outward in every direction — which has no tile in it, and which
+## at a Factory's worth of Machines is a hedge. Drawn only around the aim, that same ring is
+## a legend for the one Machine a player is deciding about, and #47's tile-by-tile promise is
+## kept in full exactly where it is being asked.
+##
+## 6 is the shipped figure and three renders bracketed it. At 4 the Machine a player is
+## placing *beside* loses its arrows, which is the one Machine whose output port they are
+## lining the hologram up against. At 9 the picture is identical to 6 on the opening line, so
+## the extra reach buys nothing and only widens the band a late Factory draws a hedge in. 6
+## is a Belt run's worth of ground and about one Machine either side of the aim.
+const PORT_ARROW_RANGE_TILES: int = 6
 
 ## The flow arrows' colour: a warm cream that reads against the dark decks, the green of a
 ## clear preview and the red of a refused one alike.
@@ -5276,15 +5314,32 @@ func _sync_ports(sim: Simulation) -> void:
 	var into: PackedFloat32Array = PackedFloat32Array()
 	var out_of: PackedFloat32Array = PackedFloat32Array()
 
+	if not _ports_are_advice_right_now(sim):
+		_input_port_transforms = into
+		_output_port_transforms = out_of
+		_upload(_input_ports, into)
+		_upload(_output_ports, out_of)
+		return
+
+	var asked_about: Array[Vector3i] = _where_the_ports_are_being_asked_about(sim)
 	for index: int in range(sim.query_machine_count()):
 		var id: String = sim.query_machine_id(index)
 		var definition: MachineDefinition = definitions.machine(id)
 		if definition == null:
 			continue
-		_mark_ports(
-			sim, ports.ports_of(id), definition, sim.query_machine_tile(index),
-			sim.query_machine_rotation(index), into, out_of
-		)
+		var declared: Array[MachinePorts.Port] = ports.ports_of(id)
+		var origin: Vector3i = sim.query_machine_tile(index)
+		var rotated: int = sim.query_machine_rotation(index)
+		# **Whole Machine or none of it, which a render decided.** Filtered dock tile by dock
+		# tile, a Machine straddling the range showed the arrows on its near face and not the
+		# ones on its far one — and a face that is half drawn reads as the whole declaration,
+		# which is a worse thing to tell a player than nothing. So the range decides which
+		# Machine is being asked about and the answer is always its whole declaration.
+		if not _machine_is_being_asked_about(
+			declared, definition, origin, rotated, asked_about
+		):
+			continue
+		_mark_ports(sim, declared, definition, origin, rotated, into, out_of)
 
 	# The Machine about to land, on the tile it would land on, turned the way it would be
 	# turned. Only while the hologram is up: with the Belt tool out the route is what the
@@ -5303,6 +5358,8 @@ func _sync_ports(sim: Simulation) -> void:
 				sim.query_player_selected_machine_index(VIEWED_PLAYER),
 				rotation
 			)
+			# No filter: the Machine about to land *is* what the gun is pointing at, so
+			# every face of it is the question being asked.
 			_mark_ports(
 				sim, ports.ports_of(selected), about_to_land, where.tile, rotation, into, out_of
 			)
@@ -5311,6 +5368,67 @@ func _sync_ports(sim: Simulation) -> void:
 	_output_port_transforms = out_of
 	_upload(_input_ports, into)
 	_upload(_output_ports, out_of)
+
+
+## Whether a port arrow is advice this player could act on, which is the whole of #66's
+## first fault.
+##
+## **`BuildGun.hand_refusal` is the one home for "is this player in a position to build"**,
+## and the port arrows had never asked it. Since #42 the weapon is the default hand, so the
+## state a player spends most of a Run in was the state in which every tile of every face of
+## every Machine wore a 3.2 m warm-orange quad at deck height — measured off the shipped
+## table, eight of the ten Machines declare every tile of every face, so a square Smelter
+## wears twelve and the Factory wears a hedge. An arrow is advice about where to put a Belt
+## and a player holding a rifle is not putting one anywhere.
+##
+## Deliberately the **hand** and not the tool: the Machine tool is how a player decides which
+## way round to turn the thing they are about to place, which is a question entirely about
+## ports, and the Belt tool is how they act on the answer.
+func _ports_are_advice_right_now(sim: Simulation) -> bool:
+	return BuildGun.hand_refusal(
+		sim.query_player_is_in_build_mode(VIEWED_PLAYER)
+	) == Simulation.Refusal.NONE
+
+
+## The tiles the Build Gun is asking a question about this frame, which is what the port
+## arrows are drawn around.
+##
+## Where it is pointing, always — and with a Belt drag in flight, the tile the drag was
+## anchored on as well, because a route has two ends and the far one is the one a player
+## committed to several seconds ago. Without it the arrow that started the drag goes out
+## while the drag is being made, which is the one moment it is being read.
+func _where_the_ports_are_being_asked_about(sim: Simulation) -> Array[Vector3i]:
+	var asked: Array[Vector3i] = [BuildGun.aimed_tile(sim, VIEWED_PLAYER)]
+	if _belt_drag_active:
+		asked.append(_belt_drag_anchor)
+	return asked
+
+
+## Whether any of a Machine's dock tiles is within `PORT_ARROW_RANGE_TILES` of something the
+## Build Gun is asking about. Its *dock* tiles rather than its footprint, because the dock
+## tile is where the arrow stands and where the Belt goes — so the thing the range is about
+## and the thing it measures are one.
+##
+## Compared squared, the way every reach in this project is, so there is no rounding rule
+## deciding whether a tile exactly on the boundary is in or out. The hologram's own ports do
+## not come through here at all: the Machine about to land *is* what the gun is pointing at.
+static func _machine_is_being_asked_about(
+	ports: Array[MachinePorts.Port],
+	definition: MachineDefinition,
+	origin: Vector3i,
+	rotation: int,
+	asked_about: Array[Vector3i]
+) -> bool:
+	for port: MachinePorts.Port in ports:
+		var tile: Vector3i = MachinePorts.dock_tile(
+			port, origin, definition.footprint_x, definition.footprint_z, rotation
+		)
+		for about: Vector3i in asked_about:
+			var gap_x: int = tile.x - about.x
+			var gap_z: int = tile.z - about.z
+			if gap_x * gap_x + gap_z * gap_z <= PORT_ARROW_RANGE_TILES * PORT_ARROW_RANGE_TILES:
+				return true
+	return false
 
 
 ## Writes one Machine's declared ports into the two buffers.
@@ -5395,6 +5513,14 @@ func _sync_connection_marks(sim: Simulation) -> void:
 	if _dangling_marks == null:
 		_dangling_marks = _marker_posts(tile_size, DANGLING_COLOUR)
 		_starved_marks = _marker_posts(tile_size, STARVED_COLOUR)
+		_starved_tethers = _unshaded_tags(
+			Vector3(
+				tile_size * STARVED_TETHER_THICKNESS_TILES,
+				STARVED_MARK_LIFT_METRES,
+				tile_size * STARVED_TETHER_THICKNESS_TILES
+			),
+			STARVED_COLOUR
+		)
 		_belt_flow_arrows = _flow_arrows(tile_size, FLOW_ARROW_COLOUR)
 
 	var dangling: PackedFloat32Array = PackedFloat32Array()
@@ -5432,6 +5558,7 @@ func _sync_connection_marks(sim: Simulation) -> void:
 			)
 
 	var starved: PackedFloat32Array = PackedFloat32Array()
+	var tethers: PackedFloat32Array = PackedFloat32Array()
 	for index: int in range(sim.query_machine_count()):
 		if not sim.query_machine_is_starved(index):
 			continue
@@ -5445,12 +5572,24 @@ func _sync_connection_marks(sim: Simulation) -> void:
 			Vector3(centre.x, centre.y + roof + STARVED_MARK_LIFT_METRES, centre.z),
 			0.0
 		)
+		# And the line that says whose tag it is, filling the gap the lift leaves — from the
+		# top of the body a player can see up to the tag resting over it.
+		tethers.resize(tethers.size() + FLOATS_PER_INSTANCE)
+		@warning_ignore("integer_division")
+		_write_instance(
+			tethers,
+			tethers.size() / FLOATS_PER_INSTANCE - 1,
+			Vector3(centre.x, centre.y + roof + STARVED_MARK_LIFT_METRES * 0.5, centre.z),
+			0.0
+		)
 
 	_dangling_transforms = dangling
 	_starved_transforms = starved
+	_starved_tether_transforms = tethers
 	_belt_flow_transforms = flow
 	_upload(_dangling_marks, dangling)
 	_upload(_starved_marks, starved)
+	_upload(_starved_tethers, tethers)
 	_upload(_belt_flow_arrows, flow)
 
 
@@ -5739,6 +5878,19 @@ func starved_marker_count() -> int:
 ## clears the body a player can see rather than asserting a number.
 func starved_marker_position(which: int) -> Vector3:
 	return _instance_position(_starved_transforms, which)
+
+
+## How many starved tags are tethered to the body under them. One per tag, always — a tag
+## without one is #41's ownerless mark, which is what this count exists to refuse.
+func starved_tether_count() -> int:
+	@warning_ignore("integer_division")
+	return _starved_tether_transforms.size() / FLOATS_PER_INSTANCE
+
+
+## Where a tether's middle is, in metres. For the smoke test, which asserts it spans the gap
+## between the drawn roof and the tag rather than asserting a number.
+func starved_tether_position(which: int) -> Vector3:
+	return _instance_position(_starved_tether_transforms, which)
 
 
 ## How many flow arrows are drawn along the Belts that are standing. For the smoke test.
